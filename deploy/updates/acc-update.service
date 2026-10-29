@@ -1,0 +1,19 @@
+[Unit]
+Description=Rynhult backup and update transaction
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/accd
+EnvironmentFile=-/etc/default/acc-backup
+ExecStart=/usr/local/sbin/acc-update
+TimeoutStartSec=3h
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+Alias=rynhult-update.service

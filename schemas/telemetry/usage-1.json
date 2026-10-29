@@ -1,0 +1,460 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "usage/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "install": {
+      "pattern": "^[A-Za-z0-9_-]{22}$",
+      "title": "Install",
+      "type": "string"
+    },
+    "day": {
+      "format": "date",
+      "title": "Day",
+      "type": "string"
+    },
+    "acc": {
+      "pattern": "^(dev|[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta|rc)\\.[0-9]+)?)$",
+      "title": "Acc",
+      "type": "string"
+    },
+    "os": {
+      "items": {
+        "enum": [
+          "linux",
+          "wsl",
+          "macos",
+          "windows",
+          "other"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Os",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "install_kind": {
+      "enum": [
+        "release",
+        "git-checkout",
+        "windows-installer",
+        "mac-installer"
+      ],
+      "title": "Install Kind",
+      "type": "string"
+    },
+    "machines": {
+      "enum": [
+        "0",
+        "1",
+        "2-3",
+        "4-10",
+        "11-50",
+        "51+"
+      ],
+      "title": "Machines",
+      "type": "string"
+    },
+    "people": {
+      "enum": [
+        "0",
+        "1",
+        "2-3",
+        "4-10",
+        "11-50",
+        "51+"
+      ],
+      "title": "People",
+      "type": "string"
+    },
+    "projects": {
+      "enum": [
+        "0",
+        "1",
+        "2-3",
+        "4-10",
+        "11-50",
+        "51+"
+      ],
+      "title": "Projects",
+      "type": "string"
+    },
+    "sessions_running": {
+      "enum": [
+        "0",
+        "1",
+        "2-3",
+        "4-10",
+        "11-50",
+        "51+"
+      ],
+      "title": "Sessions Running",
+      "type": "string"
+    },
+    "vault_keys": {
+      "enum": [
+        "0",
+        "1",
+        "2-3",
+        "4-10",
+        "11-50",
+        "51+"
+      ],
+      "title": "Vault Keys",
+      "type": "string"
+    },
+    "providers_enabled": {
+      "items": {
+        "enum": [
+          "claude",
+          "codex",
+          "copilot",
+          "cursor",
+          "antigravity",
+          "opencode"
+        ],
+        "type": "string"
+      },
+      "maxItems": 6,
+      "title": "Providers Enabled",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "features_enabled": {
+      "items": {
+        "enum": [
+          "groups",
+          "organizations",
+          "containers",
+          "backups",
+          "backup_server",
+          "publishing",
+          "dns_provider",
+          "auto_updates",
+          "push",
+          "issue_sources",
+          "remote_access",
+          "schedules",
+          "orchestrator",
+          "preview",
+          "custom_guardrails"
+        ],
+        "type": "string"
+      },
+      "maxItems": 15,
+      "title": "Features Enabled",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "used": {
+      "additionalProperties": false,
+      "maxProperties": 21,
+      "title": "Used",
+      "type": "object",
+      "properties": {
+        "session.launch": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "session.resume": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "session.multirun": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "session.export": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "schedule.run": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "orchestrator.team": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "explain.run": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "changes.view": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "files.edit": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "preview.open": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "pr.merge": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "pr.feedback": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "publish.request": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "vault.give": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "catalog.import": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "search.query": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "backup.run": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "update.install": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "node.enroll": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "inbox.answer": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "guardrail.block": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "by_provider": {
+      "additionalProperties": false,
+      "maxProperties": 6,
+      "title": "By Provider",
+      "type": "object",
+      "properties": {
+        "claude": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "codex": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "copilot": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "cursor": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "antigravity": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        },
+        "opencode": {
+          "enum": [
+            "1",
+            "2-5",
+            "6-20",
+            "21-100",
+            "101+"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "install",
+    "day",
+    "acc",
+    "os",
+    "install_kind",
+    "machines",
+    "people",
+    "projects",
+    "sessions_running",
+    "vault_keys",
+    "providers_enabled",
+    "features_enabled",
+    "used",
+    "by_provider"
+  ],
+  "title": "Usage",
+  "type": "object"
+}

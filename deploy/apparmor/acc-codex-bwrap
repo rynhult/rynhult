@@ -1,0 +1,12 @@
+# Install: /etc/apparmor.d/acc-codex-bwrap ; apparmor_parser -r /etc/apparmor.d/acc-codex-bwrap
+# Ubuntu 24.04 restricts unprivileged user namespaces, which Codex's sandbox (its bundled bubblewrap) needs: without
+# this, every sandboxed command fails ("bwrap: loopback: Failed RTM_NEWADDR"). This allows them for Codex's own bwrap
+# at the path npm installs it to, and nothing else, so Codex runs with its sandbox ON. Same shape as acc-chrome.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile acc-codex-bwrap /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/codex-resources/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-codex-bwrap>
+}

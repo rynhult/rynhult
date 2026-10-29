@@ -1,0 +1,4 @@
+◯ general-purpose  Reading check_mounts and freeze_inputs
+
+❯
+⏵⏵ bypass permissions on

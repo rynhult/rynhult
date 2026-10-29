@@ -1,0 +1,13 @@
+#!/bin/sh
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../../lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# acc-node on a Mac, installed to ~/Library/Application Support/ACC/bin (and linked into Homebrew's bin) by
+# deploy/node/macos/install.sh. Runs as you, like the broker.
+#   acc-node enroll --primary URL (--trust system | --ca-fingerprint HEX) --code CODE --name NAME
+#   acc-node status
+# The LaunchAgent local.acc.node starts by itself once enrolling has written the config file.
+acc="$HOME/Library/Application Support/ACC"
+export ACC_NODE_CONFIG="$acc/acc-node.env" ACC_NODE_STATE_DIR="$acc/node" ACC_NODE_SOCKET_DIR="$acc/sock"
+exec "$acc/app/.venv/bin/python" -I -m acc.node "$@"

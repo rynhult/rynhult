@@ -1,0 +1,366 @@
+"""Opt-in Linux ciphertext receiver and bounded enrolled-link adapter.
+
+No shell or caller-selected address crosses the machine link. Setup is emitted as
+text for the owner; Rynhult never executes these commands.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import os
+import shutil
+import stat
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
+VERSION = '0.14.0'
+CHECKSUMS = {
+    'amd64': '4c9c95bc079a0334e81fad379b19dc5c3353c71c2c88d652cafce2081c2b1c66',
+    'arm64': 'cef139cbe8b27b16bda731d17f093b0aa466b8c60b136c12d78b6f2bff3daf22',
+}
+BINDING = Path('/etc/acc/backup-target.json')
+# The only receiver refusals a node sends, and the only ones Check setup shows: fixed texts an owner can act on.
+RECEIVER_REFUSALS = {
+    'missing': 'Backup receiver is not set up on this machine yet: run the target setup commands there as root, then '
+               'check again.',
+    'mismatch': "This machine's backup receiver is bound to another target or Rynhult installation: review "
+                '/etc/acc/backup-target.json there.',
+    'unsafe': 'Backup receiver binding is unsafe: /etc/acc/backup-target.json must be a root-owned regular file with '
+              'no group or other write.',
+    'disk': 'Backup receiver disk check failed: verify acc-backup ownership, mode 0700, the recorded device/fsid and '
+            'subfolder mounts. After a reviewed volume change, re-record the disk as root with '
+            '/usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check --rerecord.',
+    'down': 'Backup receiver is not listening: check acc-backup-receiver.service on this machine.',
+}
+RECEIVER_SHOWN = {*RECEIVER_REFUSALS.values(), 'Node update required for backup targets'}
+RECEIVER_GENERIC = ('Backup receiver unavailable. Check that the machine is connected and up to date, and check '
+                    'acc-backup-receiver.service there.')
+STREAM_IDLE_SECONDS = 60
+
+
+class ReceiverRefused(ValueError):
+    """Why this node's receiver can't be used; the node sends RECEIVER_REFUSALS[reason], never the detail."""
+    def __init__(self, detail, reason):
+        super().__init__(detail)
+        self.reason = reason
+
+
+GIB = 2**30
+MIN_MAX_SIZE = GIB
+MAX_MAX_SIZE = 10240 * GIB
+LEGACY_MAX_SIZE = 100 * GIB
+
+
+def default_max_size(free=None):
+    if isinstance(free, bool) or not isinstance(free, (int, float)) or not math.isfinite(free) or free < 0:
+        return 20 * GIB
+    return max(MIN_MAX_SIZE, min(MAX_MAX_SIZE, int(free // (2 * GIB)) * GIB))
+
+
+def node_max_size(link):
+    """Use the reported filesystem containing /var/lib/acc-backup; light data is a fallback."""
+    snapshot = getattr(link, 'host_snapshot', None) or {}
+    disks = [d for d in snapshot.get('disks') or []
+             if d.get('mount') and Path('/var/lib/acc-backup').is_relative_to(d['mount'])]
+    disk = max(disks, key=lambda d: len(d['mount'])) if disks else (getattr(link, 'host_light', None) or {}).get('disk') or {}
+    # The light summary may describe a different, fuller filesystem. Do not size this receiver from it.
+    if not disk.get('mount') or not Path('/var/lib/acc-backup').is_relative_to(disk['mount']):
+        return default_max_size()
+    return default_max_size(disk.get('free'))
+
+
+def target_max_size(target):
+    value = target.get('max_size_bytes', LEGACY_MAX_SIZE)
+    if type(value) is not int or not MIN_MAX_SIZE <= value <= MAX_MAX_SIZE:
+        raise ValueError('The backup size limit must be between 1 and 10240 GiB.')
+    return value
+
+
+def receiver_binding(path, target_id, installation_id, *, owner=0, data=None, receiver_uid=None):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd) as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022 or info.st_size > 4096:
+                raise ReceiverRefused('unsafe receiver binding', 'unsafe')
+            value = json.load(stream)
+        if (value['target_id'] != target_id or value['installation_id'] != installation_id or
+                type(value['port']) is not int or not 1024 <= value['port'] <= 65535):
+            raise ReceiverRefused('receiver not approved for this installation and target', 'mismatch')
+        import pwd
+
+        from .backup_receiver_check import DATA, verify
+        try:
+            verify(DATA if data is None else data, value, pwd.getpwnam('acc-backup').pw_uid if receiver_uid is None else receiver_uid)
+        except ValueError as error:
+            raise ReceiverRefused(str(error), 'disk') from None
+        return value['port']
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        raise ReceiverRefused('owner must configure this backup target', 'missing') from None
+
+
+def setup_commands(target, installation_id, password_hash):
+    # IDs and the transport-token hash are generated by Rynhult, never interpolated user input.
+    target_id = target['id']
+    binding = json.dumps({'target_id': target_id, 'installation_id': installation_id, 'port': 18762})
+    guard = Path(__file__).with_name('backup_receiver_check.py').read_text()
+    return f'''# Run as root on the enrolled Linux target, after reviewing disk capacity.
+# Requires Python 3, runuser, curl, sha256sum, tar and systemd already installed. No package installation.
+bash -euo pipefail <<'ACC_SETUP'
+trap 'echo "Setup stopped at line $LINENO. ${{resume:-Nothing is bound yet: correct the error above and rerun this block.}} The login shell stays open." >&2' ERR
+umask 077
+if [ "$(id -u)" != 0 ]; then echo 'Run this block in a root shell on the target; no changes made.' >&2; exit 1; fi
+# The disk guard is installed (or refreshed) first: an existing receiver uses it to re-record its disk.
+install -d -o root -g root -m 0755 /usr/local/libexec
+cat > /usr/local/libexec/acc-backup-receiver-check <<'ACC_GUARD'
+{guard}
+ACC_GUARD
+chown root:root /usr/local/libexec/acc-backup-receiver-check
+chmod 0755 /usr/local/libexec/acc-backup-receiver-check
+if [ -e /etc/acc/backup-target.json ] || [ -L /etc/acc/backup-target.json ]; then
+  # Append our guard without clearing any operator-supplied pre-start safety checks. A newer base unit can
+  # already have this guard: a second check is safe. A legacy binding needs --rerecord before its next start.
+  install -d -o root -g root -m 0755 /etc/systemd/system/acc-backup-receiver.service.d
+  cat > /etc/systemd/system/acc-backup-receiver.service.d/disk-guard.conf <<'ACC_DROPIN'
+[Service]
+TimeoutStartSec=30min
+ExecStartPre=/usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check
+ACC_DROPIN
+  chmod 0644 /etc/systemd/system/acc-backup-receiver.service.d/disk-guard.conf
+  systemctl daemon-reload
+  echo 'Receiver already configured; only its disk guard and pre-start check were refreshed. After a reviewed volume change (or for a binding from before disk checks), record the disk: /usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check --rerecord. To replace setup, stop the receiver and save the binding and recovery kit first.' >&2
+  exit 1
+fi
+# Mount dedicated storage BEFORE setup; bind a subfolder, never a whole filesystem root.
+/usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check --preflight
+# Close main-controlled root helpers before installing the backup trust boundary.
+systemctl stop acc-update.path acc-packages.path acc-packages-daily.timer
+for unit in acc-update.service acc-packages.service acc-packages-daily.service; do
+  if systemctl is-active --quiet "$unit"; then
+    echo "Wait for $unit to finish, then rerun setup" >&2
+    exit 1
+  fi
+done
+for unit in acc-update.service acc-update.path acc-packages.service acc-packages.path acc-packages-daily.service acc-packages-daily.timer; do
+  install -d -o root -g root -m 0755 "/etc/systemd/system/$unit.d"
+  cat > "/etc/systemd/system/$unit.d/backup-target.conf" <<'ACC_ROOT_HELPER'
+[Unit]
+ConditionPathExists=!/etc/acc/backup-target.json
+ACC_ROOT_HELPER
+done
+case "$(uname -m)" in
+  x86_64) arch=amd64; checksum={CHECKSUMS['amd64']} ;;
+  aarch64) arch=arm64; checksum={CHECKSUMS['arm64']} ;;
+  *) echo 'Unsupported receiver architecture; use an x86_64 or aarch64 Linux target.' >&2; exit 1 ;;
+esac
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+curl --fail --location --max-filesize 33554432 --connect-timeout 15 --max-time 300 --proto '=https' --tlsv1.2 "https://github.com/restic/rest-server/releases/download/v{VERSION}/rest-server_{VERSION}_linux_${{arch}}.tar.gz" -o "$scratch/receiver.tar.gz"
+printf '%s  %s\\n' "$checksum" "$scratch/receiver.tar.gz" | sha256sum --check -
+tar -xzf "$scratch/receiver.tar.gz" -C "$scratch" --no-same-owner
+install -o root -g root -m 0755 "$scratch/rest-server_{VERSION}_linux_${{arch}}/rest-server" /usr/local/bin/acc-rest-server
+if ! id -u acc-backup >/dev/null 2>&1; then
+  useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin acc-backup
+fi
+if [ "$(id -u acc-backup)" = 0 ]; then echo 'Unsafe acc-backup account: repair the receiver service account before setup.' >&2; exit 1; fi
+install -d -o root -g root -m 0755 /etc/acc
+install -d -o root -g acc-backup -m 0750 /etc/acc/backup
+install -d -o acc-backup -g acc-backup -m 0700 /var/lib/acc-backup
+cat > /etc/acc/backup/writers <<'ACC_AUTH'
+{target_id}:{password_hash}
+ACC_AUTH
+chown root:acc-backup /etc/acc/backup/writers
+chmod 0640 /etc/acc/backup/writers
+cat > /etc/systemd/system/acc-backup-receiver.service <<'ACC_UNIT'
+[Unit]
+Description=Rynhult append-only ciphertext receiver
+After=network.target
+[Service]
+User=acc-backup
+Group=acc-backup
+UMask=0077
+# The guard reads every entry as acc-backup; after a reboot a large repository is a cold walk, beyond the 90 s default.
+TimeoutStartSec=30min
+ExecStartPre=/usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check
+ExecStart=/usr/local/bin/acc-rest-server --listen 127.0.0.1:18762 --path /var/lib/acc-backup --htpasswd-file /etc/acc/backup/writers --private-repos --append-only --max-size {target_max_size(target)}
+Restart=on-failure
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/acc-backup
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+[Install]
+Alias=rynhult-backup-receiver.service
+WantedBy=multi-user.target
+ACC_UNIT
+# Scan as the receiver account, not root (root would hide unreadable entries). The binding is written once, with
+# its disk identity, only after the scan passed: a refused disk leaves no binding, so this block can simply rerun.
+runuser -u acc-backup -- /usr/bin/python3 -I /usr/local/libexec/acc-backup-receiver-check --record > "$scratch/disk.json"
+cat > "$scratch/binding.json" <<'ACC_BINDING'
+{binding}
+ACC_BINDING
+/usr/bin/python3 -I - "$scratch/binding.json" "$scratch/disk.json" <<'ACC_DISK'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+binding = json.loads(path.read_text())
+binding.update(json.loads(pathlib.Path(sys.argv[2]).read_text()))
+path.write_text(json.dumps(binding) + '\\n')
+ACC_DISK
+install -o root -g root -m 0644 "$scratch/binding.json" /etc/acc/backup-target.json
+resume='The receiver is bound: correct the error above, then run systemctl daemon-reload and systemctl enable --now acc-backup-receiver.service (rerunning this block refuses).'
+systemctl daemon-reload
+systemctl enable --now acc-backup-receiver.service
+systemctl --no-pager status acc-backup-receiver.service
+df -h /var/lib/acc-backup
+# Maintenance is target-local only. Do not give acc-node filesystem access,
+# sudo privileges, the acc-backup account, or a non-append-only listener.
+ACC_SETUP
+'''
+
+
+@contextmanager
+def node_transport(link, target, installation_id, *, preflight=False):
+    """Worker-thread context; all link IO stays on the link's owning loop.
+
+    Only one connection at a time; restic uses --option rest.connections=1.
+    No advertised port, credential or repository path ever crosses the link.
+    The adapter is a Unix socket in a private folder: a loopback port would let any local account
+    (member agents on the main) hold the single receiver gate or reach the receiver.
+    """
+    loop = link._loop
+    active = set()
+    gate = asyncio.Semaphore(1)
+
+    async def open_receiver():
+        # A reconnect may reach the node before its previous channel drained: wait out "busy" briefly.
+        deadline = loop.time() + 10
+        while True:
+            try:
+                return await link.open_backup(target['id'], installation_id)
+            except ConnectionError as error:
+                if str(error) != 'backup receiver busy' or loop.time() >= deadline:
+                    raise
+                await asyncio.sleep(.02)
+
+    async def accept(reader, writer):
+        # One active request plus one draining/reconnecting request. Other local
+        # users cannot build an unbounded queue behind the receiver gate.
+        if len(active) >= 2:
+            writer.close()
+            await writer.wait_closed()
+            return
+        task = asyncio.current_task()
+        active.add(task)
+        remote_writer = None
+        last_progress = loop.time()
+        async def copy(src, dst):
+            nonlocal last_progress
+            while True:
+                remaining = STREAM_IDLE_SECONDS - (loop.time() - last_progress)
+                if remaining <= 0:
+                    raise TimeoutError('backup transport idle')
+                try:
+                    data = await asyncio.wait_for(src.read(64 << 10), remaining)
+                except TimeoutError:
+                    # The other half may be transferring a long response/body.
+                    # Its progress renews the connection's idle budget too.
+                    continue
+                if not data:
+                    return
+                last_progress = loop.time()
+                dst.write(data)
+                await asyncio.wait_for(dst.drain(), 30)
+                last_progress = loop.time()
+        try:
+            async with gate:
+                remote_reader, remote_writer = await open_receiver()
+                last_progress = loop.time()
+                flows = [asyncio.create_task(copy(reader, remote_writer)), asyncio.create_task(copy(remote_reader, writer))]
+                try:
+                    done, pending = await asyncio.wait(flows, return_when=asyncio.FIRST_COMPLETED)
+                    for flow in done:
+                        flow.result()
+                    # Request EOF is a half-close, not cancellation of its reply.
+                    # The receiver knows the HTTP request length; let its response
+                    # drain under the same bounded idle budget. Receiver EOF still
+                    # closes the request side immediately as before.
+                    if flows[0] in done and flows[1] not in done and remote_writer.can_write_eof():
+                        # Forward FIN without closing the response half. Otherwise
+                        # a keep-alive receiver never sees EOF and monopolizes the
+                        # single-channel gate until the entire idle budget elapses.
+                        remote_writer.write_eof()
+                        await remote_writer.drain()
+                        await flows[1]
+                    # Older nodes cannot represent a half-close. Keep their former
+                    # full-close behavior rather than waiting for an impossible FIN.
+                finally:
+                    for flow in flows:
+                        flow.cancel()
+                    await asyncio.gather(*flows, return_exceptions=True)
+        except (ConnectionError, OSError, TimeoutError):
+            pass
+        finally:
+            if remote_writer:
+                remote_writer.close()
+            writer.close()
+            active.discard(task)
+            await writer.wait_closed()
+
+    folder = tempfile.mkdtemp(prefix='acc-backup-')  # 0700 and ours; short enough for sun_path
+    path = os.path.join(folder, 'receiver.sock')
+
+    async def start():
+        return await asyncio.start_unix_server(accept, path, limit=1 << 20)
+
+    try:
+        async def probe():
+            reader, writer = await open_receiver()
+            writer.close()
+            await writer.wait_closed()
+        if preflight:
+            checking = asyncio.run_coroutine_threadsafe(probe(), loop)
+            try:
+                checking.result(timeout=15)
+            except (ConnectionError, TimeoutError) as error:
+                checking.cancel()
+                from .backup_server import Refused
+                # Only fixed texts reach the owner: anything else a node sends (or an older node's text) is generic.
+                raise Refused(str(error) if str(error) in RECEIVER_SHOWN else RECEIVER_GENERIC) from None
+        future = asyncio.run_coroutine_threadsafe(start(), loop)
+        try:
+            server = future.result(timeout=15)
+        except BaseException:
+            future.cancel()
+            raise
+        try:
+            yield f"http+unix://{path}:/{target['id']}/"
+        finally:
+            async def close():
+                server.close()
+                for task in list(active):
+                    task.cancel()
+                await asyncio.gather(*list(active), return_exceptions=True)
+                await server.wait_closed()
+            asyncio.run_coroutine_threadsafe(close(), loop).result(timeout=15)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)

@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "route53:ListResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZEXAMPLE"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:GetChange",
+      "Resource": "arn:aws:route53:::change/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZEXAMPLE",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsRecordTypes": [
+            "TXT"
+          ],
+          "route53:ChangeResourceRecordSetsActions": [
+            "CREATE",
+            "UPSERT",
+            "DELETE"
+          ]
+        },
+        "ForAllValues:StringLike": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+            "_acme-challenge.example.com",
+            "_acme-challenge.*.example.com"
+          ]
+        }
+      }
+    }
+  ]
+}

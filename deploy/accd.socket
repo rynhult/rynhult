@@ -1,0 +1,16 @@
+# Install: /etc/systemd/system/accd.socket ; systemctl enable --now accd.socket
+# accd's only listener: a Unix socket systemd creates for it, reachable by the caddy group alone (0660 acc:caddy),
+# so no local process can call accd directly or claim another client's address. Held across accd restarts, so
+# requests wait instead of failing.
+[Unit]
+Description=Rynhult daemon socket (for Caddy only)
+
+[Socket]
+ListenStream=/run/accd.sock
+SocketUser=acc
+SocketGroup=caddy
+SocketMode=0660
+
+[Install]
+Alias=rynhultd.socket
+WantedBy=sockets.target

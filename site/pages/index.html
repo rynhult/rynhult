@@ -1,0 +1,107 @@
+<!--{"path": "/", "title": "Rynhult", "description": "Rynhult is self-hosted control for coding agents. Run Claude Code, Codex, GitHub Copilot CLI and other agent CLIs on your own Linux server and supervise them from any browser, including your phone."}-->
+<section class="hero" aria-labelledby="hero-title">
+<svg class="bands" viewBox="0 0 760 900" preserveAspectRatio="xMinYMid slice" aria-hidden="true" focusable="false">
+<path class="b1" d="M0 900V335L335 0H505L170 335V900Z"/>
+<path class="b2" d="M248 900V535L783 0H953L418 535V900Z"/>
+<path class="rule" d="M426 900V538L964 0"/>
+<path class="b3" d="M496 900V738L1134 100H1304L666 738V900Z"/>
+</svg>
+<div class="wrap">
+<h1 id="hero-title"><span>Your agents.</span> <span>Your machines.</span> <span class="call">Your call.</span></h1>
+<p class="lead">Rynhult is self-hosted control for coding agents. Run Claude Code, Codex, GitHub Copilot CLI and other agent CLIs on your own Linux server, and supervise them from any browser, including your phone.</p>
+<p class="release-note">{{release.note}}</p>
+<div class="actions">
+{{#soon}}<a class="button primary" href="{{follow}}">Follow on GitHub</a>{{/soon}}
+{{#release}}<a class="button primary" href="/install/">Install Rynhult</a>
+<a class="button" href="/docs/">Read the docs</a>{{/release}}
+</div>
+<figure class="shot">
+<img class="desk" src="/media/overview.png" width="1440" height="900" alt="The Rynhult overview: live sessions grouped by who needs you, open Inbox items, plan usage, projects and host health.">
+<img class="phone" src="/media/phone-overview.png" width="780" height="1688" alt="The same overview on a phone, with what needs you at the top.">
+<figcaption>The overview on a demo instance, on a desktop browser and a phone. Every name in it is artificial.</figcaption>
+</figure>
+</div>
+</section>
+
+<section class="section" aria-labelledby="what">
+<div class="wrap">
+<h2 id="what">One place to supervise your coding agents</h2>
+<p class="intro">You choose the agent, the project and where it runs. Rynhult starts the agent in a real terminal on your server, keeps it running when you close the tab, and tells you when it needs an answer.</p>
+<ul class="features">
+<li>
+<h3>Real agent sessions</h3>
+<p>Each session is the agent's own CLI (Claude Code, Codex, GitHub Copilot CLI, Antigravity, Cursor or OpenCode) running in tmux. Its page is that terminal in your browser. Close the tab and the session keeps running; open it on your phone and you're back where you were.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Sessions/">Sessions</a></p>{{/release}}
+</li>
+<li>
+<h3>Knows what needs you</h3>
+<p>Sessions are grouped into Needs you, Working and Idle, with what each one is doing now. Questions, approvals and alerts collect in one Inbox, and the phone web app can send push notifications.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Inbox/">Inbox</a> and <a href="/docs/User-Guide/Notifications-and-App/">notifications</a></p>{{/release}}
+</li>
+<li>
+<h3>Nodes</h3>
+<p>Add Linux machines, Macs, and Windows PCs through WSL2 as nodes. They connect out to your main Rynhult over a signed link, and you pick where each session runs, all in the same dashboard.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Nodes/">Nodes</a></p>{{/release}}
+</li>
+<li>
+<h3>Guardrails</h3>
+<p>Agents are stopped from force pushing, pushing to main, merging pull requests, deleting outside their workspace and reading secrets, in every permission mode. Guardrails are a safety net, not a sandbox: keep branch protection and separate agent accounts.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Guardrails/">Guardrails</a></p>{{/release}}
+</li>
+<li>
+<h3>Backups</h3>
+<p>Project git backup is on by default. Owners can add encrypted backups of Rynhult's state and repositories to a Linux receiver, S3-compatible storage or a local directory. New backup schedules start off until you turn them on.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Backups/">Backups</a></p>{{/release}}
+</li>
+<li>
+<h3>Groups</h3>
+<p>Owners create groups and appoint maintainers. Members publish committed work to the group and launch group sessions in their own private checkouts on the main server, with a shared work board for tasks.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Groups/">Groups</a></p>{{/release}}
+</li>
+<li>
+<h3>Preview your app</h3>
+<p>See a project's running web app inside Rynhult, next to the agent's terminal. Previews are private to the project's people; publishing a site is a separate, approved step.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Preview/">Preview</a></p>{{/release}}
+</li>
+<li>
+<h3>Containers per session <span class="tag preview">Preview</span></h3>
+<p>An owner can run a project's new sessions each in its own rootless container. It's off by default, switched on per project, and only available on a host that has passed the container qualification.</p>
+{{#release}}<p class="more"><a href="/docs/User-Guide/Sessions/#sessions-in-containers">Sessions in containers</a></p>{{/release}}
+</li>
+</ul>
+</div>
+</section>
+
+<section class="section" aria-labelledby="scope">
+<div class="wrap">
+<h2 id="scope">What version 1.0 is, and what comes later</h2>
+<p class="intro">Version 1.0 is the self-hosted Linux server, used from a web browser. This is what that means today.</p>
+<table class="scope">
+<caption class="visually-hidden">Platform scope for version 1.0</caption>
+<thead><tr><th scope="col">Part</th><th scope="col">Details</th><th scope="col">Status</th></tr></thead>
+<tbody>
+<tr><th scope="row">Main server</th><td>Ubuntu 24.04 or newer, or Debian 13 or newer, with systemd, on amd64 or arm64.</td><td><span class="tag v1">In v1</span></td></tr>
+<tr><th scope="row">Using Rynhult</th><td>Any modern browser on any computer, and the phone web app you add to your home screen from the browser.</td><td><span class="tag v1">In v1</span></td></tr>
+<tr><th scope="row">Nodes</th><td>Linux machines, Macs, and Windows PCs running Linux through WSL2.</td><td><span class="tag v1">In v1</span></td></tr>
+<tr><th scope="row">Away from home</th><td>Rynhult answers private addresses only. Reach it through your VPN or Tailscale; direct public access stays off in v1.</td><td><span class="tag v1">VPN in v1</span></td></tr>
+<tr><th scope="row">Containers per session</th><td>Off by default and only on a qualified host. Works, but not fully supported yet.</td><td><span class="tag preview">Preview</span></td></tr>
+<tr><th scope="row">Native apps</th><td>Windows, macOS, Linux desktop, iOS and Android apps come after v1.0, one platform at a time. No dates yet.</td><td><span class="tag later">Later</span></td></tr>
+</tbody>
+</table>
+<p class="legend"><strong>Preview</strong> means a feature works but isn't fully supported yet, and stays off until an owner turns it on.{{#release}} See <a href="/docs/User-Guide/Install/#v10-platform-scope">platform scope</a> in the docs.{{/release}}</p>
+</div>
+</section>
+
+<section class="section closing" aria-labelledby="start">
+<div class="wrap">
+<div>
+<h2 id="start">Run it on your own server</h2>
+<p>{{#release}}Rynhult is MIT-licensed and runs on a Linux machine you control.{{/release}}{{#soon}}Rynhult runs on a Linux machine you control, and will be open source under the MIT licence when the release candidate ships.{{/soon}} It needs no Rynhult account and no hosted service.</p>
+</div>
+<div class="actions">
+{{#soon}}<a class="button primary" href="{{follow}}">Follow on GitHub</a>{{/soon}}
+{{#release}}<a class="button primary" href="/install/">Install Rynhult</a>
+<a class="button" href="/docs/User-Guide/Features/">See every feature</a>{{/release}}
+</div>
+</div>
+</section>

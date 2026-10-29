@@ -1,0 +1,8 @@
+[Unit]
+Description=Rynhult update requests
+[Path]
+PathExistsGlob=/srv/acc/updates/requests/*.json
+Unit=acc-update.service
+[Install]
+Alias=rynhult-update.path
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.db
+.pytest_cache/
+src/acc/server/static/
+*.tsbuildinfo
+web/e2e/.results/
+web/e2e/screenshots/
+web/playwright-report/
+
+# Any node_modules, including a symlink (a committed link replaced the real folder on Oct 26)
+node_modules

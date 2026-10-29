@@ -1,0 +1,8 @@
+• Ran sed -i ... tests/test_device_ca.py
+• Working (1m 22s • esc to interrupt)
+• Queued follow-up inputs
+  ? 1 question
+    shift+← to answer
+› Ask Codex to do anything
+  GPT-6.1-Sol default · /srv/acc/workspaces/.worktrees/example
+  ? for shortcuts

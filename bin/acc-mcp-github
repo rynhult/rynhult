@@ -1,0 +1,7 @@
+#!/bin/sh
+# GitHub MCP server for ACC sessions: read-only, limited toolsets, token from the session user's gh login.
+# The token is passed only to this process's environment; it is never written to a launch spec or file.
+set -eu
+GITHUB_PERSONAL_ACCESS_TOKEN=$(gh auth token) || { echo "acc-mcp-github: run 'gh auth login' for this user" >&2; exit 1; }
+export GITHUB_PERSONAL_ACCESS_TOKEN
+exec /srv/acc/tools/github-mcp-server stdio --read-only --toolsets context,repos,issues,pull_requests,actions "$@"

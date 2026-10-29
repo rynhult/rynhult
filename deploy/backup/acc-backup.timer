@@ -1,0 +1,12 @@
+# Install: /etc/systemd/system/acc-backup.{service,timer} ; systemctl enable --now acc-backup.timer
+[Unit]
+Description=Rynhult: daily backup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+Alias=rynhult-backup.timer
+WantedBy=timers.target

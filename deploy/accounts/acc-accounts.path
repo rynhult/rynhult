@@ -1,0 +1,11 @@
+# Install: /etc/systemd/system/acc-accounts.path ; systemctl enable --now acc-accounts.path
+[Unit]
+Description=Rynhult: watch for agent accounts to create
+
+[Path]
+PathExistsGlob=/srv/acc/accounts/requests/*.json
+MakeDirectory=no
+
+[Install]
+Alias=rynhult-accounts.path
+WantedBy=paths.target

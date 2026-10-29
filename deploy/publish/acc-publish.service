@@ -1,0 +1,38 @@
+[Unit]
+Description=Rynhult: install/remove approved Caddy sites (acc-publish)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/acc-publish
+# Zones, ACC's own origins (reserved names): the same settings accd uses.
+EnvironmentFile=-/etc/default/accd
+# Root only to write Caddy's site folder and reload Caddy; nothing else is writable.
+ProtectSystem=strict
+# Validation provisions log writers. Hide real Caddy logs/storage behind a private throwaway mount.
+TemporaryFileSystem=/var/lib/caddy:rw,nosuid,nodev,noexec
+ReadWritePaths=/etc/caddy/acc.d /srv/acc/publish
+# The Caddy configuration lock shared with acc-dns (optional until the DNS helper is deployed).
+ReadWritePaths=-/run/acc-dns
+StateDirectory=acc-publish
+Environment=HOME=/var/lib/acc-publish XDG_DATA_HOME=/var/lib/acc-publish XDG_CONFIG_HOME=/var/lib/acc-publish
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+Alias=rynhult-publish.service

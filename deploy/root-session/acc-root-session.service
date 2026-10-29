@@ -1,0 +1,16 @@
+# Install: /etc/systemd/system/acc-root-session.service ; systemctl enable acc-root-session
+[Unit]
+Description=Rynhult external session: resume root's admin Claude conversation at boot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/acc-root-session
+# The tmux server is forked from this unit; stopping or restarting the unit must not kill it.
+KillMode=process
+
+[Install]
+Alias=rynhult-root-session.service
+WantedBy=multi-user.target

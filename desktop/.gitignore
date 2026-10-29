@@ -1,0 +1,6 @@
+/src-tauri/target/
+/src-tauri/gen/
+/runtime/
+/package/
+/runtime-deps/
+/web-dist/

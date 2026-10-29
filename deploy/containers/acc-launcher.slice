@@ -1,0 +1,12 @@
+# Aggregate budget for the root helper processes, separate from the launched payload slices.
+[Unit]
+Description=Rynhult container launcher helper budget
+
+[Slice]
+MemoryMax=256M
+# Never the limit that refuses a request's fork: every connection acc-containers.socket admits (MaxConnections=16) at
+# acc-containers@.service's TasksMax=256, plus the reconcile run's 32, is 4128. A fork this slice refused would be
+# counted in the slice on kernels with hierarchical pids events, where no request could tell it was its own. Memory
+# (MemoryMax below) still bounds what the launchers can use together.
+TasksMax=4352
+CPUQuota=100%

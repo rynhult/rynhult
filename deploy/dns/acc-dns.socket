@@ -1,0 +1,11 @@
+[Unit]
+Description=Rynhult private DNS credential delivery socket
+[Socket]
+ListenStream=/run/acc-dns/helper.sock
+SocketUser=root
+SocketGroup=acc
+SocketMode=0660
+DirectoryMode=0750
+[Install]
+Alias=rynhult-dns.socket
+WantedBy=sockets.target

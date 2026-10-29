@@ -1,0 +1,32 @@
+# Public RFC 6238 test vector in tests/test_auth.py (not a secret)
+2464b4213cc01aac71397af9e8c7dcdf15adf042:tests/test_auth.py:generic-api-key:39
+
+# Directory-scan fingerprints for gitleaks 8.16. Keep built-in rules enabled.
+# These are exact path/rule/line exceptions, not directory or rule allowlists.
+# Re-review them when their fixture lines change; never use these values in production.
+#
+# Android lifecycle: recorded by tools/record_fixtures.py against an in-process
+# test server, using fixed test keys, not captured from a deployed instance.
+mobile/android/enrollment-core/src/test/resources/fixtures/lifecycle.json:generic-api-key:46
+mobile/android/enrollment-core/src/test/resources/fixtures/lifecycle.json:generic-api-key:119
+mobile/android/enrollment-core/src/test/resources/fixtures/lifecycle.json:generic-api-key:281
+mobile/android/enrollment-core/src/test/resources/fixtures/lifecycle.json:generic-api-key:299
+# Validation regular expression containing PEM delimiters, not a private key.
+src/acc/dns_credentials.py:private-key:53
+# AWS documentation/test credentials used with stubbed storage/DNS clients.
+tests/test_backup_s3.py:aws-access-token:565
+tests/test_dns_providers_p2.py:aws-access-token:76
+tests/upgrade_rehearsal.py:aws-access-token:250
+# Synthetic service-account PEM/JSON fixtures; no production signing identity.
+tests/test_dns_wave2.py:private-key:11
+tests/test_security_review_dns_w2.py:generic-api-key:11
+tests/test_security_review_dns_w2.py:private-key:12
+# Deliberate log-redaction and telemetry-scrubber canaries.
+tests/test_pulls.py:github-pat:175
+tests/test_telemetry.py:aws-access-token:572
+tests/test_telemetry.py:aws-access-token:594
+# Synthetic values in redaction/scrubber tests (Oct 29): fake AWS-format keys and a fake secret that the tests
+# assert are removed; never real credentials.
+tests/test_publish_helper.py:generic-api-key:174
+tests/test_telemetry.py:aws-access-token:573
+tests/test_telemetry.py:aws-access-token:595

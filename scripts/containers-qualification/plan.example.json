@@ -1,0 +1,10 @@
+{
+  "account": "alex-agent",
+  "archive": "/srv/acc/reviewed/acc-session-reviewed.oci.tar",
+  "archive_sha256": "REPLACE_WITH_INDEPENDENTLY_REVIEWED_64_HEX_ARCHIVE_SHA256",
+  "image": "sha256:REPLACE_WITH_REVIEWED_64_HEX_CONFIG_DIGEST",
+  "podman_version": "REPLACE_WITH_REVIEWED_INSTALLED_VERSION",
+  "crun_version": "REPLACE_WITH_REVIEWED_INSTALLED_VERSION",
+  "repo": "/srv/acc/workspaces/demo-api",
+  "root": "/srv/acc/workspaces"
+}

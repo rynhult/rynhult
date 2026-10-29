@@ -1,0 +1,15 @@
+{
+  "productName": "rynhult-linux-spike",
+  "bundle": {
+    "category": "DeveloperTool",
+    "publisher": "MAINTAINER PLACEHOLDER - the owner sets the name <maintainer-placeholder@example.invalid>",
+    "linux": {
+      "deb": {
+        "depends": ["acl"], "desktopTemplate": "linux/rynhult.desktop",
+        "files": { "/usr/share/doc/rynhult-linux-spike/copyright": "linux/copyright" }
+      },
+      "rpm": { "depends": ["acl"], "desktopTemplate": "linux/rynhult.desktop" },
+      "appimage": { "bundleMediaFramework": false }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+# Install: /etc/apparmor.d/acc-system-bwrap ; apparmor_parser -r /etc/apparmor.d/acc-system-bwrap
+# Codex 0.163+ prefers the distribution's bubblewrap (/usr/bin/bwrap) when the package is installed (it arrives with
+# WebKitGTK, Flatpak and similar). Ubuntu 24.04 restricts unprivileged user namespaces, so without this every
+# sandboxed Codex command fails ("bwrap: loopback: Failed RTM_NEWADDR"). Same shape as acc-codex-bwrap.
+# Owner-approved host change, 2026-10-25.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile acc-system-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-system-bwrap>
+}

@@ -1,0 +1,18 @@
+#!/bin/bash
+# Give an agent account read/write access to folders another user owns (e.g. project checkouts whose Docker
+# stacks run as that user), without changing ownership: ACLs on the files that user owns, plus default ACLs so
+# new files stay shared both ways. Container data (files owned by other ids) is left alone. Run as root.
+#   acc-agent-share <account> <owner> <folder>...
+set -euo pipefail
+account=${1:?usage: acc-agent-share <account> <owner> <folder>...}; owner=${2:?owner}; shift 2
+id "$account" >/dev/null && id "$owner" >/dev/null
+for folder in "$@"; do
+  if [ ! -d "$folder" ] || [ -L "$folder" ]; then echo "skip $folder: not a folder" >&2; continue; fi
+  # Directories: access + defaults for both users; files: access for the account. Only what $owner owns; never
+  # follows symlinks (-P). The owner performs ACL changes so swapped links cannot reach root files.
+  # Only the owner's files are shared. Folders the owner can't read (an agent's rootless container storage, say) aren't
+  # theirs to share, so their "Permission denied" must not stop the installer (set -e).
+  runuser -u "$owner" -- find -P "$folder" -path '*/.acc/container-build' -prune -o -user "$owner" -type d -exec setfacl -m "u:$account:rwX,d:u:$account:rwX,d:u:$owner:rwX,m::rwX,d:m::rwX" {} + 2>/dev/null || true
+  runuser -u "$owner" -- find -P "$folder" -path '*/.acc/container-build' -prune -o -user "$owner" -type f -exec setfacl -m "u:$account:rwX,m::rwX" {} + 2>/dev/null || true
+  echo "shared $folder with $account (owner $owner)"
+done

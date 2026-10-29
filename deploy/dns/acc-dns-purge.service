@@ -1,0 +1,21 @@
+[Unit]
+Description=Purge expired Rynhult DNS rollback credentials
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/lib/acc-dns/helper.py --purge
+User=root
+Group=root
+UMask=0077
+# Removes root-owned files in a root-owned directory: no capabilities needed.
+CapabilityBoundingSet=
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/caddy/acc-dns /etc/caddy/acc-dns-google
+StandardOutput=null
+StandardError=null
+
+[Install]
+Alias=rynhult-dns-purge.service

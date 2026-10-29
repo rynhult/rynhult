@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Rynhult</title>
+<style>body { font: 13px -apple-system, sans-serif; line-height: 1.45; } h1 { font-size: 16px; } li { margin: 4px 0; }</style>
+</head>
+<body>
+<h1>Rynhult on this Mac: an additional machine</h1>
+<p>This installs Rynhult so that a Rynhult you already run (the <b>main Rynhult</b>, on Linux or Windows) can start agent
+sessions on this Mac.</p>
+<ul>
+<li><b>A Mac is an additional machine only, not a main Rynhult (yet).</b> The main Rynhult needs Linux: its services use
+systemd and separate agent accounts.</li>
+<li><b>Sessions run as you</b>, the user signed in now. Agents can read your files, and the node&rsquo;s key and
+settings. If that is too much, create a separate macOS user for Rynhult, sign in as that user and install there.</li>
+<li>You need <b>Homebrew</b> (<a href="https://brew.sh">brew.sh</a>): Rynhult uses it to install Python, tmux, git and uv.</li>
+</ul>
+<p>The files go to <code>/Library/Application Support/ACC/src</code>, and <b>Rynhult Setup</b> to Applications. When
+the installer finishes, Rynhult Setup opens and asks for the command from <b>Host &rarr; Machines &rarr; Add machine</b>
+on your main Rynhult. Have that page open.</p>
+<p>This package is not signed. Rynhult is open source (MIT License).</p>
+</body>
+</html>

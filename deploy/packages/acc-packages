@@ -1,0 +1,750 @@
+#!/usr/bin/python3 -I
+"""acc-packages: root helper that installs and updates the software Rynhult's agents use.
+
+accd (user acc, unprivileged) can't install software. An owner asks from the dashboard; accd drops
+/srv/acc/packages/requests/<id>.json ({"id", "action", "package", "auto"}) and acc-packages.path starts this helper.
+acc-packages-daily.timer runs `acc-packages --daily`: it checks every package and updates the installed ones whose
+auto-update is on.
+
+Catalog actions name an entry in CATALOG, never a command, version, URL or path. Catalog state (installed and latest
+versions, auto-update, the last result) goes to /srv/acc/packages/state.json (root:acc 0640) for the dashboard.
+
+M16's separately approved action "tool" accepts only validated apt/snap/flatpak registry coordinates and
+install/remove, using the deployed acc-tool-policy.py's fixed argv. Its request has exactly
+{"id", "action", "manager", "name", "version", "operation"}; no commands, URLs, scripts or paths. The resolved
+version is returned in the existing per-request result file, not added to catalog auto-updates.
+
+  acc-packages                          process the queued requests
+  acc-packages --daily                  check everything; update what has auto-update on
+  acc-packages --install codex copilot  install now (deploy/install.sh), catalog update policy
+"""
+from __future__ import annotations
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(environment.get("ACC_PACKAGES_ROOT", "/srv/acc/packages"))
+GROUP = environment.get("ACC_PACKAGES_GROUP", "acc")  # who reads state.json: accd, or acc-node on another machine
+ID_RE = re.compile(r"[a-z0-9-]{4,64}")
+ACTIONS = ("install", "update", "remove", "check", "auto")
+
+# What Rynhult may install. method: how it is installed and updated; bin: the command it provides. mac_ok: a Mac node
+# installs it too, as the signed-in user with Homebrew's npm (acc.node.packages); everything else is Linux only.
+CATALOG: dict[str, dict] = {
+    "restic": {"label": "Restic", "method": "restic", "bin": "restic", "version": "0.19.1",
+               "dest": "/usr/local/bin/restic", "root": "/opt/acc-restic",
+               "checksums": {
+                   "amd64": "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
+                   "arm64": "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465"},
+               "note": "Pinned official restic 0.19.1, SHA-256 verified; never a system package."},
+    "claude": {"label": "Claude Code", "method": "apt", "package": "claude-code", "bin": "claude",
+               "repository": "acc-claude-apt-repo",
+               "note": "From Anthropic's signed apt repository (added on first install, pinned key). Held between Rynhult updates."},
+    "codex": {"label": "Codex", "method": "npm", "package": "@openai/codex", "bin": "codex", "mac_ok": True,
+              "pin": "0.163.0", "note": "Rynhult qualified target: Codex 0.163.0 (docs/PROVIDERS.md)."},
+    "copilot": {"label": "GitHub Copilot CLI", "method": "npm", "package": "@github/copilot", "bin": "copilot",
+                "pin": "1.0.103", "note": "Rynhult target: Copilot 1.0.103; preview, needs Node.js 22+ (docs/PROVIDERS.md).", "mac_ok": True},
+    "antigravity": {"label": "Google Antigravity CLI", "method": "manifest", "bin": "agy", "dest": "/usr/local/bin/agy",
+                    "manifest": "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_{arch}.json",
+                    "note": "Google's release manifest; the download's SHA-512 is checked. Its own self-update is off (root-owned)."},
+    "cursor": {"label": "Cursor CLI", "method": "cursor", "bin": "cursor-agent", "dest": "/usr/local/bin/cursor-agent",
+               "root": "/opt/cursor-agent", "script": "https://cursor.com/install",
+               "note": "Cursor's release package over HTTPS (Cursor publishes no checksum). Its own self-update is off (root-owned)."},
+    # Pinned: a release line Rynhult was verified with (docs/providers/OPENCODE.md) and its newest patch, never below the
+    # minimum; a new line needs a Rynhult change. The platform binary comes from npm, checked against the registry's SHA-512.
+    "opencode": {"label": "OpenCode", "method": "npm-binary", "package": "@opencode/cli", "bin": "opencode",
+                 "dest": "/usr/local/bin/opencode", "root": "/opt/opencode", "line": "2.1", "minimum": "2.1.3",
+                 "registry": "https://registry.npmjs.org",
+                 "note": "OpenCode 2.1.x from npm (SHA-512 checked), pinned to the release line Rynhult was verified with. "
+                         "Its own updater is off (root-owned)."},
+    "ollama": {"label": "Ollama", "method": "script", "script": "https://ollama.com/install.sh", "bin": "ollama",
+               "releases": "https://api.github.com/repos/ollama/ollama/releases/latest",
+               "note": "Local model server (http://127.0.0.1:11434). Updating restarts it."},
+}
+
+
+# Claude Code on a machine without apt (Fedora, openSUSE, Arch: docs/LINUX-DISTROS.md): Anthropic's official native
+# release, pinned like restic. The SHA-256 per platform is the one Anthropic publishes in that version's manifest.json
+# (downloads.claude.ai/claude-code-releases/<version>/manifest.json); the binary lands root-owned in /opt/acc-claude, so its
+# own per-user updater can't replace it. A new version is a Rynhult change, as for the other pins.
+CLAUDE_NATIVE = {"label": "Claude Code", "method": "claude-native", "bin": "claude", "version": "2.1.308",
+                 "dest": "/usr/local/bin/claude", "root": "/opt/acc-claude",
+                 "url": "https://downloads.claude.ai/claude-code-releases/{version}/{platform}/claude",
+                 "checksums": {"linux-x64": "356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58",
+                               "linux-arm64": "fdd22e6cbb734d580f5664c48df4294eeec850218ff07f186f9af30426396ee1"},
+                 "note": "Anthropic's official native release 2.1.308 (this machine has no apt), SHA-256 from Anthropic's "
+                         "manifest. Root-owned, so its own updater is off."}
+CLAUDE_MAX_BYTES = 512 << 20  # the 2.1.308 Linux binaries are about 280 MiB
+
+
+def claude_spec(apt: bool) -> dict:
+    return CATALOG["claude"] if apt else CLAUDE_NATIVE
+
+
+CATALOG["claude"] = claude_spec(shutil.which("apt-get", path="/usr/sbin:/usr/bin:/sbin:/bin") is not None)
+
+
+class Refused(Exception):
+    pass
+
+
+def open_url(url: str, timeout: float):
+    """HTTPS GET with Rynhult's User-Agent (some vendors' CDNs refuse Python's default one)."""
+    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "acc-packages"}), timeout=timeout)
+
+
+def run(argv: list[str], timeout: int = 900, env: dict | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                          env={**environment, "DEBIAN_FRONTEND": "noninteractive", **(env or {})})
+
+
+def must(result: subprocess.CompletedProcess, what: str) -> str:
+    if result.returncode:
+        raise Refused(f"{what} failed: {(result.stderr or result.stdout).strip()[-400:]}")
+    return result.stdout
+
+
+# ---------------------------------------------------------------------------- versions
+
+def npm_installed() -> dict[str, str]:
+    result = run(["npm", "ls", "-g", "--json", "--depth=0"], timeout=120)
+    try:
+        deps = json.loads(result.stdout or "{}").get("dependencies") or {}
+    except ValueError:
+        return {}
+    return {name: info.get("version") for name, info in deps.items() if isinstance(info, dict)}
+
+
+def installed_version(spec: dict, npm: dict[str, str] | None = None) -> str | None:
+    if spec["method"] == "npm":
+        return (npm if npm is not None else npm_installed()).get(spec["package"])
+    if spec["method"] == "apt":
+        result = run(["dpkg-query", "-W", "-f", "${Status} ${Version}", spec["package"]], timeout=60)
+        parts = result.stdout.split()
+        return parts[-1] if result.returncode == 0 and "installed" in parts else None
+    if spec["method"] in ("cursor", "npm-binary", "restic", "claude-native"):  # /usr/local/bin/<bin> -> <root>/versions/<version>/<bin>
+        dest = Path(spec["dest"])
+        return dest.resolve().parent.name if dest.is_symlink() and dest.exists() else None
+    if shutil.which(spec["bin"]) is None and not (spec.get("dest") and Path(spec["dest"]).exists()):
+        return None
+    output = run([spec.get("dest") or spec["bin"], "--version"], timeout=60).stdout
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", output)
+    return match.group(1) if match else "installed"
+
+
+def latest_version(spec: dict) -> str | None:
+    if spec["method"] in ("restic", "claude-native"):
+        return spec["version"]
+    if spec.get("pin"):
+        return spec["pin"]
+    if spec["method"] == "npm":
+        result = run(["npm", "view", spec["package"], "version"], timeout=120)
+        return (result.stdout.strip() or None) if result.returncode == 0 else None
+    if spec["method"] == "apt":
+        run(["apt-get", "update", "-qq", "-o", f"Dir::Etc::sourcelist=/etc/apt/sources.list.d/{spec['package']}.list",
+             "-o", "Dir::Etc::sourceparts=-", "-o", "APT::Get::List-Cleanup=0"], timeout=300)
+        match = re.search(r"Candidate:\s*(\S+)", run(["apt-cache", "policy", spec["package"]], timeout=60).stdout)
+        return match.group(1) if match and match.group(1) != "(none)" else None
+    if spec["method"] == "manifest":
+        return (manifest(spec) or {}).get("version")
+    if spec["method"] == "cursor":
+        return cursor_release()
+    if spec["method"] == "npm-binary":
+        return npm_binary_version(spec)
+    try:
+        request = urllib.request.Request(spec["releases"], headers={"Accept": "application/vnd.github+json",
+                                                                     "User-Agent": "acc-packages"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response).get("tag_name", "").lstrip("v") or None
+    except (OSError, ValueError):
+        return None
+
+
+def manifest(spec: dict) -> dict | None:
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(os.uname().machine, os.uname().machine)
+    try:
+        with open_url(spec["manifest"].format(arch=arch), 30) as response:
+            data = json.load(response)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("url", "").startswith("https://") and data.get("sha512") else None
+
+
+def install_from_manifest(spec: dict) -> None:
+    """Download the release the vendor's manifest names, check its SHA-512, put the binary in place atomically."""
+    import hashlib
+    import tarfile
+    import tempfile
+    release = manifest(spec)
+    if release is None:
+        raise Refused("couldn't read the release manifest")
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = Path(tmp) / "payload"
+        with open_url(release["url"], 600) as response, payload.open("wb") as out:
+            shutil.copyfileobj(response, out)
+        if hashlib.sha512(payload.read_bytes()).hexdigest() != release["sha512"]:
+            raise Refused("the download's checksum doesn't match the manifest; nothing installed")
+        binary = payload
+        if tarfile.is_tarfile(payload):
+            with tarfile.open(payload) as archive:
+                member = archive.getmember("antigravity")
+                if not member.isfile():
+                    raise Refused("unexpected archive layout")
+                archive.extract(member, tmp, filter="data")
+            binary = Path(tmp) / "antigravity"
+        staged = Path(spec["dest"] + ".acc-new")
+        shutil.copyfile(binary, staged)
+        os.chmod(staged, 0o755)
+        staged.replace(spec["dest"])
+
+
+def cursor_release() -> str | None:
+    """The version Cursor's install script currently installs (its download URLs carry it)."""
+    try:
+        with open_url(CATALOG["cursor"]["script"], 30) as response:
+            script = response.read().decode(errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"https://downloads\.cursor\.com/lab/([0-9][0-9A-Za-z.\-]{4,40})/", script)
+    return match.group(1) if match else None
+
+
+def install_cursor(spec: dict) -> None:
+    """Cursor's release package into /opt/cursor-agent/versions/<version>, then /usr/local/bin/cursor-agent points at
+    it (atomically); older versions are removed."""
+    import tarfile
+    import tempfile
+    version = cursor_release()
+    if not version:
+        raise Refused("couldn't find Cursor's current release")
+    arch = {"x86_64": "x64", "aarch64": "arm64"}.get(os.uname().machine, os.uname().machine)
+    url = f"https://downloads.cursor.com/lab/{version}/linux/{arch}/agent-cli-package.tar.gz"
+    versions = Path(spec["root"]) / "versions"
+    target = versions / version
+    versions.mkdir(parents=True, exist_ok=True)
+    if not (target / "cursor-agent").exists():
+        with tempfile.TemporaryDirectory(dir=versions) as tmp:
+            payload = Path(tmp) / "package.tar.gz"
+            with open_url(url, 600) as response, payload.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            unpacked = Path(tmp) / "unpacked"
+            with tarfile.open(payload) as archive:
+                for member in archive.getmembers():  # the package has one top-level folder: drop it, like the installer
+                    parts = Path(member.name).parts[1:]
+                    if not parts:
+                        continue
+                    member.name = str(Path(*parts))
+                    archive.extract(member, unpacked, filter="data")
+            if not (unpacked / "cursor-agent").exists():
+                raise Refused("unexpected package layout (no cursor-agent)")
+            unpacked.replace(target)
+    link = Path(spec["dest"] + ".acc-new")
+    link.unlink(missing_ok=True)
+    link.symlink_to(target / "cursor-agent")
+    link.replace(spec["dest"])
+    for old in versions.iterdir():
+        if old.is_dir() and old.name != version and not old.name.startswith("tmp"):
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def npm_binary_version(spec: dict) -> str | None:
+    """The newest release of the pinned line (`line`.x, plain x.y.z only, at least `minimum`)."""
+    try:
+        with open_url(f"{spec['registry']}/{spec['package'].replace('/', '%2f')}", 60) as response:
+            versions = json.load(response).get("versions") or {}
+    except (OSError, ValueError):
+        return None
+    line, minimum = spec["line"] + ".", _version_key(spec["minimum"])
+    usable = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v) and v.startswith(line) and _version_key(v) >= minimum]
+    return max(usable, key=_version_key) if usable else None
+
+
+def npm_binary_platform() -> str:
+    """The platform package: x64 (or its baseline build on a CPU without AVX2) or arm64; glibc Linux."""
+    machine = os.uname().machine
+    if machine == "aarch64":
+        return "linux-arm64"
+    if machine != "x86_64":
+        raise Refused(f"no OpenCode build for {machine}")
+    try:
+        avx2 = " avx2 " in " " + Path("/proc/cpuinfo").read_text().replace("\n", " ") + " "
+    except OSError:
+        avx2 = True
+    return "linux-x64" if avx2 else "linux-x64-baseline"
+
+
+# A registry response is hashed against the same registry's checksum, which bounds nothing: cap what root downloads and
+# what the tar parser may read (decompressed bytes, headers, and PAX/GNU metadata, which tarfile keeps in memory).
+NPM_BINARY_MAX_DOWNLOAD = 512 << 20
+NPM_BINARY_MAX_UNPACKED = 1 << 30
+NPM_BINARY_MAX_HEADERS = 10000
+NPM_BINARY_MAX_METADATA = 64 << 10
+
+
+def _bounded_tarinfo():
+    import tarfile
+
+    class Bounded(tarfile.TarInfo):
+        def _proc_member(self, archive):
+            if self.type in (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE, tarfile.GNUTYPE_LONGNAME,
+                             tarfile.GNUTYPE_LONGLINK) and self.size > NPM_BINARY_MAX_METADATA:
+                raise Refused("unexpected package layout (oversized tar metadata)")
+            return super()._proc_member(archive)
+    return Bounded
+
+
+class _Capped:
+    """A decompressed stream that refuses to yield more than `limit` bytes."""
+    def __init__(self, raw, limit: int):
+        self.raw, self.left = raw, limit
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.raw.read(size if size is not None and size >= 0 else 1 << 20)
+        self.left -= len(data)
+        if self.left < 0:
+            raise Refused("unexpected package layout (unpacks too large)")
+        return data
+
+
+def _npm_binary_member(payload: Path, name: str, out: Path) -> None:
+    """Copy one regular file out of an npm tarball, reading it as a bounded stream."""
+    import gzip
+    import tarfile
+    with payload.open("rb") as raw, gzip.GzipFile(fileobj=raw) as unzipped:
+        try:
+            with tarfile.open(fileobj=_Capped(unzipped, NPM_BINARY_MAX_UNPACKED), mode="r|",
+                              tarinfo=_bounded_tarinfo()) as archive:
+                for count, member in enumerate(archive):
+                    if count >= NPM_BINARY_MAX_HEADERS:
+                        break
+                    if member.name != name:
+                        continue
+                    if not member.isfile():
+                        raise Refused("unexpected package layout")
+                    with archive.extractfile(member) as src, out.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    return
+        except (tarfile.TarError, OSError, EOFError) as error:
+            raise Refused(f"unexpected package layout ({type(error).__name__})") from None
+    raise Refused(f"unexpected package layout (no {name.removeprefix('package/')})")
+
+
+def install_npm_binary(spec: dict) -> None:
+    """The platform package of the newest release of the pinned line, from the npm registry: its SHA-512 is checked
+    against the registry's `integrity`, only `package/bin/<bin>` is unpacked into <root>/versions/<version>/, then
+    <dest> points at it (atomically); older versions are removed."""
+    import base64
+    import hashlib
+    import tempfile
+    version = npm_binary_version(spec)
+    if not version:
+        raise Refused(f"couldn't find a {spec['label']} {spec['line']}.x release")
+    package = f"{spec['package']}-{npm_binary_platform()}"
+    try:
+        with open_url(f"{spec['registry']}/{package.replace('/', '%2f')}/{version}", 60) as response:
+            dist = json.load(response).get("dist") or {}
+    except (OSError, ValueError) as error:
+        raise Refused(f"couldn't read {package}@{version} from the registry: {error}") from None
+    tarball, integrity = str(dist.get("tarball") or ""), str(dist.get("integrity") or "")
+    if not tarball.startswith(spec["registry"] + "/") or not integrity.startswith("sha512-"):
+        raise Refused(f"{package}@{version} has no sha512 integrity or an unexpected download address")
+    versions = Path(spec["root"]) / "versions"
+    target = versions / version
+    versions.mkdir(parents=True, exist_ok=True)
+    if not (target / spec["bin"]).exists():
+        with tempfile.TemporaryDirectory(dir=versions) as tmp:
+            payload = Path(tmp) / "package.tgz"
+            hasher, size = hashlib.sha512(), 0
+            with open_url(tarball, 900) as response, payload.open("wb") as out:
+                while chunk := response.read(1 << 20):
+                    size += len(chunk)
+                    if size > NPM_BINARY_MAX_DOWNLOAD:
+                        raise Refused("the download is too large; nothing installed")
+                    hasher.update(chunk)
+                    out.write(chunk)
+            if base64.b64encode(hasher.digest()).decode() != integrity.removeprefix("sha512-"):
+                raise Refused("the download's checksum doesn't match the registry's; nothing installed")
+            unpacked = Path(tmp) / "unpacked"
+            unpacked.mkdir()
+            _npm_binary_member(payload, f"package/bin/{spec['bin']}", unpacked / spec["bin"])
+            os.chmod(unpacked / spec["bin"], 0o755)
+            unpacked.replace(target)
+    link = Path(spec["dest"] + ".acc-new")
+    link.unlink(missing_ok=True)
+    link.symlink_to(target / spec["bin"])
+    link.replace(spec["dest"])
+    for old in versions.iterdir():
+        if old.is_dir() and old.name != version and not old.name.startswith("tmp"):
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def install_restic(spec: dict) -> None:
+    """Official compressed binary, checksum pinned in trusted code; bounded atomic installation."""
+    import bz2
+    import hashlib
+    import tempfile
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(os.uname().machine)
+    if arch not in spec["checksums"]:
+        raise Refused("no qualified restic build for this architecture")
+    version = spec["version"]
+    url = f"https://github.com/restic/restic/releases/download/v{version}/restic_{version}_linux_{arch}.bz2"
+    versions = Path(spec["root"]) / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    target = versions / version
+    with tempfile.TemporaryDirectory(dir=versions) as tmp:
+        payload = Path(tmp) / "payload.bz2"
+        hasher, size = hashlib.sha256(), 0
+        with open_url(url, 120) as response, payload.open("wb") as out:
+            while chunk := response.read(1 << 20):
+                size += len(chunk)
+                if size > 64 << 20:
+                    raise Refused("restic download exceeds limit")
+                hasher.update(chunk)
+                out.write(chunk)
+        if hasher.hexdigest() != spec["checksums"][arch]:
+            raise Refused("restic checksum mismatch; nothing installed")
+        binary = Path(tmp) / "restic"
+        with bz2.open(payload, "rb") as inp, binary.open("wb") as out:
+            size = 0
+            while chunk := inp.read(1 << 20):
+                size += len(chunk)
+                if size > 128 << 20:
+                    raise Refused("restic binary exceeds limit")
+                out.write(chunk)
+        os.chmod(binary, 0o755)
+        target.mkdir(exist_ok=True)
+        binary.replace(target / "restic")
+    link = Path(spec["dest"] + ".acc-new")
+    link.unlink(missing_ok=True)
+    link.symlink_to(target / "restic")
+    link.replace(spec["dest"])
+
+
+def install_claude_native(spec: dict) -> None:
+    """Anthropic's native Linux binary at the pinned version, its published SHA-256 checked before anything is linked."""
+    import hashlib
+    import tempfile
+    platform = {"x86_64": "linux-x64", "aarch64": "linux-arm64"}.get(os.uname().machine)
+    if platform not in spec["checksums"]:
+        raise Refused("no Claude Code native release Rynhult pinned for this architecture")
+    version = spec["version"]
+    versions = Path(spec["root"]) / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    target = versions / version
+    with tempfile.TemporaryDirectory(dir=versions) as tmp:
+        binary = Path(tmp) / "claude"
+        hasher, size = hashlib.sha256(), 0
+        with open_url(spec["url"].format(version=version, platform=platform), 300) as response, binary.open("wb") as out:
+            while chunk := response.read(1 << 20):
+                size += len(chunk)
+                if size > CLAUDE_MAX_BYTES:
+                    raise Refused("Claude Code download exceeds limit; nothing installed")
+                hasher.update(chunk)
+                out.write(chunk)
+        if hasher.hexdigest() != spec["checksums"][platform]:
+            raise Refused("Claude Code checksum doesn't match Anthropic's published manifest; nothing installed")
+        os.chmod(binary, 0o755)
+        target.mkdir(exist_ok=True)
+        binary.replace(target / "claude")
+    link = Path(spec["dest"] + ".acc-new")
+    link.unlink(missing_ok=True)
+    link.symlink_to(target / "claude")
+    link.replace(spec["dest"])
+    for old in versions.iterdir():
+        if old.is_dir() and old.name != version and not old.name.startswith("tmp"):
+            shutil.rmtree(old, ignore_errors=True)
+
+
+APT_SOURCES = Path("/etc/apt/sources.list.d")
+
+
+def add_apt_repository(spec: dict) -> None:
+    """A machine set up without the vendor's repository (a node): add it with the script installed beside this helper
+    (deploy/lib/claude-apt-repo.sh), which checks the key's pinned fingerprint first and changes nothing on a mismatch."""
+    script = Path(__file__).resolve().with_name(spec["repository"]) if spec.get("repository") else None
+    if script is None or not script.is_file():
+        raise Refused(f"{spec['label']}'s apt repository isn't configured, and this machine has no script to add it "
+                      "(reinstall or update Rynhult on it)")
+    must(run(["sh", str(script)], timeout=120), f"adding {spec['label']}'s apt repository")
+
+
+# ---------------------------------------------------------------------------- actions
+
+def install(spec: dict) -> str:
+    """Install the catalog target (exact npm pin, supported line, or opted-in upstream)."""
+    if spec["method"] == "npm":
+        if shutil.which("npm") is None:
+            raise Refused("npm isn't installed on this machine: install Node.js 22 or newer first")
+        must(run(["npm", "install", "-g", "--ignore-scripts", "--no-audit", "--no-fund", f"{spec['package']}@{spec['pin']}"]),
+             "npm install")
+    elif spec["method"] == "apt":
+        if not (APT_SOURCES / f"{spec['package']}.list").exists():
+            add_apt_repository(spec)
+        run(["apt-mark", "unhold", spec["package"]], timeout=60)
+        try:
+            must(run(["apt-get", "update", "-qq"], timeout=600), "apt-get update")
+            must(run(["apt-get", "install", "-y", "-qq", spec["package"]]), "apt-get install")
+        finally:
+            run(["apt-mark", "hold", spec["package"]], timeout=60)  # only Rynhult updates it, never unattended-upgrades
+    elif spec["method"] == "manifest":
+        install_from_manifest(spec)
+    elif spec["method"] == "cursor":
+        install_cursor(spec)
+    elif spec["method"] == "npm-binary":
+        install_npm_binary(spec)
+    elif spec["method"] == "restic":
+        install_restic(spec)
+    elif spec["method"] == "claude-native":
+        install_claude_native(spec)
+    else:  # the vendor's own install script, from its fixed URL
+        with open_url(spec["script"], 60) as response:
+            script = response.read()
+        must(subprocess.run(["sh", "-s"], input=script, capture_output=True, timeout=1800), "install script")
+    return f"{spec['label']} {installed_version(spec) or '?'} installed"
+
+
+def remove(spec: dict) -> str:
+    if spec["method"] == "npm":
+        must(run(["npm", "uninstall", "-g", spec["package"]]), "npm uninstall")
+    elif spec["method"] == "apt":
+        run(["apt-mark", "unhold", spec["package"]], timeout=60)
+        must(run(["apt-get", "remove", "-y", "-qq", spec["package"]]), "apt-get remove")
+    elif spec["method"] == "manifest":
+        Path(spec["dest"]).unlink(missing_ok=True)
+    elif spec["method"] in ("cursor", "npm-binary", "restic", "claude-native"):
+        Path(spec["dest"]).unlink(missing_ok=True)
+        shutil.rmtree(spec["root"], ignore_errors=True)
+    return f"{spec['label']} removed"
+
+
+# ---------------------------------------------------------------------------- state
+
+def load_state() -> dict:
+    try:
+        return json.loads((ROOT / "state.json").read_text())
+    except (OSError, ValueError):
+        return {"packages": {}}
+
+
+def save_state(state: dict) -> None:
+    state["updated_at"] = time.time()
+    tmp = ROOT / ".state.tmp"
+    tmp.write_text(json.dumps(state, indent=2))
+    os.chmod(tmp, 0o640)
+    try:
+        shutil.chown(tmp, group=GROUP)
+    except (LookupError, PermissionError):
+        pass
+    tmp.replace(ROOT / "state.json")
+
+
+def policy_entry(state: dict, name: str) -> dict:
+    spec = CATALOG[name]
+    channel = "pinned" if spec.get("pin") else "supported-line" if spec.get("line") else "upstream"
+    entry = state["packages"].setdefault(name, {})
+    if "channel" not in entry and channel == "upstream":
+        entry["auto_update"] = False  # replace the old implicit rolling-update default
+    entry.setdefault("auto_update", True)
+    entry["channel"] = channel
+    return entry
+
+
+def refresh(state: dict, names: list[str], latest: bool) -> None:
+    npm = npm_installed()
+    for name in names:
+        spec = CATALOG[name]
+        entry = policy_entry(state, name)
+        entry.update(label=spec["label"], method=spec["method"], note=spec.get("note", ""),
+                     installed=installed_version(spec, npm))
+        if latest:
+            entry["latest"] = latest_version(spec)
+            if spec.get("pin"):
+                result = run(["npm", "view", spec["package"], "version"], timeout=120)
+                entry["upstream_latest"] = (result.stdout.strip()[:40] or None) if result.returncode == 0 else None
+            entry["checked_at"] = time.time()
+        if spec.get("pin"):
+            entry["note"] += f" Upstream latest: {entry.get('upstream_latest') or 'not checked'}; changes require Rynhult qualification."
+        elif not spec.get("line"):
+            entry["note"] += " Rolling upstream channel; automatic updates require explicit opt-in."
+
+
+def act(state: dict, name: str, action: str, auto: bool | None = None) -> str:
+    if name not in CATALOG:
+        raise Refused(f"unknown package {name!r}")
+    if action not in ACTIONS:
+        raise Refused(f"unknown action {action!r}")
+    spec, entry = CATALOG[name], policy_entry(state, name)
+    if action == "auto":
+        entry["auto_update"] = bool(auto)
+        return f"auto-update {'on' if auto else 'off'} for {spec['label']}"
+    if action == "remove" and spec["method"] == "script":
+        raise Refused(f"remove {spec['label']} by hand (its installer has no uninstall); see its documentation")
+    if action == "check":
+        refresh(state, [name], latest=True)
+        return f"{spec['label']}: installed {entry.get('installed') or 'no'}, latest {entry.get('latest') or '?'}"
+    entry["running"] = action
+    save_state(state)
+    try:
+        detail = remove(spec) if action == "remove" else install(spec)
+    finally:
+        entry.pop("running", None)
+    refresh(state, [name], latest=action != "remove")
+    return detail
+
+
+def record(state: dict, name: str, action: str, ok: bool, detail: str) -> None:
+    entry = state["packages"].setdefault(name, {"auto_update": True}) if name in CATALOG else {}
+    entry["last"] = {"action": action, "ok": ok, "detail": detail[-500:], "at": time.time()}
+
+
+def write_result(request_id: str, payload: dict) -> None:
+    results = ROOT / "results"
+    results.mkdir(exist_ok=True)
+    tmp = results / f".{request_id}.tmp"
+    tmp.write_text(json.dumps(payload))
+    os.chmod(tmp, 0o640)
+    try:
+        shutil.chown(tmp, group=GROUP)
+    except (LookupError, PermissionError):
+        pass
+    tmp.replace(results / f"{request_id}.json")
+
+
+def process(state: dict, path: Path) -> dict:
+    request_id = path.stem
+    name, action = "", ""
+    try:
+        request = json.loads(path.read_text())
+        if not isinstance(request, dict) or request.get("id") != request_id or not ID_RE.fullmatch(request_id):
+            raise Refused("bad request")
+        name, action = str(request.get("package", "")), str(request.get("action", ""))
+        if action == "tool":
+            policy = Path(__file__).resolve().with_name("acc-tool-policy.py")
+            if not policy.exists():
+                policy = Path(__file__).resolve().parents[2] / "src/acc/tooling.py"
+            # Root runs this file's code: it must be root's own, not writable by anyone else (nor its folder).
+            for checked in (policy, policy.parent):
+                info = checked.stat()
+                if info.st_uid != 0 or info.st_mode & 0o022:
+                    raise Refused("tool policy file is not root-owned and protected")
+            spec = importlib.util.spec_from_file_location("acc_tool_policy", policy)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.helper_request(request)
+            result = module.execute(request["manager"], request["name"], request["version"], request["operation"],
+                                    home=Path("/root"), system=True, run=run)
+        else:
+            result = {"ok": True, "detail": act(state, name, action, request.get("auto"))}
+    except (Refused, ValueError, OSError, subprocess.TimeoutExpired) as error:
+        result = {"ok": False, "detail": str(error)}
+    record(state, name, action, result["ok"], result["detail"])
+    save_state(state)
+    if ID_RE.fullmatch(request_id):
+        write_result(request_id, {**result, "package": name, "action": action})
+    path.unlink(missing_ok=True)
+    return result
+
+
+def daily(state: dict) -> None:
+    """Check every package; update installed ones with auto-update on that are behind."""
+    refresh(state, list(CATALOG), latest=True)
+    save_state(state)
+    for name, entry in state["packages"].items():
+        spec = CATALOG.get(name, {})
+        if spec.get("pin") and entry.get("installed"):
+            installed = entry["installed"]
+            if not re.fullmatch(r"\d+\.\d+\.\d+", installed) or _version_key(installed) > _version_key(spec["pin"]):
+                continue  # never silently downgrade a manually installed or prerelease CLI
+        if name in CATALOG and entry.get("installed") and entry.get("auto_update") and entry.get("latest") \
+                and entry["latest"] != entry["installed"] and entry["latest"] not in str(entry["installed"]):
+            try:
+                detail, ok = act(state, name, "update"), True
+            except (Refused, OSError, subprocess.TimeoutExpired) as error:
+                detail, ok = str(error), False
+            record(state, name, "update", ok, detail)
+            save_state(state)
+            print(name, "update", "ok" if ok else "failed", detail)
+    state["daily_at"] = time.time()
+    save_state(state)
+
+
+def main(argv: list[str]) -> int:
+    ROOT.mkdir(parents=True, exist_ok=True)
+    state = load_state()
+    if argv[:1] == ["--daily"]:
+        daily(state)
+        return 0
+    if argv[:1] == ["--install"]:
+        failed = 0
+        for name in argv[1:]:
+            try:
+                detail, ok = act(state, name, "install"), True
+            except (Refused, OSError, subprocess.TimeoutExpired) as error:
+                detail, ok, failed = str(error), False, failed + 1
+            record(state, name, "install", ok, detail)
+            save_state(state)
+            print(name, "ok" if ok else "FAILED", detail)
+        return 1 if failed else 0
+    for path in (ROOT / "results").glob("*.json") if (ROOT / "results").is_dir() else ():
+        if time.time() - path.stat().st_mtime > 3600:
+            path.unlink(missing_ok=True)
+    for path in sorted((ROOT / "requests").glob("*.json")):
+        print(path.name, json.dumps(process(state, path)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

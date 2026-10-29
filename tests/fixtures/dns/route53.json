@@ -1,0 +1,60 @@
+[
+  {
+    "method": "GET",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ListResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ResourceRecordSets><ResourceRecordSet><Name>example.com.</Name><Type>SOA</Type><TTL>900</TTL><ResourceRecords><ResourceRecord><Value>ns-1.example.net. hostmaster.example.net. 1 7200 900 1209600 86400</Value></ResourceRecord></ResourceRecords></ResourceRecordSet></ResourceRecordSets><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>"
+  },
+  {
+    "method": "GET",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ListResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ResourceRecordSets></ResourceRecordSets><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>"
+  },
+  {
+    "method": "POST",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ChangeResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>PENDING</Status><SubmittedAt>2026-10-23T00:00:00Z</SubmittedAt></ChangeInfo></ChangeResourceRecordSetsResponse>",
+    "replaces": false
+  },
+  {
+    "method": "GET",
+    "path": "/change/CEXAMPLE",
+    "xml": "<GetChangeResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>INSYNC</Status></ChangeInfo></GetChangeResponse>"
+  },
+  {
+    "method": "GET",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ListResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ResourceRecordSets><ResourceRecordSet><Name>site.example.com.</Name><Type>A</Type><TTL>300</TTL><ResourceRecords><ResourceRecord><Value>192.0.2.1</Value></ResourceRecord></ResourceRecords></ResourceRecordSet></ResourceRecordSets><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>"
+  },
+  {
+    "method": "POST",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ChangeResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>PENDING</Status><SubmittedAt>2026-10-23T00:00:00Z</SubmittedAt></ChangeInfo></ChangeResourceRecordSetsResponse>",
+    "replaces": true
+  },
+  {
+    "method": "GET",
+    "path": "/change/CEXAMPLE",
+    "xml": "<GetChangeResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>INSYNC</Status></ChangeInfo></GetChangeResponse>"
+  },
+  {
+    "method": "GET",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ListResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ResourceRecordSets><ResourceRecordSet><Name>site.example.com.</Name><Type>A</Type><TTL>300</TTL><ResourceRecords><ResourceRecord><Value>192.0.2.99</Value></ResourceRecord></ResourceRecords></ResourceRecordSet></ResourceRecordSets><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>"
+  },
+  {
+    "method": "GET",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ListResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ResourceRecordSets><ResourceRecordSet><Name>site.example.com.</Name><Type>A</Type><TTL>300</TTL><ResourceRecords><ResourceRecord><Value>192.0.2.2</Value></ResourceRecord></ResourceRecords></ResourceRecordSet></ResourceRecordSets><IsTruncated>false</IsTruncated></ListResourceRecordSetsResponse>"
+  },
+  {
+    "method": "POST",
+    "path": "/hostedzone/ZEXAMPLE/rrset",
+    "xml": "<ChangeResourceRecordSetsResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>PENDING</Status><SubmittedAt>2026-10-23T00:00:00Z</SubmittedAt></ChangeInfo></ChangeResourceRecordSetsResponse>",
+    "replaces": false
+  },
+  {
+    "method": "GET",
+    "path": "/change/CEXAMPLE",
+    "xml": "<GetChangeResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><ChangeInfo><Id>/change/CEXAMPLE</Id><Status>INSYNC</Status></ChangeInfo></GetChangeResponse>"
+  }
+]

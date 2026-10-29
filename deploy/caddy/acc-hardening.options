@@ -1,0 +1,9 @@
+# ACC phase 1: no body/write deadline; terminals and git streams may be long lived.
+# The certificate credential is expanded into the loaded configuration ({$CF_API_TOKEN}); never autosave it.
+persist_config off
+servers {
+    timeouts {
+        read_header 10s
+        idle 2m
+    }
+}

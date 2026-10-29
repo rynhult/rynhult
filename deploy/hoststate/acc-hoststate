@@ -1,0 +1,261 @@
+#!/usr/bin/python3 -I
+"""acc-hoststate: read-only host snapshot for the Rynhult dashboard (run by root from acc-hoststate.timer).
+
+accd runs as an unprivileged, sandboxed user, so it cannot read SMART data, GPU devices or other users'
+services. This collects them once a minute into /srv/acc/hoststate/hoststate.json (root:acc 0640).
+It changes nothing on the host.
+"""
+from __future__ import annotations
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+
+import json
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+OUT = Path(environment.get("ACC_HOSTSTATE", "/srv/acc/hoststate/hoststate.json"))
+# Mounts to report: ACC_HOSTSTATE_MOUNTS="/ /srv" to choose; by default every real (disk-backed) filesystem.
+MOUNTS = environment.get("ACC_HOSTSTATE_MOUNTS", "").split()
+DISK_FILESYSTEMS = "ext2,ext3,ext4,xfs,btrfs,zfs,f2fs,bcachefs,jfs,reiserfs,vfat,exfat,ntfs3"
+SERVICES = ["caddy", "accd", "accd.socket", "acc-root-session", "acc-publish.path", "acc-accounts.path", "tailscaled",
+            "smartmontools", "ssh"]
+# Whose rootless Docker runs the project stacks: ACC_SERVICES_ACCOUNT from /etc/default/accd (the unit loads it).
+AGENT_USER = environment.get("ACC_AGENT_USER") or environment.get("ACC_SERVICES_ACCOUNT") or "agent"
+BROKER_ENV = Path(environment.get("ACC_BROKER_ENV_DIR", "/etc/acc/broker"))
+DU_EVERY = 900  # disk use per account is slower to measure: every 15 minutes
+
+
+def run(*argv: str, timeout: int = 20, env: dict | None = None) -> tuple[int, str]:
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        return result.returncode, result.stdout
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 127, str(error)
+
+
+def mounts() -> list[str]:
+    if MOUNTS:
+        return MOUNTS
+    code, out = run("findmnt", "-rn", "-o", "TARGET,SOURCE", "-t", DISK_FILESYSTEMS)
+    found, sources = [], set()
+    for line in out.splitlines() if code == 0 else []:
+        target, _, source = line.partition(" ")
+        target = target.replace("\\x20", " ")
+        if (target.startswith(("/snap/", "/boot/efi", "/var/lib/docker", "/run/")) or source in sources
+                or "[" in source or not os.path.isdir(target)):
+            continue  # snaps, the EFI partition, bind mounts (of a filesystem already listed, or of single files)
+        found.append(target)
+        sources.add(source)
+    return found or ["/"]
+
+
+def disks() -> list[dict]:
+    rows = []
+    for mount in mounts():
+        try:
+            usage = shutil.disk_usage(mount)
+        except OSError:
+            continue
+        code, source = run("findmnt", "-no", "SOURCE", mount)
+        rows.append({"mount": mount, "device": source.strip(), "total": usage.total, "used": usage.used,
+                     "free": usage.free, "percent": round(usage.used / usage.total * 100, 1)})
+    return rows
+
+
+def smart() -> list[dict]:
+    code, out = run("lsblk", "-dnJo", "NAME,TYPE,MODEL,SIZE")
+    devices = [d for d in json.loads(out or '{"blockdevices": []}')["blockdevices"] if d["type"] == "disk"] if code == 0 else []
+    rows = []
+    for device in devices:
+        _, out = run("smartctl", "-H", "-A", "-j", f"/dev/{device['name']}")
+        try:
+            data = json.loads(out)
+        except ValueError:
+            data = {}
+        nvme = data.get("nvme_smart_health_information_log") or {}
+        ata_attrs = {a["name"]: a.get("raw", {}).get("value") for a in (data.get("ata_smart_attributes") or {}).get("table", [])}
+        rows.append({
+            "device": device["name"], "model": (device.get("model") or "").strip(), "size": device.get("size"),
+            "passed": (data.get("smart_status") or {}).get("passed"),
+            "temperature": (data.get("temperature") or {}).get("current"),
+            "power_on_hours": (data.get("power_on_time") or {}).get("hours"),
+            "percentage_used": nvme.get("percentage_used"),
+            "media_errors": nvme.get("media_errors"),
+            "reallocated_sectors": ata_attrs.get("Reallocated_Sector_Ct"),
+        })
+    return rows
+
+
+def gpu() -> list[dict]:
+    code, out = run("nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                    "--format=csv,noheader,nounits")
+    rows = []
+    if code == 0:
+        for line in out.strip().splitlines():
+            name, util, used, total, temp, power = [x.strip() for x in line.split(",")]
+            number = lambda v: float(v) if v.replace(".", "", 1).isdigit() else None
+            rows.append({"name": name, "utilization": number(util), "memory_used_mb": number(used),
+                         "memory_total_mb": number(total), "temperature": number(temp), "power_w": number(power)})
+    return rows
+
+
+def services() -> dict:
+    states = {}
+    for unit in SERVICES:
+        _, out = run("systemctl", "is-active", unit)
+        states[unit] = out.strip() or "unknown"
+    for env in sorted(BROKER_ENV.glob("*.env")):  # one broker per account, started from its socket
+        unit = f"acc-broker@{env.stem}.socket"
+        _, out = run("systemctl", "is-active", unit)
+        states[unit] = out.strip() or "unknown"
+    _, out = run("systemctl", "--user", "-M", f"{AGENT_USER}@", "is-active", "docker")  # the project stacks
+    states[f"{AGENT_USER}:docker"] = out.strip() or "unknown"
+    _, out = run("systemctl", "--failed", "--no-legend", "--plain")
+    failed = [line.split()[0] for line in out.strip().splitlines() if line.strip()]
+    return {"units": states, "failed": failed}
+
+
+def containers() -> list[dict]:
+    uid = subprocess.run(["id", "-u", AGENT_USER], capture_output=True, text=True).stdout.strip()
+    env = {"PATH": "/usr/bin:/bin", "HOME": f"/home/{AGENT_USER}", "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+           "DOCKER_HOST": f"unix:///run/user/{uid}/docker.sock"}
+    code, out = run("/usr/sbin/runuser", "-u", AGENT_USER, "--", "docker", "ps", "-a", "--format", "{{json .}}", env=env)
+    rows = []
+    if code == 0:
+        for line in out.splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue  # one odd line must not lose the whole snapshot
+            if not isinstance(item, dict):
+                continue
+            rows.append({"name": item.get("Names"), "image": item.get("Image"), "state": item.get("State"),
+                         "status": item.get("Status"), "project": (item.get("Labels") or "").split("com.docker.compose.project=")[-1].split(",")[0]
+                         if "com.docker.compose.project=" in (item.get("Labels") or "") else None})
+    return rows
+
+
+def _number(value: str) -> int | None:
+    return int(value) if value.isdigit() else None  # "infinity" / "[not set]" -> no limit
+
+
+def _du(paths: list[str]) -> int | None:
+    code, out = run("du", "-sxb", "--", *paths, timeout=120)
+    sizes = [int(line.split()[0]) for line in out.splitlines() if line.split() and line.split()[0].isdigit()]
+    return sum(sizes) if sizes else None
+
+
+def accounts(previous: dict) -> list[dict]:
+    """Each broker unit (one per agent account, plus the services one): its role, what it uses now, its limits
+    (acc-agent-add --cpu/--memory/--tasks) and its disk use. CPU percent is from the change since the last snapshot."""
+    old = {a["account"]: a for a in previous.get("accounts", [])}
+    rows = []
+    for env in sorted(BROKER_ENV.glob("*.env")):
+        account = env.stem
+        settings = Environment(dict(line.split("=", 1) for line in env.read_text().splitlines() if "=" in line and not line.startswith("#")))
+        unit = f"acc-broker@{account}.service"
+        _, out = run("systemctl", "show", unit, "-p", "ActiveState,MemoryCurrent,CPUUsageNSec,TasksCurrent,MemoryMax,"
+                     "CPUQuotaPerSecUSec,TasksMax")
+        props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        quota = props.get("CPUQuotaPerSecUSec", "infinity")
+        cpu_ns, now = _number(props.get("CPUUsageNSec", "")), time.time()
+        before = old.get(account, {})
+        cpu_percent = None
+        if cpu_ns is not None and before.get("cpu_ns") is not None and now > before.get("at", now):
+            cpu_percent = round(max(cpu_ns - before["cpu_ns"], 0) / ((now - before["at"]) * 1e9) * 100, 1)
+        roots = [r for r in settings.get("ACC_ALLOWED_ROOTS", "").split(":") if r and r != "/srv/acc/app"]
+        home = Path("/home") / account
+        disk, disk_at = before.get("disk_bytes"), before.get("disk_at", 0)
+        if settings.get("ACC_BROKER_ROLE", "agents") == "agents" and now - disk_at > DU_EVERY:
+            disk, disk_at = _du([p for p in [*roots[:1], str(home)] if Path(p).exists()]), now
+        rows.append({
+            "account": account, "role": settings.get("ACC_BROKER_ROLE", "agents"), "active": props.get("ActiveState"),
+            "memory_bytes": _number(props.get("MemoryCurrent", "")), "memory_max": _number(props.get("MemoryMax", "")),
+            "cpu_percent": cpu_percent, "cpu_quota_percent": round(int(quota.rstrip("ms")) / 10) if quota.endswith("ms") else
+            (round(float(quota.rstrip("s")) * 100) if quota.endswith("s") and quota[:-1].replace(".", "").isdigit() else None),
+            "tasks": _number(props.get("TasksCurrent", "")), "tasks_max": _number(props.get("TasksMax", "")),
+            "workspace_root": roots[0] if roots else None, "disk_bytes": disk, "disk_at": disk_at,
+            "cpu_ns": cpu_ns, "at": now,
+        })
+    return rows
+
+
+def tailscale() -> dict:
+    code, out = run("tailscale", "status", "--json", "--self=true", "--peers=false")
+    if code != 0:
+        return {"state": "unknown"}
+    data = json.loads(out)
+    self_node = data.get("Self") or {}
+    return {"state": data.get("BackendState"), "ips": self_node.get("TailscaleIPs", []), "online": self_node.get("Online")}
+
+
+def main() -> None:
+    _, kernel = run("uname", "-r")
+    try:
+        previous = json.loads(OUT.read_text())
+    except (OSError, ValueError):
+        previous = {}
+    snapshot = {
+        "collected_at": time.time(),
+        "hostname": os.uname().nodename,
+        "kernel": kernel.strip(),
+        "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
+        "reboot_required": Path("/var/run/reboot-required").exists(),
+        "disks": disks(), "smart": smart(), "gpu": gpu(), "services": services(),
+        "containers": containers(), "tailscale": tailscale(), "accounts": accounts(previous),
+    }
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = OUT.with_suffix(".tmp")
+    tmp.write_text(json.dumps(snapshot))
+    os.chmod(tmp, 0o640)
+    try:
+        shutil.chown(tmp, group="acc")
+    except (LookupError, PermissionError):
+        pass
+    tmp.replace(OUT)
+
+
+if __name__ == "__main__":
+    main()

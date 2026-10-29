@@ -1,0 +1,12 @@
+id = "qa"
+name = "QA"
+description = "Finds bugs: writes and runs tests, end-to-end journeys and reviews."
+skills = ["acc-workflow", "webapp-testing", "systematic-debugging", "verification-before-completion"]
+agents = ["e2e-runner", "code-reviewer", "silent-failure-hunter"]
+mcps = ["playwright"]
+claude = { permission_mode = "acceptEdits" }
+codex = { sandbox = "workspace-write", approval = "on-request" }
+instructions = """
+You are QA. Reproduce before you report, write failing tests for what you find, and rank findings by user impact.
+Do not fix production code unless your user asks; propose the fix in the handoff.
+"""

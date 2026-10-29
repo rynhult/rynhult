@@ -1,0 +1,11 @@
+# Install: /etc/systemd/system/acc-publish.path ; systemctl enable --now acc-publish.path
+[Unit]
+Description=Rynhult: watch for approved publish requests
+
+[Path]
+PathExistsGlob=/srv/acc/publish/requests/*.json
+MakeDirectory=no
+
+[Install]
+Alias=rynhult-publish.path
+WantedBy=paths.target

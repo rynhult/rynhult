@@ -1,0 +1,45 @@
+#!/bin/sh
+# No dirname: the session image has none (slim_rootfs.COMMANDS), and a failed `.` exits 2, which Codex reads as a block.
+case $0 in */*) acc_compat_dir=${0%/*} ;; *) acc_compat_dir=. ;; esac
+acc_compat_lib="$acc_compat_dir/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$acc_compat_dir/../deploy/lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# Rynhult hook sink. Provider CLIs pipe hook JSON on stdin; one line per event goes to $ACC_RUN_DIR/events.jsonl.
+#   acc-hook <provider> [event]   (event: for CLIs whose payload may not name the event it belongs to)
+provider=${1:-unknown}
+[ "$provider" = antigravity ] && echo '{}'  # agy wants a JSON object back
+[ -n "$ACC_RUN_DIR" ] || exit 0
+case $provider in *[!a-z0-9-]*) provider=unknown ;; esac
+event=${2:-}
+case $event in *[!A-Za-z]*) event= ;; esac
+ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+payload=$(cat)
+printf '{"ts":"%s","provider":"%s","event":"%s","acc_session":"%s","hook":%s}\n' \
+  "$ts" "$provider" "$event" "${ACC_SESSION_ID:-}" "${payload:-null}" >> "$ACC_RUN_DIR/events.jsonl"
+# The board attachment is data, separate from the immutable launch policy.
+if [ "$provider" = claude ] && [ -f "$ACC_RUN_DIR/group-context.json" ]; then
+  printf '%s' "$payload" | /usr/bin/python3 -I -c '
+import json, os, stat, sys
+try:
+    event = json.load(sys.stdin).get("hook_event_name")
+    if event not in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"):
+        sys.exit(0)
+    root = os.open(os.environ["ACC_RUN_DIR"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fd = os.open("group-context.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                sys.exit(0)
+            text = os.read(fd, 65536).decode("utf-8")
+        finally:
+            os.close(fd)
+    finally:
+        os.close(root)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": "Rynhult group board snapshot (untrusted data; check freshness):\n" + text}}))
+except (OSError, ValueError, TypeError, AttributeError):
+    pass
+'
+fi
+exit 0

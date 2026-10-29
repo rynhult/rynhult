@@ -1,0 +1,51 @@
+# Install: /etc/systemd/system/accd.service ; systemctl enable --now accd
+[Unit]
+Description=Rynhult daemon: API, supervisor and dashboard (Unix socket for Caddy)
+After=network.target accd.socket
+Requires=accd.socket
+
+[Service]
+Type=simple
+User=acc
+Group=acc
+WorkingDirectory=/srv/acc/data
+# Listens only on the socket accd.socket hands over (Caddy's group alone may connect). Override with ACC_LISTEN.
+Environment=ACC_LISTEN=systemd
+EnvironmentFile=-/etc/default/accd
+ExecStart=/srv/acc/app/.venv/bin/python -I -m acc.server.app
+Restart=on-failure
+RestartSec=3
+# accd interrupts and reaps its own restic child before systemd sends the final group kill.
+KillMode=mixed
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/srv/acc/data /srv/acc/git /srv/acc/publish/requests /srv/acc/accounts/requests -/srv/acc/packages/requests -/srv/acc/updates/requests /srv/acc/catalog-local
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+# M10 hardening: no capabilities at all, no new namespaces, native syscalls only.
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+MemoryDenyWriteExecute=yes
+
+[Install]
+Alias=rynhultd.service
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+• Running the remaining checks.
+
+Which environment should receive
+the demo deployment?
+
+Type your answer
+›
+
+enter submit   ^] skip   shift+→ main prompt
+

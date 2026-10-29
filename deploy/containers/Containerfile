@@ -1,0 +1,66 @@
+# All system/browser bytes inherit this pinned Linux amd64 base. No apt runs.
+FROM mcr.microsoft.com/playwright/python:v1.56.0-noble-amd64@sha256:508b37a524219d210a67a7190beb079efda72553e0dcb9ef21d4dae8f8a7686b AS assembled
+USER root
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+WORKDIR /opt/acc/cli
+COPY deploy/containers/session/package.json deploy/containers/session/package-lock.json ./
+COPY deploy/containers/session/requirements.txt ./
+RUN /usr/bin/python3 -I -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r requirements.txt
+# npm is build-only; pinned Node runs the unpacked immutable Copilot package. Python's lzma avoids an unpinned xz installation.
+RUN test "$(uname -m)" = x86_64 && \
+    curl --fail --location --proto '=https' --tlsv1.2 -o /tmp/node.tar.xz https://nodejs.org/dist/v22.21.1/node-v22.21.1-linux-x64.tar.xz && \
+    echo '680d3f30b24a7ff24b98db5e96f294c0070f8f9078df658da1bce1b9c9873c88  /tmp/node.tar.xz' | sha256sum -c - && \
+    /usr/bin/python3 -I -c 'import tarfile; tarfile.open("/tmp/node.tar.xz").extractall("/tmp/node", filter="data")' && \
+    cp -R --no-preserve=all /tmp/node/node-v22.21.1-linux-x64/. /usr/local/ && \
+    chmod 755 /usr/local/bin/node /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/lib/node_modules/npm/bin/npx-cli.js && \
+    npm ci --ignore-scripts --no-audit --no-fund && \
+    ln -s /opt/acc/cli/node_modules/@anthropic-ai/claude-code-linux-x64/claude /usr/local/bin/claude && \
+    /usr/bin/python3 -I -c 'import glob,os; paths=glob.glob("/opt/acc/cli/node_modules/@openai/codex-linux-x64/vendor/*/bin/codex"); assert len(paths)==1; os.symlink(paths[0], "/usr/local/bin/codex")' && \
+    claude --version && codex --version && \
+    XDG_CACHE_HOME=/tmp/copilot-code /opt/acc/cli/node_modules/@github/copilot-linux-x64/copilot --version && \
+    /usr/bin/python3 -I -c 'import glob,shutil; p=glob.glob("/tmp/copilot-code/copilot/pkg/linux-x64/*"); assert len(p)==1; shutil.copytree(p[0],"/opt/acc/copilot")' && \
+    dpkg-query -W -f='${Package}=${Version}\n' > /opt/acc/system-packages.txt && \
+    /usr/bin/python3 -I -m pip freeze --all > /opt/acc/python-packages.txt
+COPY src/acc/env.py /usr/local/bin/acc_env.py
+COPY src/acc/tooling.py /usr/local/bin/acc-tool-policy.py
+COPY deploy/lib/acc-env.sh /usr/local/bin/acc-env.sh
+COPY bin/acc-guard bin/acc-hook bin/acc-request bin/acc-mcp-team /usr/local/bin/
+COPY scripts/container_qualification/statusline.py /usr/local/bin/acc-statusline
+COPY deploy/containers/acc-session /usr/local/bin/acc-session
+COPY src/acc /opt/acc/src/acc
+COPY scripts/container_qualification /opt/acc/qualification
+COPY deploy/containers/prepare_session.py deploy/containers/slim_rootfs.py deploy/containers/install_wrappers.py \
+     deploy/containers/check_rootfs.py /opt/acc/build/
+COPY deploy/containers/sandbox_policy.py deploy/containers/session_runtime.py deploy/containers/egress_bridge.py /opt/acc/runtime/
+COPY src/acc/container_egress.py /opt/acc/runtime/egress.py
+RUN chmod 755 /usr/local/bin/acc-* && \
+    chmod 644 /usr/local/bin/acc_env.py && \
+    chmod -R go-w /opt/acc/src /opt/acc/build /opt/acc/runtime && \
+    /usr/bin/python3 -I /opt/acc/build/prepare_session.py && \
+    /usr/bin/python3 -I /opt/acc/build/install_wrappers.py && \
+    /usr/bin/python3 -I /opt/acc/build/slim_rootfs.py /runtime && \
+    /usr/bin/python3 -I -B /opt/acc/build/check_rootfs.py /runtime
+# The image as it will run, checked from inside: its own loader, libraries, interpreters and absolute paths (the
+# check_rootfs.py run above uses the build stage's). Nothing from this stage reaches the image but one unchanged file,
+# copied below only so that the build cannot skip this stage.
+FROM scratch AS checked
+COPY --from=assembled /runtime/ /
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PATH=/usr/local/bin:/usr/bin:/bin HOME=/home/acc PYTHONDONTWRITEBYTECODE=1
+RUN /usr/bin/python3 -I -B -c 'import json,pathlib; [pathlib.Path(p).mkdir(parents=True,exist_ok=True) for p in json.loads(pathlib.Path("/opt/acc/state-directories.json").read_text())]' && \
+    /usr/bin/python3 -I -B -c 'import importlib.util,sys; p="/opt/acc/src/acc/__init__.py"; s=importlib.util.spec_from_file_location("acc",p); m=importlib.util.module_from_spec(s); sys.modules["acc"]=m; exec(compile(open(p,"rb").read(),p,"exec"),m.__dict__); from acc.providers import get; [get(p) for p in ("claude","codex","copilot")]' && \
+    /usr/local/bin/claude --version && /usr/local/bin/codex --version && /usr/local/bin/copilot --version && /usr/bin/git --version
+# Only selected native CLIs, Python, git, Chromium and ELF dependencies. No
+# inherited build layers, npm/pip, caches, apt database, docs or extra browsers.
+# No RUN in this stage, ever: a RUN step gets Podman's own /run/.containerenv (and /etc/hosts, /etc/hostname,
+# /etc/resolv.conf) mounted over the image and its commit can record them as deleted (whiteouts), removing the mount
+# targets the read-only rootfs needs (qualification attempt 10). The checks run in the stages above instead.
+FROM scratch
+COPY --from=assembled /runtime/ /
+COPY --from=checked /opt/acc/rootfs-size.json /opt/acc/rootfs-size.json
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PATH=/usr/local/bin:/usr/bin:/bin HOME=/home/acc PYTHONDONTWRITEBYTECODE=1
+USER 1000:1000
+WORKDIR /tmp
+ENTRYPOINT ["/usr/local/bin/acc-session"]
+CMD ["/dev/null", "/bin/sh"]

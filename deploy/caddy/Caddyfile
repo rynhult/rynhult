@@ -1,0 +1,10 @@
+{
+	# Admin API on a Unix socket only the caddy user (and root) can use, instead of
+	# 127.0.0.1:2019, which any local user could reach to rewrite the config.
+	admin unix//run/caddy/admin.sock|0660
+	import acc-hardening.options
+}
+
+# Site blocks live in /etc/caddy/acc.d, one file per site, managed by ACC (/srv/acc).
+# Previous layouts: /etc/caddy/Caddyfile.bak-*
+import acc.d/*.caddy

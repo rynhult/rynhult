@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "disable_existing_loggers": true,
+  "formatters": {"plain": {"format": "%(levelname)s %(message)s"}},
+  "handlers": {"stderr": {"class": "logging.StreamHandler", "formatter": "plain", "stream": "ext://sys.stderr"}},
+  "loggers": {
+    "acc.telemetry_collector": {"handlers": ["stderr"], "level": "ERROR", "propagate": false}
+  },
+  "root": {"handlers": [], "level": "CRITICAL"}
+}

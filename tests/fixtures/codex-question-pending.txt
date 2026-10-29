@@ -1,0 +1,7 @@
+• Running the remaining checks.
+
+• Queued follow-up inputs
+  ? 1 question
+    shift+← to answer
+› Ask Codex to do anything
+

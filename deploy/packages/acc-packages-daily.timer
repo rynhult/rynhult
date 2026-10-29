@@ -1,0 +1,12 @@
+# Install: /etc/systemd/system/acc-packages-daily.timer ; systemctl enable --now acc-packages-daily.timer
+[Unit]
+Description=Rynhult: daily check and update of agent software
+
+[Timer]
+OnCalendar=*-*-* 05:15
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+Alias=rynhult-packages-daily.timer
+WantedBy=timers.target

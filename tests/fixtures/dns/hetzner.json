@@ -1,0 +1,262 @@
+[
+  {
+    "method": "GET",
+    "path": "/v1/zones/example.com",
+    "response": {
+      "zone": {
+        "id": 123,
+        "name": "example.com",
+        "ttl": 300,
+        "mode": "primary"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [],
+      "meta": {
+        "pagination": {
+          "next_page": 2
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=2&per_page=100",
+    "response": {
+      "rrsets": [],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/zones/123/rrsets",
+    "response": {
+      "action": {
+        "id": 1,
+        "status": "success",
+        "error": null
+      }
+    },
+    "body": {
+      "name": "site",
+      "type": "A",
+      "ttl": 300,
+      "records": [
+        {
+          "value": "192.0.2.1"
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.1",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.1",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v1/zones/123/rrsets/site/A/actions/set_records",
+    "response": {
+      "action": {
+        "id": 1,
+        "status": "success",
+        "error": null
+      }
+    },
+    "body": {
+      "records": [
+        {
+          "value": "192.0.2.2"
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.2",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.99",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.2",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/v1/zones/123/rrsets/site/A",
+    "response": {
+      "action": {
+        "id": 1,
+        "status": "success",
+        "error": null
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v1/zones/123/rrsets?page=1&per_page=100",
+    "response": {
+      "rrsets": [
+        {
+          "id": "site/A",
+          "name": "site",
+          "type": "A",
+          "ttl": 300,
+          "records": [
+            {
+              "value": "192.0.2.99",
+              "comment": ""
+            }
+          ],
+          "labels": {},
+          "protection": {
+            "change": false
+          }
+        }
+      ],
+      "meta": {
+        "pagination": {
+          "next_page": null
+        }
+      }
+    }
+  }
+]

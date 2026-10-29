@@ -1,0 +1,14 @@
+<!--{"path": "/download/", "title": "Download", "phases": ["release"], "description": "Rynhult release files and their SHA-256 checksums."}-->
+<div class="wrap">
+<div class="page-head">
+<h1>Download</h1>
+<p>Rynhult is installed from its source release onto a Linux server. There is no separate desktop or phone app to download for v1.</p>
+</div>
+<div class="prose">
+{{release.downloads}}
+<h2>Verify what you download</h2>
+<p>Download <code>SHA256SUMS</code> and its detached signature, <code>SHA256SUMS.asc</code>, with the release files. Follow <a href="/security/#release-key">release verification</a>: compare the public key's full fingerprints, verify the signature, then check every listed SHA-256. Stop on a missing signature or failed check. Only <code>SHA256SUMS</code> is signed; the in-app updater does not verify signatures yet. The <a href="/docs/User-Guide/Install/">install guide</a> explains the next steps.</p>
+<h2>Earlier versions and changes</h2>
+<p>Each release lists its changes in the changelog that ships with the source.</p>
+</div>
+</div>

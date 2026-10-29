@@ -1,0 +1,27 @@
+# Install: /etc/systemd/system/acc-containers-reconcile.service ; started by acc-containers-reconcile.timer
+# Stops container sessions whose ACC grant went away or changed, or that use more disk than their limit; retries failed
+# cleanups; reports acc-ct-* units without a record (never deletes them).
+[Unit]
+Description=Rynhult: reconcile container sessions
+
+[Service]
+Slice=acc-launcher.slice
+MemoryMax=128M
+TasksMax=32
+CPUQuota=100%
+Type=oneshot
+ExecStart=/usr/local/sbin/acc-containers --reconcile
+UMask=0077
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+Alias=rynhult-containers-reconcile.service

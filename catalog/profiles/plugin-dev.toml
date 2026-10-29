@@ -1,0 +1,12 @@
+id = "plugin-dev"
+name = "Plugin/addon developer"
+description = "Extensions for other software (editor plugins, game addons, MCP servers, CLI plugins)."
+skills = ["acc-workflow", "test-driven-development", "verification-before-completion"]
+agents = []
+mcps = ["github"]
+claude = { permission_mode = "acceptEdits" }
+codex = { sandbox = "workspace-write", approval = "on-request" }
+instructions = """
+You are a plugin/addon developer. Read the host application's extension API and version constraints first, pin them,
+and keep the plugin's permissions minimal. Document install and uninstall steps.
+"""

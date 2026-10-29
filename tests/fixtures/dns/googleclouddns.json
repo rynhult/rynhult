@@ -1,0 +1,160 @@
+[
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone",
+    "response": {
+      "name": "example-zone",
+      "dnsName": "example.com.",
+      "visibility": "public"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100",
+    "response": {
+      "rrsets": [],
+      "nextPageToken": "next"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100&pageToken=next",
+    "response": {
+      "rrsets": []
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/changes",
+    "response": {
+      "id": "1",
+      "status": "done"
+    },
+    "body": {
+      "additions": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.1"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100",
+    "response": {
+      "rrsets": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.1"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/changes",
+    "response": {
+      "id": "1",
+      "status": "done"
+    },
+    "body": {
+      "additions": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.2"
+          ]
+        }
+      ],
+      "deletions": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.1"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100",
+    "response": {
+      "rrsets": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.99"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100",
+    "response": {
+      "rrsets": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.2"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/changes",
+    "response": {
+      "id": "1",
+      "status": "done"
+    },
+    "body": {
+      "deletions": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.2"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns/v1/projects/example-project/managedZones/example-zone/rrsets?maxResults=100",
+    "response": {
+      "rrsets": [
+        {
+          "name": "site.example.com.",
+          "type": "A",
+          "ttl": 300,
+          "rrdatas": [
+            "192.0.2.99"
+          ]
+        }
+      ]
+    }
+  }
+]

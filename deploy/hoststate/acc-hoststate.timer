@@ -1,0 +1,12 @@
+# Install: /etc/systemd/system/acc-hoststate.{service,timer} ; systemctl enable --now acc-hoststate.timer
+[Unit]
+Description=Rynhult: host snapshot every minute
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+Alias=rynhult-hoststate.timer
+WantedBy=timers.target

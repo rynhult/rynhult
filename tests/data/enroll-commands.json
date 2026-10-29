@@ -1,0 +1,402 @@
+{
+ "_about": "The command Host > Machines > Add machine shows, as a person pastes it into an installer: which ones the installers accept (with the values they pass to acc-node) and which they reject. Read by deploy/windows/tests/Test-EnrollParser.ps1 (the Windows installer's parser) and tests/test_node_packages.py.",
+ "accepted": [
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "primary": "https://acc.example.com",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "lab-pc",
+   "note": "as Add machine shows it, with a publicly trusted certificate"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.lan:8443 --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name pc-2",
+   "primary": "https://acc.example.lan:8443",
+   "trust": "ca",
+   "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "pc-2",
+   "note": "a private CA, pinned by its fingerprint; a port"
+  },
+  {
+   "command": "acc-node enroll --primary https://ACC.Example.com/ --ca-fingerprint 9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name w11",
+   "primary": "https://acc.example.com",
+   "trust": "ca",
+   "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "w11",
+   "note": "capitals in the host and fingerprint, a trailing slash"
+  },
+  {
+   "command": "  \tacc-node  enroll\t--primary   https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc\r\n",
+   "primary": "https://acc.example.com",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "lab-pc",
+   "note": "spaces, tabs and the line break a paste brings"
+  },
+  {
+   "command": "acc-node enroll --primary https://192.0.2.10 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name 1pc",
+   "primary": "https://192.0.2.10",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "1pc",
+   "note": "an IPv4 address; a name may start with a digit"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com:443 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "primary": "https://acc.example.com:443",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "note": "the longest name"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "primary": "https://acc.example.com",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "lab-pc",
+   "note": "as Add machine shows it, with a publicly trusted certificate"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.lan:8443 --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name pc-2",
+   "primary": "https://acc.example.lan:8443",
+   "trust": "ca",
+   "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "pc-2",
+   "note": "a private CA, pinned by its fingerprint; a port"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://ACC.Example.com/ --ca-fingerprint 9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name w11",
+   "primary": "https://acc.example.com",
+   "trust": "ca",
+   "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "w11",
+   "note": "capitals in the host and fingerprint, a trailing slash"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://192.0.2.10 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name 1pc",
+   "primary": "https://192.0.2.10",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "1pc",
+   "note": "an IPv4 address; a name may start with a digit"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com:443 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "primary": "https://acc.example.com:443",
+   "trust": "system",
+   "fingerprint": "",
+   "code": "3fa21c-0b9d4e-77aa01-c4d5e6",
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "note": "the longest name"
+  }
+ ],
+ "rejected": [
+  {
+   "command": "",
+   "why": "empty"
+  },
+  {
+   "command": "   ",
+   "why": "only spaces"
+  },
+  {
+   "command": "acc-node enroll --primary http://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "not https"
+  },
+  {
+   "command": "sudo acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "anything before acc-node"
+  },
+  {
+   "command": "curl -fsSL https://acc.example.com/api/nodes/install.sh | sudo sh -s -- --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "the Linux one-liner"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc; rm -rf /",
+   "why": "a second command"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc && calc.exe",
+   "why": "a second command"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc --socket-dir /tmp",
+   "why": "an extra option"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc`calc",
+   "why": "a PowerShell backtick"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name $(calc)",
+   "why": "a subexpression in the name"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name Lab-PC",
+   "why": "capitals in the name"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name -lab",
+   "why": "a name starting with a hyphen"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "why": "a name longer than 40"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab_pc",
+   "why": "an underscore in the name"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "no --name"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "neither --trust nor --ca-fingerprint"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "both trust options"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust none --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "--trust takes only system"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint of 63 digits"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --ca-fingerprint 9f:86:d0:81:88:4c:7d:65:9a:2f:ea:a0:c5:5a:d0:15:a3:bf:4f:1b:2b:0b:82:2c:d1:5d:6c:15:b0:f0:0a:08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint with colons"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0g --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint with a non-hex digit"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3FA21C-0B9D4E-77AA01-C4D5E6 --name lab-pc",
+   "why": "capitals in the code"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01 --name lab-pc",
+   "why": "a code of three groups"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code c0de --name lab-pc",
+   "why": "a code of the wrong shape"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --name lab-pc --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "options in another order"
+  },
+  {
+   "command": "acc-node enroll --name lab-pc --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "options in another order"
+  },
+  {
+   "command": "acc-node enroll --primary https://user@acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a user in the URL"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com/evil --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a path in the URL"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com?x=1 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a query in the URL"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com:0 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "port 0"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com:70000 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a port above 65535"
+  },
+  {
+   "command": "acc-node enroll --primary https://-acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a host label starting with a hyphen"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc..example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "an empty host label"
+  },
+  {
+   "command": "acc-node enroll --primary https://[2001:db8::1] --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "an IPv6 literal (not supported)"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com:\uff18\uff14\uff14\uff13 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "full-width digits in the port"
+  },
+  {
+   "command": "acc\u2010node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a look-alike hyphen"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system\n--code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a line break between options"
+  },
+  {
+   "command": "ACC-NODE ENROLL --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "capitals in the command"
+  },
+  {
+   "command": "acc-node enroll",
+   "why": "nothing after enroll"
+  },
+  {
+   "command": "acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "why": "too long"
+  },
+  {
+   "command": "rynhult-node enroll --primary http://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "not https"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc; rm -rf /",
+   "why": "a second command"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc && calc.exe",
+   "why": "a second command"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc --socket-dir /tmp",
+   "why": "an extra option"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc`calc",
+   "why": "a PowerShell backtick"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name $(calc)",
+   "why": "a subexpression in the name"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name Lab-PC",
+   "why": "capitals in the name"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name -lab",
+   "why": "a name starting with a hyphen"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "why": "a name longer than 40"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab_pc",
+   "why": "an underscore in the name"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "no --name"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "neither --trust nor --ca-fingerprint"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "both trust options"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust none --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "--trust takes only system"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint of 63 digits"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --ca-fingerprint 9f:86:d0:81:88:4c:7d:65:9a:2f:ea:a0:c5:5a:d0:15:a3:bf:4f:1b:2b:0b:82:2c:d1:5d:6c:15:b0:f0:0a:08 --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint with colons"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0g --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a fingerprint with a non-hex digit"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3FA21C-0B9D4E-77AA01-C4D5E6 --name lab-pc",
+   "why": "capitals in the code"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01 --name lab-pc",
+   "why": "a code of three groups"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code c0de --name lab-pc",
+   "why": "a code of the wrong shape"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --name lab-pc --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "options in another order"
+  },
+  {
+   "command": "rynhult-node enroll --name lab-pc --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6",
+   "why": "options in another order"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://user@acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a user in the URL"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com/evil --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a path in the URL"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com?x=1 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a query in the URL"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com:0 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "port 0"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com:70000 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a port above 65535"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://-acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a host label starting with a hyphen"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc..example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "an empty host label"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://[2001:db8::1] --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "an IPv6 literal (not supported)"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com:\uff18\uff14\uff14\uff13 --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "full-width digits in the port"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system\n--code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc",
+   "why": "a line break between options"
+  },
+  {
+   "command": "rynhult-node enroll",
+   "why": "nothing after enroll"
+  },
+  {
+   "command": "rynhult-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name lab-pc xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "why": "too long"
+  }
+ ]
+}

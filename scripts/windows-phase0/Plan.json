@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "root": "C:\\RynhultSpike",
+  "userName": "rynhult-spike-1",
+  "serviceName": "RynhultSpike",
+  "serviceStart": "AutomaticDelayed",
+  "serviceRequiredPrivileges": ["SeChangeNotifyPrivilege"],
+  "userGroups": ["S-1-5-32-545"],
+  "grantRights": ["SeServiceLogonRight"],
+  "denyRights": [
+    "SeDenyInteractiveLogonRight",
+    "SeDenyRemoteInteractiveLogonRight",
+    "SeDenyBatchLogonRight",
+    "SeDenyNetworkLogonRight"
+  ],
+  "folders": ["bin", "secrets", "evidence"],
+  "files": ["manifest.json", "config.json", "bin\\SpikeHost.exe", "secrets\\password.dpapi"],
+  "profile": "CreateProfile/DeleteProfile by recorded SID",
+  "firewall": []
+}

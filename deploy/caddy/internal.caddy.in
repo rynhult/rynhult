@@ -1,0 +1,81 @@
+# Managed by ACC (/srv/acc), rendered by deploy/install.sh from deploy/caddy/internal.caddy.in.
+# No domain: Caddy's own certificate authority signs ACC's certificate (browsers warn until you trust
+# Caddy's root, see deploy/caddy/README.md). Publishing sites needs a domain on Cloudflare instead.
+@ACC_HOST@ {
+	tls internal
+
+	# Private networks only (LAN, VPN, Tailscale); everyone else gets 403 and is never proxied.
+	@internal remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 ::1 fd00::/8
+	handle @internal {
+		# Git backup pushes (/api/git/, docs/MULTIHOST.md) carry packs: accd limits them itself (2 GiB).
+		@small not path /api/git/*
+		request_body @small {
+			max_size 4MB
+		}
+		reverse_proxy unix//run/accd.sock {
+			transport http {
+				dial_timeout 5s
+			}
+		}
+	}
+	handle {
+		respond "Forbidden" 403
+	}
+	log {
+		output file /var/lib/caddy/acc-access.json {
+			mode 0600
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 336h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+# Private DNS wildcard; Caddy's local CA never publishes these names to CT.
+*.@PREVIEW_DOMAIN@ {
+	tls internal
+	@preview expression `{http.request.host}.startsWith("preview-")`
+	handle @preview {
+		@preview_private remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 ::1 fd00::/8
+		handle @preview_private {
+			request_body {
+				max_size 4MB
+			}
+			reverse_proxy unix//run/accd.sock {
+			transport http {
+				dial_timeout 5s
+			}
+		}
+		}
+		handle {
+			respond "Forbidden" 403
+		}
+	}
+	handle {
+		abort
+	}
+	log {
+		output file /var/lib/caddy/acc-access.json {
+			mode 0600
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 336h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}

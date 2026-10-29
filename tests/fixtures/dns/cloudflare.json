@@ -1,0 +1,123 @@
+[
+  {
+    "method": "GET",
+    "path": "/zones",
+    "json": {
+      "success": true,
+      "result": [
+        {
+          "id": "z1",
+          "name": "example.com",
+          "status": "active",
+          "permissions": [
+            "#dns_records:edit"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns_records",
+    "json": {
+      "success": true,
+      "result": []
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/dns_records",
+    "json": {
+      "success": true,
+      "result": {
+        "id": "r1",
+        "name": "site.example.com",
+        "type": "A",
+        "content": "192.0.2.1",
+        "ttl": 300,
+        "proxied": false,
+        "comment": "managed by ACC (pub-1)"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns_records",
+    "json": {
+      "success": true,
+      "result": [
+        {
+          "id": "r1",
+          "name": "site.example.com",
+          "type": "A",
+          "content": "192.0.2.1",
+          "ttl": 300,
+          "proxied": false,
+          "comment": "managed by ACC (pub-1)"
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/dns_records/r1",
+    "json": {
+      "success": true,
+      "result": {
+        "id": "r1",
+        "name": "site.example.com",
+        "type": "A",
+        "content": "192.0.2.2",
+        "ttl": 300,
+        "proxied": false,
+        "comment": "managed by ACC (pub-2)"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns_records",
+    "json": {
+      "success": true,
+      "result": [
+        {
+          "id": "r1",
+          "name": "site.example.com",
+          "type": "A",
+          "content": "192.0.2.99",
+          "ttl": 300,
+          "proxied": false,
+          "comment": "managed by ACC (pub-2)"
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/dns_records",
+    "json": {
+      "success": true,
+      "result": [
+        {
+          "id": "r1",
+          "name": "site.example.com",
+          "type": "A",
+          "content": "192.0.2.2",
+          "ttl": 300,
+          "proxied": false,
+          "comment": "managed by ACC (pub-2)"
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/dns_records/r1",
+    "json": {
+      "success": true,
+      "result": {
+        "id": "r1"
+      }
+    }
+  }
+]

@@ -1,0 +1,35 @@
+[Unit]
+Description=Rynhult: back up acc.db, secrets and configured mirrors off their drive
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/acc-backup
+Nice=10
+# Root only for reading acc's 0700 data; mirrors run as their users (runuser). Writes are limited to the backup
+# folder and the database folder (SQLite's shared-memory file for an online read); setup.sh adds each mirror's
+# destination in a drop-in (acc-backup.service.d/mirrors.conf).
+ProtectSystem=strict
+EnvironmentFile=-/etc/default/acc-backup
+ReadWritePaths=/var/backups/acc /srv/acc/data
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+Alias=rynhult-backup.service

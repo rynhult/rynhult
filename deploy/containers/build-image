@@ -1,0 +1,77 @@
+#!/bin/bash
+# Build and save the reviewed session image as the dedicated build account, in a private throwaway store that is removed on exit.
+# Never the account's own store: a layer left there with the ID of a session image layer is found before the protected
+# copy, and the launcher refuses every launch (qualification attempt 11: the `checked` stage's first layer is the final
+# image's first layer). Run from the reviewed checkout: deploy/containers/build-image OUTPUT_DIR
+set -euo pipefail
+[ "$(id -u)" -ne 0 ] || { echo 'Build as the dedicated build account, never as root.' >&2; exit 1; }
+[ $# -eq 1 ] || { echo 'usage: deploy/containers/build-image OUTPUT_DIR' >&2; exit 2; }
+here=$(cd "$(dirname "$0")" && pwd)
+checkout=$(cd "$here/../.." && pwd)
+# Security review 8, SR8-3: any other process of this account could change the image's layers, the build context or the
+# archive while it is built. build_census.py refuses unless this script's own process tree is all the account runs
+# (Podman's pause process aside), and, at the start, unless nothing starts unattended (lingering, user timers, cron,
+# at). It runs again right before `podman save` and before the checksum the owner pins. ACC_BUILD_CENSUS, like
+# ACC_BUILD_PODMAN, is the invoker's choice (tests use a fake); from the owner's console, pass neither.
+CENSUS=${ACC_BUILD_CENSUS:-$here/build_census.py}
+quiet() { "$CENSUS" "$1" "$$"; }
+quiet start
+mkdir -p -m 700 -- "$1"
+out=$(cd "$1" && pwd)
+[ -z "$(ls -A "$out")" ] || { echo "$out is not empty: choose a new folder for this build" >&2; exit 1; }
+
+# /tmp, not $TMPDIR: Podman refuses a runroot longer than 50 characters. mktemp makes it private (0700).
+store=$(mktemp -d /tmp/acc-ib.XXXXXXXX)
+mkdir -m 700 "$store/data" "$store/tmp" "$store/xdg"
+# Everything Podman keeps for a build goes under the throwaway store: graphroot and runroot (--root/--runroot), libpod's
+# state (--tmpdir), the blob-info cache ($XDG_DATA_HOME/containers/cache) and image-copy scratch files ($TMPDIR).
+# A private runtime directory and cgroupfs avoid requiring a user manager, session bus or lingering.
+export CONTAINERS_CONF=/dev/null CONTAINERS_CONF_OVERRIDE=/dev/null CONTAINERS_STORAGE_CONF="$here/build-storage.conf"
+export XDG_DATA_HOME="$store/data" TMPDIR="$store/tmp" XDG_RUNTIME_DIR="$store/xdg"
+PODMAN=${ACC_BUILD_PODMAN:-podman}
+podman() {
+  "$PODMAN" --cgroup-manager=cgroupfs --root "$store/storage" --runroot "$store/run" --tmpdir "$store/tmp/libpod" --storage-driver overlay "$@"
+}
+cleanup() {
+  status=$?
+  trap - EXIT
+  set +e
+  # Layer files belong to the account's subordinate IDs: remove them from inside its user namespace.
+  podman unshare rm -rf -- "$store/storage" "$store/run" "$store/tmp" "$store/data" "$store/xdg"
+  rm -rf -- "$store"
+  if [ "$status" -ne 0 ]; then
+    # Nothing the owner could pin: an archive saved before a refused check is removed with its record.
+    rm -f -- "$out/acc-session.oci.tar" "$out/acc-session.oci.tar.sha256" "$out/image.txt"
+    echo "build-image: the build FAILED (exit $status); $out holds no reviewed archive. Start again in a new folder." >&2
+  else
+    echo "The build succeeded: $out holds the archive, its checksum, image.txt and review/."
+  fi
+  if [ -e "$store" ]; then
+    printf 'build-image: the throwaway build store %s could not be fully removed. Sessions never read it. Remove it as this account:\n  %q --root %q --runroot %q unshare rm -rf -- %q\n' \
+      "$store" "$PODMAN" "$store/storage" "$store/run" "$store" >&2
+  elif [ "$status" -eq 0 ]; then
+    echo "The throwaway build store is removed; the account's own image store was never used."
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+cd "$checkout"
+tag=localhost/acc-session:qualification
+podman build --arch amd64 --format oci --pull=always \
+  --timestamp="$(git log -1 --format=%ct)" \
+  --ignorefile deploy/containers/session.containerignore \
+  -f deploy/containers/Containerfile -t "$tag" .
+podman image inspect "$tag" --format '{{.Id}} {{.Architecture}} {{.Os}}' > "$out/image.txt"
+quiet save
+podman save --format oci-archive --output "$out/acc-session.oci.tar" "$tag"
+# Review inventory without executing image code: a created (never started) container, copied out.
+podman create --name acc-image-review --network=none --entrypoint /bin/true "$tag" > /dev/null
+mkdir -m 700 "$out/review"
+for file in /opt/acc/system-packages.txt /opt/acc/python-packages.txt /opt/acc/rootfs-size.json; do
+  podman cp "acc-image-review:$file" "$out/review/" || echo "not in the image: $file" >&2
+done
+quiet checksum
+(cd "$out" && sha256sum acc-session.oci.tar > acc-session.oci.tar.sha256)
+echo "image: $(cut -d' ' -f1 "$out/image.txt")"
+echo "archive: $(cat "$out/acc-session.oci.tar.sha256")"

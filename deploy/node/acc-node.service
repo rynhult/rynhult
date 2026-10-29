@@ -1,0 +1,42 @@
+# Install: /etc/systemd/system/acc-node.service (deploy/node/install.sh). Enabled at install; it starts once the node
+# is enrolled (`sudo acc-node enroll …` writes /etc/acc-node.env and starts it).
+# acc-node keeps one outbound WebSocket to the primary and relays its connections to this node's broker sockets
+# (/run/acc-broker/<account>.sock, group acc-node). Roaming git backup jobs briefly bind a token-scoped loopback forwarder; nothing is reachable from other machines. See docs/MULTIHOST.md.
+[Unit]
+Description=Rynhult node (relays the primary's broker connections)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/acc-node.env
+
+[Service]
+Type=simple
+User=acc-node
+Group=acc-node
+ExecStart=/opt/acc/app/.venv/bin/python -I -m acc.node run
+# acc-node reconnects by itself (1 s doubling to 60 s); this only covers a crash.
+Restart=always
+RestartSec=5
+StateDirectory=acc-node
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# Agent software: the only place it writes outside its state dir is the acc-packages helper's request folder.
+ReadWritePaths=-/srv/acc/packages/requests -/srv/acc/updates/requests
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Whatever the primary asks for, acc-node stays small: it refuses channels past 64 (each a broker socket and two
+# tasks, up to 16 MiB queued), and these bound the rest.
+MemoryMax=1G
+TasksMax=128
+LimitNOFILE=1024
+
+[Install]
+Alias=rynhult-node.service
+WantedBy=multi-user.target

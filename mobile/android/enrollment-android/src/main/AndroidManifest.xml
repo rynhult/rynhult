@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The library needs no permissions. The app that uses it must also set android:allowBackup="false" (or exclude
+     its noBackupFilesDir state and Keystore-dependent data from backup and device transfer rules), so a restored
+     phone pairs again instead of carrying an identity record whose key didn't come along. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

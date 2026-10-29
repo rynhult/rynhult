@@ -1,0 +1,16 @@
+# Maintainer: MAINTAINER PLACEHOLDER - the owner sets the name <maintainer-placeholder@example.invalid>
+# Render with desktop/package-arch.sh; local, checksummed payload from desktop/package.sh.
+pkgname=rynhult-linux-spike
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Rynhult desktop Linux spike with bundled main and Python runtime'
+arch=('x86_64')
+license=('MIT')
+depends=('acl' 'webkit2gtk-4.1' 'gtk3' 'librsvg')
+options=('!strip' '!debug')
+source=('rynhult-desktop.tar.gz')
+sha256sums=('@SHA256@')
+
+package() {
+    cp -a "$srcdir/usr" "$pkgdir/"
+}

@@ -1,0 +1,24 @@
+# Retain every built-in rule. Only generated browser output is outside source scanning.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated Playwright traces, reports and captures (never publication inputs)"
+paths = [
+  '''(^|/)web/e2e/\.results/''',
+  '''(^|/)web/e2e/screenshots/''',
+  '''(^|/)web/playwright-report/''',
+]
+
+[[allowlists]]
+description = "Public Cloudflare module commit pin; exact matched pin, not a credential"
+regexTarget = "match"
+regexes = [
+  '''^cloudflare": "a8737d095ad5a48ca031cea6ab704057dbc2d250"$''',
+]
+
+[[allowlists]]
+description = "Android enrollment fixtures recorded from an in-process test server (expired one-use test tokens, no real instance)"
+paths = [
+  '''(^|/)mobile/android/enrollment-core/src/test/resources/fixtures/lifecycle\.json$''',
+]

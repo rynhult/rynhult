@@ -1,0 +1,82 @@
+[project]
+name = "rynhult"
+version = "0.15.0-rc.1"
+description = "Rynhult: native Claude Code / Codex session manager"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "argon2-cffi>=23.1",
+    "webauthn==3.0.1",
+    "segno>=1.6",
+    "psutil>=6.0",
+    "cryptography>=46",
+    "http-ece>=1.2.1",
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "websockets>=15",
+]
+
+[project.urls]
+Homepage = "https://rynhult.dev"
+Documentation = "https://rynhult.dev/docs/"
+Repository = "https://github.com/rynhult/rynhult"
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+rynhult = "acc.cli:main"
+acc = "acc.cli:main"
+rynhultd = "acc.cli:daemon_main"
+accd = "acc.cli:daemon_main"
+rynhult-node = "acc.node.cli:main"
+rynhult-guard = "acc.cli:guard_main"
+acc-guard = "acc.cli:guard_main"
+acc-node = "acc.node.cli:main"
+rynhult-restore = "acc.backup_server:main"
+acc-restore = "acc.backup_server:main"
+acc-s3-maintain = "acc.backup_s3_maintenance:main"
+rynhult-db-transfer = "acc.db_transfer:main"
+acc-db-transfer = "acc.db_transfer:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff==0.17.2",
+    "pytest-xdist>=3.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Python sdists rebuild the Python wheel, not the server source installer. Keep private
+# checkout documents out independently of gitignore and the source-bundle exporter.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/acc", "bin/acc-guard", "bin/acc_env.py", "pyproject.toml", "uv.lock", "LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acc"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"bin/acc-guard" = "acc/_scripts/acc-guard"
+"bin/acc_env.py" = "acc/_scripts/acc_env.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["src/acc/server/migrations"]
+
+[tool.ruff.lint]
+select = ["F", "I"]  # pyflakes (undefined/unused names) and import order

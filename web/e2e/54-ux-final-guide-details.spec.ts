@@ -1,0 +1,23 @@
+import {expect,test} from '@playwright/test';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {AUTH_FILE,gitProject,wikiShotPath} from './helpers';
+test.use({storageState:AUTH_FILE});
+test('refresh session and passkey Guide details with artificial metadata only',async({page},testInfo)=>{
+ test.setTimeout(60000);
+ const {id,headers}=await gitProject(page,'guide-handoffs');
+ const response=await page.request.post('/api/sessions',{headers,data:{project_id:id,provider:'claude',name:'Example handoff',worktree:true}});expect(response.ok()).toBe(true);
+ const session=await response.json();
+ mkdirSync(`${session.worktree}/docs/handoffs`,{recursive:true});writeFileSync(`${session.worktree}/docs/handoffs/2026-10-24-${session.id}-example.md`,'# Example handoff\n\nThe sample greeting is implemented and tested.\n');
+ await page.route(`**/api/sessions/${session.id}`,async r=>{const data=await(await r.fetch()).json();await r.fulfill({json:{...data,native_id:'example-conversation-001'}});});
+ await page.goto(`/sessions/${session.id}?tab=handoffs`);await expect(page.getByRole('button',{name:new RegExp(`2026-10-24-${session.id}-example.md`)})).toBeVisible();
+ await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-handoffs.png')});
+ await page.goto(`/sessions/${session.id}`);await expect(page.locator('.xterm-rows')).toContainText('fake-claude ready',{timeout:15000});
+ await expect(page.getByRole('button',{name:'Copy conversation ID'})).toBeVisible();
+ await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-page.png')});
+ await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-worktree.png')});
+ await page.route('**/api/auth/passkeys',r=>r.fulfill({json:{passkeys:[{id:1,name:'Alex security key',rp_id:'acc.example.lan',last_used_at:null}],recovery_code:true,policy:{owners:'allow',members:'allow'}}}));
+ await page.goto('/settings#passkeys');const card=page.locator('#passkeys > section');await expect(card.getByText('Alex security key',{exact:true})).toBeVisible();
+ await card.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'settings-passkeys.png')});
+ await page.setViewportSize({width:390,height:844});await page.getByRole('heading',{name:'Passkeys',exact:true}).evaluate(e=>e.scrollIntoView({block:'start'}));
+ await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'settings-passkeys-phone.png')});
+});

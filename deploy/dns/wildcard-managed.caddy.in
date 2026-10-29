@@ -1,0 +1,73 @@
+# Managed by ACC (/srv/acc), rendered by deploy/install.sh from deploy/caddy/wildcard.caddy.in.
+# One wildcard certificate via the selected DNS-01 provider, so internal hostnames never appear in Certificate
+# Transparency logs. Explicit site blocks elsewhere are more specific and keep their own certificates.
+*.@ZONE@ {
+	tls {
+		{$ACC_DNS_CONFIG}
+	}
+
+	@acc host @ACC_HOST@
+	handle @acc {
+		# Private networks only (LAN, VPN, Tailscale); everyone else gets 403 and is never proxied.
+		@internal remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 ::1 fd00::/8
+		handle @internal {
+			# Git backup pushes (/api/git/, docs/MULTIHOST.md) carry packs: accd limits them itself (2 GiB).
+			@small not path /api/git/*
+			request_body @small {
+				max_size 4MB
+			}
+			reverse_proxy unix//run/accd.sock {
+			transport http {
+				dial_timeout 5s
+			}
+		}
+		}
+		handle {
+			respond "Forbidden" 403
+		}
+	}
+
+	# Preview names reuse this wildcard certificate; accd authenticates each request.
+	@preview expression `{http.request.host}.startsWith("preview-")`
+	handle @preview {
+		@preview_private remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 ::1 fd00::/8
+		handle @preview_private {
+			request_body {
+				max_size 4MB
+			}
+			reverse_proxy unix//run/accd.sock {
+			transport http {
+				dial_timeout 5s
+			}
+		}
+		}
+		handle {
+			respond "Forbidden" 403
+		}
+	}
+
+	# Hosts published through ACC (one snippet each, rendered by acc-publish). They share this
+	# wildcard certificate, so they never appear in Certificate Transparency logs.
+	import routes-@ZONE@/*.caddy
+
+	# Any other *.@ZONE@ name without its own site block: drop the connection.
+	handle {
+		abort
+	}
+	log {
+		output file /var/lib/caddy/acc-access.json {
+			mode 0600
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 336h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}

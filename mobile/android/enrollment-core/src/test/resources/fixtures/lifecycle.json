@@ -1,0 +1,463 @@
+{
+  "recorded_from": "40fbfe78579853cd6b6dfa60a58f50cab0b33c4a",
+  "recorded_at": "2026-10-27T23:28:25+00:00",
+  "how": "mobile/android/tools/record_fixtures.py, in process with the server's own test fixtures",
+  "private_origin": "https://acc.example.lan",
+  "installation_id": "0123456789abcdef0123456789abcdef",
+  "platform": "android",
+  "cookie_secure": false,
+  "test_keys": [
+    {
+      "label": "rynhult android fixture key 1",
+      "public_key_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0ouBeMTMwiHF2V/T832heyif8cpePC16ayus2hl1FvIQTRorvN6NGWmDanIWbHpigozQ2kn9mT05xtSY1W7A6g=="
+    },
+    {
+      "label": "rynhult android fixture key 2",
+      "public_key_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEcPbyg8rnRdv13HlHT0nCDf67XskW2Clxyn2emJUXotP9tN7NGldoATHSOD/5jRgzuEPfpgnp8aKKezo9jMY8DA=="
+    }
+  ],
+  "now_for_tests": "2026-10-27T23:28:25+00:00",
+  "exchanges": {
+    "start": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/pairings",
+        "body": {
+          "label": "Robin phone",
+          "person": "casey"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "id": "a7becf819fcfc5a521ec34791d8bd99c",
+        "link": "https://acc.example.lan/pair-mobile#a7becf819fcfc5a521ec34791d8bd99c:1vAKTX3b_uNhrsfRmBA3iNsLqzuVryvUCq88sFXZ-2w",
+        "expires_at": "2026-10-27T23:33:23.946027+00:00",
+        "origin": "https://acc.example.lan"
+      }
+    },
+    "claim": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/claim",
+        "body": {
+          "token": "1vAKTX3b_uNhrsfRmBA3iNsLqzuVryvUCq88sFXZ-2w",
+          "installation_id": "0123456789abcdef0123456789abcdef",
+          "platform": "android",
+          "csr": "-----BEGIN CERTIFICATE REQUEST-----\nMIHVMHwCAQAwGjEYMBYGA1UEAwwPcnluaHVsdC1hbmRyb2lkMFkwEwYHKoZIzj0C\nAQYIKoZIzj0DAQcDQgAE0ouBeMTMwiHF2V/T832heyif8cpePC16ayus2hl1FvIQ\nTRorvN6NGWmDanIWbHpigozQ2kn9mT05xtSY1W7A6qAAMAoGCCqGSM49BAMCA0kA\nMEYCIQCEj0Ajai2i/6cpcpTUC37xZrM+DgAUOf+ENHcR3o+C/QIhAMEzCaHwYu4p\numWnc+Rl1XaeCiQEA1en/q6Q7KDvjrEi\n-----END CERTIFICATE REQUEST-----\n",
+          "proof": "MEYCIQCKgczok7fedoUorjvaIcLnnETe-3NzbAUnPIALyt1TpwIhAII_SytrZ_Uxqb7IBrZ7kke4XfwHL7BQifwf7WczyMKn"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "receipt": "i-N_usHPxl7HkZZB-X02nCZHDMiSIU7K5kDGP716CJo",
+        "matching_code": "769451"
+      }
+    },
+    "credential_waiting": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "i-N_usHPxl7HkZZB-X02nCZHDMiSIU7K5kDGP716CJo"
+        }
+      },
+      "status": 409,
+      "headers": {},
+      "body": {
+        "detail": "An owner must confirm this device first, or its certificate is no longer current."
+      }
+    },
+    "confirm": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/pairings/a7becf819fcfc5a521ec34791d8bd99c/confirm",
+        "body": {
+          "matching_code": "769451"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "ok": true,
+        "device_id": "de4fe1255d986bd53bbbbad574626c7f",
+        "activation": "pending"
+      }
+    },
+    "credential": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "i-N_usHPxl7HkZZB-X02nCZHDMiSIU7K5kDGP716CJo"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "device_id": "de4fe1255d986bd53bbbbad574626c7f",
+        "certificate": "-----BEGIN CERTIFICATE-----\nMIIBlzCCATygAwIBAgIUP3bY3TLO4xbrXnuEGMpYQdrSIzYwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzIzWhcN\nMjcwMTI1MjMyODIzWjBAMSkwJwYDVQQDDCBkZTRmZTEyNTVkOTg2YmQ1M2JiYmJh\nZDU3NDYyNmM3ZjETMBEGA1UECwwKYWNjLW5hdGl2ZTBZMBMGByqGSM49AgEGCCqG\nSM49AwEHA0IABNKLgXjEzMIhxdlf0/N9oXson/HKXjwtemsrrNoZdRbyEE0aK7ze\njRlpg2pyFmx6YoKM0NpJ/Zk9OcbUmNVuwOqjODA2MAwGA1UdEwEB/wQCMAAwDgYD\nVR0PAQH/BAQDAgeAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMCMAoGCCqGSM49BAMC\nA0kAMEYCIQDZIG9QpTzhQ2c35L8Lfm2OHe8x8GWi6lDyezocOYl0+QIhAPgEO1VW\n8CUvBt8ewJ6eb91O8evAhVtJg3B4GTb707WR\n-----END CERTIFICATE-----\n",
+        "chain": "-----BEGIN CERTIFICATE-----\nMIIBdzCCAR6gAwIBAgIUI17Ru8gBBbZGrYmhlXAOeQucmxQwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzIzWhcN\nMzYxMDI0MjMyODIzWjAcMRowGAYDVQQDDBFSeW5odWx0IGRldmljZSBDQTBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABDohgQrZCXBZEoTVHULPV/hXgn/nplrO9DYW\n9VYdSmcZhI53it6HSjyrqyXwCS2YwL2h2glTCGYyWsNqJbQg4M2jPjA8MBIGA1Ud\nEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMBYGA1UdJQEB/wQMMAoGCCsG\nAQUFBwMCMAoGCCqGSM49BAMCA0cAMEQCIHW9tSAE0BxDKTxikJGPXi3ejsfi+0mm\nUjb7EHkXPe95AiB0BbfbX2lx19dl7Sa1BByc8dCsZFZQQFnbaWiN5xM1kA==\n-----END CERTIFICATE-----\n",
+        "expires_at": "2027-01-25T23:28:23+00:00",
+        "activation": "pending"
+      }
+    },
+    "claim_used": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/claim",
+        "body": {
+          "token": "1vAKTX3b_uNhrsfRmBA3iNsLqzuVryvUCq88sFXZ-2w",
+          "installation_id": "0123456789abcdef0123456789abcdef",
+          "platform": "android",
+          "csr": "-----BEGIN CERTIFICATE REQUEST-----\nMIHUMHwCAQAwGjEYMBYGA1UEAwwPcnluaHVsdC1hbmRyb2lkMFkwEwYHKoZIzj0C\nAQYIKoZIzj0DAQcDQgAE0ouBeMTMwiHF2V/T832heyif8cpePC16ayus2hl1FvIQ\nTRorvN6NGWmDanIWbHpigozQ2kn9mT05xtSY1W7A6qAAMAoGCCqGSM49BAMCA0gA\nMEUCIQD1VYxKBN/BwBWXEIV1vqZRUTLNEcItt4z7eWInS6ej9wIgEm+dzEUcgPiw\n5Kcq1FP2NhX1OYNhEx13eh/qaqXILXQ=\n-----END CERTIFICATE REQUEST-----\n",
+          "proof": "MEYCIQC9SYh40GqWA1EfNeIMlrfIMaW_BTjeH_EnbgOCxXs0oAIhAOQmFByidZfUKXTQrOqFuLlieVDHFIkTm8oX-POJ_0lj"
+        }
+      },
+      "status": 410,
+      "headers": {},
+      "body": {
+        "detail": "This pairing was already used. Start pairing again."
+      }
+    },
+    "credential_awaiting": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "i-N_usHPxl7HkZZB-X02nCZHDMiSIU7K5kDGP716CJo"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "device_id": "de4fe1255d986bd53bbbbad574626c7f",
+        "certificate": "-----BEGIN CERTIFICATE-----\nMIIBlzCCATygAwIBAgIUP3bY3TLO4xbrXnuEGMpYQdrSIzYwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzIzWhcN\nMjcwMTI1MjMyODIzWjBAMSkwJwYDVQQDDCBkZTRmZTEyNTVkOTg2YmQ1M2JiYmJh\nZDU3NDYyNmM3ZjETMBEGA1UECwwKYWNjLW5hdGl2ZTBZMBMGByqGSM49AgEGCCqG\nSM49AwEHA0IABNKLgXjEzMIhxdlf0/N9oXson/HKXjwtemsrrNoZdRbyEE0aK7ze\njRlpg2pyFmx6YoKM0NpJ/Zk9OcbUmNVuwOqjODA2MAwGA1UdEwEB/wQCMAAwDgYD\nVR0PAQH/BAQDAgeAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMCMAoGCCqGSM49BAMC\nA0kAMEYCIQDZIG9QpTzhQ2c35L8Lfm2OHe8x8GWi6lDyezocOYl0+QIhAPgEO1VW\n8CUvBt8ewJ6eb91O8evAhVtJg3B4GTb707WR\n-----END CERTIFICATE-----\n",
+        "chain": "-----BEGIN CERTIFICATE-----\nMIIBdzCCAR6gAwIBAgIUI17Ru8gBBbZGrYmhlXAOeQucmxQwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzIzWhcN\nMzYxMDI0MjMyODIzWjAcMRowGAYDVQQDDBFSeW5odWx0IGRldmljZSBDQTBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABDohgQrZCXBZEoTVHULPV/hXgn/nplrO9DYW\n9VYdSmcZhI53it6HSjyrqyXwCS2YwL2h2glTCGYyWsNqJbQg4M2jPjA8MBIGA1Ud\nEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMBYGA1UdJQEB/wQMMAoGCCsG\nAQUFBwMCMAoGCCqGSM49BAMCA0cAMEQCIHW9tSAE0BxDKTxikJGPXi3ejsfi+0mm\nUjb7EHkXPe95AiB0BbfbX2lx19dl7Sa1BByc8dCsZFZQQFnbaWiN5xM1kA==\n-----END CERTIFICATE-----\n",
+        "expires_at": "2027-01-25T23:28:23+00:00",
+        "activation": "awaiting_connection"
+      }
+    },
+    "before_bind": {
+      "request": {
+        "method": "GET",
+        "path": "/api/projects"
+      },
+      "status": 401,
+      "headers": {},
+      "body": {
+        "detail": "Sign in to continue."
+      }
+    },
+    "auth_state": {
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/state"
+      },
+      "status": 200,
+      "headers": {},
+      "body": {
+        "setup_required": false,
+        "authenticated": true,
+        "username": "casey",
+        "role": "owner",
+        "sign_in_method": "local",
+        "step_up_required": false
+      }
+    },
+    "bind": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/session/bind",
+        "body": {}
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "set_cookie": [
+        "acc_session=cFzeEMXex5RMFRwkqg-I1gN3EVwsydW1DyUNk3GOy0k; HttpOnly; Max-Age=43200; Path=/; SameSite=strict",
+        "acc_csrf=Yz37de7OWe-TvQ0AkJ_sTDYEykaXKqUJ; Max-Age=43200; Path=/; SameSite=strict"
+      ],
+      "body": {
+        "ok": true
+      }
+    },
+    "devices_public": {
+      "request": {
+        "method": "GET",
+        "path": "/api/mobile/v1/devices"
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "devices": [
+          {
+            "id": "de4fe1255d986bd53bbbbad574626c7f",
+            "person": "casey",
+            "label": "Robin phone",
+            "kind": "native",
+            "status": "active",
+            "fingerprint": "18a9a9e38c6a80f46af762a69c6fde9aede3e8af4b6ff57ee9ce72cb6bdb8012",
+            "serial": "362316798019028472163012147228089183074639815478",
+            "expires_at": "2027-01-25T23:28:23+00:00",
+            "last_seen_at": "2026-10-27T23:28:24.925911+00:00",
+            "created_at": "2026-10-27T23:28:23.991003+00:00",
+            "installation": "3eb1bd439947",
+            "platform": "android",
+            "activation": "verified"
+          }
+        ]
+      }
+    },
+    "devices_private": {
+      "request": {
+        "method": "GET",
+        "path": "/api/mobile/v1/devices"
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "devices": [
+          {
+            "id": "de4fe1255d986bd53bbbbad574626c7f",
+            "person": "casey",
+            "label": "Robin phone",
+            "kind": "native",
+            "status": "active",
+            "fingerprint": "18a9a9e38c6a80f46af762a69c6fde9aede3e8af4b6ff57ee9ce72cb6bdb8012",
+            "serial": "362316798019028472163012147228089183074639815478",
+            "expires_at": "2027-01-25T23:28:23+00:00",
+            "last_seen_at": "2026-10-27T23:28:24.925911+00:00",
+            "created_at": "2026-10-27T23:28:23.991003+00:00",
+            "installation": "3eb1bd439947",
+            "installation_id": "0123456789abcdef0123456789abcdef",
+            "platform": "android",
+            "activation": "verified"
+          }
+        ]
+      }
+    },
+    "rotate": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/devices/de4fe1255d986bd53bbbbad574626c7f/rotate",
+        "body": {
+          "label": "Robin phone",
+          "person": "casey"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "id": "c30aa922388e891019985bfd770af1a3",
+        "link": "https://acc.example.lan/pair-mobile#c30aa922388e891019985bfd770af1a3:rmY-NHO0YcjObp9KUaCaS82r1Hw68y6Byub2Kb9rbTM",
+        "expires_at": "2026-10-27T23:33:24.960365+00:00",
+        "origin": "https://acc.example.lan"
+      }
+    },
+    "rotate_same_key": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/claim",
+        "body": {
+          "token": "rmY-NHO0YcjObp9KUaCaS82r1Hw68y6Byub2Kb9rbTM",
+          "installation_id": "0123456789abcdef0123456789abcdef",
+          "platform": "android",
+          "csr": "-----BEGIN CERTIFICATE REQUEST-----\nMIHUMHwCAQAwGjEYMBYGA1UEAwwPcnluaHVsdC1hbmRyb2lkMFkwEwYHKoZIzj0C\nAQYIKoZIzj0DAQcDQgAE0ouBeMTMwiHF2V/T832heyif8cpePC16ayus2hl1FvIQ\nTRorvN6NGWmDanIWbHpigozQ2kn9mT05xtSY1W7A6qAAMAoGCCqGSM49BAMCA0gA\nMEUCIGMpwt5fGa6TVUiet15jtTyxHsr3vWHyqAsi6Api1PG+AiEA7bXbIjSQ9rXY\nVDHuMCpiQU53ZgqqburhBZe3/XTKYF0=\n-----END CERTIFICATE REQUEST-----\n",
+          "proof": "MEQCIH3JRnRfGGWrP9CKW7PmTgwI7SBQ70u5bge2uM7p-eFHAiAMeE-eb-EO779khZPS07cMoSzIM28iUwbJL5Jqh2oOWA"
+        }
+      },
+      "status": 409,
+      "headers": {},
+      "body": {
+        "detail": "To renew, use the app on the same phone. Otherwise pair it as a new device."
+      }
+    },
+    "rotate_claim": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/claim",
+        "body": {
+          "token": "rmY-NHO0YcjObp9KUaCaS82r1Hw68y6Byub2Kb9rbTM",
+          "installation_id": "0123456789abcdef0123456789abcdef",
+          "platform": "android",
+          "csr": "-----BEGIN CERTIFICATE REQUEST-----\nMIHUMHwCAQAwGjEYMBYGA1UEAwwPcnluaHVsdC1hbmRyb2lkMFkwEwYHKoZIzj0C\nAQYIKoZIzj0DAQcDQgAEcPbyg8rnRdv13HlHT0nCDf67XskW2Clxyn2emJUXotP9\ntN7NGldoATHSOD/5jRgzuEPfpgnp8aKKezo9jMY8DKAAMAoGCCqGSM49BAMCA0gA\nMEUCIQC0I1Sv6dyBgmFZnkwTYCzRnTdDM8uKcEewzJJYgEQtSAIgepktbGtgTozQ\nnRtDXVuSdwfNW9v0M4Fcc64L6hZM/I4=\n-----END CERTIFICATE REQUEST-----\n",
+          "proof": "MEQCIHmanNPYkLlaDK0FHWdhhZltQd0NP7trpepjSdqE9CiOAiBlCZkG4wQJJmk6h7CyIZMgAw-T1pTLY9n45RXCtShiRw"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "receipt": "myfiTxle45970xXcdpG6z5PZLKZozLtZRHiJGSmjaGA",
+        "matching_code": "217038"
+      }
+    },
+    "rotate_confirm": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/pairings/c30aa922388e891019985bfd770af1a3/confirm",
+        "body": {
+          "matching_code": "217038"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "ok": true,
+        "device_id": "de4fe1255d986bd53bbbbad574626c7f",
+        "activation": "pending"
+      }
+    },
+    "rotate_credential": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "myfiTxle45970xXcdpG6z5PZLKZozLtZRHiJGSmjaGA"
+        }
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "device_id": "de4fe1255d986bd53bbbbad574626c7f",
+        "certificate": "-----BEGIN CERTIFICATE-----\nMIIBlTCCATygAwIBAgIUJaNBpjXrUKp7+J3OIzmhXJt67hwwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzI0WhcN\nMjcwMTI1MjMyODI0WjBAMSkwJwYDVQQDDCBkZTRmZTEyNTVkOTg2YmQ1M2JiYmJh\nZDU3NDYyNmM3ZjETMBEGA1UECwwKYWNjLW5hdGl2ZTBZMBMGByqGSM49AgEGCCqG\nSM49AwEHA0IABHD28oPK50Xb9dx5R09Jwg3+u17JFtgpccp9npiVF6LT/bTezRpX\naAEx0jg/+Y0YM7hD36YJ6fGiins6PYzGPAyjODA2MAwGA1UdEwEB/wQCMAAwDgYD\nVR0PAQH/BAQDAgeAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMCMAoGCCqGSM49BAMC\nA0cAMEQCIC5MQ+kTgW5Y4RYxf//iyo8xVHvRKAr/5gbP5EEio+qrAiA60ovHln+W\n489k8/7VD2xg2XkZgtcGaF4hCtV7emL/hg==\n-----END CERTIFICATE-----\n",
+        "chain": "-----BEGIN CERTIFICATE-----\nMIIBdzCCAR6gAwIBAgIUI17Ru8gBBbZGrYmhlXAOeQucmxQwCgYIKoZIzj0EAwIw\nHDEaMBgGA1UEAwwRUnluaHVsdCBkZXZpY2UgQ0EwHhcNMjYxMDI3MjMyNzIzWhcN\nMzYxMDI0MjMyODIzWjAcMRowGAYDVQQDDBFSeW5odWx0IGRldmljZSBDQTBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABDohgQrZCXBZEoTVHULPV/hXgn/nplrO9DYW\n9VYdSmcZhI53it6HSjyrqyXwCS2YwL2h2glTCGYyWsNqJbQg4M2jPjA8MBIGA1Ud\nEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMBYGA1UdJQEB/wQMMAoGCCsG\nAQUFBwMCMAoGCCqGSM49BAMCA0cAMEQCIHW9tSAE0BxDKTxikJGPXi3ejsfi+0mm\nUjb7EHkXPe95AiB0BbfbX2lx19dl7Sa1BByc8dCsZFZQQFnbaWiN5xM1kA==\n-----END CERTIFICATE-----\n",
+        "expires_at": "2027-01-25T23:28:24+00:00",
+        "activation": "pending"
+      }
+    },
+    "old_receipt_after_rotation": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "i-N_usHPxl7HkZZB-X02nCZHDMiSIU7K5kDGP716CJo"
+        }
+      },
+      "status": 409,
+      "headers": {},
+      "body": {
+        "detail": "An owner must confirm this device first, or its certificate is no longer current."
+      }
+    },
+    "revoke": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/devices/de4fe1255d986bd53bbbbad574626c7f/revoke",
+        "body": {}
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "ok": true,
+        "policy_applied": false
+      }
+    },
+    "credential_after_revoke": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "myfiTxle45970xXcdpG6z5PZLKZozLtZRHiJGSmjaGA"
+        }
+      },
+      "status": 410,
+      "headers": {},
+      "body": {
+        "detail": "This mobile app pairing expired or was cancelled. Start pairing again."
+      }
+    },
+    "session_after_revoke": {
+      "request": {
+        "method": "GET",
+        "path": "/api/mobile/v1/devices"
+      },
+      "status": 401,
+      "headers": {},
+      "body": {
+        "detail": "Sign in to continue."
+      }
+    },
+    "devices_after_revoke": {
+      "request": {
+        "method": "GET",
+        "path": "/api/mobile/v1/devices"
+      },
+      "status": 200,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "devices": [
+          {
+            "id": "de4fe1255d986bd53bbbbad574626c7f",
+            "person": "casey",
+            "label": "Robin phone",
+            "kind": "native",
+            "status": "revoked",
+            "fingerprint": "413a59d781b9be7a2631e92ace3eb17425b9a76cb51f1cca5aace024acbee6e4",
+            "serial": "214873398844971936898792971371192407412541419036",
+            "expires_at": "2027-01-25T23:28:24+00:00",
+            "last_seen_at": null,
+            "created_at": "2026-10-27T23:28:23.991003+00:00",
+            "installation": "3eb1bd439947",
+            "installation_id": "0123456789abcdef0123456789abcdef",
+            "platform": "android",
+            "activation": "inactive"
+          }
+        ]
+      }
+    },
+    "edge_after_revoke": {
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/state"
+      },
+      "status": 403,
+      "headers": {},
+      "body": {
+        "detail": "This device or machine is not allowed here."
+      }
+    },
+    "throttled": {
+      "request": {
+        "method": "POST",
+        "path": "/api/mobile/v1/credential",
+        "body": {
+          "receipt": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "status": 429,
+      "headers": {},
+      "body": {
+        "detail": "Too many mobile app pairing attempts. Wait ten minutes and try again."
+      }
+    }
+  }
+}

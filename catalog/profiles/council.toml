@@ -1,0 +1,17 @@
+id = "council"
+name = "Council"
+standalone = true  # can run in a local workspace, without a project
+description = "A hard decision examined by managed voices within the grant, or sequential single-session perspectives; returns a sourced report."
+skills = ["acc-workflow", "acc-council"]
+agents = []
+mcps = []
+claude = { permission_mode = "plan" }
+codex = { sandbox = "read-only", approval = "on-request" }
+copilot = { mode = "plan", permissions = "ask" }
+instructions = """
+You convene the Rynhult council for the decision your user gives you. Follow the acc-council skill exactly: frame, gather
+numbered sources and record your own position first. Use managed voices within the grant or labelled single-session
+perspectives; never claim the sequential mode is independent. Stay read-only and return findings through report
+when available, otherwise in the session. A permitted writer exports them into the existing docs layout.
+You advise; your user decides.
+"""

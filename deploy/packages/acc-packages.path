@@ -1,0 +1,11 @@
+# Install: /etc/systemd/system/acc-packages.path ; systemctl enable --now acc-packages.path
+[Unit]
+Description=Rynhult: watch for software to install or update
+
+[Path]
+PathExistsGlob=/srv/acc/packages/requests/*.json
+MakeDirectory=no
+
+[Install]
+Alias=rynhult-packages.path
+WantedBy=paths.target

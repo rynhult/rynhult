@@ -1,0 +1,31 @@
+[Unit]
+Description=Rynhult: read-only host snapshot for the dashboard
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/accd
+ExecStart=/usr/local/sbin/acc-hoststate
+Nice=10
+# Root for SMART (raw disk access), GPU and other users' services; it writes only the snapshot.
+ProtectSystem=strict
+ReadWritePaths=/srv/acc/hoststate
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_RAWIO CAP_SYS_ADMIN CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE CAP_CHOWN
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @raw-io
+
+[Install]
+Alias=rynhult-hoststate.service

@@ -1,0 +1,59 @@
+{
+  "id": "caddy-2.11.7-dns-wave2-candidate",
+  "status": "pending-ci-and-qualification",
+  "go": "1.26.10",
+  "xcaddy": "v0.4.7",
+  "caddy": "v2.11.7",
+  "modules": {
+    "github.com/caddy-dns/cloudflare": "a8737d095ad5a48ca031cea6ab704057dbc2d250",
+    "github.com/caddy-dns/azure": "388d92a7d77f3051698c6f649b1f55b6df8334a6",
+    "github.com/caddy-dns/route53": "2eb347b211125519bdcdfdd47ec3667ab5bfade4",
+    "github.com/caddy-dns/googleclouddns": "6fcdbd98a8565df50ff40ff53411dc6c8d97dcd9",
+    "github.com/caddy-dns/digitalocean": "04bde2867106aa1b44c2f9da41a285fa02e629c5",
+    "github.com/caddy-dns/hetzner/v2": "8dd9e5b6f483e37d4fb64e06727637d67147d6ed"
+  },
+  "required_modules": [
+    "dns.providers.cloudflare",
+    "dns.providers.azure",
+    "dns.providers.route53",
+    "dns.providers.googleclouddns",
+    "dns.providers.digitalocean",
+    "dns.providers.hetzner"
+  ],
+  "artifacts": {},
+  "qualification": "CI must produce both immutable binaries, dependency locks, SBOM and provenance. Independently review and commit SHA-256 values and qualification evidence before marking qualified. Never infer trust from downloaded checksums.",
+  "go_linux_amd64_sha256": "ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5",
+  "provider_qualification": {
+    "cloudflare": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null
+    },
+    "azure": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null
+    },
+    "route53": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null
+    },
+    "googleclouddns": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null,
+      "hold": "NOT qualified: candidate needs a credentials file and project-wide managedZones.list; root file custody, dependency compatibility and both live consumers require live tests and security review."
+    },
+    "digitalocean": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null
+    },
+    "hetzner": {
+      "certificates": false,
+      "publishing": false,
+      "evidence": null
+    }
+  }
+}

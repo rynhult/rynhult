@@ -1,0 +1,38 @@
+#!/usr/bin/python3 -I
+"""Operator-only offline install. No compiler, URL, artifact or destination argument."""
+import importlib.util
+import json
+import os
+import platform
+import sys
+
+if os.geteuid() != 0 or len(sys.argv) != 1:
+    sys.exit('acc-dns: root operator required; no arguments accepted')
+spec = importlib.util.spec_from_file_location('dns_helper', '/usr/local/lib/acc-dns/helper.py')
+helper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helper)
+policy = helper.open_root('/etc/acc-dns')
+cache = helper.open_root('/var/cache/acc-dns')
+bin_dir = helper.open_root('/usr/local/bin')
+try:
+    manifest = json.loads(helper.DNSHelper(policy, {}, None).read('release.json'))
+    arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
+    if arch is None:
+        raise helper.Refused('unsupported_architecture')
+    # Fixed architecture filename. The independently approved manifest supplies only the expected digest.
+    fd = os.open('caddy-linux-' + arch, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=cache)
+    try:
+        st = os.fstat(fd)
+        helper.trusted(st, 0)  # downloaded staging artifact is root:root 0600
+        if st.st_size > 100 * 1024 * 1024:
+            raise helper.Refused('oversize_binary')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            data = stream.read(100 * 1024 * 1024 + 1)
+        helper.install_binary(bin_dir, data, manifest, arch)
+    finally:
+        os.close(fd)
+except (OSError, ValueError, KeyError):
+    sys.exit('acc-dns: release refused; no unverified binary was executed')
+finally:
+    for fd in (policy, cache, bin_dir):
+        os.close(fd)

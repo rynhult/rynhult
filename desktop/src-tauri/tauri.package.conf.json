@@ -1,0 +1,16 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "icon": ["icons/icon.png"],
+    "shortDescription": "Rynhult Linux desktop spike (not a release)",
+    "resources": {
+      "../package/stage/desktop/": "desktop/",
+      "../package/stage/src/": "src/",
+      "../package/stage/catalog/": "catalog/",
+      "../package/stage/docs/": "docs/",
+      "../package/stage/bin/": "bin/"
+    },
+    "linux": { "deb": { "section": "devel" } }
+  }
+}

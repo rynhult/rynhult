@@ -1,0 +1,11 @@
+# KEY=VALUE only (parsed, never sourced). The current conversation id is kept in /var/lib/acc-root-session.
+# Root's admin Claude conversation (the session that built ACC), resumed at boot by
+# acc-root-session.service and shown in ACC as an external, observe-only session.
+# Attach locally: sudo tmux -L acc-root attach -t acc-root   (or use its Remote Control link)
+SESSION_ID=aad9b1d9-b657-44a5-878e-cfc5d908372f
+ACC_ID=b79c92170367
+# Must be owned by root: Claude loads project settings (.claude/, CLAUDE.md) from its working directory.
+WORKDIR=/root
+PERMISSION_MODE=auto
+TMUX_SOCKET=acc-root
+TMUX_SESSION=acc-root

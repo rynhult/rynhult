@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "Frame": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "maxLength": 200,
+          "pattern": "^acc/(?:[a-zA-Z_][a-zA-Z_0-9]*/)*[a-zA-Z_][a-zA-Z_0-9]*\\.py$",
+          "title": "Module",
+          "type": "string"
+        },
+        "function": {
+          "maxLength": 100,
+          "pattern": "^[a-zA-Z_<>][a-zA-Z_0-9<>]*$",
+          "title": "Function",
+          "type": "string"
+        },
+        "line": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "module",
+        "function",
+        "line"
+      ],
+      "title": "Frame",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "report/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "report": {
+      "format": "uuid",
+      "title": "Report",
+      "type": "string"
+    },
+    "install": {
+      "pattern": "^[A-Za-z0-9_-]{22}$",
+      "title": "Install",
+      "type": "string"
+    },
+    "acc": {
+      "pattern": "^(dev|[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta|rc)\\.[0-9]+)?)$",
+      "title": "Acc",
+      "type": "string"
+    },
+    "os": {
+      "enum": [
+        "linux",
+        "wsl",
+        "macos",
+        "windows",
+        "other"
+      ],
+      "title": "Os",
+      "type": "string"
+    },
+    "install_kind": {
+      "enum": [
+        "release",
+        "git-checkout",
+        "windows-installer",
+        "mac-installer"
+      ],
+      "title": "Install Kind",
+      "type": "string"
+    },
+    "trigger": {
+      "enum": [
+        "server_error",
+        "supervisor_stage",
+        "update_failed",
+        "install_failed",
+        "session_crash",
+        "broker_crash"
+      ],
+      "title": "Trigger",
+      "type": "string"
+    },
+    "component": {
+      "enum": [
+        "server",
+        "supervisor",
+        "update",
+        "installer",
+        "session",
+        "broker",
+        "node"
+      ],
+      "title": "Component",
+      "type": "string"
+    },
+    "exception": {
+      "pattern": "^[A-Za-z_][A-Za-z_0-9]{0,79}$",
+      "title": "Exception",
+      "type": "string"
+    },
+    "fingerprint": {
+      "pattern": "^[a-f0-9]{16}$",
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "frames": {
+      "items": {
+        "$ref": "#/$defs/Frame"
+      },
+      "maxItems": 20,
+      "title": "Frames",
+      "type": "array"
+    },
+    "repeats": {
+      "default": "1",
+      "enum": [
+        "1",
+        "2-5",
+        "6-20",
+        "21-100",
+        "101+"
+      ],
+      "title": "Repeats",
+      "type": "string"
+    },
+    "message": {
+      "default": "",
+      "maxLength": 300,
+      "title": "Message",
+      "type": "string"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "enum": [
+            "claude",
+            "codex",
+            "copilot",
+            "cursor",
+            "antigravity",
+            "opencode"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "maximum": 255,
+          "minimum": -255,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exit Code"
+    }
+  },
+  "required": [
+    "schema",
+    "report",
+    "install",
+    "acc",
+    "os",
+    "install_kind",
+    "trigger",
+    "component",
+    "exception",
+    "fingerprint",
+    "frames"
+  ],
+  "title": "Report",
+  "type": "object",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "trigger": {
+            "const": "session_crash"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "message": {
+            "const": ""
+          },
+          "frames": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

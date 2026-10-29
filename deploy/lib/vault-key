@@ -1,0 +1,81 @@
+#!/usr/bin/python3 -I
+"""vault-key: make the key vault's data key once (deploy/install.sh, as root; standard library only).
+
+- Already there: nothing to do.
+- Missing while the database holds encrypted keys (for example acc.db restored without secrets/): refuse. A new
+  key couldn't decrypt them; restore vault.key from the same backup instead (docs/VAULT.md).
+- Otherwise: 32 random bytes, base64, written to a temporary file (0600) that is then linked into place, so a crash
+  never leaves an empty or half-written key, and a key made meanwhile by accd is never replaced.
+
+Root never follows a link here: the file is made with O_EXCL|O_NOFOLLOW and handed to its owner through its descriptor.
+
+Usage: vault-key <path to vault.key> <path to acc.db> [owner] [--external-database]
+"""
+from __future__ import annotations
+
+import base64
+import os
+import pwd
+import sqlite3
+import sys
+from pathlib import Path
+
+
+def stored_keys(database: Path) -> int:
+    if not database.is_file():
+        return 0
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    try:
+        tables = {r[0] for r in connection.execute("select name from sqlite_master where type = 'table'")}
+        return sum(connection.execute(f"select count(*) from {table}").fetchone()[0]
+                   for table in ("vault_key", "infrastructure_credential") if table in tables)
+    finally:
+        connection.close()
+
+
+def make(path: Path, owner: str | None = None) -> bool:
+    """True when this made the key, False when one appeared meanwhile."""
+    scratch = path.with_name(f".{path.name}.{os.getpid()}")
+    fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        if owner:
+            account = pwd.getpwnam(owner)
+            os.fchown(fd, account.pw_uid, account.pw_gid)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(base64.b64encode(os.urandom(32)).decode() + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(scratch, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+def main(argv: list[str]) -> int:
+    external = "--external-database" in argv
+    argv = [arg for arg in argv if arg != "--external-database"]
+    if len(argv) not in (3, 4):
+        print(__doc__.strip().splitlines()[-1], file=sys.stderr)
+        return 2
+    path, database = Path(argv[1]), Path(argv[2])
+    if path.exists() or path.is_symlink():
+        return 0
+    if external:
+        print("Missing vault.key with an external database: restore the matching key, or provision a key "
+              "for a verified empty new database before installation. Nothing was created.", file=sys.stderr)
+        return 1
+    count = stored_keys(database)
+    if count:
+        print(f"{path} is missing but {database} holds {count} encrypted key(s): restore vault.key from the backup "
+              "you restored acc.db from (a new key can't decrypt them). Nothing was created.", file=sys.stderr)
+        return 1
+    if make(path, argv[3] if len(argv) == 4 else None):
+        print(f"   created {path} (backed up with the other secrets by acc-backup)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

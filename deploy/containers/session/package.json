@@ -1,0 +1,10 @@
+{
+  "name": "@rynhult/session-image",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.120",
+    "@openai/codex": "0.164.0",
+    "@github/copilot": "1.0.102"
+  }
+}

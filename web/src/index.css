@@ -1,0 +1,155 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens (Rynhult design system v3). Dark first; light via html:not(.dark). Components use these, never raw hex.
+   Dark surfaces step from Charcoal to Slate; light surfaces use Snow and Frost tints. Text and status colours are >= 4.5:1 on every surface
+   they are used on (checked in docs/design/DESIGN.md). */
+:root {
+  --bg: #10191f;
+  --panel: #15232b;
+  --panel-2: #1c2e38;
+  --panel-3: #263b46;
+  --border: #38515f;
+  --border-strong: #526d7c;
+  --border-input: #8da4b2;
+  --text: #f2f5f4;
+  --muted: #a4b4be;
+  --faint: #93a7b4;
+  --accent: #abb6ff;
+  --accent-strong: #939ef2;
+  --accent-ink: #10191f;
+  --status-ink: #10191f;
+  --ok: #84ecb7;
+  --wait: #ffd78d;
+  --bad: #ffa0a0;
+  --info: #b6ddff;
+  --idle: #b9cfe1;
+  --term-bg: #10191f;
+  --elev-card: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --elev-pop: 0 24px 64px -16px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(255 255 255 / 0.06);
+  color-scheme: dark;
+}
+html:not(.dark) {
+  --bg: #f0f3f3;
+  --panel: #ffffff;
+  --panel-2: #e8eff3;
+  --panel-3: #dae5ed;
+  --border: #c0cfd8;
+  --border-strong: #9cafbc;
+  --border-input: #627987;
+  --text: #10191f;
+  --muted: #485d68;
+  --faint: #526671;
+  --accent: #414fa8;
+  --accent-strong: #3d4c9e;
+  --accent-ink: #ffffff;
+  --status-ink: #ffffff;
+  --ok: #086039;
+  --wait: #794200;
+  --bad: #aa1e24;
+  --info: #174f9e;
+  --idle: #50657a;
+  --term-bg: #10191f;
+  --elev-card: 0 1px 2px rgb(16 16 24 / 0.05);
+  --elev-pop: 0 24px 64px -16px rgb(16 16 24 / 0.25), 0 0 0 1px rgb(16 16 24 / 0.06);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-line-input: var(--border-input);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-info: var(--info);
+  --color-accent-ink: var(--accent-ink);
+  --color-status-ink: var(--status-ink);
+  --color-ok: var(--ok);
+  --color-wait: var(--wait);
+  --color-bad: var(--bad);
+  --color-idle: var(--idle);
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --shadow-card: var(--elev-card);
+  --shadow-pop: var(--elev-pop);
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01", "ss03";  /* Inter: single-storey a, open digits, curved r */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.xterm { padding: 8px 10px; height: 100%; }
+.xterm-viewport { background: var(--term-bg) !important; }
+
+/* Numbers that change or line up (counts, percentages, times) never jitter. */
+.tnum { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+/* Thin, quiet scrollbars on dark surfaces. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+/* A link inside a sentence is underlined, so it never relies on colour alone (WCAG 1.4.1, axe link-in-text-block).
+   In the base layer, so utilities such as no-underline win; links styled as buttons (inline-flex) are left alone. */
+@layer base {
+  /* Disclosure headers are tap targets too: at least 44 px on touch screens (phone pass). Utilities still win. */
+  @media (pointer: coarse) {
+    summary { min-height: 2.75rem; align-content: center; }
+    label:has(> input:is([type=checkbox], [type=radio])) { min-height: 2.75rem; min-width: 2.75rem; }
+  }
+  :where(p, li, dd) a:where(:not([class*="inline-flex"])) {
+    text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  }
+}
+
+/* Wiki pages (rendered Markdown). Readable measure, quiet hierarchy, design-system tokens only. */
+.wiki-prose { font-size: 14px; line-height: 1.7; color: var(--text); }
+/* Prose keeps a readable measure; code, tables and images may use the full width. */
+.wiki-prose > :is(p, ul, ol, h1, h2, h3, h4, blockquote) { max-width: 78ch; }
+.wiki-prose > :first-child { margin-top: 0; }
+.wiki-prose :is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 5rem; }
+.wiki-prose h1, .wiki-prose h2, .wiki-prose h3, .wiki-prose h4 { font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; margin: 1.6em 0 0.6em; }
+.wiki-prose h1 { font-size: 24px; margin-top: 0.2em; }
+.wiki-prose h2 { font-size: 18px; padding-bottom: 0.35em; border-bottom: 1px solid var(--border); }
+.wiki-prose h3 { font-size: 15px; }
+.wiki-prose h4 { font-size: 14px; color: var(--muted); }
+.wiki-prose p, .wiki-prose ul, .wiki-prose ol, .wiki-prose table, .wiki-prose pre, .wiki-prose blockquote { margin: 0 0 1em; }
+.wiki-prose ul { list-style: disc; padding-left: 1.4em; }
+.wiki-prose ol { list-style: decimal; padding-left: 1.5em; }
+.wiki-prose li { margin: 0.25em 0; }
+.wiki-prose li > input[type="checkbox"] { margin-right: 0.45em; accent-color: var(--accent); }
+.wiki-prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.wiki-prose a:hover { text-decoration-color: var(--accent); }
+.wiki-prose code { font-family: var(--font-mono); font-size: 0.86em; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 0.1em 0.35em; }
+.wiki-prose pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.9em 1em; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+.wiki-prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.wiki-prose kbd { font-family: var(--font-mono); font-size: 0.82em; background: var(--panel); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0.05em 0.4em; white-space: nowrap; }
+.wiki-prose blockquote { border-left: 3px solid var(--accent); background: var(--panel-2); padding: 0.6em 1em; border-radius: 0 6px 6px 0; color: var(--muted); }
+.wiki-prose table { width: 100%; border-collapse: collapse; font-size: 13px; display: table; }
+.wiki-prose th, .wiki-prose td { border: 1px solid var(--border); padding: 0.45em 0.7em; text-align: left; vertical-align: top; }
+.wiki-prose th { background: var(--panel-2); font-weight: 600; }
+.wiki-prose img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; margin: 0.4em 0; }
+.wiki-prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
+
+/* Paths in prose may wrap; fenced code keeps its exact local scroll surface. */
+.wiki-prose :not(pre) > code { overflow-wrap: anywhere; }

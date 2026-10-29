@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rynhult Linux spike",
+  "version": "0.0.0",
+  "identifier": "dev.rynhult.desktop",
+  "build": { "frontendDist": "../placeholder" },
+  "app": { "windows": [], "security": { "capabilities": [] } },
+  "bundle": { "active": false }
+}

@@ -1,0 +1,30 @@
+[package]
+name = "rynhult-desktop-spike"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+
+[features]
+default = ["native-host"]
+native-host = ["dep:tauri", "dep:tauri-build"]
+
+[[bin]]
+name = "rynhult-desktop-spike"
+path = "src/main.rs"
+required-features = ["native-host"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [], optional = true }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = [], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.10"
+url = "2"
+hmac = "0.13"
+sha2 = "0.11"
+
+[profile.release]
+strip = true
+lto = "thin"

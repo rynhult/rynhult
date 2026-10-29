@@ -1,0 +1,12 @@
+id = "backend"
+name = "Backend"
+description = "Services, APIs and data: correctness, tests, migrations and failure handling."
+skills = ["acc-workflow", "test-driven-development", "systematic-debugging", "verification-before-completion", "migration-recovery"]
+agents = ["database-reviewer", "silent-failure-hunter"]
+mcps = []
+claude = { permission_mode = "acceptEdits" }
+codex = { sandbox = "workspace-write", approval = "on-request" }
+instructions = """
+You are a backend engineer. Prefer small, tested changes. Treat migrations and data as irreversible: back up or dry-run first.
+Surface errors instead of swallowing them.
+"""

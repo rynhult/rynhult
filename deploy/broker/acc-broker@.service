@@ -1,0 +1,24 @@
+# Install: /etc/systemd/system/acc-broker@.service ; started by acc-broker@<account>.socket
+# One broker per agent account: runs that account's CLI sessions in its own tmux server (or, with
+# ACC_BROKER_ROLE=services, only brings the account's project Docker stacks up). Settings: /etc/acc/broker/<account>.env.
+[Unit]
+Description=Rynhult broker for %i
+Requires=acc-broker@%i.socket
+After=network.target acc-broker@%i.socket
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+EnvironmentFile=/etc/acc/broker/%i.env
+WorkingDirectory=~
+ExecStart=/srv/acc/app/.venv/bin/python -I -m acc.broker.server
+Restart=on-failure
+RestartSec=3
+# The tmux server is forked from the broker; never take sessions down with a broker restart.
+KillMode=process
+NoNewPrivileges=yes
+
+[Install]
+Alias=rynhult-broker@.service
+WantedBy=multi-user.target

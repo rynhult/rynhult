@@ -1,0 +1,35 @@
+# Install: /etc/systemd/system/acc-containers@.service ; one copy per connection to acc-containers.socket
+# Root: asks PID 1 to start the protected namespace bootstrap. The guard drops to the agent before Podman;
+# images never run as host root. Execution storage is private to the protected namespace. Do not set
+# NoNewPrivileges here: the account's newuidmap/newgidmap helpers are setuid.
+[Unit]
+Description=Rynhult trusted container launcher (one request)
+
+[Service]
+Slice=acc-launcher.slice
+MemoryMax=128M
+# Podman runs as the account here (image inspect): two Go processes of about one thread per CPU each. 32 rejected a
+# fork on a 20-CPU host (qualification attempt 14). Session units have their own per-session limits.
+TasksMax=256
+CPUQuota=100%
+Type=oneshot
+ExecStart=/usr/local/sbin/acc-containers
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+TimeoutStartSec=240
+# The launcher sets the modes others need explicitly (the attach root 0755, audit files 0640), never through this mask.
+UMask=0077
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+Alias=rynhult-containers@.service

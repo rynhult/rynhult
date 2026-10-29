@@ -1,0 +1,18 @@
+# Install: /etc/systemd/system/acc-containers.socket ; systemctl enable --now acc-containers.socket (deploy/install.sh)
+# The trusted container launcher's socket (docs/CONTAINER-LAUNCHER.md). Any local process may connect; acc-containers
+# answers only an agent account's own broker (peer uid and the broker unit's MainPID) for a session ACC granted.
+[Unit]
+Description=Rynhult trusted container launcher socket
+
+[Socket]
+ListenStream=/run/acc-containers.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0666
+Accept=yes
+MaxConnections=16
+MaxConnectionsPerSource=4
+
+[Install]
+Alias=rynhult-containers.socket
+WantedBy=sockets.target

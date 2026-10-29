@@ -1,0 +1,11 @@
+#!/bin/sh
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../deploy/lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# Claude Code statusLine command: keep the latest JSON for Rynhult, print a short line.
+input=$(cat)
+if [ -n "$ACC_RUN_DIR" ]; then
+  printf '%s\n' "$input" > "$ACC_RUN_DIR/statusline.json.tmp" && mv "$ACC_RUN_DIR/statusline.json.tmp" "$ACC_RUN_DIR/statusline.json"
+fi
+printf 'Rynhult %s' "${ACC_SESSION_ID:-}" | cut -c1-16

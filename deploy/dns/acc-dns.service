@@ -1,0 +1,38 @@
+[Unit]
+Description=Rynhult confined DNS credential helper
+Requires=acc-dns.socket
+After=acc-dns.socket
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/lib/acc-dns/helper.py
+User=root
+Group=root
+UMask=0077
+# Root-owned files need no DAC override; Caddy commands drop to caddy and are killed on timeout.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/caddy/acc-dns /etc/caddy/acc-dns-google /run/caddy /var/lib/caddy /run/acc-dns
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Decrypted credentials pass through this process.
+LimitCORE=0
+StandardOutput=null
+StandardError=null
+
+[Install]
+Alias=rynhult-dns.service

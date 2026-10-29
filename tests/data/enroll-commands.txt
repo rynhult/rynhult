@@ -1,0 +1,51 @@
+# Pasted "Add machine" commands and what the installers' strict parsers make of them (docs/INSTALLER.md, piece 1).
+# Read by tests/test_node_packages.py and by `deploy/macos/acc-setup.sh self-test` (macOS CI, under bash 3.2).
+# One example per line, fields separated by a tab:
+#   accept<TAB>command<TAB>primary trust fingerprint code name     (fingerprint "-" with --trust system)
+#   reject<TAB>command     (a line of just "reject": the empty command)
+# The shapes: --primary https://host[:port] (no path, no user), --trust system or --ca-fingerprint with 64 hex digits,
+# --code as made by acc.server.nodes.new_code (four groups of six hex digits), --name as acc.server.nodes.NAME.
+# Commands hold no tabs; leading and trailing blanks (a pasted newline) are fine.
+accept	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac	https://acc.example.lan system - 3fa21c-0b9d4e-77aa01-c3d2e1 studio-mac
+accept	acc-node enroll --primary https://acc.example.com:8443 --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code a1b2c3-d4e5f6-0a1b2c-3d4e5f --name m1	https://acc.example.com:8443 ca 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 a1b2c3-d4e5f6-0a1b2c-3d4e5f m1
+accept	  acc-node enroll --primary https://acc.example.lan/ --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac  	https://acc.example.lan system - 3fa21c-0b9d4e-77aa01-c3d2e1 studio-mac
+accept	acc-node enroll --name studio-mac --code 3FA21C-0B9D4E-77AA01-C3D2E1 --ca-fingerprint 9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08 --primary https://ACC.example.lan	https://ACC.example.lan ca 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 3fa21c-0b9d4e-77aa01-c3d2e1 studio-mac
+accept	acc-node   enroll  --primary https://10.0.0.5 --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name lab-2	https://10.0.0.5 system - 3fa21c-0b9d4e-77aa01-c3d2e1 lab-2
+reject
+reject	acc-node status
+reject	acc-node enroll
+reject	sudo acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary http://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan/evil --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://user@acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan:99999 --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://-acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc..example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https:// --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust none --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --ca-fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0 --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --ca-fingerprint 9f:86:d0:81:88:4c:7d:65:9a:2f:ea:a0:c5:5a:d0:15:a3:bf:4f:1b:2b:0b:82:2c:d1:5d:6c:15:b0:f0:0a:08 --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --ca-fingerprint 9g86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --fingerprint 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c0b9d4e77aa01c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name Studio-Mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name -mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name a12345678901234567890123456789012345678901
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac --name other
+reject	acc-node enroll --primary https://acc.example.lan --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac --socket-dir /tmp
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac extra
+reject	acc-node enroll --primary=https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac; rm -rf ~
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac && curl https://example.com | sh
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code $(id) --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code `id` --name studio-mac
+reject	acc-node enroll --primary 'https://acc.example.lan' --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-*
+reject	acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac > /tmp/x
+reject	curl -fsSL https://acc.example.lan/api/nodes/install.sh | sudo sh -s -- --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac
+reject	/usr/local/bin/acc-node enroll --primary https://acc.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name studio-mac

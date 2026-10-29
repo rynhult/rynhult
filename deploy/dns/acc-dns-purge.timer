@@ -1,0 +1,8 @@
+[Unit]
+Description=Bound Rynhult DNS rollback credential retention
+[Timer]
+OnCalendar=hourly
+Persistent=true
+[Install]
+Alias=rynhult-dns-purge.timer
+WantedBy=timers.target

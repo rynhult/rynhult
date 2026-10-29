@@ -1,0 +1,46 @@
+{
+	# Error records can include client addresses: discard runtime logs as well as
+	# leaving access logging disabled. Monitor availability/TLS externally.
+	log default {
+		output discard
+	}
+	servers {
+		max_header_size 8192
+		timeouts {
+			read_header 5s
+			read_body 15s
+			write 30s
+			idle 30s
+		}
+	}
+}
+
+telemetry.rynhult.dev {
+	request_body {
+		max_size 16384
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		# The privacy notice is one self-contained page: its inline stylesheet is allowed by hash only
+		# (tests/test_telemetry_privacy_notice.py keeps this in step with deploy/telemetry/privacy.html).
+		Content-Security-Policy "default-src 'none'; style-src 'self' 'sha256-bJQ1NplBl7IVYmb9VcwoM8/jsXNnr0qfS95xoqa5UZk='; img-src 'self'; frame-ancestors 'none'"
+		-Server
+	}
+	@collector path /v1/usage /v1/report /v1/delete /v1/schemas
+	handle @collector {
+		reverse_proxy unix//run/acc-telemetry/collector.sock {
+			# Override client-supplied forwarding headers. No CDN/proxy ahead.
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto https
+		}
+	}
+	handle {
+		root * /var/www/acc-telemetry
+		# No listing (no browse) and no dotfiles such as an editor's or VCS leftovers.
+		file_server {
+			hide .*
+		}
+	}
+}

@@ -1,0 +1,2007 @@
+#!/usr/bin/python3 -I
+"""acc-containers: the trusted container launcher (docs/CONTAINER-LAUNCHER.md). Root; stdlib only; never imports Rynhult.
+
+An account's broker runs with NoNewPrivileges, so rootless Podman can't map its user namespace from there. This helper
+asks PID 1 for a new service instead: `systemd-run --uid=<agent account> --property=Delegate=yes`, with the account's
+limits, outside the broker's process tree. Podman, crun, conmon and the agent all run as the agent account, never root.
+
+systemd starts one copy per connection on /run/acc-containers.sock (acc-containers.socket, Accept=yes); stdin is the
+connection. One JSON line in, one JSON line out:
+
+  {"version": 1, "request_id": "...", "operation": "launch"|"status"|"stop",
+   "session_id": "...", "generation": 3, "policy_id": "default"}
+
+Nothing else is accepted: no argv, paths, units, environment, images, mounts or systemd properties. Authority:
+  - the caller is the account's broker: its peer uid is the account's, and its pid is the MainPID of
+    acc-broker@<account>.service (the agent processes share the uid but are never the broker's main process);
+  - the session is the account's: accd (the control plane, user acc) wrote a grant for it in grants/<session>.json,
+    a folder only acc can write, naming the account, generation, policy, the session's private checkout and run
+    folder, its command and the account's limits;
+  - the image is one of Rynhult's pinned images: policy.json (root-owned) maps the policy id to a sha256 image ID;
+  - the mounts are the session's private checkout and run folder only, each a real directory owned by the account,
+    reached without following a link, under the account's own roots (its broker settings, root-owned).
+Every refusal has a stable code; every launch, stop, refusal and cleanup is audited (audit/, read into Rynhult's audit log
+by accd). `acc-containers --reconcile` (acc-containers-reconcile.timer) stops containers whose grant went away or
+changed, enforces the disk limit, retries failed cleanups and reports units it has no record of without touching them.
+"""
+from __future__ import annotations
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+
+import fcntl
+import grp
+import hashlib
+import json
+import os
+import pwd
+import re
+import select
+import shutil
+import signal
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(environment.get("ACC_CONTAINERS_ROOT", "/srv/acc/containers"))
+POLICY = Path(environment.get("ACC_CONTAINERS_POLICY", "/etc/acc/containers/policy.json"))
+IMAGE_STORE = Path(environment.get("ACC_CONTAINERS_IMAGE_STORE", "/var/lib/acc/session-images"))
+STORAGE_CONFIG = Path(environment.get("ACC_CONTAINERS_STORAGE_CONFIG", str(ROOT / "storage.conf")))
+BROKER_ENV = Path(environment.get("ACC_BROKER_ENV_DIR", "/etc/acc/broker"))
+CONTROL_USER = environment.get("ACC_CONTAINERS_CONTROL_USER", "acc")  # who may write grants (accd)
+SUBUID = Path(environment.get("ACC_SUBUID", "/etc/subuid"))
+SUBGID = Path(environment.get("ACC_SUBGID", "/etc/subgid"))
+SYSTEMD_RUN = environment.get("ACC_SYSTEMD_RUN", "/usr/bin/systemd-run")
+SYSTEMCTL = environment.get("ACC_SYSTEMCTL", "/usr/bin/systemctl")
+JOURNALCTL = environment.get("ACC_JOURNALCTL", "/usr/bin/journalctl")
+PODMAN = environment.get("ACC_PODMAN", "/usr/bin/podman")
+RUNUSER = environment.get("ACC_RUNUSER", "/usr/sbin/runuser")
+USER_RUNTIME = environment.get("ACC_USER_RUNTIME", "/run/user")
+
+VERSION = 1
+MAX_REQUEST = 4096
+READ_DEADLINE = 5  # seconds for the whole request line, not per recv (security review 8, SR8-4)
+MAX_GRANT = 128 * 1024
+REQUEST_KEYS = {"version", "request_id", "operation", "session_id", "generation", "policy_id"}
+GRANT_KEYS = {"version", "session_id", "generation", "policy_id", "account", "provider", "args", "checkout",
+              "run_dir", "guard_files", "limits"}
+LIMIT_KEYS = ("cpus", "memory_mib", "pids", "disk_gib", "sessions")
+# Inclusive bounds. None means "no limit", which only an explicit grant value can say; a missing key is refused.
+LIMIT_RANGES = {"cpus": (1, 256), "memory_mib": (256, 4 << 20), "pids": (64, 4 << 20), "disk_gib": (1, 1 << 14),
+                "sessions": (1, 64)}
+REQUEST_ID = re.compile(r"[a-z0-9][a-z0-9-]{7,63}")
+SESSION_ID = re.compile(r"[a-z0-9]{8,32}")
+POLICY_ID = re.compile(r"[a-z0-9][a-z0-9.-]{0,39}")
+ACCOUNT = re.compile(r"[a-z][a-z0-9-]{0,23}-agent")
+IMAGE = re.compile(r"sha256:[0-9a-f]{64}")
+PROVIDER = re.compile(r"[a-z][a-z0-9-]{0,23}")
+GUARD = re.compile(r"([A-Za-z0-9_./-]{1,120}=[0-9a-f]{64})( [A-Za-z0-9_./-]{1,120}=[0-9a-f]{64}){0,15}|")
+EXECUTABLE = re.compile(r"/[A-Za-z0-9_./-]{1,200}")
+# Never given to a container, whatever a grant says: not as a mount, and not as an ancestor of one.
+# Empty folders the published session image provides as tmpfs mount points for the run folder and the checkout (see
+# slim_rootfs.MOUNT_DIRECTORIES; tests keep the two lists in step).
+# The account inside the session container (keep-id). The qualification driver reads this line from the installed
+# launcher, so keep it a plain literal on one line.
+CONTAINER_UID = 1000
+TMPFS_TARGETS = tuple(environment.get("ACC_CONTAINERS_TMPFS_TARGETS", "/srv/acc/run:/srv/acc/workspaces").split(":"))
+FORBIDDEN = ("/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/proc", "/root", "/run", "/sbin", "/srv",
+             "/srv/acc", "/sys", "/usr", "/var", "/var/run", "/tmp")
+ADMIN_GROUPS = {"root", "sudo", "admin", "wheel", "adm", "docker", "lxd", "libvirt", "disk", "shadow", "systemd-journal",
+                "acc"}
+NETWORKS = ("none",)
+ACTIVE = ("starting", "running", "cleanup_failed")  # hold the account's capacity
+MAX_AUDIT_BYTES = 16 << 20  # daily disk buffer, including unauthenticated refusals
+AUDIT_DAYS = 30  # accd copies these into Rynhult's audit log within seconds; this is only a bounded buffer
+RECORD_DAYS = 7
+
+
+class Refused(Exception):
+    def __init__(self, code: str, detail: str):
+        super().__init__(detail)
+        self.code, self.detail = code, detail
+
+
+# ---- audit and records ----------------------------------------------------------------------------------------------
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def audit(action: str, **fields) -> None:
+    """One line per outcome, for accd to copy into Rynhult's audit log. Never keys, environment, output or transcripts."""
+    entry = {"id": uuid.uuid4().hex, "ts": now(), "action": action}
+    entry.update({k: v for k, v in fields.items() if v is not None})
+    for key, value in list(entry.items()):
+        if isinstance(value, str):
+            entry[key] = value[:300]
+    encoded = (json.dumps(entry, sort_keys=True) + "\n").encode()
+    if len(encoded) > 4000:
+        entry = {k: entry[k] for k in ("id", "ts", "action")}
+        entry["truncated"] = True
+        encoded = (json.dumps(entry, sort_keys=True) + "\n").encode()
+    folder = ROOT / "audit"
+    suffix = f"-refused-{fields['peer_uid'] % 64}" if action == "container.refused" and "peer_uid" in fields else ""
+    path = folder / (datetime.now(timezone.utc).strftime("%Y%m%d") + suffix + ".jsonl")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o640)
+    try:
+        os.fchmod(fd, 0o640)  # the unit's UMask=0077 drops the group's read: accd copies these lines as the acc group
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        budget = min(MAX_AUDIT_BYTES, 64 << 10) if suffix else MAX_AUDIT_BYTES
+        if os.fstat(fd).st_size + len(encoded) <= budget:
+            os.write(fd, encoded)
+        else:
+            # One marker per saturated stream/day, not a journal flood on every subsequent connection.
+            marker = path.with_suffix(".saturated")
+            try:
+                mark_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            except FileExistsError:
+                return
+            os.close(mark_fd)
+            print('{"action":"container.audit_saturated"}', file=sys.stderr)
+            return
+    finally:
+        os.close(fd)
+    _chgrp_control(path)
+    print(json.dumps(entry, sort_keys=True), file=sys.stderr)  # the journal too
+
+
+def _chgrp_control(path: Path) -> None:
+    try:
+        os.chown(path, -1, grp.getgrnam(CONTROL_USER).gr_gid, follow_symlinks=False)
+    except (KeyError, PermissionError):
+        pass
+
+
+def _state() -> Path:
+    return ROOT / "state"
+
+
+def read_record(session_id: str) -> dict | None:
+    try:
+        return json.loads((_state() / f"{session_id}.json").read_text())
+    except FileNotFoundError:
+        return None
+
+
+def write_record(record: dict) -> None:
+    record["updated_at"] = now()
+    path = _state() / f"{record['session_id']}.json"
+    tmp = path.with_name(f".{path.name}.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump(record, handle, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def records() -> list[dict]:
+    out = []
+    for path in sorted(_state().glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+class Lock:
+    """One operation at a time changes records (capacity is reserved under it)."""
+
+    def __init__(self, name: str = ".lock"):
+        self.name = name
+
+    def __enter__(self):
+        self.fd = os.open(_state() / self.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    os.close(self.fd)
+                    raise Refused("busy", "another operation is still running") from None
+                time.sleep(0.02)
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+        os.close(self.fd)
+
+
+# ---- request, peer and grant ----------------------------------------------------------------------------------------
+
+def parse_request(line: bytes) -> dict:
+    if len(line) > MAX_REQUEST:
+        raise Refused("too_large", "request too large")
+    try:
+        request = json.loads(line)
+    except (ValueError, RecursionError):
+        raise Refused("bad_request", "not JSON") from None
+    if not isinstance(request, dict) or set(request) != REQUEST_KEYS:
+        raise Refused("bad_request", "expected exactly version, request_id, operation, session_id, generation, policy_id")
+    if request["version"] != VERSION or type(request["version"]) is not int:
+        raise Refused("bad_version", f"protocol version {VERSION} only")
+    if request["operation"] not in ("launch", "status", "stop"):
+        raise Refused("bad_request", "operation is launch, status or stop")
+    for key, pattern in (("request_id", REQUEST_ID), ("session_id", SESSION_ID), ("policy_id", POLICY_ID)):
+        if not isinstance(request[key], str) or not pattern.fullmatch(request[key]):
+            raise Refused("bad_request", f"bad {key}")
+    if type(request["generation"]) is not int or not 1 <= request["generation"] <= (1 << 31):
+        raise Refused("bad_request", "bad generation")
+    return request
+
+
+def peer(sock: socket.socket) -> tuple[int, int]:
+    """(pid, uid) of the connected process, as the kernel reports it."""
+    pid, uid, _gid = struct.unpack("@iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    return pid, uid
+
+
+def broker_settings(account: str) -> dict[str, str]:
+    """The account's broker settings: root-owned, not writable by anyone else, and an agents broker."""
+    path = BROKER_ENV / f"{account}.env"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Refused("unknown_account", f"{account} has no Rynhult broker on this machine") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o022 or info.st_size > 65536:
+            raise Refused("unknown_account", f"{account}'s broker settings aren't root-owned and protected")
+        text = os.read(fd, 65536).decode(errors="replace")
+    finally:
+        os.close(fd)
+    # Resolve RYNHULT_*/ACC_* exactly as the broker's own EnvironmentFile reader does (new name wins), so the
+    # roots, run folder and role checked here are the ones that broker runs with.
+    values = dict(Environment(dict(line.split("=", 1) for line in text.splitlines()
+                                   if "=" in line and not line.startswith("#"))))
+    if values.get("ACC_BROKER_ROLE") != "agents":
+        raise Refused("unknown_account", f"{account} isn't an agents broker")
+    return values
+
+
+def _root_uid() -> int:
+    return int(environment.get("ACC_CONTAINERS_ROOT_UID", "0"))  # tests run unprivileged
+
+
+def _ranges(path: Path) -> list[tuple[str, int, int]]:
+    out = []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.strip().split(":")
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+            out.append((parts[0], int(parts[1]), int(parts[2])))
+    return out
+
+
+def account_identity(account: str) -> pwd.struct_passwd:
+    if not ACCOUNT.fullmatch(account):
+        raise Refused("unknown_account", "agent accounts are named <name>-agent")
+    try:
+        entry = pwd.getpwnam(account)
+    except KeyError:
+        raise Refused("unknown_account", f"no user {account}") from None
+    if entry.pw_uid == 0 or entry.pw_gid == 0:
+        raise Refused("unknown_account", "never root")
+    try:
+        _clean_path(entry.pw_dir)
+    except Refused:
+        raise Refused("unknown_account", f"{account}'s home isn't a plain path") from None
+    groups = {g.gr_name for g in grp.getgrall() if account in g.gr_mem}
+    try:
+        groups.add(grp.getgrgid(entry.pw_gid).gr_name)
+    except KeyError:
+        pass
+    if groups & ADMIN_GROUPS:
+        raise Refused("unknown_account", f"{account} is in an administrative group ({', '.join(sorted(groups & ADMIN_GROUPS))})")
+    for path, names in ((SUBUID, (account, str(entry.pw_uid))), (SUBGID, (account, str(entry.pw_uid)))):
+        ranges = _ranges(path)
+        own = [(start, count) for name, start, count in ranges if name in names]
+        if not own or not any(count >= 65536 for _, count in own):
+            raise Refused("no_subordinate_ids", f"{account} needs a subordinate id range of 65536 in {path}")
+        for start, count in own:
+            if start < 100000:
+                raise Refused("no_subordinate_ids", f"{account}'s subordinate ids overlap ordinary users")
+            for name, other, other_count in ranges:
+                if name not in names and other < start + count and start < other + other_count:
+                    raise Refused("no_subordinate_ids", f"{account}'s subordinate ids overlap {name}'s")
+    return entry
+
+
+def broker_main_pid(account: str) -> int:
+    result = subprocess.run([SYSTEMCTL, "show", "--property=MainPID", "--value", f"acc-broker@{account}.service"],
+                            capture_output=True, text=True, timeout=10, env=_clean_env())
+    value = result.stdout.strip()
+    return int(value) if result.returncode == 0 and value.isdigit() else 0
+
+
+def authorize(request: dict, peer_pid: int, peer_uid: int) -> tuple[dict, pwd.struct_passwd, dict]:
+    """The grant for this session, checked against the caller: (grant, account entry, broker settings)."""
+    grant = read_grant(request["session_id"])
+    account = grant["account"]
+    entry = account_identity(account)
+    settings = broker_settings(account)
+    if peer_uid != entry.pw_uid:
+        raise Refused("wrong_account", "only the session's own account's broker may ask for it")
+    main = broker_main_pid(account)
+    if not main or peer_pid != main:
+        raise Refused("not_broker", f"only acc-broker@{account}.service may ask (not one of its sessions)")
+    if grant["generation"] != request["generation"] or grant["policy_id"] != request["policy_id"]:
+        raise Refused("stale_generation", "the request doesn't match Rynhult's current grant for this session")
+    return grant, entry, settings
+
+
+def read_grant(session_id: str) -> dict:
+    """grants/<session>.json, written by accd: a regular file owned by the control user, in its own folder."""
+    folder = ROOT / "grants"
+    try:
+        control = pwd.getpwnam(CONTROL_USER).pw_uid
+    except KeyError:
+        raise Refused("no_grant", "no control-plane user") from None
+    try:
+        dir_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        raise Refused("no_grant", "no grants folder") from None
+    try:
+        info = os.fstat(dir_fd)
+        if info.st_uid != control or info.st_mode & 0o002:
+            raise Refused("no_grant", "the grants folder isn't the control plane's")
+        try:
+            fd = os.open(f"{session_id}.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+        except OSError:
+            raise Refused("no_grant", "Rynhult hasn't authorized this session") from None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != control or info.st_mode & 0o022 or info.st_size > MAX_GRANT:
+                raise Refused("no_grant", "the grant isn't a protected file written by Rynhult")
+            data = os.read(fd, MAX_GRANT + 1)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(dir_fd)
+    try:
+        grant = json.loads(data)
+    except ValueError:
+        raise Refused("bad_grant", "grant is not JSON") from None
+    return check_grant(grant, session_id)
+
+
+def check_grant(grant, session_id: str) -> dict:
+    if not isinstance(grant, dict) or set(grant) != GRANT_KEYS or grant.get("version") != VERSION:
+        raise Refused("bad_grant", "unexpected grant fields")
+    if grant["session_id"] != session_id:
+        raise Refused("bad_grant", "grant is for another session")
+    if type(grant["generation"]) is not int or not 1 <= grant["generation"] <= (1 << 31):
+        raise Refused("bad_grant", "bad generation")
+    for key, pattern in (("policy_id", POLICY_ID), ("account", ACCOUNT), ("provider", PROVIDER)):
+        if not isinstance(grant[key], str) or not pattern.fullmatch(grant[key]):
+            raise Refused("bad_grant", f"bad {key}")
+    args = grant["args"]
+    if (not isinstance(args, list) or len(args) > 256
+            or not all(isinstance(a, str) and "\0" not in a and len(a) <= 16384 for a in args)
+            or sum(len(a) for a in args) > 96 * 1024):
+        raise Refused("bad_grant", "bad command arguments")
+    if not isinstance(grant["guard_files"], str) or not GUARD.fullmatch(grant["guard_files"]):
+        raise Refused("bad_grant", "bad guard file hashes")
+    for key in ("checkout", "run_dir"):
+        if not isinstance(grant[key], str):
+            raise Refused("bad_grant", f"bad {key}")
+    grant["limits"] = check_limits(grant["limits"])
+    return grant
+
+
+def check_limits(limits) -> dict:
+    if not isinstance(limits, dict) or set(limits) != set(LIMIT_KEYS):
+        raise Refused("bad_limits", f"limits need exactly {', '.join(LIMIT_KEYS)} (null for no limit)")
+    for key, (low, high) in LIMIT_RANGES.items():
+        value = limits[key]
+        if value is not None and (type(value) is not int or not low <= value <= high):
+            raise Refused("bad_limits", f"{key} must be {low}–{high}, or null for no limit")
+    return dict(limits)
+
+
+def credential_adapter() -> dict:
+    """Execute only the installed, protected stdlib adapter, from its held fd."""
+    folder = None
+    fd = None
+    try:
+        folder, info = open_private_dir(str(ROOT), _root_uid())
+        if info.st_mode & 0o022:
+            raise ValueError()
+        # Check every ancestor too; a writable ancestor could replace ROOT.
+        for parent in ROOT.parents:
+            info = parent.lstat()
+            sticky = stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, _root_uid())
+                    or info.st_mode & 0o022 and not sticky):
+                raise ValueError()
+        fd = os.open('credentials.py', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid()
+                or info.st_mode & 0o022 or info.st_size > 32768):
+            raise ValueError()
+        code = os.read(fd, 32769)
+        namespace = {'__name__': 'acc_container_credentials'}
+        exec(compile(code, str(ROOT / 'credentials.py'), 'exec'), namespace)
+        return namespace
+    except (OSError, ValueError):
+        raise Refused('bad_integrations', 'protected credential adapter is missing or unsafe') from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if folder is not None:
+            os.close(folder)
+
+
+def load_policy(policy_id: str) -> dict:
+    """Rynhult's pinned images: root-owned and not writable by anyone else. Never a tag, never pulled."""
+    try:
+        fd = os.open(POLICY, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Refused("unpinned_image", "no container policy on this machine (/etc/acc/containers/policy.json)") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o022 or info.st_size > 65536:
+            raise Refused("unpinned_image", "the container policy isn't root-owned and protected")
+        text = os.read(fd, 65537)
+    finally:
+        os.close(fd)
+    try:
+        policy = json.loads(text)
+        entry = policy["images"][policy_id]
+    except (ValueError, KeyError, TypeError):
+        raise Refused("unpinned_image", f"{policy_id!r} isn't one of Rynhult's pinned images") from None
+    if (policy.get("version") != VERSION or not isinstance(entry, dict) or not isinstance(entry.get("image"), str)
+            or not IMAGE.fullmatch(entry["image"]) or entry["image"] == "sha256:" + "0" * 64
+            or not isinstance(entry.get("providers"), dict)
+            or entry.get("network", "none") not in NETWORKS):
+        raise Refused("unpinned_image", f"{policy_id!r} isn't pinned to a sha256 image ID")
+    for name, path in entry["providers"].items():
+        if not PROVIDER.fullmatch(str(name)) or not isinstance(path, str) or not EXECUTABLE.fullmatch(path) \
+                or ".." in path.split("/"):
+            raise Refused("unpinned_image", f"{policy_id!r} names a bad provider command")
+    result = {"image": entry["image"], "providers": dict(entry["providers"]), "network": entry.get("network", "none")}
+    if 'credentials' in entry or 'egress' in entry:
+        try:
+            adapter = credential_adapter()
+            result.update(adapter['integration_policy'](entry))
+        except (ValueError, TypeError):
+            raise Refused('bad_integrations', 'unsupported container integration policy') from None
+    return result
+
+
+# ---- mounts ---------------------------------------------------------------------------------------------------------
+
+def _clean_path(value: str) -> tuple[str, ...]:
+    if (not value.startswith("/") or "\0" in value or "//" in value or value != os.path.normpath(value)
+            or any(c in value for c in ",:\n=") or len(value) > 1024):
+        raise Refused("bad_mount", "mount paths are plain absolute paths")
+    parts = tuple(value.split("/")[1:])
+    if any(p in ("", ".", "..") for p in parts):
+        raise Refused("bad_mount", "mount paths are plain absolute paths")
+    return parts
+
+
+def open_private_dir(value: str, uid: int | None) -> tuple[int, os.stat_result]:
+    """Walk from / to `value` without following a link at any level; the last folder must be the account's own."""
+    parts = _clean_path(value)
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts:
+            try:
+                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError:
+                raise Refused("bad_mount", f"{value} isn't a folder reachable without links") from None
+            os.close(fd)
+            fd = nxt
+        info = os.fstat(fd)
+        if (uid is not None and info.st_uid != uid) or info.st_mode & 0o002:
+            raise Refused("bad_mount", f"{value} isn't the account's own private folder")
+        return fd, info
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _under(path: str, root: str) -> bool:
+    return path.startswith(root.rstrip("/") + "/")
+
+
+def check_mounts(grant: dict, entry: pwd.struct_passwd, settings: dict) -> tuple[list[int], dict]:
+    """Open the session's checkout and run folder (held until the unit runs); refuse anything else."""
+    checkout, run_dir = grant["checkout"], grant["run_dir"]
+    _clean_path(checkout)
+    _clean_path(run_dir)
+    roots = [r for r in settings.get("ACC_ALLOWED_ROOTS", "").split(":") if r]
+    expected_run = os.path.join(settings.get("ACC_RUN_DIR", "/srv/acc/run"), grant["session_id"])
+    if run_dir != expected_run:
+        raise Refused("bad_mount", "the run folder must be this account's folder for this session")
+    if not any(_under(checkout, root) for root in roots) or Path(checkout).parent.name != ".worktrees":
+        raise Refused("bad_mount", "the checkout must be a session checkout under the account's own roots")
+    home = entry.pw_dir.rstrip("/") or "/"
+    for path in (checkout, run_dir):
+        if path in FORBIDDEN or path in roots or path == home or _under(home, path) or _under(path, home):
+            raise Refused("bad_mount", f"{path} is never given to a container")
+        if any(_under(other, path) for other in (*FORBIDDEN, *roots)):
+            raise Refused("bad_mount", f"{path} contains a protected folder")
+    if _under(checkout, run_dir) or _under(run_dir, checkout) or checkout == run_dir:
+        raise Refused("bad_mount", "the checkout and run folder overlap")
+    held = []
+    try:
+        for path in (checkout, run_dir):
+            fd, _ = open_private_dir(path, entry.pw_uid)
+            held.append(fd)
+        # A private checkout has its own .git folder; a worktree's .git file points at the project's shared
+        # administration, which a container never gets.
+        try:
+            git = os.stat(".git", dir_fd=held[0], follow_symlinks=False)
+        except OSError:
+            raise Refused("shared_git", "the checkout has no .git folder of its own") from None
+        if not stat.S_ISDIR(git.st_mode) or git.st_uid != entry.pw_uid:
+            raise Refused("shared_git", "the checkout shares git administration (a worktree); containers need a private checkout")
+        identity = {path: [os.fstat(fd).st_dev, os.fstat(fd).st_ino] for path, fd in zip((checkout, run_dir), held)}
+        return held, identity
+    except BaseException:
+        for fd in held:
+            os.close(fd)
+        raise
+
+
+def same_dirs(identity: dict, uid: int) -> bool:
+    """After the unit started: are the mounted paths still the folders checked before it?"""
+    for path, (dev, ino) in identity.items():
+        try:
+            fd, info = open_private_dir(path, uid)
+        except Refused:
+            return False
+        os.close(fd)
+        if (info.st_dev, info.st_ino) != (dev, ino):
+            return False
+    return True
+
+
+# ---- systemd and podman ---------------------------------------------------------------------------------------------
+
+def _clean_env() -> dict:
+    return {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+
+
+def storage_config() -> str:
+    # An empty /dev/null storage.conf breaks Podman 4.9's keep-id layer-copy
+    # reexec. Select the reviewed backend explicitly, without user config.
+    content = ('[storage]\ndriver = "overlay"\n[storage.options]\nadditionalimagestores = ' + json.dumps([str(IMAGE_STORE)]) + '\n').encode()
+    if not STORAGE_CONFIG.exists() and STORAGE_CONFIG.parent == ROOT:
+        # Runtime metadata under the already-protected launcher root, not a
+        # machine/user configuration edit. Publish complete bytes atomically.
+        temporary = ROOT / 'state' / f'.storage-{os.getpid()}.conf'
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        try:
+            os.write(fd, content)
+            os.fchmod(fd, 0o644)
+        finally:
+            os.close(fd)
+        try:
+            try:
+                os.link(temporary, STORAGE_CONFIG, follow_symlinks=False)
+            except FileExistsError:
+                pass
+        finally:
+            temporary.unlink()
+    try:
+        fd = os.open(STORAGE_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o022
+                    or info.st_size > 4096 or os.read(fd, 4097) != content):
+                raise Refused('unsafe_runtime_config', 'storage configuration is not the protected overlay profile')
+        finally:
+            os.close(fd)
+    except OSError:
+        raise Refused('unsafe_runtime_config', 'protected storage configuration is missing or unreadable') from None
+    return str(STORAGE_CONFIG)
+
+
+def unit_name(session_id: str, generation: int) -> str:
+    return f"acc-ct-{session_id}-g{generation}.service"
+
+
+def container_name(session_id: str) -> str:
+    return f"acc-ct-{session_id}"
+
+
+def slice_name(uid: int) -> str:
+    return f"acc-containers-{uid}.slice"
+
+
+def limit_properties(limits: dict, *, aggregate: bool = False) -> list[str]:
+    """systemd properties for one session or, aggregate, for the account's slice (sessions x the per-session limit;
+    without a session cap the account's total isn't bounded either). Unset limits are cleared on the slice."""
+    times = limits["sessions"] if aggregate else 1
+    def value(key):
+        return None if limits[key] is None or times is None else limits[key] * times
+    cpus, memory, pids = value("cpus"), value("memory_mib"), value("pids")
+    props = []
+    if cpus is not None or aggregate:
+        props.append(f"CPUQuota={cpus * 100}%" if cpus is not None else "CPUQuota=")
+    if memory is not None:
+        props += [f"MemoryMax={memory}M", "MemorySwapMax=0"]
+    elif aggregate:
+        props += ["MemoryMax=infinity", "MemorySwapMax=infinity"]
+    if pids is not None or aggregate:
+        props.append(f"TasksMax={pids}" if pids is not None else "TasksMax=infinity")
+    return props
+
+
+# PID 1 creates the staging and runtime mount points below these host folders and follows symlinks there.
+STAGING_PARENT = Path("/run/acc-container-inputs")
+RUNTIME_PARENT = Path("/run/acc-ct")
+
+
+def staging_dir(grant: dict) -> str:
+    # Rootless Podman may join a previous pause mount namespace. Never reuse a staging name there.
+    return f"{STAGING_PARENT}/{unit_name(grant['session_id'], grant['generation']).removesuffix('.service')}"
+
+
+# Podman refuses a runroot longer than 50 characters ("the specified runroot is longer than 50 characters", exit 125:
+# conmon's attach socket under it must fit a socket path). The staging name (up to 51 characters for the unit stem
+# alone) is too long, so Podman's graphroot, runroot, tmpdir and XDG_RUNTIME_DIR live in their own fresh tmpfs at a short
+# per-generation path, in the unit's private mount namespace like the staging tree. The digest keeps names unique
+# across sessions and generations (rootless Podman may join an earlier pause namespace, so never reuse one).
+PODMAN_RUNROOT_LIMIT = 50
+
+
+def runtime_dir(grant: dict) -> str:
+    stem = unit_name(grant["session_id"], grant["generation"]).removesuffix(".service")
+    return f"{RUNTIME_PARENT}/" + hashlib.sha256(stem.encode()).hexdigest()[:16]
+
+
+def check_mount_parents() -> None:
+    """Each mount-point parent is missing (PID 1 creates it as root) or a root-owned real folder nobody else can
+    write, as is its parent: nobody else can create, replace or redirect where the tmpfs mounts. Further ancestors
+    may also be root's sticky folders, whose root-owned entries nobody else can replace."""
+    for folder in (STAGING_PARENT, RUNTIME_PARENT):
+        for depth, path in enumerate((folder, *folder.parents)):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                if path == folder:
+                    continue
+                raise Refused('unsafe_runtime_config', f'{path} is missing') from None
+            except OSError:
+                raise Refused('unsafe_runtime_config', f'{path} is unreadable') from None
+            sticky_root = depth > 1 and info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, _root_uid())
+                    or (info.st_mode & 0o022 and not sticky_root)):
+                raise Refused('unsafe_runtime_config', f'{path} is not a protected root-owned folder')
+
+
+# ---- what a unit leaves behind in its runtime dir --------------------------------------------------------------------
+# Rootless Podman's pause process (catatonit) can leave the unit: Podman asks the account's user manager to move it into
+# a podman-pause-*.scope (qualification attempt 10), so stopping the unit doesn't end it. It keeps the unit's mount
+# namespace, and with it the runtime tmpfs and pause.pid, which the host only sees as an empty folder: a later
+# `podman system migrate` can't reach it. So cleanup finds, from outside, every process of the account whose mount
+# table still has that runtime tmpfs, and ends it the way migrate ends the pause process (SIGKILL), through a pidfd so a
+# reused PID is never signalled. Nothing runs inside that namespace (the account shapes it). Only after none is left
+# is the empty mount-point folder removed.
+PROC = Path("/proc")
+HOLDER_WAIT = 5.0
+
+
+def _real_uid(pid: str) -> int | None:
+    try:
+        for line in (PROC / pid / "status").read_text().splitlines():
+            if line.startswith("Uid:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _holds(pid: str, runtime: str) -> bool:
+    try:
+        lines = (PROC / pid / "mountinfo").read_text().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        fields = line.split(" - ", 1)
+        if len(fields) == 2 and len(fields[0].split()) > 4 and fields[0].split()[4] == runtime \
+                and fields[1].split()[:1] == ["tmpfs"]:
+            return True
+    return False
+
+
+def runtime_holders(uid: int, runtime: str) -> list[str]:
+    """PIDs of the account's processes whose mount namespace still has the unit's runtime tmpfs at `runtime`."""
+    found = []
+    try:
+        pids = sorted((p.name for p in PROC.iterdir() if p.name.isdigit()), key=int)
+    except OSError:
+        return found
+    for pid in pids:
+        if _real_uid(pid) == uid and _holds(pid, runtime):
+            found.append(pid)
+    return found
+
+
+def describe(pid: str) -> str:
+    """The PID and a fixed label: `comm` is the account's to choose, so it's only compared, never copied."""
+    try:
+        comm = (PROC / pid / "comm").read_text().strip()
+    except OSError:
+        comm = ""
+    return f"PID {int(pid)} ({'catatonit' if comm == 'catatonit' else 'another process of the account'})"
+
+
+def end_process(pid: str, uid: int, runtime: str) -> None:
+    """SIGKILL one holder through a pidfd, re-checked after opening it; wait briefly for it to go."""
+    try:
+        fd = os.pidfd_open(int(pid))
+    except OSError:
+        return
+    try:
+        if _real_uid(pid) != uid or not _holds(pid, runtime):
+            return
+        signal.pidfd_send_signal(fd, signal.SIGKILL)
+        select.select([fd], [], [], HOLDER_WAIT)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def remove_runtime_dir(runtime: str) -> None:
+    """The host's empty, root-owned mount point PID 1 made for the runtime tmpfs; never follows a link."""
+    name = runtime.rsplit("/", 1)[1]
+    try:
+        parent = os.open(RUNTIME_PARENT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    try:
+        info = os.fstat(parent)
+        if info.st_uid not in (0, _root_uid()) or info.st_mode & 0o022:
+            return
+        os.rmdir(name, dir_fd=parent)  # only an empty folder goes; anything else stays for an owner to look at
+    except OSError:
+        pass
+    finally:
+        os.close(parent)
+
+
+def end_runtime_holders(record: dict, entry: pwd.struct_passwd) -> list[str]:
+    """After the unit stopped: end what still holds its runtime dir; what remains (named) means cleanup failed."""
+    runtime = runtime_dir(record)
+    others = {runtime_dir(r) for r in records()
+              if r["state"] in ACTIVE and (r["session_id"], r["generation"]) != (record["session_id"], record["generation"])}
+    if runtime in others:  # another container of the account uses it: never end its processes
+        return []
+    for pid in runtime_holders(entry.pw_uid, runtime):
+        end_process(pid, entry.pw_uid, runtime)
+    left = [describe(pid) for pid in runtime_holders(entry.pw_uid, runtime)]
+    if not left:
+        remove_runtime_dir(runtime)
+    return left
+
+
+def sweep_runtime_dirs(units: set[str]) -> None:
+    """Empty mount-point folders of runtime dirs no active record and no listed unit uses (they used to accumulate).
+    A unit without a record is left for an owner, so its folder stays too: removing it would detach the runtime tmpfs
+    inside that unit's mount namespace (rmdir of a mount point in another namespace does that)."""
+    active = {runtime_dir(r) for r in records() if r["state"] in ACTIVE}
+    active |= {f"{RUNTIME_PARENT}/" + hashlib.sha256(unit.removesuffix(".service").encode()).hexdigest()[:16]
+               for unit in units}
+    try:
+        names = [p.name for p in RUNTIME_PARENT.iterdir()]
+    except OSError:
+        return
+    for name in names:
+        runtime = f"{RUNTIME_PARENT}/{name}"
+        if re.fullmatch(r"[0-9a-f]{16}", name) and runtime not in active:
+            remove_runtime_dir(runtime)
+
+
+# The session's terminal: the execution guard's relay listens on <ATTACH_ROOT>/<runtime digest>/attach.sock, a folder
+# made here for the account (0700) before the unit starts and removed at cleanup. It is never mounted into the
+# container, so only the host account (the broker's pane) reaches the terminal (docs/decisions/drafts/container-attach-path.md).
+ATTACH_ROOT = Path(environment.get("ACC_CONTAINERS_ATTACH_ROOT", "/run/acc-ct-attach"))
+
+
+def attach_dir(grant: dict) -> Path:
+    return ATTACH_ROOT / runtime_dir(grant).rsplit("/", 1)[1]
+
+
+def attach_socket(grant: dict) -> str:
+    return str(attach_dir(grant) / "attach.sock")
+
+
+def _attach_parent() -> int:
+    """The attach root, held: root's, 0755. The guard reaches its folder below it as the account, so a narrower mode
+    (mkdir under this unit's UMask=0077 made it 0700: qualification attempt 14) is set on the held folder. Anything
+    else (a link, another owner, group or other write) is refused, never repaired: names in it could be planted."""
+    try:
+        os.mkdir(ATTACH_ROOT, 0o755)
+    except FileExistsError:
+        pass
+    try:
+        fd = os.open(ATTACH_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:  # ELOOP or ENOTDIR: a link or a file in its place
+        raise Refused("unsafe_runtime_config", f"the terminal attach folder {ATTACH_ROOT} is not a folder") from None
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != _root_uid() or info.st_mode & 0o022:
+            raise Refused("unsafe_runtime_config", "the terminal attach folder's parent is not protected")
+        if stat.S_IMODE(info.st_mode) != 0o755:
+            os.fchmod(fd, 0o755)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _remove_attach(parent: int, name: str) -> bool:
+    """Unlink what the account left in its attach folder without following anything; False if a folder remains."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    except FileNotFoundError:
+        return True
+    except OSError:  # not a folder (a link or file put in its place): remove the name only
+        os.unlink(name, dir_fd=parent)
+        return True
+    left = False
+    try:
+        for item in os.listdir(fd):
+            try:
+                os.unlink(item, dir_fd=fd)
+            except FileNotFoundError:
+                pass
+            except OSError:  # a folder, or anything else the account put there: a leftover, never a failed cleanup
+                left = True
+    finally:
+        os.close(fd)
+    if left:
+        return False
+    try:
+        os.rmdir(name, dir_fd=parent)
+    except FileNotFoundError:
+        pass
+    except OSError:  # the account added an entry after the listing
+        return False
+    return True
+
+
+def make_attach_dir(grant: dict, entry: pwd.struct_passwd) -> None:
+    parent = _attach_parent()
+    try:
+        name = attach_dir(grant).name
+        if not _remove_attach(parent, name):  # a leftover of this generation: never reuse what's in it
+            raise Refused("conflict", "the session's terminal attach folder couldn't be cleared")
+        os.mkdir(name, 0o700, dir_fd=parent)
+        os.chown(name, entry.pw_uid, entry.pw_gid, dir_fd=parent, follow_symlinks=False)
+    finally:
+        os.close(parent)
+
+
+def remove_attach_dir(grant: dict) -> bool:
+    try:
+        parent = os.open(ATTACH_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return True
+    try:
+        return _remove_attach(parent, attach_dir(grant).name)
+    finally:
+        os.close(parent)
+
+
+def input_dir(grant: dict) -> Path:
+    return ROOT / "inputs" / f"{grant['session_id']}-g{grant['generation']}"
+
+
+def discard_inputs(grant: dict) -> None:
+    folder = input_dir(grant)
+    if folder.exists():
+        # Only root's private snapshot tree, never the agent's input directory.
+        for directory, _, _ in os.walk(folder, followlinks=False):
+            os.chmod(directory, 0o700)
+        shutil.rmtree(folder)
+
+
+def bootstrap_integrations(grant: dict, held: list[int], entry: pwd.struct_passwd) -> tuple[dict, int]:
+    """Authenticate the broker main process, not an agent-controlled listener."""
+    fd = None
+    try:
+        name = f'/proc/self/fd/{held[1]}/.acc-integrations.sock'
+        fd = os.open(name, os.O_PATH | os.O_NOFOLLOW)
+        info = os.fstat(fd)
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != entry.pw_uid or info.st_mode & 0o077:
+            raise ValueError()
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.settimeout(5)
+            # Through the held descriptor: the authenticated listener is exactly the inode mounted below,
+            # even if a same-account process swaps names in the run directory meanwhile.
+            conn.connect(f'/proc/self/fd/{fd}')
+            pid, uid = peer(conn)
+            if uid != entry.pw_uid or pid != broker_main_pid(entry.pw_name) or pid <= 0:
+                raise ValueError()
+            current = os.stat(name, follow_symlinks=False)
+            if (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino):
+                raise ValueError()
+            conn.sendall(b'ACC-BOOTSTRAP\n')
+            data = bytearray()
+            while b'\n' not in data and len(data) <= 131072:
+                chunk = conn.recv(min(65536, 131073-len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            if not data.endswith(b'\n') or len(data) > 131072:
+                raise ValueError()
+            value = json.loads(data)
+        result, fd = fd, None
+        return value, result
+    except (OSError, ValueError, RecursionError):
+        raise Refused('bad_integrations', 'session integration endpoint is missing or unauthenticated') from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def freeze_integrations(grant: dict, held: list[int], entry: pwd.struct_passwd, policy: dict) -> None:
+    """Credential bytes only reach a sealed memfd; never the persistent input copy."""
+    if 'credentials' not in policy:
+        freeze_inputs(grant, held, entry)
+        return
+    endpoint_fd = credential_fd = None
+    try:
+        adapter = credential_adapter()
+        value, endpoint_fd = bootstrap_integrations(grant, held, entry)
+        if (not isinstance(value, dict) or value.get('provider') != grant['provider']
+                or value.get('session_id') != grant['session_id']
+                or type(value.get('generation')) is not int or value['generation'] != grant['generation']
+                or value.get('policy_digest') != adapter['policy_digest'](policy)):
+            raise ValueError()
+        envelope = adapter['validate'](value.get('credentials'), grant['provider'], grant['session_id'], grant['generation'])
+        if policy.get('egress') and endpoint_fd is None:
+            raise ValueError()
+        credential_fd = os.memfd_create('acc-session-auth', os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+        payload = json.dumps(envelope['credentials']).encode()
+        if os.write(credential_fd, payload) != len(payload):
+            raise ValueError()
+        os.fchmod(credential_fd, 0o444)
+        fcntl.fcntl(credential_fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_SEAL | fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK)
+        grant['_integrations'] = True
+        grant['_egress'] = bool(policy.get('egress'))
+        freeze_inputs(grant, held, entry)
+        grant['_credential_fd'] = len(held)
+        held.append(credential_fd)
+        credential_fd = None
+        if policy.get('egress'):
+            grant['_egress_fd'] = len(held)
+            held.append(endpoint_fd)
+            endpoint_fd = None
+    except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+        raise Refused('bad_integrations', 'session credential snapshot or policy refused') from None
+    finally:
+        for fd in (endpoint_fd, credential_fd):
+            if fd is not None:
+                os.close(fd)
+
+
+def freeze_inputs(grant: dict, held: list[int], entry: pwd.struct_passwd) -> None:
+    """Copy bounded launch inputs from held descriptors; verify control-plane hashes.
+
+    Root owns the private copy. A read-only bind of the original agent-owned
+    files would still let a writable alias or host-side writer change them.
+    Only the two output files retain writable bindings to the source run dir.
+    Team replies have a live read-only directory bind; launch inputs stay frozen.
+    """
+    expected = {}
+    for item in grant['guard_files'].split():
+        name, digest = item.split('=', 1)
+        if name.startswith('/') or any(part in ('', '.', '..') for part in name.split('/')) or name in expected:
+            raise Refused('bad_inputs', 'invalid guarded input name')
+        expected[name] = digest
+    folder = input_dir(grant)
+    parent = folder.parent
+    parent.mkdir(mode=0o700, exist_ok=True)
+    info = parent.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o077:
+        raise Refused('bad_inputs', 'input snapshot parent is not protected')
+    folder.mkdir(mode=0o700)  # never reuse or overwrite an earlier snapshot
+    output_fds = []
+    seen, total, count = set(), 0, 0
+    deadline = time.monotonic() + 5
+
+    def copy(source, target, prefix='', depth=0):
+        nonlocal total, count
+        if depth > 16:
+            raise Refused('bad_inputs', 'input snapshot depth exceeded')
+        with os.scandir(source) as listing:
+            for item in listing:
+                count += 1
+                if count > 2048 or time.monotonic() > deadline:
+                    raise Refused('bad_inputs', 'input snapshot budget exceeded')
+                name = prefix + item.name
+                if not prefix and item.name == '.acc-integrations.sock' and grant.get('_integrations'):
+                    continue  # authenticated separately; never copied or exposed as a run input
+                if not prefix and item.name == '.acc-launch-contract.json':
+                    raise Refused('bad_inputs', 'launcher contract is not an agent input')
+                if not prefix and item.name == 'team':
+                    (target / 'team').mkdir(mode=0o555)
+                    continue
+                if not prefix and item.name in ('events.jsonl', 'statusline.json'):
+                    (target / item.name).touch(mode=0o444)
+                    continue
+                info = item.stat(follow_symlinks=False)
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                if stat.S_ISDIR(info.st_mode):
+                    flags |= os.O_DIRECTORY
+                fd = os.open(item.name, flags, dir_fd=source)
+                try:
+                    info = os.fstat(fd)
+                    if info.st_uid != entry.pw_uid:
+                        raise Refused('bad_inputs', 'input is not owned by the session account')
+                    dest = target / item.name
+                    if stat.S_ISDIR(info.st_mode):
+                        dest.mkdir(mode=0o700)
+                        copy(fd, dest, name + '/', depth + 1)
+                        dest.chmod(0o555)
+                    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                        total += info.st_size
+                        if info.st_size > 2 << 20 or total > 16 << 20:
+                            raise Refused('bad_inputs', 'input snapshot byte budget exceeded')
+                        digest = hashlib.sha256()
+                        remaining = info.st_size
+                        with dest.open('xb') as output:
+                            while remaining:
+                                if time.monotonic() > deadline:
+                                    raise Refused('bad_inputs', 'input snapshot time budget exceeded')
+                                chunk = os.read(fd, min(remaining, 65536))
+                                if not chunk:
+                                    raise Refused('bad_inputs', 'input changed while copying')
+                                output.write(chunk)
+                                digest.update(chunk)
+                                remaining -= len(chunk)
+                        if name in expected:
+                            if digest.hexdigest() != expected[name]:
+                                raise Refused('bad_inputs', 'guarded input hash mismatch')
+                            seen.add(name)
+                        dest.chmod(0o555 if info.st_mode & 0o111 else 0o444)
+                    else:
+                        raise Refused('bad_inputs', 'input is linked or not a regular file/directory')
+                finally:
+                    os.close(fd)
+
+    try:
+        for name in ('events.jsonl', 'statusline.json'):
+            flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+            try:
+                fd = os.open(name, flags, dir_fd=held[1])
+            except FileNotFoundError:
+                fd = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o640, dir_fd=held[1])
+                os.fchown(fd, entry.pw_uid, entry.pw_gid)
+                os.fchmod(fd, 0o640)  # as the broker makes events.jsonl; accd reads it as the acc group (UMask=0077)
+            output_fds.append(fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != entry.pw_uid:
+                raise Refused('bad_inputs', 'output is not a private regular file')
+        created_team = False
+        try:
+            os.mkdir('team', mode=0o700, dir_fd=held[1])
+        except FileExistsError:
+            pass
+        else:
+            created_team = True
+        fd = os.open('team', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=held[1])
+        output_fds.append(fd)
+        if created_team:
+            os.fchown(fd, entry.pw_uid, entry.pw_gid)
+        info = os.fstat(fd)
+        if info.st_uid != entry.pw_uid or info.st_mode & 0o077:
+            raise Refused('bad_inputs', 'team replies require a private account-owned directory')
+        copy(held[1], folder)
+        if seen != set(expected):
+            raise Refused('bad_inputs', 'guarded input hash is missing')
+        contract = folder / '.acc-launch-contract.json'
+        contract.write_text(json.dumps({'version': 1, 'issuer': 'acc-containers', 'sandbox': 'container',
+                                        'network': 'none', 'session_id': grant['session_id'],
+                                        'generation': grant['generation'],
+                                        **({'integrations': 'readonly-v1', 'provider': grant['provider'],
+                                            'egress': grant['_egress']} if grant.get('_integrations') else {})}))
+        contract.chmod(0o444)
+        folder.chmod(0o555)
+        frozen_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        os.close(held[1])
+        held[1] = frozen_fd
+        held.extend(output_fds)
+    except BaseException:
+        for fd in output_fds:
+            os.close(fd)
+        discard_inputs(grant)
+        raise
+
+
+def podman_argv(grant: dict, policy: dict, entry: pwd.struct_passwd) -> list[str]:
+    """Fixed: only the policy's image and provider command, the grant's arguments after it, fixed workspace/input/output and contract mounts."""
+    session_id, limits = grant["session_id"], grant["limits"]
+    provider = policy["providers"].get(grant["provider"])
+    if provider is None:
+        raise Refused("unpinned_image", f"the pinned image has no {grant['provider']} command")
+    tmp_size = f"{min(limits['disk_gib'] or 4, 4)}g"  # tmpfs counts against memory; the disk limit is for the checkout
+    env_file = os.path.join(grant["run_dir"], "session.env")
+    runtime = runtime_dir(grant)
+    # The published rootfs is read-only before Podman starts, so crun can't create the session's bind targets (host
+    # paths). Small tmpfs mounts at the run root and the checkout's allowed root, which the image ships as empty
+    # folders (slim_rootfs.MOUNT_DIRECTORIES: /srv/acc/run, /srv/acc/workspaces), take the deeper mount points.
+    settings = broker_settings(entry.pw_name)
+    run_root = settings.get("ACC_RUN_DIR", "/srv/acc/run").rstrip("/") or "/"
+    checkout_root = next((r.rstrip("/") for r in settings.get("ACC_ALLOWED_ROOTS", "").split(":")
+                          if r and _under(grant["checkout"], r)), None)
+    if checkout_root is None or not _under(grant["run_dir"], run_root):
+        raise Refused("bad_mount", "the checkout and run folder must be under the account's roots")
+    # Only at the folders the image ships empty for this (slim_rootfs.MOUNT_DIRECTORIES), never at a root itself: an
+    # owner's root that is or contains image content (/usr/local, /srv/acc, /etc, /run, /) would otherwise be hidden by
+    # an empty tmpfs, and a hidden /usr/local/bin/acc-guard makes the agent's guard hook fail open.
+    targets = []
+    for root in (run_root, checkout_root):
+        shipped = next((folder for folder in TMPFS_TARGETS if root == folder or _under(root, folder)), None)
+        if shipped is None:
+            raise Refused("bad_mount", f"{root} isn't below a folder the session image provides "
+                                       f"({', '.join(TMPFS_TARGETS)}); use the standard roots")
+        if shipped not in targets:
+            targets.append(shipped)
+    targets = [f"--tmpfs={folder}:rw,nosuid,nodev,noexec,size=64k,mode=0755" for folder in targets]
+    argv = [PODMAN, "--remote=false", "--cgroup-manager=cgroupfs", "--storage-driver=overlay", f"--root={runtime}/storage",
+            f"--runroot={runtime}/run", f"--tmpdir={runtime}/tmp",
+            "run", "--default-mounts-file=/dev/null", "--events-backend=none",
+            "--runtime=/usr/bin/crun", f"--name={container_name(session_id)}", "--cgroups=split", "--sdnotify=conmon", "--detach",
+            "--rm", "--pull=never", "--read-only", "--read-only-tmpfs=false", "--image-volume=ignore",
+            "--no-healthcheck", "--cgroupns=private", "--log-driver=none",
+            "--hooks-dir=/etc/acc/containers/hooks.d", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            f"--userns=keep-id:uid={CONTAINER_UID},gid={CONTAINER_UID}", f"--user={CONTAINER_UID}:{CONTAINER_UID}",
+            "--pid=private", "--ipc=private", "--uts=private",
+            f"--network={policy['network']}", "--http-proxy=false", "--tty", "--interactive",
+            f"--pids-limit={limits['pids'] if limits['pids'] is not None else -1}",
+            f"--label=acc.session={session_id}", f"--label=acc.generation={grant['generation']}",
+            f"--tmpfs=/tmp:rw,nosuid,nodev,size={tmp_size},mode=1777",
+            "--tmpfs=/run/credentials:rw,nosuid,nodev,noexec,size=1m,mode=700",
+            *targets,
+            f"--mount=type=bind,src={staging_dir(grant)}/checkout,dst={grant['checkout']}",
+            f"--mount=type=bind,src={staging_dir(grant)}/run,dst={grant['run_dir']},ro",
+            *[f"--mount=type=bind,src={staging_dir(grant)}/{name},dst={grant['run_dir']}/{file}"
+              for name, file in (('events', 'events.jsonl'), ('statusline', 'statusline.json'))],
+            f"--mount=type=bind,src={staging_dir(grant)}/team,dst={grant['run_dir']}/team,ro",
+            f"--mount=type=bind,src={staging_dir(grant)}/run/.acc-launch-contract.json,dst=/run/acc-container/contract.json,ro",
+            f"--workdir={grant['checkout']}", "--env=HOME=/home/acc", "--env=PATH=/usr/local/bin:/usr/bin:/bin",
+            "--env=ACC_SESSION_READONLY_INPUTS=1", "--env=RYNHULT_SESSION_READONLY_INPUTS=1",
+            "--env=LANG=C.UTF-8", "--env=LC_ALL=C.UTF-8", "--env=PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
+            "--env=PYTHONDONTWRITEBYTECODE=1",
+            "--env=TERM=tmux-256color", f"--env=ACC_RUN_DIR={grant['run_dir']}", f"--env=ACC_SESSION_ID={session_id}",
+            f"--env=ACC_GUARD_FILES={grant['guard_files']}",
+            f"--env=RYNHULT_RUN_DIR={grant['run_dir']}", f"--env=RYNHULT_SESSION_ID={session_id}",
+            f"--env=RYNHULT_GUARD_FILES={grant['guard_files']}",
+            # session.env (vault keys, MCP secrets; 0600 in the run folder) is read inside, never put on a command line
+            "--rootfs", "--passwd=false", "--entrypoint=/usr/local/bin/acc-session",
+            f"{staging_dir(grant)}/rootfs", env_file, provider,
+            *grant["args"]]
+    if '_credential_fd' in grant:
+        index = argv.index('--rootfs')
+        argv[index:index] = [f"--mount=type=bind,src={staging_dir(grant)}/auth,dst=/run/acc-credentials/auth.json,ro"]
+    if '_egress_fd' in grant:
+        index = argv.index('--rootfs')
+        argv[index:index] = [f"--mount=type=bind,src={staging_dir(grant)}/egress,dst=/run/acc-egress/socket,ro"]
+    return argv
+
+
+def systemd_run_argv(grant: dict, policy: dict, entry: pwd.struct_passwd, *, held: list[int]) -> list[str]:
+    unit = unit_name(grant["session_id"], grant["generation"])
+    runtime = runtime_dir(grant)
+    guard = ROOT / 'acc-container-exec'
+    try:
+        if not guard.is_absolute() or '..' in guard.parts:
+            raise ValueError()
+        for parent in guard.parents:
+            info = parent.lstat()
+            sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if (info.st_uid not in (0, _root_uid()) or not stat.S_ISDIR(info.st_mode)
+                    or (info.st_mode & 0o022 and not sticky_root)):
+                raise ValueError()
+        fd = os.open(guard, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o022:
+                raise ValueError()
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        raise Refused('unsafe_runtime_config', 'protected execution namespace guard is missing or unsafe') from None
+    check_mount_parents()
+    host_namespace = os.stat('/proc/self/ns/user')
+    argv = [SYSTEMD_RUN, "--quiet", "--collect", f"--unit={unit}", f"--slice={slice_name(entry.pw_uid)}",
+            "--uid=0", "--gid=0", "--working-directory=/", "--expand-environment=no",
+            "--property=Delegate=yes", "--property=Type=notify", "--property=NotifyAccess=all",
+            "--property=KillMode=mixed", "--property=TimeoutStartSec=40", "--property=TimeoutStopSec=20",
+            "--property=Restart=no", "--property=OOMPolicy=kill", "--property=PrivateUsers=no",
+            # A User=0 service gets USER=root/LOGNAME=root from systemd; Podman picks subordinate ranges by $USER.
+            f"--setenv=HOME={entry.pw_dir}", f"--setenv=USER={entry.pw_name}", f"--setenv=LOGNAME={entry.pw_name}",
+            f"--setenv=XDG_RUNTIME_DIR={runtime}",
+            "--setenv=PATH=/usr/local/bin:/usr/bin:/bin",
+            "--setenv=CONTAINERS_CONF=/dev/null", "--setenv=CONTAINERS_CONF_OVERRIDE=/dev/null",
+            f"--setenv=CONTAINERS_STORAGE_CONF={storage_config()}"]
+    # PID 1 binds the objects held by root into a private, root-owned staging tree, before dropping uid.
+    # Podman never reopens the agent-controlled source names. norbind excludes host submounts.
+    argv += [f"--property=TemporaryFileSystem={staging_dir(grant)}:ro",
+             *[f"--property=BindPaths=/proc/{os.getpid()}/fd/{fd}:{staging_dir(grant)}/{name}:norbind"
+               for fd, name in zip(held[:-1], ("checkout", "run", "events", "statusline", "team"))]]
+    for key, name in (('_credential_fd', 'auth'), ('_egress_fd', 'egress')):
+        if key in grant:
+            argv += [f"--property=BindReadOnlyPaths=/proc/{os.getpid()}/fd/{held[grant[key]]}:{staging_dir(grant)}/{name}:norbind"]
+    argv += [f"--property=BindReadOnlyPaths=/proc/{os.getpid()}/fd/{held[-1]}:{staging_dir(grant)}/rootfs:norbind"]
+    argv += [f"--property=TemporaryFileSystem={runtime}:rw,mode=0700,uid={entry.pw_uid},gid={entry.pw_gid}"]
+    # No user bus: rootless Podman moves a new pause process into a podman-pause-*.scope through the account's user
+    # manager whatever --cgroup-manager says (utils.MovePauseProcessToScope), and godbus finds that bus at
+    # /run/user/<uid>/bus from the uid, not from XDG_RUNTIME_DIR. It escaped the unit, its limits and its cleanup
+    # (qualification attempt 10). With /run/user empty here the move fails (a warning) and catatonit stays in the unit.
+    argv += ["--property=TemporaryFileSystem=/run/user:ro"]
+    argv += [f"--property={p}" for p in limit_properties(grant["limits"])]
+    return argv + ["--", "/usr/bin/python3", "-I", str(guard), str(entry.pw_uid), str(entry.pw_gid),
+                   str(host_namespace.st_dev), str(host_namespace.st_ino), unit, attach_socket(grant), "--",
+                   *podman_argv(grant, policy, entry)]
+
+
+# ---- Podman as the account, from this request's own service ---------------------------------------------------------
+# as_account() runs Podman as the account for checks (image inspect at launch, container exists at cleanup). Rootless
+# Podman makes the account's pause process (catatonit) when it has none, and asks the account's user manager to move
+# it into a podman-pause-*.scope: godbus finds that bus at /run/user/<uid>/bus from the uid, whatever XDG_RUNTIME_DIR
+# says, and socket-activates the session bus on the way. That left a catatonit and a dbus-daemon of the account outside
+# every unit (qualification attempt 13's census counted both). So the bus address here is one that never connects: the
+# move fails (a warning) and catatonit stays in this request's cgroup, where nothing else of the account can be (only
+# root can move processes into a system service). Before answering, it is ended the way `podman system migrate` ends
+# it (SIGKILL, and its pause.pid removed), so the launcher leaves the account no process and no stale pause.pid. A
+# pause process the account already had is only joined: it isn't in this cgroup and is left alone.
+NO_BUS = "disabled:"
+# Where "this request's cgroup" is one of the launcher's own units (acc-launcher.slice: a socket-activated instance or
+# the reconcile run). Anywhere else (the legacy hierarchy's "/", a root shell's session) it holds processes the
+# launcher didn't start, so nothing is ended.
+OWN_UNIT = re.compile(r"/acc-launcher\.slice/acc-containers(@[^/]+|-reconcile)\.service")
+
+
+def _own_cgroup() -> str | None:
+    try:
+        return next(line[3:] for line in (PROC / "self" / "cgroup").read_text().splitlines() if line.startswith("0::"))
+    except (OSError, StopIteration):
+        return None
+
+
+def _in_cgroup(pid: str, cgroup: str) -> bool:
+    try:
+        return (PROC / pid / "cgroup").read_text().splitlines() == [f"0::{cgroup}"]
+    except OSError:
+        return False
+
+
+def remove_pause_pid(uid: int, pids: set[str]) -> None:
+    """The account's pause.pid, if it names a process ended here; every folder opened without following a link."""
+    fds = []
+    try:
+        fds.append(os.open(USER_RUNTIME, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+        for name in (str(uid), "libpod", "tmp"):
+            fds.append(os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1]))
+        fd = os.open("pause.pid", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fds[-1])
+        try:
+            info = os.fstat(fd)
+            text = os.read(fd, 33) if stat.S_ISREG(info.st_mode) and info.st_uid == uid else b""
+        finally:
+            os.close(fd)
+        if text.strip().decode(errors="replace") in pids:
+            os.unlink("pause.pid", dir_fd=fds[-1])
+    except OSError:
+        pass
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+# A pause.pid naming a process Podman can't join (qualification attempt 18b): generation 2's image check failed with
+# "podman exited 125: cannot re-exec process to join the existing user namespace". Podman 4.9.3 removes such a file only
+# in TryJoinPauseProcess. When the alive file is missing from its tmp dir, runtime setup refreshes first: it starts a new
+# pause process, which publishes pause.pid with rename_noreplace; an existing pause.pid wins, Podman joins the PID it
+# names, and opening that process's /proc/PID/ns/user fails. `podman system migrate` takes the same runtime setup (and
+# SIGKILLs whatever PID the file names), so it can't recover here. Before each Podman call as the account the launcher
+# reads the file, never following a link: a live catatonit of the account is joined and left alone, and a file naming
+# no process, an exited one or someone else's is removed (no process is signalled), so Podman makes a fresh pause process
+# that end_own_leftovers then ends. What can't be verified refuses the request instead of running Podman.
+STALE_PODMAN_STATE = "it can't be verified, so Podman isn't run (owner review required)"
+
+
+def pause_pid_problem(text: bytes, entry: pwd.struct_passwd) -> str | None:
+    """None when pause.pid names the account's live pause process; otherwise why Podman can't join what it names."""
+    value = text.strip().decode("ascii", errors="replace")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", value):
+        return "pause.pid named no process"
+    try:
+        status = (PROC / value / "status").read_text()
+        comm = (PROC / value / "comm").read_text().strip()
+    except OSError:
+        return f"pause.pid named PID {value}, which has exited"
+    if re.search(r"^State:\s*[ZX]", status, re.MULTILINE):
+        return f"pause.pid named PID {value}, which has exited"
+    if _real_uid(value) != entry.pw_uid or comm != "catatonit":  # comm is the account's: compared, never copied
+        return f"pause.pid named PID {value}, which is not {entry.pw_name}'s catatonit"
+    return None
+
+
+def clear_stale_pause_pid(entry: pwd.struct_passwd) -> None:
+    """Remove the account's pause.pid when it names a process Podman can't join (above); refuse when unverifiable."""
+    def refuse(detail):
+        audit("container.stale_podman_state", account=entry.pw_name, detail=detail)
+        return Refused("stale_podman_state", f"{detail}; {STALE_PODMAN_STATE}")
+    fds = []
+    try:
+        try:
+            fds.append(os.open(USER_RUNTIME, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+            for name in (str(entry.pw_uid), "libpod", "tmp"):
+                fds.append(os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1]))
+        except FileNotFoundError:
+            return  # no Podman state yet
+        except OSError:
+            raise refuse("the account's Podman runtime folder (libpod/tmp) can't be opened without following a link") from None
+        try:
+            fd = os.open("pause.pid", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fds[-1])
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise refuse("Podman's pause.pid in the account's runtime folder is not a regular file") from None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise refuse("Podman's pause.pid in the account's runtime folder is not a regular file")
+            if info.st_uid != entry.pw_uid:
+                raise refuse("Podman's pause.pid in the account's runtime folder is not the account's own file")
+            text = os.read(fd, 33)
+        finally:
+            os.close(fd)
+        problem = pause_pid_problem(text, entry)
+        if problem is None:
+            return
+        try:
+            current = os.stat("pause.pid", dir_fd=fds[-1], follow_symlinks=False)
+            if (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino):  # the file just read, not a new one
+                os.unlink("pause.pid", dir_fd=fds[-1])
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise refuse(f"{problem}, and it couldn't be removed") from None
+        audit("container.pause_state_cleared", account=entry.pw_name,
+              detail=f"{problem}; removed so Podman starts a new pause process")
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def end_own_leftovers(uid: int) -> list[str]:
+    """End the account's processes left in this request's cgroup by Podman (its new pause process): pidfd, re-check
+    the UID and cgroup, SIGKILL, wait briefly. Returns what remains."""
+    cgroup = _own_cgroup()
+    if not cgroup or not OWN_UNIT.fullmatch(cgroup):
+        return []
+
+    def leftovers() -> list[str]:
+        try:
+            pids = sorted((p.name for p in PROC.iterdir() if p.name.isdigit()), key=int)
+        except OSError:
+            return []
+        return [pid for pid in pids if _real_uid(pid) == uid and _in_cgroup(pid, cgroup)]
+    ended = set()
+    for pid in leftovers():
+        try:
+            fd = os.pidfd_open(int(pid))
+        except OSError:
+            continue
+        try:
+            if _real_uid(pid) == uid and _in_cgroup(pid, cgroup):
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+                ended.add(pid)
+                select.select([fd], [], [], HOLDER_WAIT)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    if ended:
+        remove_pause_pid(uid, ended)
+    return leftovers()
+
+
+# Rootless Podman is two Go processes (it re-executes itself in the user namespace), each with about one thread per CPU
+# plus a few. acc-containers@.service's TasksMax=32 rejected a fork during an image inspect on acc-host's 20 CPUs
+# (qualification attempt 14); the units now allow 256. Whether that limit was hit is read from this request's own
+# cgroup: on 6.8 a rejected fork counts in the forking task's pids.events, whichever ancestor's limit refused it; on
+# kernels with hierarchical pids events it counts in pids.events.local of the cgroup whose own limit refused it. So
+# acc-launcher.slice is sized never to be that limit (it admits every connection at this unit's limit), and the unit's
+# own counter sees every rejection on both. Podman may get through a rejected fork with half its state made, so the
+# check is refused either way.
+CGROUP_FS = Path("/sys/fs/cgroup")
+
+
+def rejected_forks() -> int | None:
+    """Forks the task limit rejected in this request's own unit; None elsewhere (as end_own_leftovers: any other
+    cgroup holds processes the launcher didn't start) or when unreadable."""
+    cgroup = _own_cgroup()
+    if not cgroup or not OWN_UNIT.fullmatch(cgroup) or ".." in cgroup.split("/"):
+        return None
+    folder = CGROUP_FS / cgroup.lstrip("/")
+    for name in ("pids.events.local", "pids.events"):
+        try:
+            for line in (folder / name).read_text().splitlines():
+                key, _, value = line.partition(" ")
+                if key == "max":
+                    return int(value)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def as_account(entry: pwd.struct_passwd, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    """Podman as the agent account; fixed config includes the protected additional store. No user bus (above). A
+    process it leaves that can't be ended is audited and refuses the request (cleanup records that for a retry), as is
+    a fork the task limit rejected meanwhile. A pause.pid Podman couldn't join is cleared first (above)."""
+    clear_stale_pause_pid(entry)
+    before = rejected_forks()
+    try:
+        return subprocess.run([RUNUSER, "-u", entry.pw_name, "--", "/usr/bin/env", "-i", f"HOME={entry.pw_dir}",
+                               f"XDG_RUNTIME_DIR={USER_RUNTIME}/{entry.pw_uid}", f"DBUS_SESSION_BUS_ADDRESS={NO_BUS}",
+                               "PATH=/usr/bin:/bin", "CONTAINERS_CONF=/dev/null", "CONTAINERS_CONF_OVERRIDE=/dev/null", f"CONTAINERS_STORAGE_CONF={storage_config()}", PODMAN, *args],
+                              capture_output=True, text=True, timeout=timeout, env=_clean_env())
+    finally:
+        left = end_own_leftovers(entry.pw_uid)
+        after = rejected_forks()
+        rejected = after - before if before is not None and after is not None and after > before else 0
+        stuck = ("the launcher's own Podman check left processes of the account it could not end: "
+                 + ", ".join(describe(pid) for pid in left)) if left else ""
+        if rejected:  # first: a process left behind is likely this rejected fork's doing, so one refusal names both
+            detail = (f"the launcher's Podman check as the account hit the task limit ({rejected} fork(s) "
+                      "rejected): install the reviewed acc-containers@.service and acc-launcher.slice (TasksMax "
+                      "256 and 4352), then systemctl daemon-reload")
+            audit("container.launcher_task_limit", account=entry.pw_name, detail=detail, leftover=stuck or None)
+            raise Refused("launcher_task_limit", detail + ("; a process of the account also outlived the check, "
+                                                           "owner review required" if stuck else ""))
+        if left:
+            audit("container.account_leftover", account=entry.pw_name, detail=stuck)
+            raise Refused("account_leftover", "a process of the account outlived the launcher's Podman check; "
+                          "owner review required")
+
+
+def _walk_error(error):
+    raise error
+
+
+def check_protected_tree(path: Path) -> None:
+    if not path.is_absolute() or not path.is_relative_to(IMAGE_STORE) or '..' in path.parts:
+        raise ValueError()
+    if path.lstat().st_uid != _root_uid():
+        raise ValueError()
+    resolved = path.resolve(strict=True)
+    if not resolved.is_relative_to(IMAGE_STORE):
+        raise ValueError()
+    for parent in (*path.parents, resolved, *resolved.parents):
+        info = parent.lstat()
+        sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+        if (info.st_uid not in (0, _root_uid()) or not stat.S_ISDIR(info.st_mode)
+                or (info.st_mode & 0o022 and not sticky_root)):
+            raise ValueError()
+    for root, dirs, files in os.walk(resolved, followlinks=False, onerror=_walk_error):
+        for child in (Path(root), *(Path(root) / name for name in dirs + files)):
+            info = child.lstat()
+            if info.st_uid != _root_uid() or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022):
+                raise ValueError()
+
+
+def open_image_rootfs(policy: dict) -> int:
+    """Hold the owner-published tree, not another lookup in the account's mutable image index."""
+    path = IMAGE_STORE / 'rootfs' / policy['image'].removeprefix('sha256:')
+    fd = None
+    try:
+        if path.resolve(strict=True) != path:
+            raise ValueError()
+        check_protected_tree(path)
+        fd, _ = open_private_dir(str(path), _root_uid())
+        pin = os.open('.acc-image-id', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        try:
+            info = os.fstat(pin)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != _root_uid() or info.st_mode & 0o022
+                    or os.read(pin, 128) != (policy['image'] + '\n').encode()):
+                raise ValueError()
+        finally:
+            os.close(pin)
+        return fd
+    except (OSError, ValueError, Refused):
+        if fd is not None:
+            os.close(fd)
+        raise Refused('untrusted_image_store', 'protected execution root is missing, unsafe or mismatched') from None
+
+
+def check_image_location(image: dict, expected: str, account: pwd.struct_passwd | None = None) -> None:
+    """Never accept an ID resolved to the account's writable image layers."""
+    failed = None
+    try:
+        data = image['GraphDriver']['Data']
+        paths = [data['UpperDir'], *filter(None, data.get('LowerDir', '').split(':'))]
+        if image['Id'].removeprefix('sha256:') != expected.removeprefix('sha256:') or image['GraphDriver']['Name'] != 'overlay':
+            raise ValueError()
+        for name in paths:
+            failed = name
+            # Check both the overlay/l shortlink and its canonical target:
+            # resolving alone would miss a replaceable shortlink directory.
+            check_protected_tree(Path(name))
+    except (KeyError, TypeError, AttributeError, OSError, ValueError):
+        try:
+            explain_image_store(account, expected, failed)
+        except Exception:  # advisory: never change the refusal, even if the journal write fails
+            pass
+        raise Refused('untrusted_image_store', 'session image must resolve exclusively to protected root-owned layers') from None
+
+
+def explain_image_store(account: pwd.struct_passwd | None, image: str, path) -> None:
+    """Why the image store was refused, for the owner: the journal only, never the audit (which accd copies)."""
+    entry = {"action": "container.image_store_diagnosis", "image": str(image)[:80]}
+    if account is not None:
+        entry["account"] = account.pw_name
+    if not isinstance(path, str):
+        entry["fix"] = "inspection did not return the pinned overlay image; check the policy's image ID and the store"
+    else:
+        own = os.path.join(os.path.normpath(account.pw_dir), ".local/share/containers/storage") if account else None
+        entry.update(path=path[:300], own_store=bool(own and os.path.normpath(path).startswith(own + "/")))
+        parts = Path(path).parts
+        layer = parts[-2][:80] if len(parts) >= 3 and parts[-3] == "overlay" and parts[-1] == "diff" else None
+        if entry["own_store"]:
+            entry["fix"] = (f"an image layer with the same ID ({layer or 'see path'}) exists in {account.pw_name}'s own store; "
+                            f"as {account.pw_name}, run `python3 -I scripts/container_qualification/image_store.py "
+                            f"--check-store {image}` from the reviewed checkout: it prints the exact commands that remove "
+                            "only the images and containers holding it. Build only with deploy/containers/build-image.")
+        else:
+            entry["fix"] = "this layer is not protected (root-owned, no group/other write, no replaceable link); review the store"
+    print(json.dumps(entry, sort_keys=True), file=sys.stderr)
+
+
+# Why the launcher's own Podman check failed, for the refusal and its audit: attempt 17's second generation was refused
+# with only "unavailable", and Podman's reason was gone. Podman runs as the account over the account's own storage, so
+# the text is the account's to shape: one error line, printable ASCII only, bounded, and every path but Podman itself
+# and the protected store replaced, so the refusal names the failure without copying the account's files or folders.
+UNAVAILABLE = 'protected session image is unavailable'
+PODMAN_REASON_LIMIT = 240
+LOGRUS_MESSAGE = re.compile(r'level=(?:error|fatal|panic) msg="((?:[^"\\]|\\.)*)"')
+
+
+def podman_reason(stderr) -> str:
+    lines = [line.strip() for line in (stderr or '').splitlines() if line.strip()]
+    errors = [line for line in lines if line.startswith('Error:') or LOGRUS_MESSAGE.search(line)]
+    line = (errors or lines or ['no message'])[-1]
+    found = LOGRUS_MESSAGE.search(line)
+    line = found.group(1).replace('\\"', '"') if found else line.removeprefix('Error:').strip()
+    line = re.sub(r'[^\x20-\x7e]', '?', line)
+
+    def path(match):
+        value = match.group(0)
+        kept = value == PODMAN or (_under(value, str(IMAGE_STORE)) and '..' not in value.split('/'))
+        return value if kept else '<path>'
+    return re.sub(r'/[^\s"\'`:,;()<>]*', path, line)[:PODMAN_REASON_LIMIT]
+
+
+def check_image(entry, policy):
+    try:
+        answer = as_account(entry, 'image', 'inspect', policy['image'])
+    except subprocess.TimeoutExpired:
+        raise Refused('untrusted_image_store', f'{UNAVAILABLE}: podman image inspect took longer than 60 s') from None
+    except (OSError, subprocess.SubprocessError):
+        raise Refused('untrusted_image_store', f'{UNAVAILABLE}: podman could not be run as the account') from None
+    if answer.returncode:
+        raise Refused('untrusted_image_store',
+                      f'{UNAVAILABLE}: podman exited {answer.returncode}: {podman_reason(answer.stderr)}')
+    try:
+        images = json.loads(answer.stdout)
+    except (ValueError, TypeError):
+        raise Refused('untrusted_image_store', f"{UNAVAILABLE}: podman's answer is not an image list") from None
+    if not isinstance(images, list) or len(images) != 1:
+        count = len(images) if isinstance(images, list) else 'no'
+        raise Refused('untrusted_image_store', f'{UNAVAILABLE}: podman found {count} images')
+    check_image_location(images[0], policy['image'], entry)
+
+
+def unit_state(unit: str) -> str:
+    result = subprocess.run([SYSTEMCTL, "show", "--property=ActiveState", "--value", unit], capture_output=True,
+                            text=True, timeout=10, env=_clean_env())
+    return result.stdout.strip() or "unknown"
+
+
+def bootstrap_refusal(unit: str) -> str | None:
+    """The guard's own refusal line, for the audit. Only the guard prints a bare JSON object with this code,
+    and it does so only when Podman never ran; the reason is advisory, the launch is refused either way."""
+    try:
+        result = subprocess.run([JOURNALCTL, "--quiet", "--no-pager", "--boot", "--output=cat", f"--unit={unit}",
+                                 "--lines=50"], capture_output=True, text=True, timeout=10, env=_clean_env())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in reversed(result.stdout.splitlines()):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(entry, dict) and entry.get("code") == "unsafe_runtime_namespace"
+                and isinstance(entry.get("detail"), str)):
+            return f"unsafe_runtime_namespace: {entry['detail']}"[:300]
+    return None
+
+
+def cleanup(record: dict, entry: pwd.struct_passwd) -> bool:
+    """Persist failed cleanup even if systemd or the runtime times out; never audit command arguments."""
+    try:
+        return _cleanup(record, entry)
+    except (OSError, subprocess.SubprocessError, Refused):
+        audit("container.cleanup_failed", account=record["account"], session_id=record["session_id"],
+              unit=record["unit"], code="runtime_unavailable")
+        return False
+
+
+def _cleanup(record: dict, entry: pwd.struct_passwd) -> bool:
+    """Stop the whole unit and verify absence; nothing is ever removed by name or label.
+
+    The container, conmon and Podman's storage exist only inside the unit: its cgroup, its private mount namespace and
+    the runtime tmpfs there. A unit that is inactive (or failed) has no process left, and that tmpfs went with it, so
+    that is the proof of absence, once no process that left the unit still holds that tmpfs (end_runtime_holders).
+    The account's own Podman store never holds these containers, and anything running as
+    the account can write it: a container named like this one there proves nothing, and must not block the session."""
+    unit = record["unit"]
+    subprocess.run([SYSTEMCTL, "stop", unit], capture_output=True, timeout=30, env=_clean_env())
+    stopped = unit_state(unit) in ("inactive", "failed")
+    subprocess.run([SYSTEMCTL, "reset-failed", unit], capture_output=True, timeout=10, env=_clean_env())
+    if not stopped:  # it may still run: hold its capacity until an owner has looked
+        audit("container.quarantined", account=record["account"], session_id=record["session_id"], unit=unit,
+              detail="the session's unit didn't stop; owner review required")
+        return False
+    left = end_runtime_holders(record, entry)  # a pause process that left the unit (attempt 10)
+    if left:
+        record["leftover"] = ", ".join(left)[:300]
+        audit("container.quarantined", account=record["account"], session_id=record["session_id"], unit=unit,
+              detail="processes of the account still hold the session's runtime folder after the unit stopped: "
+                     + record["leftover"])
+        return False
+    record.pop("leftover", None)
+    discard_inputs(record)
+    if not remove_attach_dir(record):
+        audit("container.attach_leftover", account=record["account"], session_id=record["session_id"], unit=unit,
+              detail="the account left a folder in the session's terminal attach folder; it goes at reboot")
+    return True
+
+
+# ---- operations -----------------------------------------------------------------------------------------------------
+
+def reply(request: dict | None, ok: bool, code: str, detail: str = "", **extra) -> dict:
+    out = {"ok": ok, "code": code, "request_id": (request or {}).get("request_id")}
+    if detail:
+        out["detail"] = detail[:300]
+    return out | extra
+
+
+def launch(request: dict, grant: dict, entry: pwd.struct_passwd, settings: dict) -> dict:
+    policy = load_policy(request["policy_id"])
+    check_image(entry, policy)
+    session_id, generation = request["session_id"], request["generation"]
+    with Lock():
+        existing = read_record(session_id)
+        if existing:
+            if existing["generation"] > generation:
+                raise Refused("stale_generation", "a newer generation of this session exists")
+            if existing["generation"] == generation:
+                if existing["request_id"] == request["request_id"] and existing["state"] in ("starting", "running"):
+                    return reply(request, True, "already", state=existing["state"], unit=existing["unit"])
+                raise Refused("conflict", "this generation was already launched")
+            if existing["state"] in ACTIVE:
+                raise Refused("conflict", "an earlier generation is still running or wasn't cleaned up; stop it first")
+        limits = grant["limits"]
+        if limits["sessions"] is not None:
+            running = sum(1 for r in records() if r["account"] == entry.pw_name and r["state"] in ACTIVE
+                          and r["session_id"] != session_id)
+            if running >= limits["sessions"]:
+                raise Refused("account_capacity", f"{entry.pw_name} already runs {running} container sessions "
+                                                  f"(its limit is {limits['sessions']})")
+        held, identity = check_mounts(grant, entry, settings)
+        record = {"session_id": session_id, "generation": generation, "request_id": request["request_id"],
+                  "account": entry.pw_name, "uid": entry.pw_uid, "unit": unit_name(session_id, generation),
+                  "policy_id": request["policy_id"], "image": policy["image"], "limits": limits,
+                  "mounts": identity, "state": "starting", "started_at": now()}
+        write_record(record)
+    try:
+        freeze_integrations(grant, held, entry, policy)
+        make_attach_dir(grant, entry)
+        held.append(open_image_rootfs(policy))
+        # The account's slice: what all its sessions together may use.
+        subprocess.run([SYSTEMCTL, "set-property", "--runtime", slice_name(entry.pw_uid),
+                        *limit_properties(limits, aggregate=True)],
+                       capture_output=True, timeout=30, env=_clean_env(), check=True)
+        # Within accd's 60 s for a broker answer: the unit has 40 s to report ready (no pulls, so a start is quick).
+        result = subprocess.run(systemd_run_argv(grant, policy, entry, held=held), capture_output=True, text=True, timeout=45,
+                                env=_clean_env())
+        if result.returncode:
+            raise Refused("start_failed", "container service failed to start (requires protected user namespace bootstrap and execution guard)")
+        if not same_dirs(identity, entry.pw_uid):
+            raise Refused("bad_mount", "a mounted folder was replaced while the container started")
+    except (Refused, subprocess.SubprocessError, OSError) as error:
+        code = error.code if isinstance(error, Refused) else "start_failed"
+        detail = error.detail if isinstance(error, Refused) else "container service operation failed"
+        reason = bootstrap_refusal(record["unit"]) if code == "start_failed" else None
+        clean = cleanup(record, entry)
+        with Lock():
+            record["state"] = "failed" if clean else "cleanup_failed"
+            record["ended_at"] = now()
+            write_record(record)
+        audit("container.launch_failed", correlation=request["request_id"], account=entry.pw_name,
+              session_id=session_id, generation=generation, unit=record["unit"], code=code,
+              cleanup="done" if clean else "failed", detail=detail, reason=reason)
+        raise Refused(code, detail) from None
+    finally:
+        for fd in held:
+            os.close(fd)
+    with Lock():
+        record["state"] = "running"
+        write_record(record)
+    audit("container.launch", correlation=request["request_id"], account=entry.pw_name, session_id=session_id,
+          generation=generation, unit=record["unit"], image=policy["image"], policy_id=request["policy_id"],
+          limits=limits, sandbox="container", credential_adapter=policy.get("credentials", "none"),
+          egress="internet-v1" if policy.get("egress") else "none")  # the launcher contract: Codex/Chrome inner sandboxes are off (Option A)
+    return reply(request, True, "launched", state="running", unit=record["unit"], container=container_name(session_id),
+                 attach=attach_socket(grant))
+
+
+def status(request: dict, entry: pwd.struct_passwd) -> dict:
+    record = read_record(request["session_id"])
+    if record is None or record["account"] != entry.pw_name:
+        return reply(request, True, "none", state="none")
+    if record["generation"] != request["generation"]:
+        raise Refused("stale_generation", "status of another generation")
+    return reply(request, True, "status", state=record["state"], unit=record["unit"],
+                 active=unit_state(record["unit"]))
+
+
+def stop(request: dict, entry: pwd.struct_passwd, reason: str = "stop") -> dict:
+    record = read_record(request["session_id"])
+    if record is None or record["account"] != entry.pw_name:
+        return reply(request, True, "none", state="none")
+    if record["generation"] > request["generation"]:
+        raise Refused("stale_generation", "a newer generation of this session exists")
+    if record["state"] in ("stopped", "exited", "failed"):
+        return reply(request, True, "already", state=record["state"])
+    clean = cleanup(record, entry)
+    with Lock():
+        record["state"] = "stopped" if clean else "cleanup_failed"
+        record["ended_at"] = now()
+        write_record(record)
+    audit("container.stop", correlation=request["request_id"], account=entry.pw_name, session_id=record["session_id"],
+          generation=record["generation"], unit=record["unit"], reason=reason, cleanup="done" if clean else "failed")
+    if not clean:
+        left = f" (still running: {record['leftover']})" if record.get("leftover") else ""
+        raise Refused("cleanup_failed", "the container didn't stop cleanly; Rynhult retries, and won't relaunch it until it "
+                                        "has" + left)
+    return reply(request, True, "stopped", state="stopped")
+
+
+def handle(line: bytes, peer_pid: int, peer_uid: int) -> dict:
+    request = None
+    try:
+        request = parse_request(line)
+        grant, entry, settings = authorize(request, peer_pid, peer_uid)
+        with Lock(f".session-{request['session_id']}"):
+            if request["operation"] == "launch":
+                return launch(request, grant, entry, settings)
+            if request["operation"] == "status":
+                return status(request, entry)
+            return stop(request, entry)
+    except Refused as error:
+        audit("container.refused", correlation=(request or {}).get("request_id"),
+              session_id=(request or {}).get("session_id"), operation=(request or {}).get("operation"),
+              peer_uid=peer_uid, code=error.code, detail=error.detail)
+        return reply(request, False, error.code, error.detail)
+
+
+def serve(stream: socket.socket) -> None:
+    pid, uid = peer(stream)
+    deadline = time.monotonic() + READ_DEADLINE
+    data = b""
+    while b"\n" not in data and len(data) <= MAX_REQUEST:
+        left = deadline - time.monotonic()
+        if left <= 0:  # a client trickling bytes would otherwise hold this instance (16 at most) until TimeoutStartSec
+            raise TimeoutError("request not received in time")
+        stream.settimeout(left)
+        chunk = stream.recv(MAX_REQUEST + 1)
+        if not chunk:
+            break
+        data += chunk
+    stream.settimeout(None)
+    out = handle(data.split(b"\n", 1)[0], pid, uid)
+    stream.sendall(json.dumps(out).encode() + b"\n")
+
+
+# ---- reconcile (timer) ----------------------------------------------------------------------------------------------
+
+def disk_bytes(path: str, limit: int) -> int:
+    """Bytes under a folder without following links; stops counting once over `limit`."""
+    total, count = 0, 0
+    deadline = time.monotonic() + 2
+    def walk(fd: int, depth: int) -> None:
+        nonlocal total, count
+        if depth > 64:
+            raise Refused("disk_scan", "disk scan depth exceeded")
+        with os.scandir(fd) as entries:
+            for item in entries:
+                count += 1
+                if count > 100000 or time.monotonic() > deadline:
+                    raise Refused("disk_scan", "disk scan budget exceeded")
+                try:
+                    info = item.stat(follow_symlinks=False)
+                    total += info.st_blocks * 512
+                    if total > limit:
+                        return
+                    if stat.S_ISDIR(info.st_mode):
+                        child = os.open(item.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                        try:
+                            walk(child, depth + 1)
+                        finally:
+                            os.close(child)
+                except OSError:
+                    raise Refused("disk_scan", "disk scan folder changed") from None
+    try:
+        fd, _ = open_private_dir(path, None)
+    except Refused:
+        raise Refused("disk_scan", "disk scan root changed") from None
+    try:
+        walk(fd, 0)
+    finally:
+        os.close(fd)
+    return total
+
+
+def _age(stamp) -> float:
+    try:
+        return time.time() - datetime.fromisoformat(stamp).timestamp()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def grant_matches(record: dict) -> bool:
+    try:
+        grant = read_grant(record["session_id"])
+    except Refused:
+        return False
+    return grant["generation"] == record["generation"] and grant["account"] == record["account"]
+
+
+def reconcile() -> list[dict]:
+    done = []
+    for record in records():
+        if record["state"] not in ACTIVE:
+            continue
+        with Lock(f".session-{record['session_id']}"):
+            record = read_record(record["session_id"])
+            if record is None or record["state"] not in ACTIVE:
+                continue
+            try:
+                entry = pwd.getpwnam(record["account"])
+            except KeyError:
+                continue
+            reason = None
+            stale_start = record["state"] == "starting" and _age(record.get("started_at")) > 300  # a launch that died
+            if record["state"] == "cleanup_failed":
+                reason = "retry_cleanup"
+            elif unit_state(record["unit"]) in ("inactive", "failed", "unknown") and (record["state"] == "running" or stale_start):
+                reason = "exited"
+            elif not grant_matches(record):
+                reason = "grant_revoked"
+            elif record["limits"].get("disk_gib") is not None:
+                cap = record["limits"]["disk_gib"] << 30
+                try:
+                    used = sum(disk_bytes(path, cap) for path in record["mounts"])
+                    if used > cap:
+                        reason = "disk_limit"
+                except Refused:
+                    reason = "disk_scan_failed"
+            if reason is None:
+                continue
+            clean = cleanup(record, entry)
+            with Lock():
+                record["state"] = ("exited" if reason == "exited" else "stopped") if clean else "cleanup_failed"
+                record["ended_at"] = now()
+                write_record(record)
+            audit("container.reconcile", account=record["account"], session_id=record["session_id"],
+                  generation=record["generation"], unit=record["unit"], reason=reason, cleanup="done" if clean else "failed")
+            done.append({"session_id": record["session_id"], "reason": reason, "clean": clean})
+    listed = subprocess.run([SYSTEMCTL, "list-units", "--all", "--plain", "--no-legend", "acc-ct-*.service"],
+                            capture_output=True, text=True, timeout=30, env=_clean_env())
+    units = {line.split()[0] for line in listed.stdout.splitlines()
+             if line.split() and line.split()[0].startswith("acc-ct-")}
+    if listed.returncode == 0:  # without a unit list, no folder is known to be unused
+        with Lock():
+            sweep_runtime_dirs(units)
+    known = {r["unit"] for r in records()}
+    for unit in sorted(units - known):
+        audit("container.unknown_unit", unit=unit[:120], detail="no Rynhult record; left in place for an owner")
+    prune()
+    return done
+
+
+def prune() -> None:
+    cutoff = time.time() - RECORD_DAYS * 86400
+    for path in _state().glob("*.json"):
+        try:
+            record = json.loads(path.read_text())
+            if record["state"] not in ACTIVE and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except (OSError, ValueError, KeyError):
+            continue
+    cutoff = time.time() - AUDIT_DAYS * 86400
+    for path in (ROOT / "audit").iterdir():
+        if path.stat().st_mtime < cutoff:
+            path.unlink(missing_ok=True)
+
+
+def main(argv: list[str]) -> int:
+    if argv[1:] == ["--reconcile"]:
+        print(json.dumps(reconcile()))
+        return 0
+    if argv[1:]:
+        print("usage: acc-containers (socket-activated) | acc-containers --reconcile", file=sys.stderr)
+        return 2
+    stream = socket.socket(fileno=sys.stdin.fileno())
+    try:
+        serve(stream)
+    finally:
+        stream.detach()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

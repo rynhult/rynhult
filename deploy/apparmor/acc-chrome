@@ -1,0 +1,20 @@
+# Install: /etc/apparmor.d/acc-chrome ; apparmor_parser -r /etc/apparmor.d/acc-chrome
+# Ubuntu 24.04 restricts unprivileged user namespaces, which Chrome's sandbox needs. This allows them for the
+# pinned Chrome for Testing builds under /srv/acc/tools only (used by the Playwright and Chrome DevTools MCP
+# servers), so Chrome runs with its sandbox ON instead of --no-sandbox. Same shape as Ubuntu's own chrome profile.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile acc-chrome /srv/acc/tools/ms-playwright/chromium-*/chrome-linux64/chrome flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-chrome>
+}
+
+# Playwright's headless shell (a separate binary, used by the browser test suite) needs the same allowance; without
+# it the suite's Chrome fails under the restriction (seen 2026-10-23: DENIED capable sys_admin, chrome-headless).
+profile acc-chrome-headless-shell /srv/acc/tools/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-chrome-headless-shell>
+}

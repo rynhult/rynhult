@@ -1,0 +1,31 @@
+#!/bin/sh
+# acc-node on a Linux node, installed to /usr/local/bin by deploy/node/install.sh.
+#   sudo acc-node enroll --primary URL (--trust system | --ca-fingerprint HEX) --code CODE --name NAME   then starts acc-node.service
+#   acc-node status
+# Enrolling writes /etc/acc-node.env, so it runs as root. Root never works on paths in /var/lib/acc-node, which the
+# acc-node user owns (and could swap things in): the new key and CA are made in a private root-owned staging folder,
+# then acc-node itself stores them in its state dir. Everything else runs as acc-node.
+set -eu
+python=/opt/acc/app/.venv/bin/python
+state=/var/lib/acc-node
+if [ "$(id -u)" != 0 ]; then
+  exec "$python" -I -m acc.node "$@"
+fi
+if [ "${1:-}" = enroll ]; then
+  shift
+  staging=$(mktemp -d /run/acc-node-enroll.XXXXXX)  # root's, mode 0700
+  trap 'rm -rf "$staging"' EXIT
+  # The last --state-dir wins: the key and CA go to staging; the config names where they will be.
+  "$python" -I -m acc.node enroll "$@" --state-dir "$staging" --installed-state-dir "$state"
+  for file in node.key ca.pem; do
+    if [ -f "$staging/$file" ]; then
+      runuser -u acc-node -- "$python" -I -m acc.node adopt --state-dir "$state" "$file" < "$staging/$file"
+    fi
+  done
+  if [ -d /run/systemd/system ]; then
+    systemctl restart acc-node.service
+    echo "acc-node: enrolled; acc-node.service started (check: systemctl status acc-node)"
+  fi
+  exit 0
+fi
+exec runuser -u acc-node -- "$python" -I -m acc.node "$@"

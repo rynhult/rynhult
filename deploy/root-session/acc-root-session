@@ -1,0 +1,169 @@
+#!/bin/bash
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# Resume root's admin Claude conversation in tmux at boot and report it to ACC as an
+# external (observe-only) session. Install: /usr/local/sbin/acc-root-session (root 0755).
+# Settings: /etc/default/acc-root-session (KEY=VALUE, parsed, never sourced).
+# Never starts a fresh conversation and never sends keystrokes.
+#
+# Everything root reads or writes here is root-owned: the run folder lives under /srv/acc/run-root (not the agent
+# user's /srv/acc/run), the current conversation id is kept in a root-only state file, the working directory must be
+# root-owned (Claude loads project settings from it), and only the repository catalog's skills are linked.
+set -u
+CONF=${ACC_ROOT_SESSION_CONF:-/etc/default/acc-root-session}
+STATE=${ACC_ROOT_SESSION_STATE:-/var/lib/acc-root-session/session_id}
+RUN_ROOT=${ACC_ROOT_RUN_DIR:-/srv/acc/run-root}
+CLAUDE_DIR=${ACC_ROOT_CLAUDE_DIR:-/root/.claude}
+CATALOG=${ACC_ROOT_CATALOG:-/srv/acc/app/catalog/skills}
+UUID='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+die() { echo "acc-root-session: $*" >&2; exit 1; }
+
+# KEY=VALUE only, each value checked against its own pattern; anything else is refused.
+declare -A PATTERN=(
+  [SESSION_ID]=$UUID [ACC_ID]='^[0-9a-f]{12}$' [WORKDIR]='^/[A-Za-z0-9._/-]*$'
+  [PERMISSION_MODE]='^(default|acceptEdits|plan|auto|dontAsk|bypassPermissions)$'
+  [TMUX_SOCKET]='^[a-z0-9-]{1,32}$' [TMUX_SESSION]='^[a-z0-9-]{1,32}$'
+)
+declare -A CFG=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+  [[ $line =~ ^([A-Z_]+)=(.*)$ ]] || die "bad line in $CONF: $line"
+  key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+  [ -n "${PATTERN[$key]+x}" ] || die "unknown setting $key in $CONF"
+  [[ $value =~ ${PATTERN[$key]} ]] || die "bad value for $key in $CONF"
+  CFG[$key]=$value
+done < "$CONF"
+for key in "${!PATTERN[@]}"; do [ -n "${CFG[$key]+x}" ] || die "$key missing from $CONF"; done
+ACC_ID=${CFG[ACC_ID]} WORKDIR=${CFG[WORKDIR]} PERMISSION_MODE=${CFG[PERMISSION_MODE]}
+TMUX_SOCKET=${CFG[TMUX_SOCKET]} TMUX_SESSION=${CFG[TMUX_SESSION]}
+[ -d "$WORKDIR" ] && [ ! -L "$WORKDIR" ] && [ "$(stat -c %u "$WORKDIR")" = "$(id -u)" ] \
+  || die "WORKDIR $WORKDIR must be a directory owned by $(id -un) (Claude loads project settings from it)"
+
+# The conversation id: the state file once Claude has moved it on, else the configured one.
+SESSION_ID=${CFG[SESSION_ID]}
+if [ -f "$STATE" ] && [ ! -L "$STATE" ]; then
+  stored=$(head -c 64 "$STATE" | tr -d '[:space:]')
+  [[ $stored =~ $UUID ]] && SESSION_ID=$stored
+fi
+
+export HOME=/root TERM=tmux-256color PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+install -d -o root -g acc -m 0750 "$RUN_ROOT"
+RUN=$RUN_ROOT/$ACC_ID
+[ -L "$RUN" ] && die "$RUN is a symlink"
+install -d -o root -g acc -m 2750 "$RUN"
+T=(tmux -L "$TMUX_SOCKET")
+
+transcript() {  # the conversation's transcript under any project folder; $1 is a checked UUID
+  local file
+  for file in "$CLAUDE_DIR"/projects/*/"$1".jsonl; do [ -f "$file" ] && return 0; done
+  return 1
+}
+
+# Claude Code can move this conversation to a new id (fork, compact, clear). The ACC hooks record
+# every SessionStart in the spool, so resume the newest one that continues it and whose transcript
+# exists. "startup" is a different, fresh conversation and is never followed.
+if [ -f "$RUN/events.jsonl" ] && [ ! -L "$RUN/events.jsonl" ]; then
+  while IFS= read -r sid; do
+    [[ $sid =~ $UUID ]] && transcript "$sid" && latest=$sid
+  done < <(/usr/bin/python3 -I - "$RUN/events.jsonl" <<'PY'
+import json, sys
+for line in open(sys.argv[1], errors="replace"):
+    try:
+        hook = json.loads(line).get("hook") or {}
+    except (ValueError, AttributeError):
+        continue
+    if isinstance(hook, dict) and hook.get("hook_event_name") == "SessionStart" \
+            and hook.get("source") in ("fork", "compact", "resume", "clear"):
+        print(str(hook.get("session_id") or "").replace("\n", " "))
+PY
+)
+  if [ -n "${latest:-}" ] && [ "$latest" != "$SESSION_ID" ]; then
+    echo "following conversation $SESSION_ID -> $latest (from the hook spool)" >&2
+    SESSION_ID=$latest
+  fi
+fi
+install -d -o root -g root -m 0700 "$(dirname "$STATE")"
+printf '%s\n' "$SESSION_ID" > "$STATE.tmp" && chmod 600 "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
+
+# Claude keeps a conversation (and its memory) in a folder named after the working directory. After WORKDIR
+# moves, bring the conversation's folder there, so `--resume` finds it. The newest transcript wins: files only
+# replace older copies, and the old folder is left as it was.
+project=$CLAUDE_DIR/projects/$(printf '%s' "$WORKDIR" | sed 's/[^A-Za-z0-9]/-/g')
+newest=$(ls -t "$CLAUDE_DIR"/projects/*/"$SESSION_ID".jsonl 2>/dev/null | head -1)
+if [ -n "$newest" ] && [ "$(dirname "$newest")" != "$project" ]; then
+  echo "bringing $(dirname "$newest") -> $project (working directory moved)" >&2
+  mkdir -p "$project" && cp -a --update=older "$(dirname "$newest")/." "$project/"
+fi
+
+if [ -n "${ACC_ROOT_SESSION_DRY_RUN:-}" ]; then echo "$SESSION_ID"; exit 0; fi
+
+"${T[@]}" has-session -t "=$TMUX_SESSION" 2>/dev/null && exit 0
+# Two processes on one conversation interleave its transcript: never start a second one.
+if pgrep -f -- "$SESSION_ID" >/dev/null; then
+  echo "conversation $SESSION_ID is already running elsewhere; not starting another" >&2
+  exit 0
+fi
+
+event() {
+  printf '{"ts":"%s","provider":"claude","acc_session":"%s","hook":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$ACC_ID" "$1" >> "$RUN/events.jsonl"
+}
+
+if ! transcript "$SESSION_ID"; then
+  event "{\"hook_event_name\":\"LauncherError\",\"session_id\":\"$SESSION_ID\",\"message\":\"transcript missing; not starting a new conversation\"}"
+  echo "transcript for $SESSION_ID not found; refusing to start a new conversation" >&2
+  exit 1
+fi
+
+# The repository catalog's skills (root-owned) as root's user skills. Skills added in the dashboard live in
+# catalog-local, which the acc user can write, so root never links those. Only links into the catalog are
+# managed; anything else in ~/.claude/skills is left alone.
+mkdir -p "$CLAUDE_DIR/skills"
+for link in "$CLAUDE_DIR"/skills/*; do
+  [ -L "$link" ] || continue
+  case "$(readlink "$link")" in
+    "$CATALOG"/*) [ -e "$link" ] || rm -f "$link" ;;
+    /srv/acc/catalog-local/skills/*) rm -f "$link" ;;
+  esac
+done
+for dir in "$CATALOG"/*; do
+  [ -f "$dir/SKILL.md" ] && [ ! -e "$CLAUDE_DIR/skills/$(basename "$dir")" ] && ln -s "$dir" "$CLAUDE_DIR/skills/$(basename "$dir")"
+done
+
+rm -f "$RUN/settings.json"
+cat > "$RUN/settings.json" <<JSON
+{
+  "hooks": {
+$(for e in SessionStart SessionEnd UserPromptSubmit Notification PermissionRequest PermissionDenied PostToolUse Stop StopFailure; do
+    printf '    "%s": [{"hooks": [{"type": "command", "command": "/srv/acc/bin/acc-hook claude"}]}],\n' "$e"
+  done | sed '$ s/,$//')
+  },
+  "statusLine": {"type": "command", "command": "/srv/acc/bin/acc-statusline"}
+}
+JSON
+chmod 640 "$RUN/settings.json"
+
+"${T[@]}" start-server \; set-option -g exit-empty off \; set-option -g remain-on-exit on \; set-option -g history-limit 50000
+"${T[@]}" new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$WORKDIR" \
+  -e "ACC_RUN_DIR=$RUN" -e "ACC_SESSION_ID=$ACC_ID" \
+  -e "RYNHULT_RUN_DIR=$RUN" -e "RYNHULT_SESSION_ID=$ACC_ID" \
+  "claude --resume $SESSION_ID --settings $RUN/settings.json --permission-mode $PERMISSION_MODE --remote-control $TMUX_SESSION"
+
+# ACC cannot read root's Claude registry, so hand it the Remote Control link.
+for _ in $(seq 60); do
+  pid=$("${T[@]}" list-panes -t "=$TMUX_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)
+  registry=$CLAUDE_DIR/sessions/$pid.json
+  if [ -n "$pid" ] && [ -f "$registry" ]; then
+    bridge=$(/usr/bin/python3 -I -c 'import json,re,sys; b=str(json.load(open(sys.argv[1])).get("bridgeSessionId") or ""); print(b if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", b) else "")' "$registry")
+    if [ -n "$bridge" ]; then
+      printf '{"bridge_session_id":"%s"}\n' "$bridge" > "$RUN/remote.json"
+      chmod 640 "$RUN/remote.json"
+      break
+    fi
+  fi
+  sleep 2
+done
+exit 0

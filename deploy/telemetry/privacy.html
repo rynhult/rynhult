@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Rynhult telemetry: privacy notice</title>
+<style>
+:root { --bg: #ffffff; --fg: #1d2330; --muted: #4f5868; --line: #d9dde4; --note-bg: #fff4d6; --note-fg: #5a4200; --accent: #2f5bb7; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #11151c; --fg: #e6e9ef; --muted: #a9b1bf; --line: #2c3340; --note-bg: #3a2f0f; --note-fg: #ffe3a1; --accent: #9db8ff; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 0.5rem 0 0.25rem; }
+h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
+p, li { overflow-wrap: anywhere; }
+ul { padding-left: 1.25rem; }
+li { margin: 0.25rem 0; }
+code { font: 0.92em ui-monospace, "SFMono-Regular", Menlo, monospace; }
+a { color: var(--accent); }
+.meta { color: var(--muted); font-size: 0.9rem; margin: 0; }
+.banner { background: var(--note-bg); color: var(--note-fg); border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; }
+.banner strong { display: block; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+<p class="meta">Version 0.4 (staging) · 27 October 2026</p>
+<h1>Privacy notice for Rynhult usage statistics and bug reports</h1>
+
+<div class="banner" role="note">
+  <strong>Pre-release staging service.</strong>
+  Rynhult is not yet publicly released. Anything received here before the version 1 launch is test data, and all of it
+  is deleted at launch. The retention periods below already apply now.
+</div>
+
+<p>This collector, <code>telemetry.rynhult.dev</code>, receives optional usage statistics and bug reports from
+Rynhult installations. Every installation sends nothing unless its owner turns sending on.</p>
+
+<h2>Who is responsible</h2>
+<p>The controller is Joshua Fulton, the Rynhult project maintainer. For any privacy request, write to
+<a href="mailto:privacy@rynhult.dev">privacy@rynhult.dev</a>.</p>
+
+<h2>Only if an installation's owner opts in</h2>
+<ul>
+  <li>Both kinds of data are off by default, and are two separate choices. Only an owner of an installation can turn
+    them on, in <strong>Settings → Usage and bug reports</strong>. Members of an installation can't.</li>
+  <li>Consent is to a schema version. If a later version would send something new, sending switches off and the owner
+    is asked again.</li>
+  <li>Turning a choice off stops sending at once and discards anything waiting to be sent.</li>
+  <li>An installation can send somewhere else, or nowhere: its operator can point it at their own collector or remove the
+    feature entirely.</li>
+</ul>
+
+<h2>Legal basis: consent</h2>
+<p>Data is received and kept only because an installation's owner consented by turning sending on. Consent can be
+withdrawn at any time by turning the choice off. Sending stops at once and anything waiting is discarded. Data already
+sent is deleted too when the owner leaves <strong>Also delete previously sent data when turning a choice off</strong>
+ticked; otherwise it is kept for the periods below, and can still be deleted later (see <a href="#rights">Your
+rights</a>). Withdrawing doesn't affect what was done with the data before.</p>
+
+<h2>Usage statistics</h2>
+<p>At most one small summary a day. Every value in it is a fixed choice, a yes/no, a range or a date; there is no free
+text. It contains:</p>
+<table>
+  <tr><th>Item</th><th>What is sent</th></tr>
+  <tr><td>Schema</td><td><code>usage/1</code></td></tr>
+  <tr><td>Installation key id</td><td>A pseudonymous id of the installation's current usage key (see below)</td></tr>
+  <tr><td>Day</td><td>The UTC date the summary covers; no time of day</td></tr>
+  <tr><td>Rynhult version</td><td>A release or release-candidate number (such as <code>0.15.0-rc.1</code>), or
+    <code>dev</code>; never a build identifier</td></tr>
+  <tr><td>Operating systems</td><td>Which of linux, wsl, macos, windows, other are in use</td></tr>
+  <tr><td>Kind of installation</td><td>release, git-checkout, windows-installer or mac-installer</td></tr>
+  <tr><td>Sizes</td><td>Machines, people, projects, running sessions and stored keys, each only as a range:
+    0, 1, 2-3, 4-10, 11-50, 51+</td></tr>
+  <tr><td>Agents enabled</td><td>Which of claude, codex, copilot, cursor, antigravity, opencode</td></tr>
+  <tr><td>Features enabled</td><td>Which of a fixed list: groups, organizations, containers, backups, backup_server,
+    publishing, dns_provider, auto_updates, push, issue_sources, remote_access, schedules, orchestrator, preview,
+    custom_guardrails</td></tr>
+  <tr><td>Features used that day</td><td>For a fixed list of 21 actions (such as session.launch, changes.view, pr.merge,
+    backup.run), how often, only as a range: 1, 2-5, 6-20, 21-100, 101+</td></tr>
+  <tr><td>Sessions by agent</td><td>Sessions started that day per agent, as the same ranges</td></tr>
+</table>
+
+<h2>Bug reports</h2>
+<ul>
+  <li>Only about failures of Rynhult's own code and helpers, never about what an agent did.</li>
+  <li><strong>An owner sees each report and approves it before it is sent.</strong> Unapproved reports are discarded
+    after seven days. At most ten reports a day are sent.</li>
+  <li>A report holds: a random report id; the installation's report key id; Rynhult's version and kind of
+    installation; the operating system family; what triggered it and which part of Rynhult failed; the type of error
+    (only Python's own error names, otherwise <code>other</code>); a short fingerprint of the error type and code
+    locations, to group repeats; up to 20 file names, function names and line numbers of Rynhult's own code; how often
+    it happened that day, as a range; the error message after scrubbing, at most 300 characters; and, for a crashed
+    session or process, which agent it was and its exit code.</li>
+  <li>Scrubbing removes the installation's known secrets and its known names (people, projects, repositories, machines,
+    hosts), and anything shaped like a token, email address, network address, host name or file path. It runs before and
+    after shortening. <strong>Scrubbing is best effort</strong>: a name or secret the installation doesn't know about,
+    in an unusual form, could be missed. This collector scrubs again on arrival.</li>
+  <li>A report about a crashed session contains details about the process only, never its contents.</li>
+</ul>
+
+<h2>Never collected</h2>
+<p>Prompts, transcripts, terminal output, model outputs, file names or contents, code, paths, repository or project
+names, branch names, host and machine names, IP addresses in the data, usernames, email addresses, display names,
+keys or their names, server and catalog names, guardrail patterns, model or endpoint names, time zone, locale, exact
+counts and exact times. (The collector itself notes when each item arrived and when a key was last used; see
+<a href="#retention">How long data is kept</a>.)</p>
+
+<h2>Installation keys</h2>
+<ul>
+  <li>Each installation signs what it sends with keys it creates itself. Usage and bug reports use <strong>separate
+    keys</strong>, and each is replaced every 90 days by a new, unrelated one. Rynhult sends nothing that links an old
+    key to a new one or a usage key to a report key.</li>
+  <li>A key shows that data comes from the same installation as before. It identifies no person, and it doesn't prove
+    the data comes from a genuine installation.</li>
+  <li>The installation keeps its old keys only to be able to ask for deletion, for at most 13 months.</li>
+</ul>
+
+<h2>Connections</h2>
+<p>This collector keeps no access logs. The address a connection comes from is used only to limit how often it may
+send, held in memory until the current hour or day ends, and is never stored with the data. No location lookup is
+done.</p>
+
+<h2 id="retention">How long data is kept</h2>
+<table>
+  <tr><th>Data</th><th>Kept</th></tr>
+  <tr><td>Daily usage summaries</td><td>90 days after receipt</td></tr>
+  <tr><td>Monthly totals (counts of installations per operating system, agent and feature, without any key id)</td>
+    <td>13 calendar months</td></tr>
+  <tr><td>Bug reports</td><td>180 days</td></tr>
+  <tr><td>Installation public keys and when each was last used</td><td>13 months after last use</td></tr>
+  <tr><td>Record of deletions (key and report ids only, so deleted data can't come back)</td><td>45 days</td></tr>
+  <tr><td>Backups</td><td>None during staging (see Hosting)</td></tr>
+</table>
+<p>No statistics are published now. Any figure published later will count at least ten installations.</p>
+
+<h2 id="rights">Your rights</h2>
+<p>Data here is linked only to installation keys, so a request names the installation's usage and report key ids,
+including retired ones. A host name or email address can't identify your data, so it can't be used instead. A report id alone needs a manual check that it is yours.</p>
+<ul>
+  <li><strong>Access and portability.</strong> Email <a href="mailto:privacy@rynhult.dev">privacy@rynhult.dev</a>
+    with your key ids to get a copy of what is held for them, as a JSON file. A key id isn't secret, so we confirm the
+    request is yours before sending the copy.</li>
+  <li><strong>Deletion.</strong> In Rynhult, use <strong>Delete data already sent</strong> in <strong>Settings → Usage
+    and bug reports</strong>, or leave <strong>Also delete previously sent data when turning a choice off</strong>
+    ticked when turning a choice off. Rynhult signs the request with every key it kept, current and retired, and shows
+    the receipt. Or email <a href="mailto:privacy@rynhult.dev">privacy@rynhult.dev</a> with your key ids. Deletion is
+    completed within 30 days. Monthly totals carry no key id, so they can't be traced back to an
+    installation or removed for one.</li>
+  <li><strong>Objection and restriction.</strong> Turn the choice off in Rynhult, which stops sending at once, or
+    email <a href="mailto:privacy@rynhult.dev">privacy@rynhult.dev</a> with your key ids.</li>
+  <li><strong>Rectification.</strong> The data is generated by Rynhult rather than entered by a person, so it isn't
+    edited; anything wrong can be deleted as above.</li>
+  <li><strong>Complaint.</strong> You can lodge a complaint with a data protection supervisory authority, for example
+    the one where you live or work.</li>
+</ul>
+
+<p>No decision with legal or similar effect is made about anyone from this data, automatically or otherwise.</p>
+
+<h2>Hosting</h2>
+<p>The collector runs on a dedicated virtual machine at Akamai (Linode) in Frankfurt, Germany. Data is stored
+only on that machine's own disk in the EU and isn't transferred outside it for storage. During staging there are no
+backups beyond that disk: if the machine's disk is lost, the data is lost with it.
+Akamai processes the data only as the hosting provider, under a data-processing agreement. No third-party analytics
+or error service receives this data.</p>
+
+<h2>More detail</h2>
+<p>The full design, including the exact schemas, is in Rynhult's source repository.</p>
+<!-- TODO(public release): link docs/TELEMETRY.md in the public source repository here. Not linked while it is private. -->
+</main>
+</body>
+</html>

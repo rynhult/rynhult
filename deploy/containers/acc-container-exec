@@ -1,0 +1,344 @@
+#!/usr/bin/python3 -I
+"""Root bootstrap and fail-closed guard for a protected execution user namespace."""
+import array
+import ctypes
+import errno
+import fcntl
+import glob
+import hashlib
+import json
+import os
+import re
+import selectors
+import socket
+import stat
+import struct
+import sys
+import time
+from pathlib import Path
+
+
+def verify_namespace(uid, gid, host_namespace):
+    current = os.stat('/proc/self/ns/user')
+    if (current.st_dev, current.st_ino) == host_namespace or (os.getuid(), os.getgid()) != (uid, gid):
+        raise ValueError('execution requires a separate root-owned user namespace')
+    for name in ('uid_map', 'gid_map'):
+        mapping = [[int(part) for part in line.split()] for line in Path('/proc/self/' + name).read_text().splitlines()]
+        if mapping != [[0, 0, 4294967295]]:
+            raise ValueError('execution requires the full identity UID/GID map')
+    fd = os.open('/proc/self/ns/user', os.O_RDONLY)
+    try:
+        owner = array.array('I', [0])
+        fcntl.ioctl(fd, 0xb704, owner, True)  # NS_GET_OWNER_UID
+        if owner[0] != 0:
+            raise ValueError('execution namespace is not owned by root')
+    finally:
+        os.close(fd)
+
+
+CGROUP_ROOT = Path('/sys/fs/cgroup')
+
+
+def drop_identity(uid, gid):
+    os.setgroups([])
+    os.setresgid(gid, gid, gid)
+    os.setresuid(uid, uid, uid)
+
+
+def verify_identity(uid, gid):
+    status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
+    if (list(map(int, status['Uid'].split())) != [uid] * 4
+            or list(map(int, status['Gid'].split())) != [gid] * 4
+            or status['Groups'].split()
+            or any(int(status[key].strip(), 16) for key in ('CapInh', 'CapPrm', 'CapEff', 'CapAmb'))):
+        raise ValueError('execution identity retains groups, IDs or capabilities')
+
+
+def delegate_cgroup(uid, gid, unit):
+    """Replicate PID 1's cgroup-v2 delegation, limited to our exact unit."""
+    if not re.fullmatch(r'acc-ct-[a-z0-9]{8,32}-g[1-9][0-9]*\.service', unit):
+        raise ValueError('unexpected execution unit')
+    relative = f'acc.slice/acc-containers.slice/acc-containers-{uid}.slice/{unit}'
+    if Path('/proc/self/cgroup').read_text().strip() != '0::/' + relative:
+        raise ValueError('execution is outside its delegated unit')
+    held = []
+    controls = []
+    try:
+        fd = os.open(CGROUP_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        held.append(fd)
+        for part in relative.split('/'):
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            held.append(fd)
+        for name in ('cgroup.procs', 'cgroup.threads', 'cgroup.subtree_control'):
+            controls.append(os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd))
+        for item in held + controls:
+            info = os.fstat(item)
+            if info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError('unsafe delegated cgroup')
+        # Never delegate memory.max, pids.max, cpu.max or an ancestor. All FDs
+        # are held before chown makes this subtree accessible to the account.
+        for item in controls + [fd]:
+            os.fchown(item, uid, gid)
+    finally:
+        for item in controls + held:
+            os.close(item)
+
+
+def _unshare_user():
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.unshare(0x10000000) != 0:  # CLONE_NEWUSER; leave PID 1's mount namespace intact
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _write_maps(proc_fd):
+    # The mapper stays root in the parent namespace. Write through a proc
+    # directory FD held before fork, so exit/PID reuse cannot retarget writes.
+    for name in ('uid_map', 'gid_map'):
+        fd = os.open(name, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=proc_fd)
+        try:
+            data = b'0 0 4294967295\n'
+            if os.write(fd, data) != len(data):
+                raise OSError('short namespace map write')
+        finally:
+            os.close(fd)
+
+
+def enter_namespace(uid, gid, host_namespace):
+    if not (0 < uid < 4294967295 and 0 < gid < 4294967295):
+        raise ValueError('execution requires an unprivileged target UID/GID')
+    current = os.stat('/proc/self/ns/user')
+    if (os.getuid(), os.geteuid()) != (0, 0) or (current.st_dev, current.st_ino) != host_namespace:
+        raise ValueError('namespace bootstrap requires root in the launcher namespace')
+    proc_fd = os.open('/proc/self', os.O_RDONLY | os.O_DIRECTORY)
+    parent, mapper = socket.socketpair()
+    parent.settimeout(10)
+    mapper.settimeout(10)
+    try:
+        child = os.fork()
+    except BaseException:
+        os.close(proc_fd)
+        parent.close()
+        mapper.close()
+        raise
+    if child == 0:
+        parent.close()
+        try:
+            if mapper.recv(1) != b'U':
+                os._exit(1)
+            _write_maps(proc_fd)
+            mapper.sendall(b'M')
+        except BaseException:
+            os._exit(1)
+        os._exit(0)
+    os.close(proc_fd)
+    mapper.close()
+    try:
+        _unshare_user()  # creator EUID 0 establishes NS_GET_OWNER_UID == 0
+        parent.sendall(b'U')
+        if parent.recv(1) != b'M':
+            raise ValueError('namespace mapper failed')
+        _, status = os.waitpid(child, 0)
+        child = 0
+        if status != 0:
+            raise ValueError('namespace mapper failed')
+        verify_namespace(0, os.getgid(), host_namespace)
+        drop_identity(uid, gid)
+        verify_namespace(uid, gid, host_namespace)
+        verify_identity(uid, gid)
+    finally:
+        parent.close()
+        if child:
+            # Closing the socket releases a mapper waiting for the handshake.
+            # Its timeout also bounds an unexpected parent-side failure.
+            os.waitpid(child, 0)
+
+
+# ---- the terminal relay (docs/decisions/drafts/container-attach-path.md, option A) -----------------------------------
+# The container lives in this unit's private mount namespace and root-owned user namespace, which the broker can't
+# enter (CT-05). So a relay forked here, after the identity drop, listens on a socket the launcher's folder gives it
+# on the host (/run/acc-ct-attach/<digest>/attach.sock, the account's, 0700, never mounted into the container) and
+# relays one client at a time to conmon's attach socket and control FIFO. Frames, both ways:
+#     1 byte type + 4 byte big-endian length + payload: b"d" data, b"r" resize (JSON {"rows", "cols"}), b"x" exit
+ATTACH = re.compile(r'/run/acc-ct-attach/([0-9a-f]{16})/attach\.sock')
+RUNTIME = re.compile(r'/run/acc-ct/([0-9a-f]{16})')
+FRAME = struct.Struct('>cI')
+MAX_FRAME = 1 << 16
+CONMON_CHUNK = 4096  # conmon reads attach input in 8 KiB packets: never send a SEQPACKET it would truncate
+CONMON_WAIT = 30.0
+MAX_RESIZE = 64  # {"rows": 1000, "cols": 1000} is 28 bytes; nothing longer is parsed
+CLIENT_SEND_TIMEOUT = 30.0  # a pane that stops reading is dropped, so the terminal is never held
+
+
+def attach_paths(unit, attach, runtime):
+    """The relay's socket and Podman's runtime, both named for this exact unit by the launcher."""
+    digest = hashlib.sha256(unit.removesuffix('.service').encode()).hexdigest()[:16]
+    found, home = ATTACH.fullmatch(attach), RUNTIME.fullmatch(runtime or '')
+    if not found or not home or found.group(1) != digest or home.group(1) != digest:
+        raise ValueError('unexpected attach socket or runtime folder')
+    return attach, runtime
+
+
+def listen(path, uid):
+    """Bind as the account (after the drop) in the launcher's fresh folder: the account's own, 0700, no link."""
+    folder = os.path.dirname(path)
+    info = os.lstat(folder)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError('attach folder is not the account\'s private folder')
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    previous = os.umask(0o177)
+    try:
+        listener.bind(path)  # EADDRINUSE: never take over a socket someone else left
+    finally:
+        os.umask(previous)
+    # Bound only: SO_PEERCRED names the process that calls listen(), and the pane checks that PID's cgroup. This
+    # process becomes `podman run --detach`, which exits, so the relay child listens (start_relay). Until then a pane
+    # gets ECONNREFUSED and retries.
+    return listener
+
+
+def conmon_endpoint(runtime, deadline):
+    """The one container's attach socket and control FIFO, in this unit's private runroot."""
+    while True:
+        found = [p for p in glob.glob(f'{runtime}/run/overlay-containers/*/userdata/attach')
+                 if stat.S_ISSOCK(os.lstat(p).st_mode)]
+        if len(found) == 1:
+            return os.path.dirname(found[0])
+        if len(found) > 1 or time.monotonic() > deadline:
+            raise OSError(errno.ENOENT, 'no single container attach socket')
+        time.sleep(0.1)
+
+
+def frame(kind, payload=b''):
+    return FRAME.pack(kind, len(payload)) + payload
+
+
+def resize(payload):
+    """The pane's size as Podman's ctl message, or None for anything else (dropped, never parsed deeply)."""
+    if len(payload) > MAX_RESIZE:
+        return None
+    try:
+        size = json.loads(payload)
+        rows, cols = size['rows'], size['cols']
+    except (ValueError, RecursionError, TypeError, KeyError):
+        return None
+    if type(rows) is int and type(cols) is int and 0 < rows <= 1000 and 0 < cols <= 1000:
+        return f'1 {rows} {cols}\n'.encode()
+    return None
+
+
+def serve(client, runtime, wait=CONMON_WAIT, send_timeout=CLIENT_SEND_TIMEOUT):
+    """Relay one client to the container's terminal until either side ends."""
+    client.settimeout(send_timeout)  # reads happen only when ready; a send that can't finish ends this client
+    userdata = conmon_endpoint(runtime, time.monotonic() + wait)
+    # The bundle path is longer than a socket address may be: connect through a held directory, as Podman does.
+    folder = os.open(userdata, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
+    conmon = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    try:
+        conmon.connect(f'/proc/self/fd/{folder}/attach')
+        ctl = os.open('ctl', os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=folder)
+    finally:
+        os.close(folder)
+    events = selectors.DefaultSelector()
+    events.register(client, selectors.EVENT_READ)
+    events.register(conmon, selectors.EVENT_READ)
+    pending = b''
+    try:
+        while True:
+            for key, _ in events.select():
+                if key.fileobj is conmon:
+                    packet = conmon.recv(8192 + 1)
+                    if not packet:  # the container ended
+                        client.sendall(frame(b'x'))
+                        return
+                    if packet[:1] in (b'\x02', b'\x03') and len(packet) > 1:  # stdout, stderr
+                        client.sendall(frame(b'd', packet[1:]))
+                    continue
+                data = client.recv(65536)
+                if not data:
+                    return
+                pending += data
+                while len(pending) >= FRAME.size:
+                    kind, length = FRAME.unpack_from(pending)
+                    if length > MAX_FRAME:
+                        return
+                    if len(pending) < FRAME.size + length:
+                        break
+                    payload, pending = pending[FRAME.size:FRAME.size + length], pending[FRAME.size + length:]
+                    if kind == b'd':
+                        for start in range(0, len(payload), CONMON_CHUNK):
+                            conmon.sendall(payload[start:start + CONMON_CHUNK])
+                    elif kind == b'r':
+                        message = resize(payload)
+                        if message:
+                            os.write(ctl, message)
+                    else:
+                        return
+    finally:
+        events.close()
+        conmon.close()
+        os.close(ctl)
+
+
+def relay(listener, runtime, uid):
+    """One client at a time; only the account (the broker's pane). The container has no path to this socket."""
+    while True:
+        client, _ = listener.accept()
+        with client:
+            try:
+                peer = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if peer[1] != uid:
+                    continue
+                serve(client, runtime)
+            except Exception:  # nothing one connection does ends the terminal for the rest of the session
+                try:
+                    client.sendall(frame(b'x'))
+                except Exception:
+                    pass
+
+
+def start_relay(listener, runtime, uid):
+    """Fork the relay; the parent (soon Podman) keeps no copy of the listener. It ends with the unit."""
+    child = os.fork()
+    if child == 0:
+        try:
+            listener.listen(1)  # the relay, which lives as long as the unit, is the listener the pane checks
+            relay(listener, runtime, uid)
+        finally:
+            os._exit(0)
+    listener.close()
+    return child
+
+
+ID = re.compile(r'0|[1-9][0-9]{0,19}')
+
+
+def number(value):
+    # Only the launcher's canonical ASCII decimals; int() alone accepts signs, spaces, '_' and other scripts' digits.
+    if not ID.fullmatch(value):
+        raise ValueError('unexpected bootstrap argument')
+    return int(value)
+
+
+def main():
+    try:
+        uid, gid, device, inode = map(number, sys.argv[1:5])
+        unit, attach = sys.argv[5], sys.argv[6] if len(sys.argv) > 6 else ''
+        if sys.argv[7:9] != ['--', '/usr/bin/podman']:
+            raise ValueError('expected the fixed Podman command')
+        if not re.fullmatch(r'acc-ct-[a-z0-9]{8,32}-g[1-9][0-9]*\.service', unit):
+            raise ValueError('unexpected execution unit')
+        attach, runtime = attach_paths(unit, attach, os.environ.get('XDG_RUNTIME_DIR'))
+        # No account-controlled program runs until setup and all checks finish.
+        delegate_cgroup(uid, gid, unit)
+        enter_namespace(uid, gid, (device, inode))
+        start_relay(listen(attach, uid), runtime, uid)
+    except BaseException as error:  # anything, even a signal after the drop, is a refusal the launcher can audit
+        print(json.dumps({'code': 'unsafe_runtime_namespace', 'detail': str(error) or type(error).__name__}),
+              file=sys.stderr)
+        return 126
+    os.execv('/usr/bin/podman', sys.argv[8:])
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

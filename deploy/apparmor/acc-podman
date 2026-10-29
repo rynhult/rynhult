@@ -1,0 +1,33 @@
+# Install (owner, during container qualification only; deploy/install.sh does NOT install it):
+#   install -m 0644 deploy/apparmor/acc-podman /etc/apparmor.d/acc-podman && apparmor_parser -r /etc/apparmor.d/acc-podman
+# With kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 24.04's default), an unconfined program that makes a user
+# namespace is moved into the `unprivileged_userns` profile and loses every capability inside it. Rootless Podman
+# needs user namespaces in exactly these executables, so each gets its own `userns` allowance at its resolved path and
+# nothing else does: no wildcards over writable folders, no global unconfined runtime, no sandbox-disabling flags.
+#   - newuidmap / newgidmap: setuid mapping helpers that write the session's uid_map/gid_map (subordinate ranges);
+#   - pasta (passt): the rootless network helper, which isolates itself in a user namespace of its own.
+# Podman (/usr/bin/podman) and crun (/usr/bin/crun) are covered by the distribution's own `podman` and `crun` profiles
+# on Ubuntu 24.04 (same shape). Two profiles must never attach to one path, so on a host WITHOUT those distribution
+# profiles load deploy/apparmor/acc-podman-runtime as well (see docs/CONTAINERS.md, "Qualification run").
+# `flags=(unconfined)` with `userns,` grants namespace use only; the container payload's confinement is its own
+# (no-new-privileges, dropped capabilities, seccomp).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile acc-newuidmap /usr/bin/newuidmap flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-newuidmap>
+}
+
+profile acc-newgidmap /usr/bin/newgidmap flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-newgidmap>
+}
+
+profile acc-pasta /usr/bin/{pasta,pasta.avx2} flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-pasta>
+}

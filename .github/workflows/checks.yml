@@ -1,0 +1,79 @@
+name: Contributor checks
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    # Runs once the repository is public; private development is gated locally before each merge.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: src
+      ACC_E2E_BASE: /tmp/acc-ci-e2e
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/acc-ci-browsers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Download pin inventory
+        run: python scripts/check_pins.py
+      - name: Locked dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y tmux
+          python -m pip install uv==0.13.1
+          uv sync --frozen --extra postgres --python 3.12
+          npm ci --prefix web
+      - name: Ruff
+        run: uv run --frozen ruff check src tests scripts/check_pins.py
+      - name: Python suite
+        run: uv run --frozen python -m pytest -q
+      - name: Theme contrast
+        working-directory: web
+        run: npm run test:contrast
+      - name: Payload budget fixtures
+        working-directory: web
+        run: npm run test:payload
+      - name: Terminal composition fix
+        working-directory: web
+        run: npm run test:terminal
+      - name: UI build
+        working-directory: web
+        run: npm run build -- --configLoader runner
+      - name: Third-party notices
+        run: uv run --frozen python scripts/third_party_notices.py --check
+      - name: Browser dependencies
+        working-directory: web
+        run: npx playwright install --with-deps chromium webkit firefox
+      - name: Terminal input and polling matrix
+        working-directory: web
+        env:
+          ACC_E2E_PORT: '19660'
+          ACC_E2E_BASE: /tmp/acc-ci-terminal-input
+        run: npx playwright test --config playwright.terminal-webkit.config.ts --workers=1
+      - name: HTTPS CSRF cookie recovery
+        working-directory: web
+        env:
+          ACC_E2E_PORT: '19661'
+          ACC_E2E_BASE: /tmp/acc-ci-csrf
+        run: npx playwright test --config playwright.csrf.config.ts --workers=1
+      - name: Desktop and mobile browsers
+        working-directory: web
+        run: npx playwright test --project=desktop --project=mobile
+      # The harness enables its test signer and simulated edge by default. Real installations usually have neither
+      # helper, so the remote-access safety cases that need them absent run here too (security review 7, SR7-9).
+      - name: Remote access with both test helpers absent
+        working-directory: web
+        env:
+          ACC_E2E_BASE: /tmp/acc-ci-e2e-helpers-absent
+          ACC_E2E_DEVICE_CA: '0'
+          ACC_E2E_REMOTE_EDGE: '0'
+        run: >-
+          npx playwright test e2e/63-device-pairing.spec.ts --project=desktop-stateful
+          --grep="public status exposes review|remote access stays off"

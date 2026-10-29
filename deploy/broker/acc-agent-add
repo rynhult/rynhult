@@ -1,0 +1,179 @@
+#!/bin/bash
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# Create (or update) an ACC agent account and start its broker. Run as root. Idempotent.
+#   acc-agent-add <account> [--roots /srv/acc/workspaces:/srv/acc/app]   agents: runs CLI sessions as <account>
+#   acc-agent-add <account> --services                                   only brings that user's Docker stacks up
+# Fair-use limits for everything the account's sessions run (its broker unit's cgroup):
+#   --cpu 400%   --memory 16G   --tasks 2048      (--no-limits removes them)
+# The account gets no sudo, adm, lxd or docker. Its sessions write to /srv/acc/run/<account> (only it and accd can
+# read it); its broker's socket is /run/acc-broker/<account>.sock (only accd can connect).
+# On a node (deploy/node/install.sh) the broker's client is acc-node instead of accd, and ACC lives elsewhere:
+#   ACC_AGENT_CLIENT=acc-node  ACC_AGENT_RUN_ROOT=/srv/acc/run  ACC_AGENT_PREFIX=/opt/acc
+set -euo pipefail
+client=${ACC_AGENT_CLIENT:-acc}        # the user (and group) whose processes may talk to the broker
+run_root=${ACC_AGENT_RUN_ROOT:-/srv/acc/run}
+prefix=${ACC_AGENT_PREFIX:-}           # empty: the primary's layout (/srv/acc/bin, /srv/acc/app)
+hook=${prefix:+$prefix/bin/acc-hook}
+hook=${hook:-/srv/acc/bin/acc-hook}
+account=${1:?usage: acc-agent-add <account> [--services] [--roots a:b]}; shift
+[[ $account =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "bad account name" >&2; exit 1; }
+role=agents roots=/srv/acc/workspaces:/srv/acc/app cpu='' memory='' tasks='' nolimits=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --services) role=services ;;
+    --roots) roots=$2; shift ;;
+    --cpu) cpu=$2; shift; [[ $cpu =~ ^[0-9]{1,5}%$ ]] || { echo "--cpu like 400%" >&2; exit 1; } ;;
+    --memory) memory=$2; shift; [[ $memory =~ ^[0-9]+[KMGT]$ ]] || { echo "--memory like 16G" >&2; exit 1; } ;;
+    --tasks) tasks=$2; shift; [[ $tasks =~ ^[0-9]+$ ]] || { echo "--tasks like 2048" >&2; exit 1; } ;;
+    --no-limits) nolimits=1 ;;
+    *) echo "unknown option $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+if ! id "$account" >/dev/null 2>&1; then
+  [ "$role" = agents ] || { echo "services account $account must already exist" >&2; exit 1; }
+  useradd --create-home --shell /bin/bash --user-group "$account"
+  passwd -l "$account" >/dev/null
+fi
+if [ "$role" = agents ]; then
+  for group in sudo adm lxd docker; do
+    if id -nG "$account" | tr ' ' '\n' | grep -qx "$group"; then
+      echo "refusing: $account is in group $group (agents must not be)" >&2; exit 1
+    fi
+  done
+  if command -v sudo >/dev/null; then
+    sudo_status=0
+    sudo_policy=$(LC_ALL=C sudo -n -l -U "$account" 2>&1) || sudo_status=$?
+    # sudo -l -U exits 0 whether or not the account may use sudo (Ubuntu 24.04's sudo; older builds exit 1 on denial),
+    # so decide from its report: only the explicit denial passes; listed commands or anything unexpected refuses.
+    if [[ "$sudo_policy" == *"may run the following commands"* ]]; then
+      echo "refusing: $account has sudo authorization (agents must not)" >&2; exit 1
+    fi
+    if { [ "$sudo_status" -ne 0 ] && [ "$sudo_status" -ne 1 ]; } || [[ "$sudo_policy" != "User $account is not allowed to run sudo on "* ]]; then
+      echo "refusing: cannot verify sudo authorization for $account (sudo exit $sudo_status)" >&2; exit 1
+    fi
+  fi
+fi
+home=$(getent passwd "$account" | cut -d: -f6)
+uid=$(id -u "$account")
+if [ "$role" = agents ] && { [ "$uid" -lt 1000 ] || [ "$uid" -eq 65534 ]; }; then
+  echo "refusing: system accounts cannot run agent brokers" >&2; exit 1
+fi
+
+install -d -o root -g "$client" -m 0751 "$run_root"  # others may only pass through to their own folder
+install -d -m 0755 /etc/acc/broker
+env=/etc/acc/broker/$account.env
+{
+  echo "# Written by acc-agent-add. Broker settings for $account ($role)."
+  echo "ACC_BROKER_ROLE=$role"
+  echo "ACC_ALLOWED_UIDS=$(id -u "$client")"
+  echo "ACC_ALLOWED_ROOTS=$roots"
+  echo "PATH=$home/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  echo "TERM=tmux-256color"
+  if [ "$role" = agents ]; then
+    echo "ACC_RUN_DIR=$run_root/$account"
+    if [ -n "$prefix" ]; then
+      echo "ACC_HOOK_PATH=$hook"
+      echo "ACC_CATALOG_DIR=$prefix/app/catalog"
+      echo "ACC_CATALOG_LOCAL_DIR=$prefix/catalog-local"
+    fi
+  else  # rootless Docker lives in the user's runtime folder
+    echo "XDG_RUNTIME_DIR=/run/user/$uid"
+    echo "DOCKER_HOST=unix:///run/user/$uid/docker.sock"
+  fi
+} > "$env"
+chmod 0644 "$env"
+
+if [ "$role" = agents ]; then
+  install -d -o "$account" -g "$client" -m 2750 "$run_root/$account"
+  # The account's own workspace root (its projects and local workspaces), when it doesn't exist yet. Keep it out of
+  # other accounts' trees: folders inherit the sharing ACLs of their parent.
+  first_root=${roots%%:*}
+  if [ ! -e "$first_root" ]; then
+    # Agent-controlled parents and links are traversed only with the agent's own authority.
+    # The root fallback bootstraps a new top-level workspace under protected system parents.
+    if ! runuser -u "$account" -- mkdir -p -m 0750 -- "$first_root"; then
+      /usr/bin/python3 -I - "$first_root" "$account" <<'PYROOT'
+import os
+from pathlib import PurePosixPath
+import pwd
+import sys
+
+path, account = sys.argv[1:]
+parts = PurePosixPath(path).parts
+if not path.startswith("/") or any(p in (".", "..") for p in path.split("/")[1:]):
+    raise SystemExit("unsafe workspace root")
+user = pwd.getpwnam(account)
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open("/", flags)
+try:
+    for index, part in enumerate(parts[1:]):
+        parent = os.fstat(fd)
+        if parent.st_uid != 0 or parent.st_mode & 0o022:
+            raise SystemExit("workspace parent is writable; create the folder as the agent or provision it separately")
+        final = index == len(parts) - 2
+        created = False
+        try:
+            os.mkdir(part, 0o700 if final else 0o755, dir_fd=fd)
+            created = True
+        except FileExistsError:
+            pass
+        child = os.open(part, flags, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        if created and not final:
+            os.fchmod(fd, 0o755)
+        if final and created:
+            os.fchown(fd, user.pw_uid, user.pw_gid)
+            os.fchmod(fd, 0o750)
+finally:
+    os.close(fd)
+PYROOT
+    fi
+  fi
+  # Codex reads its hooks from a static file. This is the minimal first version; the broker adds ACC's tool hooks
+  # (acc-guard) at the first launch, and Codex asks once in its TUI to trust new entries ("Hooks need review").
+  if [ ! -f "$home/.codex/hooks.json" ]; then
+    runuser -u "$account" -- mkdir -p "$home/.codex"
+    runuser -u "$account" -- /usr/bin/python3 -I - "$home/.codex/hooks.json" "$hook" <<'PY'
+import json, sys
+hook = {"type": "command", "command": f"{sys.argv[2]} codex"}
+events = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt"]
+json.dump({"hooks": {e: [{"hooks": [hook]}] for e in events}}, open(sys.argv[1], "w"), indent=2)
+PY
+  fi
+  # Claude's first run shows onboarding screens a tmux session can't get past; mark it done for a new account.
+  if [ ! -f "$home/.claude.json" ]; then
+    runuser -u "$account" -- /usr/bin/python3 -I -c 'import json,sys; json.dump({"hasCompletedOnboarding": True}, open(sys.argv[1], "w"))' "$home/.claude.json"
+    runuser -u "$account" -- chmod 0600 "$home/.claude.json"
+  fi
+  # Project checkouts belong to their original owner and are shared through ACLs (acc-agent-share): tell git that
+  # is expected.
+  runuser -u "$account" -- git config --global --get-all safe.directory | grep -qx '\*' \
+    || runuser -u "$account" -- git config --global --add safe.directory '*'
+fi
+
+limits=/etc/systemd/system/acc-broker@$account.service.d/limits.conf
+if [ -n "$nolimits" ]; then
+  rm -f "$limits"
+  systemctl set-property --runtime "acc-broker@$account.service" CPUQuota= MemoryMax=infinity MemoryHigh=infinity TasksMax=infinity 2>/dev/null || true
+elif [ -n "$cpu$memory$tasks" ]; then
+  install -d -m 0755 "$(dirname "$limits")"
+  {
+    echo "# Written by acc-agent-add: fair-use limits for everything $account's sessions run."
+    echo "[Service]"
+    [ -n "$cpu" ] && echo "CPUQuota=$cpu"
+    [ -n "$memory" ] && echo "MemoryMax=$memory" && echo "MemoryHigh=$(( $(numfmt --from=iec "$memory") * 9 / 10 ))"  # throttle before the hard limit
+    [ -n "$tasks" ] && echo "TasksMax=$tasks"
+  } > "$limits"
+fi
+
+systemctl daemon-reload
+systemctl set-property --runtime "acc-broker@$account.service" ${cpu:+CPUQuota=$cpu} ${memory:+MemoryMax=$memory} ${tasks:+TasksMax=$tasks} 2>/dev/null || true
+systemctl enable --now "acc-broker@$account.socket"
+systemctl restart "acc-broker@$account.service" 2>/dev/null || true
+echo "acc-agent-add: $account ready ($role); socket /run/acc-broker/$account.sock"

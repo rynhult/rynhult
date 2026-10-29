@@ -1,0 +1,12 @@
+#!/bin/sh
+# The Rynhult package's preinstall (runs as root): remove the previous source tree, so files a new version dropped go too.
+# Only that folder: the per-user install (~/Library/Application Support/ACC) is the user's and stays.
+set -eu
+target=${3:-/}
+target=${target%/}  # "" for the running system
+src="$target/Library/Application Support/ACC/src"
+if [ -d "$src" ] && [ ! -L "$src" ]; then
+  echo "Rynhult: removing the previous $src"
+  rm -rf "$src"
+fi
+exit 0

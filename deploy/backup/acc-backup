@@ -1,0 +1,309 @@
+#!/usr/bin/python3 -I
+"""acc-backup: daily backups of Rynhult state, kept off the drive that holds it (run by root from acc-backup.timer).
+
+- /srv/acc/data/acc.db (SQLite online backup, integrity-checked), /srv/acc/data/secrets (vault.key included: the
+  key vault's values need it, and it is never in the database) and the
+  dashboard-added catalog items (/srv/acc/catalog-local)
+  -> ACC_BACKUP_DIR/<YYYY-MM-DD>/  (root 0700, default /var/backups/acc; ideally another drive than /srv/acc)
+- /srv/acc/git, the projects' git backups (bare repositories, docs/MULTIHOST.md) -> <day>/git/, each file hard-linked
+  to the previous day's copy when it hasn't changed (git's objects never change), so a day costs only what's new
+- optional mirrors of folders projects write their own dumps to (ACC_BACKUP_MIRRORS="user:/source:/dest;…"), each
+  copied as its user: root never writes, chowns or follows links in folders other users control. Sessions' key files
+  (session.env) are never copied, and Rynhult's run folders (/srv/acc/run) aren't backed up at all. Each destination
+  must also be writable in the unit (a ReadWritePaths= drop-in; deploy/setup.sh writes it).
+Settings come from /etc/default/acc-backup. Keeps 14 days. Restore steps: docs/OPERATIONS.md.
+
+A day's folder holds acc.db and secrets/ (vault.key, the GitHub, Cloudflare and API tokens, the VAPID key) side by
+side, so whoever can read the backup drive can read every secret Rynhult has (D24). With ACC_BACKUP_PASSPHRASE_FILE
+(a file owned by root, mode 0600, on another drive than the backups), secrets/ is written as secrets.tar.enc
+instead: a tar of the regular files, encrypted by `openssl enc -aes-256-cbc -pbkdf2 -iter 600000` with that file's
+first line as the passphrase. The plain files never touch the backup drive. Keep a copy of the passphrase somewhere
+else too: without it the backup's secrets are gone.
+
+When a device authority is provisioned (/var/lib/acc-device-ca) the day's folder also gets device-ca.enc, written by
+the root-only recovery tool with its own passphrase (/etc/acc-device-ca/backup-passphrase, never in the backup set).
+Without that tool or passphrase the authority is skipped and said so; it is never copied in plain form.
+"""
+from __future__ import annotations
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+
+import datetime as dt
+import os
+import shutil
+import sqlite3
+import stat
+import subprocess
+import sys
+import tarfile
+from pathlib import Path
+
+DATA = Path(environment.get("ACC_DATA", "/srv/acc/data"))
+DEST = Path(environment.get("ACC_BACKUP_DIR", "/var/backups/acc"))
+CATALOG_LOCAL = Path(environment.get("ACC_CATALOG_LOCAL", "/srv/acc/catalog-local"))
+GIT = Path(environment.get("ACC_GIT", "/srv/acc/git"))
+MIRRORS = [tuple(entry.split(":", 2)) for entry in environment.get("ACC_BACKUP_MIRRORS", "").split(";") if entry.count(":") >= 2]
+PASSPHRASE = environment.get("ACC_BACKUP_PASSPHRASE_FILE", "")
+KEEP_DAYS = 14
+OPENSSL = ["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "600000", "-md", "sha256"]
+
+
+def copy_regular_files(source: Path, target: Path) -> None:
+    """Copy a folder's regular files and subfolders, never following or copying symlinks (acc owns the source)."""
+    target.mkdir(mode=0o700)
+    for entry in os.scandir(source):
+        if entry.is_dir(follow_symlinks=False):
+            copy_regular_files(Path(entry.path), target / entry.name)
+        elif entry.is_file(follow_symlinks=False):
+            fd = os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as reader, open(target / entry.name, "wb", opener=lambda p, f: os.open(p, f, 0o600)) as writer:
+                shutil.copyfileobj(reader, writer)
+
+
+def passphrase_file() -> Path | None:
+    """ACC_BACKUP_PASSPHRASE_FILE, if set: a regular file, not a link, owned by whoever runs the backup (root), that
+    nobody else can read."""
+    if not PASSPHRASE:
+        return None
+    path = Path(PASSPHRASE)
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        raise SystemExit(f"ACC_BACKUP_PASSPHRASE_FILE: {error}") from None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise SystemExit(f"{path} must be a regular file owned by root with mode 0600")
+    if not path.read_text().strip():
+        raise SystemExit(f"{path} is empty")
+    return path
+
+
+def add_regular_files(tar: tarfile.TarFile, source: Path, name: str) -> None:
+    """Like copy_regular_files, into a tar stream: regular files and folders only, never following a link."""
+    folder = tarfile.TarInfo(name)
+    folder.type, folder.mode = tarfile.DIRTYPE, 0o700
+    tar.addfile(folder)
+    for entry in sorted(os.scandir(source), key=lambda e: e.name):
+        if entry.is_dir(follow_symlinks=False):
+            add_regular_files(tar, Path(entry.path), f"{name}/{entry.name}")
+        elif entry.is_file(follow_symlinks=False):
+            fd = os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as reader:
+                info = tarfile.TarInfo(f"{name}/{entry.name}")
+                facts = os.fstat(fd)
+                info.size, info.mtime, info.mode = facts.st_size, int(facts.st_mtime), 0o600
+                tar.addfile(info, reader)
+
+
+def encrypt_regular_files(source: Path, target: Path, passphrase: Path) -> None:
+    """secrets/ as one encrypted file: the tar goes straight into openssl, so no plain copy is ever written."""
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as out:
+        process = subprocess.Popen([*OPENSSL, "-salt", "-pass", f"file:{passphrase}"], stdin=subprocess.PIPE,
+                                   stdout=out)
+        try:
+            with tarfile.open(fileobj=process.stdin, mode="w|") as tar:
+                add_regular_files(tar, source, "secrets")
+        finally:
+            process.stdin.close()
+            code = process.wait()
+    if code:
+        target.unlink(missing_ok=True)
+        raise SystemExit(f"openssl failed to encrypt the secrets (exit {code})")
+
+
+def copy_linked(source: Path, target: Path, previous: Path | None) -> tuple[int, int]:
+    """Like copy_regular_files, but a file whose previous copy has the same size and modification time is hard-linked
+    to it instead of copied. In each folder `objects` goes last: refs are copied before the objects they point at,
+    so a push arriving meanwhile can't leave a copied ref without its objects. Returns (copied, linked)."""
+    target.mkdir(mode=0o700)
+    copied = linked = 0
+    for entry in sorted(os.scandir(source), key=lambda e: (e.name == "objects", e.name)):
+        before = previous / entry.name if previous is not None else None
+        if entry.is_dir(follow_symlinks=False):
+            more = copy_linked(Path(entry.path), target / entry.name,
+                               before if before is not None and before.is_dir() and not before.is_symlink() else None)
+            copied, linked = copied + more[0], linked + more[1]
+        elif entry.is_file(follow_symlinks=False):
+            info = entry.stat(follow_symlinks=False)
+            try:
+                old = os.lstat(before) if before is not None else None
+            except OSError:
+                old = None
+            if old is not None and stat.S_ISREG(old.st_mode) and (old.st_size, old.st_mtime_ns) == (info.st_size, info.st_mtime_ns):
+                os.link(before, target / entry.name, follow_symlinks=False)
+                linked += 1
+                continue
+            fd = os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as reader, open(target / entry.name, "wb", opener=lambda p, f: os.open(p, f, 0o600)) as writer:
+                shutil.copyfileobj(reader, writer)
+            os.utime(target / entry.name, ns=(info.st_atime_ns, info.st_mtime_ns))
+            copied += 1
+    return copied, linked
+
+
+def backup_git(today: str) -> str:
+    """The projects' git backups, next to the day's acc.db."""
+    if not GIT.is_dir() or GIT.is_symlink():
+        return f"{GIT}: nothing yet"
+    target = DEST / today / "git"
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if target.exists():
+        shutil.rmtree(target)
+    earlier = sorted(e for e in DEST.iterdir() if e.name < today and _is_day(e.name) and (e / "git").is_dir())
+    previous = earlier[-1] / "git" if earlier else None
+    copied, linked = copy_linked(GIT, target, previous)
+    return f"{GIT} -> {target} ({copied} files copied, {linked} unchanged and linked)"
+
+
+def _is_day(name: str) -> bool:
+    try:
+        dt.date.fromisoformat(name)
+        return True
+    except ValueError:
+        return False
+
+
+def backup_acc(today: str) -> str:
+    target = DEST / today
+    target.mkdir(parents=True, exist_ok=True)
+    os.chmod(DEST, 0o700)
+    os.chmod(target, 0o700)
+    db_out = target / "acc.db"
+    if (DATA / "acc.db").is_symlink():
+        raise SystemExit(f"{DATA / 'acc.db'} is a symlink; refusing to back it up")
+    source = sqlite3.connect(f"file:{DATA / 'acc.db'}?mode=ro", uri=True)
+    copy = sqlite3.connect(db_out)
+    with copy:
+        source.backup(copy)  # consistent online copy, even while accd writes
+    check = copy.execute("PRAGMA integrity_check").fetchone()[0]
+    copy.close()
+    source.close()
+    if check != "ok":
+        raise SystemExit(f"integrity check failed for {db_out}: {check}")
+    os.chmod(db_out, 0o600)
+    secrets, sealed = target / "secrets", target / "secrets.tar.enc"
+    if secrets.exists():
+        shutil.rmtree(secrets)
+    sealed.unlink(missing_ok=True)
+    passphrase = passphrase_file()
+    if passphrase is None:
+        copy_regular_files(DATA / "secrets", secrets)
+    else:
+        encrypt_regular_files(DATA / "secrets", sealed, passphrase)
+    extra = ""
+    if CATALOG_LOCAL.is_dir():
+        catalog = target / "catalog-local"
+        if catalog.exists():
+            shutil.rmtree(catalog)
+        shutil.copytree(CATALOG_LOCAL, catalog, symlinks=True)
+        extra = " + catalog-local"
+    form = " (encrypted)" if passphrase else ""
+    return f"acc.db ({db_out.stat().st_size // 1024} KB, integrity ok) + secrets{form}{extra} -> {target}"
+
+
+DEVICE_CA = Path("/var/lib/acc-device-ca")
+DEVICE_CA_RECOVERY = Path("/usr/local/lib/acc-device-ca/acc-device-ca-recovery.py")
+DEVICE_CA_PASSPHRASE = Path("/etc/acc-device-ca/backup-passphrase")
+
+
+def backup_device_ca(day: str) -> str:
+    """The device authority, sealed by its own root-only tool (authenticated encryption); never a plain copy."""
+    if not DEVICE_CA.exists():
+        return "device CA: not provisioned"
+    if not DEVICE_CA_RECOVERY.is_file() or not DEVICE_CA_PASSPHRASE.is_file():
+        return "device CA: NOT backed up (install the recovery tool and its passphrase; see deploy/device-ca/README.md)"
+    target = DEST / day / "device-ca.enc"
+    target.unlink(missing_ok=True)
+    result = subprocess.run([str(DEVICE_CA_RECOVERY), "backup", str(target)], capture_output=True, text=True, timeout=120)
+    if result.returncode:
+        target.unlink(missing_ok=True)
+        raise SystemExit("device CA backup refused (no key material is printed); check the recovery tool's setup")
+    return f"device CA (encrypted, authority {result.stdout.strip()[:64]}) -> {target}"
+
+
+def mirror(user: str, source: str, dest: str) -> str:
+    """Copy one folder to another place as `user` (the folders are theirs, not root's)."""
+    source_path, dest_path = Path(source), Path(dest)
+    if not source_path.is_dir():
+        return f"{source}: nothing yet"
+    def as_user(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["runuser", "-u", user, "--", *args], capture_output=True, text=True)
+    for step in (("mkdir", "-p", str(dest_path)), ("chmod", "0700", str(dest_path.parent))):
+        made = as_user(*step)
+        if made.returncode:
+            raise SystemExit(f"{step[0]} failed: {made.stderr[-300:]}")
+    # A session's keys (session.env, D21) never go into a backup, even from a folder that holds a run folder.
+    result = as_user("rsync", "-a", "--delete", "--stats", "--exclude=session.env", f"{source_path}/", f"{dest_path}/")
+    if result.returncode:
+        raise SystemExit(f"rsync failed: {result.stderr[-300:]}")
+    files = next((line.split(":", 1)[1].strip() for line in result.stdout.splitlines() if line.startswith("Number of files:")), "?")
+    return f"{source} mirrored to {dest} as {user} ({files})"
+
+
+def prune() -> list[str]:
+    cutoff = dt.date.today() - dt.timedelta(days=KEEP_DAYS)
+    removed = []
+    for entry in DEST.iterdir():
+        try:
+            day = dt.date.fromisoformat(entry.name)
+        except ValueError:
+            continue  # only dated directories are ever removed
+        if day < cutoff and entry.is_dir():
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+    return removed
+
+
+def main() -> int:
+    today = dt.date.today().isoformat()
+    print(backup_acc(today))
+    print(backup_git(today))
+    print(backup_device_ca(today))
+    for user, source, dest in MIRRORS:
+        print(mirror(user, source, dest))
+    removed = prune()
+    print(f"pruned: {', '.join(removed) or 'nothing'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

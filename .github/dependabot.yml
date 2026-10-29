@@ -1,0 +1,96 @@
+# Native GitHub updater: no additional app/token or untrusted custom manager.
+# Weekly schedules apply to version PRs. Security PRs are advisory-triggered;
+# enable dependency graph, Dependabot alerts and security updates in GitHub.
+# No target-branch, cooldown, ignore rules or auto-merge: security fixes must
+# reach the default branch without waiting for the weekly version batch.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      python:
+        applies-to: version-updates
+        patterns: ['*']
+      python-security:
+        applies-to: security-updates
+        patterns: ['*']
+  - package-ecosystem: pip
+    directories:
+      - /deploy/telemetry
+      - /deploy/containers/session
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      python-standalone:
+        applies-to: version-updates
+        patterns: ['*']
+      python-standalone-security:
+        applies-to: security-updates
+        patterns: ['*']
+  - package-ecosystem: npm
+    directories:
+      - /web
+      - /deploy/mcp
+      - /deploy/containers/session
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      npm:
+        applies-to: version-updates
+        patterns: ['*']
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      rust:
+        applies-to: version-updates
+        patterns: ['*']
+      rust-security:
+        applies-to: security-updates
+        patterns: ['*']
+  - package-ecosystem: docker
+    directory: /deploy/containers
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      containers:
+        applies-to: version-updates
+        patterns: ['*']
+      containers-security:
+        applies-to: security-updates
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Etc/UTC
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ['*']
+      actions-security:
+        applies-to: security-updates
+        patterns: ['*']

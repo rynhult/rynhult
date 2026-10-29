@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchAgent template for an ACC node on macOS. deploy/node/macos/install.sh replaces each @NAME@, sets
+     ProgramArguments, EnvironmentVariables and KeepAlive per job (broker, node), and writes the result to
+     ~/Library/LaunchAgents/local.acc.<job>.plist. Both jobs run as the signed-in user. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.acc.@JOB@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@PYTHON@</string>
+		<string>-I</string>
+		<string>-m</string>
+		<string>@MODULE@</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@PATH@</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>@HOME@</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<!-- The broker forks the tmux server that holds the sessions: keep it when the broker stops or restarts. -->
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>StandardOutPath</key>
+	<string>@LOGS@/@JOB@.log</string>
+	<key>StandardErrorPath</key>
+	<string>@LOGS@/@JOB@.log</string>
+</dict>
+</plist>

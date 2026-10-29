@@ -1,0 +1,2298 @@
+#!/usr/bin/python3 -I
+"""Rynhult guardrails: the agents' pre-tool hook.   acc-guard <provider> [event]
+
+Reads the tool call (JSON on stdin), checks it against the session's rules ($ACC_RUN_DIR/guardrails.json, written at
+launch from Settings -> Guardrails), records the event like acc-hook (with a "guard" entry when it blocks), and answers
+in the CLI's own format, whatever the CLI's permission mode. Outside a Rynhult session it allows everything; inside one, a
+policy that is missing, unreadable or changed since launch ($ACC_GUARD_FILES holds the launch files' hashes) blocks
+every tool call. Its own files (the run folder, the CLIs' hook settings) can't be changed through it. It is a safety
+net against mistakes and casual prompt injection, not a sandbox: the agent's account can still do what it may.
+Standard library only: it runs before every tool call.
+
+Shell commands are parsed the way a shell reads them (quotes, comments, continuations, heredocs, subshells, groups,
+command substitutions, `sh -c` and `eval` scripts, wrappers such as sudo/env/timeout) and every command that would run
+is checked, with the directory it would run in. Text that is only printed or searched for is not a command or a file.
+"""
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+import glob
+import hashlib
+import json
+import os
+import posixpath
+import re
+import signal
+import stat
+import sys
+from datetime import datetime, timezone
+from fnmatch import fnmatchcase
+from urllib.parse import unquote, urlsplit
+
+COMMAND_KEYS = ("command", "CommandLine", "cmd", "script")
+PATH_KEYS = ("file_path", "filePath", "path", "TargetFile", "AbsolutePath", "notebook_path", "target_file", "file")
+SAFE_ENV = re.compile(r"^\.env\.(example|sample|template|dist|defaults)$")
+SECRET_NAMES = re.compile(r"^(\.env(\..+)?|session\.env|\.netrc|\.git-credentials|\.pgpass|id_(rsa|dsa|ecdsa|ed25519)|.+\.(pem|p12|pfx)|"
+                          r"credentials\.json|service-account.*\.json)$")
+SECRET_DIRS = ("/.ssh/", "/.gnupg/", "/srv/acc/data/secrets/")
+# The agent CLIs' own sign-in files (tokens), and other tools' credential stores
+SECRET_FILES = ("/.aws/credentials", "/.docker/config.json", "/.config/gh/hosts.yml", "/.codex/auth.json",
+                "/.claude/.credentials.json", "/.copilot/config.json", "/.config/antigravity/plugin-secrets.json",
+                "/.gemini/antigravity-cli/antigravity-oauth-token", "/.config/cursor/auth.json", "/.kube/config",
+                # OpenCode keeps saved API keys and OAuth tokens in its database (with every conversation)
+                "/.local/share/opencode/opencode.db", "/.local/share/opencode/opencode.db-wal",
+                "/.local/share/opencode/opencode.db-shm", "/.local/share/opencode/auth.json")
+# Folders that hold little but credentials: the folder itself counts (`grep -r . ~/.aws`)
+SECRET_FOLDERS = ("/.aws", "/.config/gh", "/.kube", "/.docker", "/.ssh", "/.gnupg")
+# Launch files in the session's run folder that hold MCP secret values
+RUN_SECRETS = ("mcp.json", "plugin/.mcp.json", "plugin/mcp_config.json", "opencode-mcp.json", "session.env")
+# What a glob in a file name is compared with: it is a secret when it could name one of these
+SECRET_SAMPLES = (".env", ".env.local", ".env.production", "session.env", ".netrc", ".git-credentials", ".pgpass",
+                  "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json")
+SEARCH_KEYS = ("glob", "include", "includes", "Includes", "SearchPath", "SearchDirectory", "DirectoryPath",
+               "target_directory", "dir_path", "directory")  # search tools' folders and file filters
+TEMP_ROOTS = ("/tmp/", "/var/tmp/")
+# What configures the guard and the CLIs' hooks, besides the session's run folder: agents may read these, not change them
+# (a trailing / is a folder of them)
+# (OpenCode plugins and custom tools are code its server runs, with no guard in between; the singular folders too)
+HOOK_FILES = ("/.codex/hooks.json", "/.cursor/hooks.json", "/.gemini/config/hooks.json", "/.copilot/hooks/", "/.github/hooks/",
+              "/.opencode/plugins/", "/.opencode/plugin/", "/.opencode/tools/", "/.opencode/tool/")
+HOOK_SETTINGS = ("/.claude/settings.json", "/.claude/settings.local.json", "/.codex/config.toml",  # hooks among others
+                 "/.github/copilot/settings.json", "/.github/copilot/settings.local.json")
+# A project's OpenCode config: other settings may change, its plugins and policies (which load code) may not
+OPENCODE_SETTINGS = ("/opencode.json", "/opencode.jsonc")
+# Commands that only read the files they're given (an edit tool or any other command may change them)
+READERS = frozenset(("cat", "tac", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "zgrep", "rg", "jq", "wc",
+                     "diff", "cmp", "file", "stat", "ls", "tree", "du", "sha256sum", "sha1sum", "sha512sum", "md5sum",
+                     "b2sum", "cksum", "od", "hexdump", "strings", "bat", "nl", "realpath", "readlink", "test", "["))
+READ_TOOLS = re.compile(r"read|view|glob|grep|search|find|list|^ls$", re.I)
+WRITE_REDIRECTS = (">", ">>", ">|", "&>", "&>>", "<>", ">&")
+# Exact names, not a prefix/deny-list: future tools must not inherit Plan approval.
+# Planning/report control-plane exceptions remain explicit; implementation and new
+# document mutations (brief_propose_documents, brief_share) keep normal approval.
+READ_ONLY_TEAM_TOOLS = frozenset(('list', 'status', 'read', 'worklist', 'selection_status',
+                                'gate_status', 'plan', 'plan_version', 'brief', 'brief_documents'))
+PLAN_AUTO_TEAM_TOOLS = READ_ONLY_TEAM_TOOLS | frozenset((
+    'start', 'message', 'stop', 'finish', 'worklist_add', 'worklist_update', 'worklist_ingest',
+    'worklist_done', 'now', 'assign', 'select', 'give', 'report', 'reserve', 'release',
+    'plan_update', 'plan_ready', 'brief_interpret', 'brief_draft', 'brief_question', 'brief_reference'))
+RUN_DIR = ""  # this session's run folder ($ACC_RUN_DIR), set by check()
+
+
+def tool_call(payload: dict) -> tuple[str, dict]:
+    """The tool's name and arguments, whichever CLI sent them."""
+    call = payload.get("toolCall") if isinstance(payload.get("toolCall"), dict) else {}
+    name = payload.get("tool_name") or payload.get("toolName") or call.get("name") or ""
+    args = payload.get("tool_input", payload.get("toolArgs", payload.get("toolInput", call.get("args"))))
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            # A bare string is a command only for a shell tool; for an edit tool it is the patch or file text, whose
+            # contents are not run (its file names are still checked: patch_paths)
+            shell = re.search(r"bash|shell|run|exec|command|terminal", str(name), re.I)
+            args = {"command": args} if shell else {"input": args}
+    return str(name), args if isinstance(args, dict) else {}
+
+
+def strings(args: dict, keys: tuple[str, ...]) -> list[str]:
+    found = []
+    for key in keys:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            found.append(value)
+        elif isinstance(value, list):
+            found += [v for v in value if isinstance(v, str)]
+    return found
+
+
+def patch_paths(args: dict) -> list[str]:
+    """Codex's apply_patch and OpenCode's patch name their files inside the patch text (a move names two)."""
+    text = " ".join(v for v in args.values() if isinstance(v, str))
+    return re.findall(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$", text, re.M)
+
+
+
+# --- Reading shell commands -------------------------------------------------------------------------------------------
+# Enough of the shell's grammar to know which commands run, with which words, in which directory. Nothing is executed
+# or expanded: an expansion ($VAR, $(...), globs aside) stays unknown, and the rules treat unknown as possibly bad.
+
+META = frozenset(" \t\n;&|()<>")
+OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "&", "|", "(", ")")
+REDIRECTS = ("&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">>", ">&", ">|", "<", ">")
+FD_PREFIX = re.compile(r"\d+(?=[<>])|\{[A-Za-z_][A-Za-z0-9_]*\}(?=[<>])")
+PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-]")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+KEYWORDS = frozenset(("!", "if", "then", "elif", "else", "fi", "do", "done", "while", "until", "esac", "coproc"))
+DATA_KEYWORDS = frozenset(("for", "select", "case", "function"))  # their words name things; they run nothing
+
+
+class Word:
+    """One shell word: its text after quote removal, and how each character was written: 'u' unquoted, 'q' quoted or
+    escaped, '$' part of an expansion or substitution. `subs` holds the scripts of its command substitutions."""
+    __slots__ = ("text", "how", "subs")
+
+    def __init__(self, text="", how=None, subs=None):
+        self.text, self.how, self.subs = text, how if how is not None else "u" * len(text), subs if subs is not None else []
+
+    def add(self, text: str, how: str):
+        self.text += text
+        self.how += how * len(text)
+
+    def tail(self, start: int) -> "Word":
+        return Word(self.text[start:], self.how[start:])
+
+    @property
+    def dynamic(self) -> bool:
+        return "$" in self.how
+
+    @property
+    def tilde(self) -> bool:
+        return self.text[:1] == "~" and self.how[:1] == "u"
+
+    @property
+    def bare(self) -> bool:
+        return self.how == "u" * len(self.text)
+
+
+class Heredoc:
+    """A `<<WORD` redirection; its body is filled in when the parser reaches the end of the line."""
+    __slots__ = ("delimiter", "quoted", "strip", "body", "subs")
+
+    def __init__(self, word: Word, strip: bool):
+        self.delimiter, self.quoted, self.strip, self.body, self.subs = word.text, not word.bare, strip, "", []
+
+
+class Command:
+    """A simple command: leading assignments, words, redirections [(operator, Word or Heredoc)]."""
+    __slots__ = ("assigns", "words", "redirs", "data")
+
+    def __init__(self):
+        self.assigns, self.words, self.redirs, self.data = [], [], [], False
+
+
+class Parser:
+    """Shell source -> a list of [node, separator after it]; a node is a Command, ("sub", list) or ("group", list)."""
+
+    def __init__(self, source: str):
+        self.s, self.i, self.pending = source, 0, []
+
+    def parse(self) -> list:
+        return self.parse_list(None)
+
+    def parse_list(self, closer):
+        items, cmd = [], None
+        while True:
+            kind, value = self.token()
+            if kind == "eof":
+                break
+            if kind == "op":
+                if value == ")":
+                    if closer == ")":
+                        break
+                    value = ";"  # a stray ")" (a case pattern, say) just ends the command
+                if value == "(":
+                    array = cmd is not None and not cmd.words and cmd.assigns and self.s[self.i - 2:self.i - 1] == "="
+                    if cmd is not None:
+                        items.append([cmd, ";"])
+                        cmd = None
+                    inner = self.parse_list(")")
+                    if array:  # name=(a b c): words, not commands
+                        for node, _ in inner:
+                            if isinstance(node, Command):
+                                node.data = True
+                    items.append([("sub", inner), None])
+                    continue
+                if cmd is not None:
+                    items.append([cmd, value])
+                    cmd = None
+                elif items and items[-1][1] is None:
+                    items[-1][1] = value
+                continue
+            if kind == "redir":
+                cmd = cmd or Command()
+                if value in ("<<", "<<-"):
+                    self.blank()
+                    doc = Heredoc(self.word(), value == "<<-")
+                    self.pending.append(doc)
+                    cmd.redirs.append((value, doc))
+                else:
+                    cmd.redirs.append((value, self.operand()))
+                continue
+            word = value
+            if cmd is not None and cmd.data and word.bare and word.text == "{" and cmd.words[0].text == "function":
+                items.append([cmd, ";"])  # function NAME { ...; }: the body runs like any other group
+                cmd = None
+            if cmd is None and word.bare:
+                if word.text == "{":
+                    items.append([("group", self.parse_list("}")), None])
+                    continue
+                if word.text == "}":
+                    if closer == "}":
+                        break
+                    continue
+                if word.text in KEYWORDS:
+                    continue
+                if word.text in DATA_KEYWORDS:
+                    cmd = Command()
+                    cmd.data = True
+            cmd = cmd or Command()
+            match = ASSIGNMENT.match(word.text) if not cmd.words else None
+            if match and word.how[:match.end()] == "u" * match.end():
+                cmd.assigns.append(word)
+            else:
+                cmd.words.append(word)
+        if cmd is not None:
+            items.append([cmd, None])
+        return items
+
+    def blank(self):
+        s = self.s
+        while self.i < len(s):
+            c = s[self.i]
+            if c in " \t":
+                self.i += 1
+            elif c == "\\" and s.startswith("\\\n", self.i):
+                self.i += 2
+            elif c == "#":  # a comment runs to the end of the line
+                end = s.find("\n", self.i)
+                self.i = len(s) if end < 0 else end
+            else:
+                break
+
+    def token(self):
+        self.blank()
+        s = self.s
+        if self.i >= len(s):
+            return "eof", None
+        if s[self.i] == "\n":
+            self.i += 1
+            self.heredocs()
+            return "op", "\n"
+        if s.startswith(("<(", ">("), self.i):
+            return "word", self.operand()
+        fd = FD_PREFIX.match(s, self.i)
+        start = fd.end() if fd else self.i
+        for op in REDIRECTS:
+            if s.startswith(op, start):
+                self.i = start + len(op)
+                return "redir", op
+        for op in OPERATORS:
+            if s.startswith(op, self.i):
+                self.i += len(op)
+                return "op", op
+        return "word", self.word()
+
+    def operand(self) -> Word:
+        """A redirection's target or a word: process substitutions <(...) >(...) included."""
+        self.blank()
+        if self.s.startswith(("<(", ">("), self.i):
+            word, start = Word(), self.i
+            self.i = self.substitution(self.i + 2, word)
+            word.add(self.s[start:self.i], "$")
+            return word
+        return self.word()
+
+    def word(self) -> Word:
+        word, s = Word(), self.s
+        n = len(s)
+        while self.i < n:
+            c = s[self.i]
+            if c in META:
+                break
+            if c == "\\":
+                if s.startswith("\\\n", self.i):
+                    self.i += 2
+                    continue
+                word.add(s[self.i + 1:self.i + 2] or "\\", "q")
+                self.i += 2
+            elif c == "'":
+                end = s.find("'", self.i + 1)
+                end = n if end < 0 else end
+                word.add(s[self.i + 1:end], "q")
+                self.i = end + 1
+            elif c == '"':
+                self.i = self.dquote(self.i + 1, word)
+            elif c == "$":
+                self.i = self.dollar(self.i, word, False)
+            elif c == "`":
+                self.i = self.backtick(self.i, word)
+            else:
+                word.add(c, "u")
+                self.i += 1
+        self.i = min(self.i, n)
+        return word
+
+    def dquote(self, i: int, word: Word) -> int:
+        s, n = self.s, len(self.s)
+        while i < n and s[i] != '"':
+            c = s[i]
+            if c == "\\" and i + 1 < n and s[i + 1] in '$`"\\\n':
+                if s[i + 1] != "\n":
+                    word.add(s[i + 1], "q")
+                i += 2
+            elif c == "$":
+                i = self.dollar(i, word, True)
+            elif c == "`":
+                i = self.backtick(i, word)
+            else:
+                word.add(c, "q")
+                i += 1
+        return min(i + 1, n)
+
+    def dollar(self, i: int, word: Word, quoted: bool) -> int:
+        s, n = self.s, len(self.s)
+        after = s[i + 1:i + 2]
+        if s.startswith("$((", i):  # arithmetic; it can still hold command substitutions
+            j, depth = i + 3, 0
+            while j < n and not (depth == 0 and s.startswith("))", j)):
+                depth += {"(": 1, ")": -1}.get(s[j], 0)
+                j += 1
+            inner, end = s[i + 3:j], min(j + 2, n)
+            if "$(" in inner or "`" in inner:
+                word.subs.append(Parser(inner).parse())
+            word.add(s[i:end], "$")
+            return end
+        if after == "(":
+            end = self.substitution(i + 2, word)
+            word.add(s[i:end], "$")
+            return end
+        if after == "{":
+            end = self.braced(i + 2, word)
+            word.add(s[i:end], "$")
+            return end
+        if after == "'" and not quoted:  # $'...': ANSI-C quoting, literal text
+            j, text = i + 2, ""
+            while j < n and s[j] != "'":
+                if s[j] == "\\" and j + 1 < n:
+                    text += {"n": "\n", "t": "\t"}.get(s[j + 1], s[j + 1])
+                    j += 2
+                else:
+                    text += s[j]
+                    j += 1
+            word.add(text, "q")
+            return min(j + 1, n)
+        if after == '"' and not quoted:
+            return self.dquote(i + 2, word)
+        name = PARAMETER.match(s, i + 1)
+        if name:
+            word.add(s[i:name.end()], "$")
+            return name.end()
+        word.add("$", "q" if quoted else "u")
+        return i + 1
+
+    def substitution(self, i: int, word: Word) -> int:
+        """$(...) or <(...) from just inside the parenthesis; returns the index after the closing one."""
+        inner = Parser(self.s)
+        inner.i = i
+        word.subs.append(inner.parse_list(")"))
+        return inner.i
+
+    def braced(self, i: int, word: Word) -> int:
+        """${...} from just inside the brace: its default values can hold substitutions too."""
+        s, n, depth, sink = self.s, len(self.s), 1, Word()
+        while i < n and depth:
+            c = s[i]
+            if c == "\\":
+                i += 2
+            elif c == "'":
+                end = s.find("'", i + 1)
+                i = n if end < 0 else end + 1
+            elif c == '"':
+                i = self.dquote(i + 1, sink)
+            elif c == "$":
+                i = self.dollar(i, sink, True)
+            elif c == "`":
+                i = self.backtick(i, sink)
+            else:
+                depth += {"{": 1, "}": -1}.get(c, 0)
+                i += 1
+        word.subs += sink.subs
+        return min(i, n)
+
+    def backtick(self, i: int, word: Word) -> int:
+        s, n, j, inner = self.s, len(self.s), i + 1, []
+        while j < n and s[j] != "`":
+            if s[j] == "\\" and j + 1 < n and s[j + 1] in "`$\\":
+                inner.append(s[j + 1])
+                j += 2
+            else:
+                inner.append(s[j])
+                j += 1
+        word.subs.append(Parser("".join(inner)).parse())
+        word.add(s[i:j + 1], "$")
+        return min(j + 1, n)
+
+    def heredocs(self):
+        """Read the bodies of the heredocs started on the line that just ended."""
+        s = self.s
+        for doc in self.pending:
+            lines = []
+            while self.i < len(s):
+                end = s.find("\n", self.i)
+                end = len(s) if end < 0 else end
+                line, self.i = s[self.i:end], end + 1
+                if (line.lstrip("\t") if doc.strip else line) == doc.delimiter:
+                    break
+                lines.append(line)
+            self.i = min(self.i, len(s))
+            doc.body = "\n".join(lines)
+            if not doc.quoted:  # an unquoted delimiter: $(...) and `...` in the body run
+                doc.subs = expansions(doc.body)
+        self.pending = []
+
+
+def expansions(text: str) -> list:
+    """The command substitutions in text that is expanded but not otherwise run (a heredoc body)."""
+    parser, sink, i = Parser(text), Word(), 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+        elif text[i] == "$":
+            i = parser.dollar(i, sink, True)
+        elif text[i] == "`":
+            i = parser.backtick(i, sink)
+        else:
+            i += 1
+    return sink.subs
+
+
+# --- What a command does -----------------------------------------------------------------------------------------------
+
+HOME = "/~home"  # the home directory: where it really is doesn't matter, only that it is outside the workspace
+HOME_PREFIX = re.compile(r"^(~|\$HOME|\$\{HOME\})(?=/|$)")
+SHELLS = frozenset(("sh", "bash", "zsh", "dash", "ksh", "ash", "mksh"))
+TEXT_COMMANDS = frozenset(("echo", "printf", "print", ":", "true", "false", "which", "type"))  # arguments are text
+# Commands that run the rest of their words as a command: (short options taking a value, long ones taking a value)
+WRAPPERS = {
+    "busybox": ("", set()),
+    "flock": ("cwE", {"--command", "--wait", "--timeout", "--conflict-exit-code"}),
+    "script": ("cIOBT", {"--command", "--log-in", "--log-out", "--log-io", "--log-timing"}),
+    "su": ("cgs", {"--command", "--session-command", "--group", "--supp-group", "--shell"}),
+    "sudo": ("CDghpRrTtUu", {"--user", "--group", "--chdir", "--chroot", "--prompt", "--role", "--type", "--host",
+                             "--other-user", "--close-from", "--command-timeout"}),
+    "doas": ("uC", set()),
+    "env": ("uCSP", {"--unset", "--chdir", "--split-string"}),
+    "command": ("", set()),
+    "builtin": ("", set()),
+    "exec": ("a", set()),
+    "time": ("fo", {"--format", "--output"}),
+    "nice": ("n", {"--adjustment"}),
+    "nohup": ("", set()),
+    "stdbuf": ("ioe", {"--input", "--output", "--error"}),
+    "timeout": ("sk", {"--signal", "--kill-after"}),
+    "setsid": ("", set()),
+    "ionice": ("cnp", {"--class", "--classdata", "--pid"}),
+    "xargs": ("adEILnPs", {"--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--max-lines",
+                           "--eof", "--process-slot-var"}),
+    "nocorrect": ("", set()),
+    "noglob": ("", set()),
+}
+CHDIR_OPTIONS = {("sudo", "-D"), ("sudo", "--chdir"), ("env", "-C"), ("env", "--chdir")}
+GREP = frozenset(("grep", "egrep", "fgrep", "zgrep", "rg"))
+GREP_LONG_VALUES = {"--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context",
+                    "--include", "--exclude", "--exclude-dir", "--exclude-from", "--label", "--binary-files",
+                    "--devices", "--directories", "--glob", "--iglob", "--type", "--type-not", "--replace",
+                    "--max-depth", "--threads", "--max-columns", "--encoding", "--sort", "--sortr", "--pre",
+                    "--pre-glob", "--type-add", "--ignore-file", "--max-filesize", "--colors", "--engine",
+                    "--context-separator", "--path-separator"}
+GREP_FILE_OPTIONS = {"--file", "--exclude-from", "--ignore-file"}
+FILTER_OPTION = re.compile(r"exclude|include|ignore|glob|pattern|regexp|grep|filter")  # --x=VALUE that isn't a file
+GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
+PUSH_VALUE_OPTIONS = {"--repo", "--push-option", "--receive-pack", "--exec", "--recurse-submodules"}
+# Complete long-option vocabularies keep ambiguous prefixes from acquiring a different meaning.
+PUSH_OPTIONS = PUSH_VALUE_OPTIONS | {
+    "--all", "--branches", "--mirror", "--tags", "--follow-tags", "--dry-run", "--porcelain",
+    "--delete", "--prune", "--force", "--force-with-lease", "--force-if-includes", "--atomic",
+    "--set-upstream", "--thin", "--verbose", "--quiet", "--progress", "--signed", "--ipv4", "--ipv6",
+    "--verify", "--no-verify", "--no-force", "--no-force-with-lease", "--no-force-if-includes",
+    "--no-thin", "--no-signed", "--no-recurse-submodules", "--no-follow-tags", "--no-atomic",
+}
+RM_OPTIONS = {"--force", "--interactive", "--one-file-system", "--no-preserve-root", "--preserve-root",
+              "--recursive", "--dir", "--verbose", "--help", "--version"}
+
+
+def long_option(option: str, choices: set) -> str:
+    if option in choices:
+        return option
+    matches = [candidate for candidate in choices if candidate.startswith(option)]
+    return matches[0] if len(matches) == 1 else option
+
+
+CURRENT_BRANCH = re.compile(r"^\$\(\s*git\s+(branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|"
+                            r"symbolic-ref\s+--short\s+HEAD)\s*\)$")
+PROTECTED = ("main", "master")
+
+
+def resolve_dir(cwd: str | None, word: Word) -> str | None:
+    """The directory a word names, from cwd; None when it can't be known before the command runs."""
+    text = word.text
+    home = HOME_PREFIX.match(text)
+    if home and word.how[:1] in ("u", "$") and "$" not in word.how[home.end():]:
+        return os.path.normpath(HOME + text[home.end():])
+    if word.dynamic:
+        text = expand(word, session_vars())
+    if text is None or word.tilde or text == "-":
+        return None
+    if os.path.isabs(text):
+        return os.path.normpath(text)
+    return os.path.normpath(os.path.join(cwd, text)) if cwd is not None else None
+
+
+def change_dir(words: list[Word], cwd: str | None) -> str | None:
+    args = [w for w in words[1:] if not re.fullmatch(r"-[LPe@]+|--", w.text)]
+    return os.path.normpath(HOME) if not args else resolve_dir(cwd, args[0])
+
+
+def unwrap(words: list[Word], cwd: str | None, known: dict | None = None,
+           seen: list | None = None) -> tuple[list[Word], str | None, bool]:
+    """The command a wrapper runs (`sudo -u x env -i A=1 nice -n 5 git push` -> `git push`), the directory it runs in,
+    and whether it is only looked up (`command -v git`). `seen` collects the wrappers' names."""
+    while words and not words[0].dynamic:
+        name = os.path.basename(words[0].text)
+        if name not in WRAPPERS:
+            break
+        if seen is not None:
+            seen.append(name)
+        short, long = WRAPPERS[name]
+        if name in ("su", "script"):
+            # These runners take shell source rather than an argv after -c.
+            for j, word in enumerate(words[1:], 1):
+                text = word.text
+                option, equals, _ = text.partition("=")
+                if option in ("--command", "--session-command") or (
+                        text.startswith("-") and not text.startswith("--") and "c" in text[1:]):
+                    offset = text.index("c") + 1 if not text.startswith("--") else 0
+                    value = word.tail(len(option) + 1) if equals else (
+                        word.tail(offset) if offset and offset < len(text) else
+                        words[j + 1] if j + 1 < len(words) else Word())
+                    login = name == "su" and any(
+                        w.text in ("-", "--login") or (
+                            w.text.startswith("-") and not w.text.startswith("--") and "l" in w.text[1:])
+                        for w in words[1:])
+                    return [Word("sh"), Word("-c"), value], None if login else cwd, False
+            return words, cwd, False
+        i = 1
+        while i < len(words):
+            word, text = words[i], words[i].text
+            if text == "--":
+                i += 1
+                break
+            if name in ("env", "sudo") and ASSIGNMENT.match(text) or name == "env" and text == "-":
+                if known is not None and ASSIGNMENT.match(text):
+                    remember(word, known)
+                elif known is not None and text == "-":
+                    known.clear()
+                i += 1
+                continue
+            if not text.startswith("-") or text == "-":
+                break
+            i += 1
+            option = value = None
+            if text.startswith("--"):
+                option, equals, _ = text.partition("=")
+                if equals:
+                    value = word.tail(len(option) + 1)
+                elif option in long and i < len(words):
+                    value, i = words[i], i + 1
+            elif not (name == "nice" and text[1:].isdigit()):
+                for k, ch in enumerate(text[1:], 1):
+                    if name == "command" and ch in "vV":
+                        return [], cwd, True
+                    if ch in short:
+                        option = "-" + ch
+                        if k + 1 < len(text):
+                            value = word.tail(k + 1)
+                        elif i < len(words):
+                            value, i = words[i], i + 1
+                        break
+            if known is not None and name == "env":
+                if text in ("-i", "--ignore-environment"):
+                    known.clear()
+                elif option in ("-u", "--unset") and value is not None:
+                    known.pop(value.text, None)
+            if name == "flock" and option in ("-c", "--command") and value is not None:
+                return [Word("sh"), Word("-c"), value], cwd, False
+            if (name, option) in CHDIR_OPTIONS and value is not None:
+                cwd = resolve_dir(cwd, value)
+        if name in ("timeout", "flock") and i < len(words):
+            i += 1  # duration or lock file
+        if name == "flock" and i < len(words) and words[i].text in ("-c", "--command"):
+            return [Word("sh"), Word("-c")] + words[i + 1:i + 2], cwd, False
+        words = words[i:]
+    return words, cwd, False
+
+
+def shell_scripts(words: list[Word], cmd: Command, feed) -> tuple[list[str], list[Word]]:
+    """For sh/bash/zsh: the scripts it runs (-c's, or the heredoc, here-string or piped text it reads) and its other
+    operands."""
+    i, inline, stdin = 1, False, False
+    while i < len(words):
+        text = words[i].text
+        if text in ("-", "--"):
+            i += 1
+            break
+        if text in ("--rcfile", "--init-file"):
+            i += 2
+        elif text.startswith("--"):
+            i += 1
+        elif len(text) > 1 and text[0] in "-+":
+            inline |= text[0] == "-" and "c" in text
+            stdin |= text[0] == "-" and "s" in text
+            i += 2 if text[-1] in "oO" else 1
+        else:
+            break
+    rest = words[i:]
+    if inline:
+        return ([rest[0].text] if rest else []), rest[1:]
+    if rest and not stdin:
+        return [], rest  # a script file
+    return stdin_text(cmd, feed), rest
+
+
+def stdin_text(cmd: Command, feed) -> list[str]:
+    texts = [t.body if isinstance(t, Heredoc) else t.text for op, t in cmd.redirs if op in ("<<", "<<-", "<<<")]
+    if not texts and isinstance(feed, Command):  # echo '...' | sh, cat <<EOF | sh
+        words = unwrap(feed.words, None)[0]
+        name = os.path.basename(words[0].text) if words else ""
+        if name == "echo":
+            texts.append(" ".join(w.text for w in words[1:]))
+        elif name == "printf":
+            texts.append("\n".join(w.text for w in words[1:]))
+        elif name == "cat" and len(words) == 1:
+            texts = stdin_text(feed, None)
+    return texts
+
+
+def walk(items: list, cwd: str | None, ctx: dict) -> tuple[tuple[str, str] | None, str | None]:
+    """Check each command of a list in order. Returns (verdict, the directory after the list)."""
+    if len(items) > 1 or any(not isinstance(node, Command) for node, _ in items):
+        ctx["compound"] = True  # other commands run alongside, and may change files the later ones read (gh aliases)
+    previous = None
+    for k, (node, sep) in enumerate(items):
+        piped_in = k > 0 and items[k - 1][1] in ("|", "|&")
+        piped_out = sep in ("|", "|&")
+        # Variables are scoped like the directory: a subshell, a pipeline member or a background job sets them only
+        # for itself, so what it assigns is dropped afterwards.
+        isolated = piped_in or piped_out or sep == "&" or (not isinstance(node, Command) and node[0] == "sub")
+        saved = dict(ctx["vars"]) if isolated else None
+        if isinstance(node, Command):
+            verdict, after = command(node, cwd, ctx, previous if piped_in else None)
+        elif node[0] == "sub":
+            verdict, after = walk(node[1], cwd, ctx)[0], cwd
+        else:
+            verdict, after = walk(node[1], cwd, ctx)
+        if saved is not None:
+            ctx["vars"] = saved
+        if verdict:
+            return verdict, cwd
+        if after != cwd and sep != "&":  # a background job runs in a subshell
+            if not (piped_in or piped_out):
+                cwd = after
+            elif not piped_out:
+                cwd = None  # the last part of a pipeline: bash runs it in a subshell, zsh doesn't
+        previous = node
+    return None, cwd
+
+
+def secret(text: str) -> tuple[str, str]:
+    return "secrets", (f"{text} looks like a secret; Rynhult's guardrails keep agents out of secrets (use a key through "
+                       "its variable instead)")
+
+
+def own_files(text: str) -> tuple[str, str]:
+    return "own_files", (f"{text} holds this session's guardrails or an agent CLI's hook settings; agents can't change "
+                         "them (ask your person)")
+
+
+def session_vars() -> dict:
+    return dict(Environment({"ACC_RUN_DIR": RUN_DIR})) if RUN_DIR else {}
+
+
+def word_path(word: Word, cwd: str | None, known: dict) -> str | None:
+    """The absolute path (or glob) a word names, with variables assigned earlier and $ACC_RUN_DIR filled in; None when
+    it can't be known before the command runs."""
+    text = expand(word, {**session_vars(), **known, "HOME": HOME}) if word.dynamic else word.text
+    if text is None:
+        return None
+    if word.tilde:
+        if text[1:2] not in ("", "/"):
+            return None
+        text = HOME + text[1:]
+    if not os.path.isabs(text):
+        if cwd is None:
+            return None
+        text = os.path.join(cwd, text)
+    return os.path.normpath(text)
+
+
+def ends_like(path: str, suffix: str) -> bool:
+    """Whether path (which may hold glob characters, as the shell or a tool would expand them) can end in suffix."""
+    want = suffix.strip("/").split("/")
+    have = path.rstrip("/").split("/")[-len(want):]
+    if len(have) != len(want):
+        return False
+    return all(fnmatchcase(w, h) and (w[:1] != "." or h[:1] == ".") for w, h in zip(want, have))
+
+
+def guarded(path: str | None) -> bool:
+    """A path (or glob) that configures this session's guard or hooks: its run folder, what's in it and the folders
+    it's in up to the accounts' run root, or a CLI's hook settings file."""
+    if not path:
+        return False
+    if RUN_DIR:
+        run, have = os.path.normpath(RUN_DIR).split("/"), path.rstrip("/").split("/")
+        n = min(len(run), len(have))
+        if n >= len(run) - 2 and all(fnmatchcase(r, h) for r, h in zip(run[:n], have[:n])):
+            return True
+    return hook_settings(path) or any(ends_like(path, f) for f in HOOK_FILES if not f.endswith("/")) or any(
+        ends_like(path[:end], f.rstrip("/")) for f in HOOK_FILES if f.endswith("/")
+        for end in [len(path)] + [i for i, c in enumerate(path) if c == "/"])
+
+
+def hook_settings(path: str) -> bool:
+    return any(ends_like(path, f) for f in HOOK_SETTINGS) or opencode_settings(path)
+
+
+def opencode_settings(path: str) -> bool:
+    """Named literally: a bare glob (`rm -rf build/*`) could match any one-word file name."""
+    return "/" + path.rstrip("/").rsplit("/", 1)[-1] in OPENCODE_SETTINGS
+
+
+def mentions_hooks(path: str, words: tuple[bytes, ...] = (b"hook",)) -> bool:
+    try:
+        text = read_small(path).lower()
+    except OSError:
+        return False
+    return any(word in text for word in words)
+
+
+TOOL_MANAGERS = frozenset(("apt", "apt-get", "dpkg", "snap", "flatpak", "npm", "pnpm", "yarn", "pip", "pip3",
+                           "pipx", "uv", "cargo", "go", "gem", "brew"))
+TOOL_VERBS = frozenset(("install", "i", "add", "ci", "uninstall", "remove", "rm", "purge", "update", "upgrade",
+                        "upgrade-all", "refresh", "full-upgrade", "dist-upgrade", "autoremove", "autopurge",
+                        "inject", "uninject", "reinstall", "reinstall-all", "pin", "unpin", "link", "unlink",
+                        "fetch", "tap", "untap", "cleanup", "repair", "override", "remote-add", "remote-delete",
+                        "revert", "self-update", "in", "ins", "inst", "insta", "instal", "isntall", "un",
+                        "uninst", "unins", "up", "r"))
+PATH_FOLDERS = ("/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin", "/bin", "/sbin",
+                "/opt/homebrew/bin", "/opt/homebrew/sbin",
+                HOME + "/bin", HOME + "/.local/bin", HOME + "/.cargo/bin", HOME + "/go/bin")
+
+
+def tool_refusal(manager: str) -> tuple[str, str]:
+    manager = {"apt-get": "apt", "pip3": "pip", "dpkg": "apt"}.get(manager, manager)
+    if manager not in TOOL_MANAGERS:
+        manager = "<manager>"
+    return "tool_approval", ("installing, removing or changing an account/machine tool needs approval; use "
+                             f'acc-request tool --manager {manager} --name <package> [--version <v>] '
+                             '--reason "<why>" and wait for your person in the Inbox. Installed tools and '
+                             "project-local dependencies may be used freely; don't work around this refusal")
+
+
+def project_path(path: str | None, workspace: str) -> bool:
+    return path is not None and (path == workspace or path.startswith(workspace.rstrip("/") + "/"))
+
+
+def path_tool_change(word: Word, cwd: str | None, known: dict) -> bool:
+    if word.text.startswith("--") and "=" in word.text:
+        word = word.tail(word.text.index("=") + 1)
+    elif word.text.startswith("of="):  # dd
+        word = word.tail(3)
+    elif word.text.startswith(("-o", "-O", "-P")) and len(word.text) > 2:
+        word = word.tail(2)
+    path = word_path(word, cwd, known)
+    home = os.path.expanduser("~")
+    if path is not None and (path == home or path.startswith(home.rstrip("/") + "/")):
+        path = HOME + path[len(home):]
+    return path is not None and any(path == folder or path.startswith(folder + "/") for folder in PATH_FOLDERS)
+
+
+def manager_action(args: list[str]) -> tuple[str, list[str]]:
+    """The manager's action, not an operand named 'install' of a read-only action."""
+    values = {"--prefix", "--root", "--target", "--install-dir", "--cwd", "--dir", "--python", "--filter",
+              "--registry", "--cache", "--config", "--config-file", "--loglevel", "--location", "-C", "-o", "-c", "-Z"}
+    i = 0
+    while i < len(args):
+        text = args[i]
+        if text == "--":
+            i += 1
+            break
+        if not text.startswith("-"):
+            break
+        i += 2 if text in values else 1
+    return (args[i], args[i + 1:]) if i < len(args) else ("", [])
+
+
+def tool_change(words: list[Word], cmd: Command, cwd: str | None, ctx: dict, feed, known: dict):
+    """Classify parsed manager commands and PATH writes, never the raw command's text."""
+    if not ctx.get("tool_approval"):
+        return None
+    name = os.path.basename(expand(words[0], known) or words[0].text)
+    args = [w.text for w in words[1:]]
+    workspace = ctx["workspace"]
+    local = project_path(cwd, workspace)
+    # An activation's effect is scoped by walk(), just like cd and other known variables.
+    if name in ("source", ".") and len(words) == 2:
+        path = word_path(words[1], cwd, known)
+        if path and path.endswith("/bin/activate"):
+            ctx["vars"]["VIRTUAL_ENV"] = path[:-len("/bin/activate")]
+    if name in ("python", "python3") or re.fullmatch(r"python3\.\d+", name):
+        if args[:2] == ["-m", "pip"]:
+            name, args = "pip", args[2:]
+        elif args[:2] == ["-m", "venv"]:
+            return None if local and len(words) > 3 and project_path(
+                word_path(words[-1], cwd, known), workspace) else tool_refusal("pip")
+    action, remaining = manager_action(args)
+    destination = None
+    destination_set = False
+    python_local, location = None, None
+    for i, word in enumerate(words[1:], 1):
+        option, equals, _ = word.text.partition("=")
+        if option in ("--python", "--location", "--prefix", "--target", "-t", "--root", "--install-dir",
+                      "-i", "--cwd", "--dir", "-C"):
+            value = word.tail(len(option) + 1) if equals else (words[i + 1] if i + 1 < len(words) else Word("$", "$"))
+            if option == "--python":
+                path = word_path(value, cwd, known)
+                python_local = project_path(path, workspace) and bool(
+                    re.search(r"/(?:\.?venv|env)(?:/bin/[^/]+)?$", path or ""))
+                continue
+            if option == "--location":
+                location = expand(value, known)
+                continue
+            # gem -i and pip -t are destinations, but npm -i and cargo -i aren't.
+            if option not in ("-i", "-t") or (option == "-i" and name == "gem") or (
+                    option == "-t" and name in ("pip", "pip3")):
+                destination = word_path(value, cwd, known)
+                destination_set = True
+                local = project_path(destination, workspace)
+    # The managers' own environment settings: npm_config_global=true is -g, a prefix or target is a destination.
+    for assign in cmd.assigns + [w for w in cmd.words if ASSIGNMENT.match(w.text)]:
+        key, _, value = assign.text.partition("=")
+        key = key.lower()
+        if key in ("npm_config_global", "npm_config_g") and (assign.dynamic or value.lower() not in ("", "false", "0")) \
+                or key == "npm_config_location" and (assign.dynamic or value.lower() == "global") or key == "pip_user" \
+                and (assign.dynamic or value.lower() not in ("", "false", "0", "no", "off")):
+            location = "global" if key.startswith("npm") else location
+            if key == "pip_user":
+                args = args + ["--user"]
+        elif key in ("npm_config_prefix", "pip_target", "pip_prefix", "cargo_install_root"):
+            destination = word_path(assign.tail(len(key) + 1), cwd, known)
+            destination_set = True
+            local = project_path(destination, workspace)
+    if name in ("bun", "deno", "corepack", "volta"):
+        global_ = any(a in ("-g", "--global") for a in args)
+        if name == "bun" and (action == "upgrade" or global_ and action in TOOL_VERBS) or \
+                name == "deno" and (action == "upgrade" or global_ and action in ("install", "i", "uninstall", "add")) or \
+                name == "corepack" and (action in ("enable", "disable") or global_ and action == "install") or \
+                name == "volta" and action in ("install", "uninstall", "setup", "fetch"):
+            return tool_refusal("<manager>")
+    if name in ("apt", "apt-get", "snap", "flatpak", "brew"):
+        if action in TOOL_VERBS:
+            return tool_refusal(name)
+    elif name == "dpkg":
+        if any(a in ("--install", "--unpack", "--configure", "--remove", "--purge", "--triggers-only",
+                     "--clear-avail", "--update-avail", "--merge-avail", "--set-selections") or
+               a.startswith(("--install=", "--remove=", "--purge=")) or
+               (a.startswith("-") and not a.startswith("--") and any(c in a[1:] for c in "iPr"))
+               for a in args):
+            return tool_refusal(name)
+    elif name in ("npm", "pnpm", "yarn"):
+        if action == "self-update":
+            return tool_refusal(name)
+        global_ = name == "yarn" and action == "global" or location == "global" or "--global" in args or any(
+            a.startswith("--global=") or a.startswith("-") and not a.startswith("--") and "g" in a[1:]
+            for a in args)
+        if name == "yarn" and action == "global":
+            action, _ = manager_action(remaining)
+        # `npm link` with no package links this project into the global prefix (its bins onto PATH)
+        global_ = global_ or name != "yarn" and action in ("link", "ln") and not [a for a in remaining if not a.startswith("-")]
+        if action in TOOL_VERBS and (global_ or not local):
+            return tool_refusal(name)
+    elif name in ("pip", "pip3") or re.fullmatch(r"pip3\.\d+", name):
+        executable = word_path(words[0], cwd, known)
+        venv = known.get("VIRTUAL_ENV")
+        in_venv = project_path(venv, workspace) or (project_path(executable, workspace) and
+                  bool(re.search(r"/(?:\.?venv|env)/bin/", executable or "")))
+        if python_local is not None:
+            in_venv = python_local
+        if in_venv and not destination_set:
+            local = True
+        if action in TOOL_VERBS and (
+                "--user" in args or "--system" in args or not local or (not destination_set and not in_venv)):
+            return tool_refusal("pip")
+    elif name == "uv":
+        nested, _ = manager_action(remaining)
+        if action == "tool" and nested in TOOL_VERBS:
+            return tool_refusal("uv")
+        uv_local = project_path(known["VIRTUAL_ENV"], workspace) if known.get("VIRTUAL_ENV") else local
+        if python_local is not None:
+            uv_local = python_local
+        if destination_set:
+            uv_local = local
+        if action == "pip" and nested in TOOL_VERBS and (
+                not uv_local or "--system" in args or "--user" in args):
+            return tool_refusal("uv")
+        if action == "venv" and (not local or len(words) > 2 and not project_path(
+                word_path(words[-1], cwd, known), workspace)):
+            return tool_refusal("uv")
+    elif name in ("cargo", "gem"):
+        if action in TOOL_VERBS and (destination is None or not local):
+            return tool_refusal(name)
+    elif name == "go" and action == "install":
+        return None if project_path(known.get("GOBIN"), workspace) else tool_refusal(name)
+    elif name == "pipx":
+        nested, _ = manager_action(remaining[1:])
+        if action in TOOL_VERBS or action == "runpip" and nested in TOOL_VERBS:
+            return tool_refusal(name)
+    elif words[0].dynamic and any(a in TOOL_VERBS for a in args) and (
+            "--global" in args or "-g" in args or "--user" in args):
+        return tool_refusal("<manager>")
+    if name in SHELLS:
+        upstream = unwrap(feed.words, cwd)[0] if isinstance(feed, Command) else []
+        if upstream and os.path.basename(upstream[0].text) in ("curl", "wget"):
+            return tool_refusal("<manager>")
+        if any("curl" in w.text or "wget" in w.text for w in words[1:] if w.subs):
+            return tool_refusal("<manager>")
+    if name in ("chmod", "install", "cp", "mv", "ln", "rm", "curl", "wget", "tee", "touch", "truncate", "tar", "unzip",
+                "rsync", "scp", "dd"):
+        if any(path_tool_change(w, cwd, known) for w in words[1:]):
+            # chmod that removes execute bits is still a tool change.
+            return tool_refusal("<manager>")
+    for op, target in cmd.redirs:
+        if op in WRITE_REDIRECTS and isinstance(target, Word) and path_tool_change(target, cwd, known):
+            return tool_refusal("<manager>")
+    return None
+
+
+PUSH_COMMANDS = ("push", "send-pack", "http-push")
+# GitHub API calls that merge pull requests or move branches (REST paths and GraphQL mutations)
+GH_MERGES = re.compile(r"pulls/[^/\s]+/merge|/merges\b|git/refs|/contents/|mergePullRequest|enablePullRequestAutoMerge|"
+                       r"updateRef|updateRefs|createCommitOnBranch|mergeBranch", re.I)  # each sends refs to another repository
+REMOTE_KEYS = re.compile(r"(remote|url)\..+|branch\..+\.(remote|pushremote)", re.I)  # where pushes and fetches go
+GH_GLOBAL_VALUE_OPTIONS = ("-R", "--repo", "--hostname")
+GH_API_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
+
+
+def gh_args(words: list[Word]) -> list[Word]:
+    """gh's command words and their options, without its global flags (accepted before or between command words)."""
+    args, i = [], 1
+    while i < len(words):
+        if words[i].text in GH_GLOBAL_VALUE_OPTIONS:
+            i += 2
+            continue
+        args.append(words[i])
+        i += 1
+    return args
+
+
+def gh_api(words: list[Word]) -> tuple[bool, list[Word]] | None:
+    """For `gh api`: whether it may write (a method other than GET, a dynamic one, or fields, which make it a POST)
+    and its other words (endpoint and field values); None for any other gh command."""
+    args = gh_args(words)
+    positional = [w for w in args if not w.text.startswith("-")]
+    if not positional or positional[0].text != "api" and not positional[0].dynamic:
+        return None
+    writes, rest, i = False, [], 0
+    while i < len(args):
+        word, text = args[i], args[i].text
+        i += 1
+        option, equals, value = text.partition("=")
+        if option in ("-X", "--method") or text.startswith("-X") and len(text) > 2:
+            if not equals and text in ("-X", "--method"):
+                value_word = args[i] if i < len(args) else Word("$", "$")
+                i += 1
+                value, dynamic = value_word.text, value_word.dynamic
+            else:
+                value, dynamic = (value if equals else text[2:]), word.dynamic
+            writes |= dynamic or value.upper() != "GET"
+        elif option in GH_API_FIELDS:
+            writes = True
+            if not equals and i < len(args):
+                rest.append(args[i])
+                i += 1
+            elif equals:
+                rest.append(word.tail(len(option) + 1))
+        else:
+            rest.append(word)
+    return writes, rest
+
+
+def git_writes_remote_config(sub: str, rest: list[Word]) -> bool:
+    """`git config` setting where a remote is or where a branch pushes (`remote.origin.url`, `url.X.insteadOf`)."""
+    if sub != "config":
+        return False
+    texts = [w.text for w in rest]
+    if any(t in ("--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l") for t in texts) or (
+            texts[:1] in (["get"], ["list"])):
+        return False
+    return any(w.dynamic or REMOTE_KEYS.fullmatch(w.text) for w in rest if not w.text.startswith("-"))
+
+
+def submodule_command(rest: list[Word]) -> str | None:
+    """The shell command `git submodule [--quiet] foreach [--recursive] <command>` runs in each submodule."""
+    i = 0
+    while i < len(rest) and rest[i].text.startswith("-"):
+        i += 1
+    if i >= len(rest) or rest[i].text != "foreach":
+        return None
+    i += 1
+    while i < len(rest) and rest[i].text in ("--recursive", "-q", "--quiet"):
+        i += 1
+    return " ".join(w.text for w in rest[i:]) or None
+
+
+POWERSHELL_NAME = re.compile(r"(?:powershell(?:_ise)?|pwsh(?:-preview|-lts)?)(?:\.exe)?")
+CMD_NAME = re.compile(r"cmd(?:\.exe)?")
+# Switches only PowerShell takes: an unknown program ($PS) given one of them is checked as PowerShell. Not -c, -e or -f,
+# which other programs ($CC -c) take too.
+POWERSHELL_SWITCHES = frozenset(("-command", "-encodedcommand", "-enc", "-ec", "-noprofile", "-noninteractive",
+                                 "-nologo", "-executionpolicy", "-file", "-windowstyle", "-noexit", "-encodedarguments",
+                                 "-inputformat", "-outputformat"))
+
+
+def program_name(word: Word, known: dict) -> str | None:
+    """The program a command word names, lowercased and without its folder (/ or \\), when it is spelled out or was
+    assigned plainly earlier in this shell; None when it can't be known."""
+    text = expand(word, known) if word.dynamic else word.text
+    if not text or re.search(r"[\s*?\[]", text):  # empty, split into several words, or a glob
+        return None
+    return re.split(r"[\\/]", text)[-1].lower()
+
+
+def powershell_verdict(words: list[Word], rules: dict, dynamic: bool = False) -> tuple[str, str] | None:
+    """A deliberately bounded PowerShell grammar, never a POSIX parse of its source.
+
+    Only literal toolchain queries are understood. Other scripts, encoded input,
+    files and stdin fail closed: they can contain any of the protected operations.
+    Keep the existing policy keys so provider adapters can report the refusal.
+    """
+    rule = next((key for key in ("rm_outside", "secrets", "force_push", "push_default", "merge_pr", "team")
+                 if rules.get(key)), None)
+    if not rule:
+        return None
+    args, flags = words[1:], set()
+    while args and not args[0].dynamic and args[0].text.lower() in ("-noprofile", "-noninteractive", "-nologo"):
+        flags.add(args[0].text.lower())
+        args = args[1:]
+    # -NoProfile is required: without it PowerShell first runs the user's profile script, which can hold anything.
+    if "-noprofile" in flags and len(args) == 2 and not any(w.dynamic for w in args) and args[0].text.lower() == "-command":
+        # No quotes, interpolation, expressions, pipelines or invocation operators
+        # in this subset. Full matching prevents suffixes from hiding more code.
+        toolchain = r"(?:\+[A-Za-z0-9_.-]+[ \t]+)?"
+        probe = (r"(?:rustup[ \t]+" + toolchain + r"(?:toolchain[ \t]+list|target[ \t]+list[ \t]+--installed)"
+                 r"|(?:cargo|rustc)[ \t]+" + toolchain + r"--version)")
+        if re.fullmatch(r"[ \t]*" + probe + r"(?:[ \t]*;[ \t]*" + probe + r")*[ \t]*;?[ \t]*", args[1].text):
+            return None
+    source = "command name comes from a variable; " if dynamic else ""
+    return rule, source + ("PowerShell command cannot be verified by Rynhult's guardrails; only literal toolchain queries "
+                           "with -NoProfile are supported")
+
+
+# cmd.exe options that come before /c, /k or /r: echo off, AutoRun off, ANSI/Unicode, colours, quote handling, extensions
+# and delayed expansion (its ! syntax is refused below).
+CMD_OPTIONS = re.compile(r"/[dqasu]|/[ef]:(?:on|off)|/v(?::(?:on|off))?|/t:[0-9a-f]{1,2}", re.I)
+# What a cmd script may not contain: deletes, ways to run other code (nested shells, batch control, robocopy /mir and
+# forfiles), git and gh, and syntax that can hide a word from this check (^ escapes, ! delayed expansion, %~ or %N
+# arguments and %VAR:~...% substrings).
+CMD_REFUSED = re.compile(
+    r"(?<![\w.-])(?:rd|rmdir|del|erase|rm|remove-item|ri|robocopy|forfiles|call|start|set|for|cmd|command|powershell"
+    r"(?:_ise)?|pwsh|wsl|bash|sh|git|gh)(?![\w-])|[\^!]|%(?:[~*0-9]|[^%\s]*:)", re.I)
+
+
+def cmd_verdict(words: list[Word], rules: dict) -> tuple[str, str] | None:
+    """cmd.exe (through WSL interop it runs with the Windows user's rights). Its scripts use cmd's grammar, never POSIX
+    shell's, so only scripts with none of CMD_REFUSED are allowed, like `cmd.exe /c echo %USERPROFILE%`. A script that
+    comes from a variable or from stdin can't be read and is refused too."""
+    rule = next((key for key in ("rm_outside", "secrets", "force_push", "push_default", "merge_pr", "team")
+                 if rules.get(key)), None)
+    if not rule:
+        return None
+    refused = rule, "Windows cmd command cannot be verified by Rynhult's guardrails; deletes and other programs are refused"
+    args = words[1:]
+    for i, word in enumerate(args):
+        if word.dynamic:
+            return refused
+        switch = re.match(r"/[ckr]", word.text, re.I)
+        if switch:
+            script = " ".join([word.text[2:]] + [w.text for w in args[i + 1:]])
+            if any(w.dynamic for w in args[i + 1:]) or CMD_REFUSED.search(script) or CMD_REFUSED.search(script.replace('"', "")):
+                return refused
+            return None
+        if not CMD_OPTIONS.fullmatch(word.text):
+            return refused
+    return refused  # no /c: cmd reads its commands from stdin
+
+
+def find_starts(words: list[Word]) -> list[Word] | None:
+    """find's starting points (. when none are given), or None when they can't be read (-files0-from)."""
+    if any(w.text == "-files0-from" or w.text.startswith("-files0-from=") for w in words):
+        return None
+    i = 1
+    while i < len(words) and not words[i].dynamic and (words[i].text in ("-H", "-L", "-P") or words[i].text.startswith("-O")):
+        i += 1
+    if i < len(words) and words[i].text == "-D":
+        i += 2
+    starts = []
+    while i < len(words) and (words[i].dynamic or not (words[i].text.startswith("-") or words[i].text in ("(", "!", ","))):
+        starts.append(words[i])
+        i += 1
+    return starts or [Word(".")]
+
+
+def found_under(start: Word) -> Word:
+    """A path find reaches under a starting point: what -delete removes and {} stands for (the start itself is left to
+    rm's and find's own refusal of . and the workspace root)."""
+    child = Word(start.text, start.how)
+    child.add("/x", "q")
+    return child
+
+
+def with_found(word: Word, found: Word) -> Word:
+    """The word with each {} replaced by a path find passes."""
+    if "{}" not in word.text:
+        return word
+    out, i = Word(), 0
+    while i < len(word.text):
+        if word.text.startswith("{}", i):
+            out.text, out.how, i = out.text + found.text, out.how + found.how, i + 2
+        else:
+            out.add(word.text[i], word.how[i])
+            i += 1
+    out.subs = word.subs
+    return out
+
+
+# Aliases. Claude Code runs commands with alias expansion on (its shell snapshot sets expand_aliases, then evals the
+# command), so an alias defined on one line expands on the following lines; any shell can turn it on itself. Aliases
+# defined in the command are therefore followed wherever they are used. UNKNOWN_ALIAS marks one this can't read.
+UNKNOWN_ALIAS = object()
+
+
+def record_aliases(words: list[Word], ctx: dict) -> None:
+    aliases = ctx.setdefault("aliases", {})
+    if words[0].text == "unalias":
+        for word in words[1:]:
+            if word.text == "-a":
+                aliases.clear()
+            else:
+                aliases.pop(word.text, None)
+        return
+    for word in words[1:]:
+        name, equals, value = word.text.partition("=")
+        if equals and name:
+            aliases[name] = UNKNOWN_ALIAS if word.dynamic else value
+
+
+def alias_expansion(cmd: Command, ctx: dict) -> Command | tuple[str, str]:
+    """The command with a leading alias defined earlier in this command replaced by its value (bash expands the first
+    word when it is written plainly, never the same alias twice). A value that is not one plain command (operators,
+    redirections, substitutions, a trailing space that expands the next word too, or a value from a variable) is
+    refused when a rule is on: the guard can't place the rest of the command in it."""
+    aliases, used = ctx.get("aliases") or {}, set()
+    while cmd.words and cmd.words[0].text in aliases and cmd.words[0].text not in used and set(cmd.words[0].how) == {"u"}:
+        name = cmd.words[0].text
+        used.add(name)
+        value = aliases[name]
+        items = None if value is UNKNOWN_ALIAS or value[-1:].isspace() else Parser(value).parse()
+        simple = (items is not None and len(items) == 1 and isinstance(items[0][0], Command) and not items[0][1]
+                  and not items[0][0].redirs and not items[0][0].data and items[0][0].words
+                  and not any(w.subs for w in items[0][0].assigns + items[0][0].words))
+        if not simple:
+            rule = next((key for key in ("rm_outside", "secrets", "force_push", "push_default", "merge_pr", "team")
+                         if ctx["rules"].get(key)), None)
+            if rule:
+                return rule, (f"alias {name} defined in this command can't be checked by Rynhult's guardrails; "
+                              "spell out the command instead")
+            return cmd
+        nested = Command()
+        nested.assigns = cmd.assigns + items[0][0].assigns
+        nested.words = items[0][0].words + cmd.words[1:]
+        nested.redirs, nested.data = cmd.redirs, cmd.data
+        cmd = nested
+    return cmd
+
+
+def command(cmd: Command, cwd: str | None, ctx: dict, feed) -> tuple[tuple[str, str] | None, str | None]:
+    rules = ctx["rules"]
+    expanded = alias_expansion(cmd, ctx)
+    if isinstance(expanded, tuple):
+        return expanded, cwd
+    cmd = expanded
+    for part in cmd.assigns + cmd.words + [target for _, target in cmd.redirs]:
+        for sub in part.subs:  # command substitutions run first, in a subshell
+            verdict = walk(sub, cwd, ctx)[0]
+            if verdict:
+                return verdict, cwd
+    verdict = custom_match(ctx.get("custom") or [], " ".join(w.text for w in cmd.assigns + cmd.words))
+    if verdict:
+        return verdict, cwd
+    if rules.get("secrets"):
+        for op, target in cmd.redirs:
+            if isinstance(target, Word) and op != "<<<" and not (op in ("<&", ">&") and re.fullmatch(r"\d*-?", target.text)) \
+                    and secret_path(target.text, cwd):
+                return secret(target.text), cwd
+    for op, target in cmd.redirs:
+        if ctx.get("tool_approval") and op in WRITE_REDIRECTS and isinstance(target, Word) and path_tool_change(
+                target, cwd, ctx["vars"]):
+            return tool_refusal("<manager>"), cwd
+        if op in WRITE_REDIRECTS and isinstance(target, Word) and not re.fullmatch(r"\d*-?", target.text) \
+                and guarded(word_path(target, cwd, ctx["vars"])):
+            return own_files(target.text), cwd
+    if not cmd.words:  # S=/tmp/x: a variable for the rest of this shell
+        for assign in cmd.assigns:
+            remember(assign, ctx["vars"])
+    if cmd.data:
+        ctx["vars"].clear()  # for/select/case/function can set variables in ways not followed here
+        return None, cwd
+    if rules.get("secrets") and cmd.words and secret_command(cmd.words):  # `env` alone: before it's unwrapped
+        return secret(" ".join(w.text for w in cmd.words)), cwd
+    known = dict(ctx["vars"])
+    for assign in cmd.assigns:
+        remember(assign, known)
+    wrappers = []
+    words, here, lookup = unwrap(cmd.words, cwd, known, wrappers)
+    if words and os.path.basename(words[0].text) in SETS_VARIABLES:
+        ctx["vars"].clear()
+    if not words or lookup:
+        return None, cwd
+    verdict = tool_change(words, cmd, here, ctx, feed, known)
+    if verdict:
+        return verdict, cwd
+    name = os.path.basename(words[0].text)
+    if name in ("alias", "unalias") and not words[0].dynamic:
+        record_aliases(words, ctx)
+    if "xargs" in wrappers and rules.get("rm_outside") and (words[0].dynamic or name == "rm") and rm_options(words)[0]:
+        return ("rm_outside", "xargs gives rm -r its paths from its input, which Rynhult's guardrails can't verify; use "
+                              "find -delete inside the workspace or name the paths"), cwd
+    # Programs with their own grammar, also when the name was assigned earlier in this shell (PS=powershell.exe; $PS)
+    # or, for PowerShell, when an unknown program is given switches only PowerShell takes. These checks only add
+    # refusals: a dynamic name still gets every conservative check below.
+    program = program_name(words[0], known)
+    if POWERSHELL_NAME.fullmatch(program or "") or (
+            program is None and any(not w.dynamic and w.text.lower() in POWERSHELL_SWITCHES for w in words[1:])):
+        verdict = powershell_verdict(words, rules, words[0].dynamic)
+        if verdict:
+            return verdict, cwd
+    if CMD_NAME.fullmatch(program or ""):
+        verdict = cmd_verdict(words, rules)
+        if verdict:
+            return verdict, cwd
+    if words[0].dynamic and (program is None or program in SHELLS):  # $SHELL -c '...': it may be a shell
+        for script in shell_scripts(words, cmd, feed)[0]:
+            verdict = walk(Parser(script).parse(), here, {**ctx, "vars": {}})[0]
+            if verdict:
+                return verdict, cwd
+    if name == "find":
+        starts = find_starts(words)
+        if rules.get("rm_outside") and any(w.text == "-delete" for w in words):
+            bad = ["(unknown)"] if starts is None else [
+                s.text for s in starts if outside(found_under(s), ctx["workspace"], here, known)]
+            if bad:
+                return ("rm_outside", f"find -delete outside the workspace ({bad[0]}) is blocked by Rynhult's guardrails"), cwd
+        i = 1
+        while i < len(words):
+            action = words[i].text
+            i += 1
+            if action not in ("-exec", "-execdir", "-ok", "-okdir"):
+                continue
+            end = i
+            while end < len(words) and words[end].text not in (";", "+"):
+                end += 1
+            nested = Command()
+            nested.words = words[i:end]
+            verdict = command(nested, None if action.endswith("dir") else here,
+                              {**ctx, "vars": dict(ctx["vars"])}, None)[0]
+            if verdict:
+                return verdict, cwd
+            if not action.endswith("dir") and any("{}" in w.text for w in nested.words):
+                # {} is each path found: check the command with one under every starting point
+                for found in ([Word("$?", "$$")] if starts is None else [found_under(s) for s in starts]):
+                    nested = Command()
+                    nested.words = [with_found(w, found) for w in words[i:end]]
+                    verdict = command(nested, here, {**ctx, "vars": dict(ctx["vars"])}, None)[0]
+                    if verdict:
+                        return verdict, cwd
+            i = end + 1
+    if name in ("cd", "pushd"):
+        return None, change_dir(words, here)
+    if name == "popd":
+        return None, None
+    if name == "eval":
+        return walk(Parser(" ".join(w.text for w in words[1:])).parse(), here, ctx)
+    if name in SHELLS:
+        scripts, rest = shell_scripts(words, cmd, feed)
+        for script in scripts:  # a new shell: this one's unexported variables are unset there
+            verdict = walk(Parser(script).parse(), here, {**ctx, "vars": {}})[0]
+            if verdict:
+                return verdict, cwd
+        words = words[:1] + rest
+    if name == "git":
+        sub, rest, where = git_subcommand(words, here)
+        script = submodule_command(rest) if sub == "submodule" else None
+        if script:  # git runs it with sh in each submodule
+            verdict = walk(Parser(script).parse(), where, {**ctx, "vars": {}})[0]
+            if verdict:
+                return verdict, cwd
+    if name not in READERS:
+        for word in operands(words):
+            if guarded(word_path(word, here, ctx["vars"])):
+                return own_files(word.text), cwd
+    if ctx.get("local_only"):
+        blocked = False
+        if name == "git" or words[0].dynamic:
+            sub, rest, _ = git_subcommand(words, here)
+            args = [w.text for w in rest if not w.text.startswith("-")]
+            action = words[len(words) - len(rest) - 1]
+            blocked = action.dynamic or sub in PUSH_COMMANDS + ("<alias>",) or (sub == "remote" and any(a in ("add", "set-url") for a in args[:1]))
+            blocked = blocked or (sub in ("remote", "subtree") and any(w.dynamic for w in rest[:1]))
+            blocked = blocked or (sub == "subtree" and "push" in args)
+            blocked = blocked or git_writes_remote_config(sub, rest)
+        if name == "gh" or words[0].dynamic:
+            args = [w.text for w in gh_args(words) if not w.text.startswith("-")]
+            blocked = blocked or args[:1] == ["repo"] and any(a in ("create", "fork") for a in args[1:])
+            blocked = blocked or any(w.dynamic and (i == 1 or words[i - 1].text == "repo") for i, w in enumerate(words))
+            api = gh_api(words)
+            blocked = blocked or bool(api and api[0])  # a private workspace has no remote to change
+        if blocked:
+            return ("local_only", "Private workspaces are local-only: pushing, adding or changing remotes and creating remote repositories (or writing through gh api) are refused. Promote the workspace explicitly to make it a project."), cwd
+    if rules.get("merge_pr") and (verdict := check_merge(words, cmd, feed, here, ctx, known)):
+        return verdict, cwd
+    if (words[0].dynamic or name == "git") and git_subcommand(words, here)[0] == "<alias>":
+        for rule in ("force_push", "push_default", "rm_outside", "secrets"):
+            if rules.get(rule):
+                return (rule, "command-line git aliases cannot be checked safely by Rynhult's guardrails"), cwd
+    if rules.get("team"):
+        if name == "gh":
+            args = [w.text for w in gh_args(words) if not w.text.startswith("-")]
+            if args[:2] == ["pr", "merge"]:
+                return ("team", "team members cannot merge pull requests; the person merges"), cwd
+            api = gh_api(words)
+            if api and api[0] and any(w.dynamic or GH_MERGES.search(w.text) for w in api[1]):
+                return ("team", "team members cannot merge pull requests or move branches through the GitHub API; "
+                        "the person merges"), cwd
+        if name == "git" or words[0].dynamic:
+            sub, rest, where = git_subcommand(words, here)
+            protected = lambda w: w.dynamic or w.text.split("=")[-1].removeprefix("refs/heads/") in ("main", "master")
+            if sub in ("checkout", "switch", "branch", "worktree", "symbolic-ref") and any(protected(w) for w in rest):
+                return ("team", "team members cannot switch to or rewrite main/master"), cwd
+            if sub == "update-ref":
+                return ("team", "team members cannot rewrite git refs directly"), cwd
+            if sub in ("merge", "cherry-pick", "rebase", "reset", "am", "pull") and current_branch(where) in (None, "main", "master"):
+                return ("team", "team members integrate only into a known topic branch"), cwd
+            if sub == "fetch" and any(w.dynamic or ":" in w.text and protected(Word(w.text.lstrip("+").rsplit(":", 1)[1]))
+                                      for w in rest if not w.text.startswith("-")):
+                return ("team", "team members cannot switch to or rewrite main/master"), cwd
+        rules = {**rules, "push_default": True}
+    verdict = check_push(words, here, rules)
+    if verdict:
+        return verdict, cwd
+    if rules.get("rm_outside") and (verdict := check_rm(words, ctx["workspace"], here, ctx["vars"])):
+        return verdict, cwd
+    if rules.get("secrets"):
+        for word in operands(words):
+            if secret_path(word.text, here):
+                return secret(word.text), cwd
+        if secret_command(words):
+            return secret(" ".join(w.text for w in words)), cwd
+    return None, cwd
+
+
+def operands(words: list[Word]) -> list[Word]:
+    """The words a command may open as files: not echo/printf text or grep patterns; --file=VALUE values count."""
+    name = "" if words[0].dynamic else os.path.basename(words[0].text)
+    if name in TEXT_COMMANDS:
+        return []
+    if name in GREP:
+        return grep_operands(words, name)
+    found, end = [], False
+    for word in words[1:]:
+        text = word.text
+        if end or not text.startswith("-") or text == "-":
+            found.append(word)
+        elif text == "--":
+            end = True
+        elif text.startswith("--") and "=" in text:
+            option = text.partition("=")[0]
+            if not FILTER_OPTION.search(option):
+                found.append(word.tail(len(option) + 1))
+    return found
+
+
+def grep_operands(words: list[Word], name: str) -> list[Word]:
+    """grep/rg: the input files (and -f pattern files), not the pattern."""
+    short = "efgtTmABCjMrEd" if name == "rg" else "efmABCdD"
+    files, positional, pattern_given, end, i = [], [], False, False, 1
+    while i < len(words):
+        word, text = words[i], words[i].text
+        i += 1
+        if end or not text.startswith("-") or text == "-":
+            positional.append(word)
+        elif text == "--":
+            end = True
+        elif text.startswith("--"):
+            option, equals, _ = text.partition("=")
+            value = word.tail(len(option) + 1) if equals else None
+            if not equals and option in GREP_LONG_VALUES and i < len(words):
+                value, i = words[i], i + 1
+            pattern_given |= option in ("--regexp", "--file")
+            if value is not None and option in GREP_FILE_OPTIONS:
+                files.append(value)
+        else:
+            for k, ch in enumerate(text[1:], 1):  # -rn, -A3, -e PATTERN, -f.env
+                if ch in short:
+                    value = None
+                    if k + 1 < len(text):
+                        value = word.tail(k + 1)
+                    elif i < len(words):
+                        value, i = words[i], i + 1
+                    pattern_given |= ch in "ef"
+                    if ch == "f" and value is not None:
+                        files.append(value)
+                    break
+    return files + (positional if pattern_given else positional[1:])
+
+
+def git_subcommand(words: list[Word], cwd: str | None) -> tuple[str, list[Word], str | None]:
+    """('push', its arguments, the repository's directory or None if unknown) for `git [-C dir] [-c k=v] push ...`.
+    -C values may be attached (-Cdir) and relative ones add up (-C a -C b is a/b)."""
+    i, where, git_dir = 1, cwd, None
+    alias = False
+    while i < len(words) and words[i].text.startswith("-"):
+        word, text = words[i], words[i].text
+        i += 1
+        option, value = text, None
+        if text in GIT_VALUE_OPTIONS:
+            value = words[i] if i < len(words) else None
+            i += 1
+        elif text[:2] in ("-C", "-c") and len(text) > 2:
+            option, value = text[:2], word.tail(2)
+        elif text.startswith("--") and "=" in text:
+            option = text.partition("=")[0]
+            value = word.tail(len(option) + 1)
+        if value is None:
+            continue
+        if option in ("-c", "--config-env") and (
+                value.dynamic or value.text.lower().startswith("alias.")):
+            alias = True
+        if option == "-C" and value.text:
+            where = resolve_dir(where, value)
+        elif option == "--git-dir":
+            git_dir = value
+    if git_dir is not None:
+        where = resolve_dir(where, git_dir)
+    if where is not None and (where == HOME or where.startswith(HOME + "/")):
+        where = None
+    return ("<alias>" if alias else words[i].text if i < len(words) else ""), words[i + 1:], where
+
+
+def git_dir_of(directory: str) -> str | None:
+    """The repository folder (.git) that directory belongs to, found without running git; None when unknown."""
+    path = os.path.normpath(directory)
+    if os.path.isfile(os.path.join(path, "HEAD")) and os.path.isdir(os.path.join(path, "objects")):
+        return path  # a repository folder itself (--git-dir=.git)
+    while True:
+        dot = os.path.join(path, ".git")
+        try:
+            info = os.stat(dot)
+        except FileNotFoundError:
+            if path == "/":
+                return None
+            path = os.path.dirname(path)
+            continue
+        except OSError:
+            return None
+        if stat.S_ISDIR(info.st_mode):
+            return dot
+        try:  # a worktree or submodule: "gitdir: <path>"
+            found = re.match(r"gitdir: (.+)", read_small(dot).decode(errors="replace").strip())
+        except OSError:
+            return None
+        return os.path.normpath(os.path.join(path, found.group(1))) if found else None
+
+
+BRANCHES: dict[str, str | None] = {}
+
+
+def current_branch(directory: str | None) -> str | None:
+    """The branch checked out in directory, read from its repository's HEAD file. Never by running git: a FIFO HEAD or
+    a slow filesystem could hold it up past the CLI's hook timeout, and some CLIs then let the command through.
+    None when it can't be told, including an unknown directory (`git -C "$X"`): the push then counts as one to main."""
+    if directory is None:
+        return None
+    if directory not in BRANCHES:
+        branch = None
+        git_dir = git_dir_of(directory)
+        try:
+            head = read_small(os.path.join(git_dir, "HEAD")).decode(errors="replace").strip() if git_dir else ""
+            branch = head[5:].strip().removeprefix("refs/heads/") if head.startswith("ref: ") else head or None
+        except OSError:
+            pass
+        BRANCHES[directory] = branch
+    return BRANCHES[directory]
+
+
+def check_push(words: list[Word], cwd: str | None, rules: dict) -> tuple[str, str] | None:
+    if not words[0].dynamic and os.path.basename(words[0].text) != "git":
+        return None
+    sub, rest, where = git_subcommand(words, cwd)
+    if sub == "subtree":
+        positional, i = [], 0
+        while i < len(rest):
+            text = rest[i].text
+            if text in ("-P", "--prefix", "-m", "--message", "--onto", "--annotate", "--branch"):
+                i += 2
+                continue
+            if not text.startswith("-"):
+                positional.append(rest[i])
+            i += 1
+        if not positional or positional[0].text != "push":
+            return None
+        sub, rest = "push", positional[1:]
+    if sub not in PUSH_COMMANDS:
+        return None
+    force = every = tags = False
+    repo, positional, i = None, [], 0
+    while i < len(rest):
+        word, text = rest[i], rest[i].text
+        i += 1
+        if not text.startswith("-") or text == "-":
+            positional.append(word)
+        elif text == "--":
+            positional += rest[i:]
+            break
+        elif text.startswith("--"):
+            option, equals, value = text.partition("=")
+            option = long_option(option, PUSH_OPTIONS)
+            force |= option in ("--force", "--force-with-lease", "--force-if-includes")
+            every |= option in ("--all", "--branches", "--mirror")
+            tags |= option == "--tags"
+            if option in PUSH_VALUE_OPTIONS and not equals:
+                value = rest[i].text if i < len(rest) else ""
+                i += 1
+            if option == "--repo":
+                repo = value
+        else:
+            for k, ch in enumerate(text[1:], 1):
+                force |= ch == "f"
+                if ch == "o":  # -o OPTION / -oOPTION
+                    i += 0 if text[k + 1:] else 1
+                    break
+    # With --repo=X git takes a first positional as the repository too; both readings are checked
+    refspecs = positional if repo is not None else positional[1:]
+    every |= sub != "push" and not refspecs  # send-pack/http-push with no refs update every matching branch
+    if rules.get("force_push") and (force or any(r.text.startswith("+") for r in refspecs)):
+        return "force_push", "force pushes are blocked by Rynhult's guardrails"
+    if not rules.get("push_default"):
+        return None
+    if every:
+        return "push_default", "pushing every branch is blocked by Rynhult's guardrails (main/master are protected)"
+    targets, protected, j = [], False, 0
+    while j < len(refspecs) and not protected:
+        word, text = refspecs[j], refspecs[j].text
+        j += 1
+        if word.dynamic:
+            if CURRENT_BRANCH.match(text):
+                targets.append("HEAD")
+            else:
+                protected = True  # only known when it runs: it could be main
+            continue
+        if text == "tag" and j < len(refspecs):  # `tag v1` is refs/tags/v1
+            j += 1
+            continue
+        text = text.removeprefix("+")
+        if text.startswith("^"):  # a negative refspec excludes
+            continue
+        source, colon, dest = text.partition(":")
+        if not colon:
+            dest = source
+        if not dest:  # ":" pushes every matching branch, main/master included
+            protected = protected or not source
+            continue
+        targets.append(dest)
+    if not positional[1:] and not tags:  # `git push` / `git push origin`: whatever branch is checked out
+        targets.append("HEAD")
+    for target in targets:
+        if target in ("HEAD", "@"):
+            if where is None:
+                protected = True  # the repository is only known when it runs
+                continue
+            target = current_branch(where)
+            if target is None:
+                protected = True
+                continue
+        if "*" in target:
+            protected |= any(fnmatchcase(ref, target) for ref in ("main", "master", "refs/heads/main", "refs/heads/master"))
+        protected |= target.removeprefix("refs/heads/").removeprefix("heads/") in PROTECTED
+    if protected:
+        return "push_default", "pushing to main/master is blocked by Rynhult's guardrails: push a branch and open a pull request"
+    return None
+
+
+SETS_VARIABLES = frozenset(("unset", "read", "readarray", "mapfile", "declare", "typeset", "local", "export",
+                            "readonly", "getopts", "set", "shift", "source", ".", "eval", "let"))
+SAFE_VALUE = re.compile(r"[A-Za-z0-9._/@%+=:,-]+")  # no spaces or glob characters: expands to exactly itself
+VARIABLE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+MAX_OWNED_CHECK = 100_000  # entries looked at to confirm a temp folder holds only the agent's own files
+
+
+MERGE_REASON = ("merging pull requests is blocked by Rynhult's guardrails: a person merges (the session's Pull request tab "
+                "in Rynhult, or GitHub). Push your branch, then say the pull request is ready")
+GH_COMMANDS = {"agent-task", "alias", "api", "attestation", "auth", "browse", "cache", "co", "codespace", "completion",
+               "config", "copilot", "extension", "gist", "gpg-key", "help", "issue", "label", "licenses", "org", "pr",
+               "preview", "project", "release", "repo", "ruleset", "run", "search", "secret", "ssh-key", "status",
+               "variable", "version", "workflow", "accessibility"}
+# Names an alias in config.yml can still define: `co` is only gh's default alias, and gh 2.45 has none of the others
+# (newer gh ignores an alias that shadows a command, so checking the alias file there only ever refuses more).
+GH_ALIASABLE = {"co", "accessibility", "agent-task", "attestation", "copilot", "licenses", "preview"}
+GH_VALUE_FLAGS = {"-R", "--repo", "--hostname", "-X", "--method", "-H", "--header", "-f", "--raw-field", "-F", "--field",
+                  "--input", "-q", "--jq", "-t", "--template", "-p", "--preview", "--cache"}
+MERGE_ENDPOINT = re.compile(r"^(https?://[^/]+/(api/v3/)?)?/?repos/[^/]+/[^/]+/pulls/[^/?#]+/merge/?([?#].*)?$", re.I)
+MERGE_MUTATIONS = re.compile(r"mergePullRequest|enablePullRequestAutoMerge", re.I)
+MAX_GH_INPUT = 1024 * 1024
+
+
+def gh_aliases() -> dict | None:
+    """A bounded YAML subset, or None when an alias file can't be checked safely.
+
+    gh decodes YAML escapes, flow maps and block scalars. Never treat an
+    unrecognised spelling as an absent alias; refuse alias commands instead.
+    Built-in gh commands don't need this reader.
+    """
+    base = environment.get("GH_CONFIG_DIR") or os.path.join(
+        environment.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "gh")
+    try:
+        fd = os.open(os.path.join(base, "config.yml"), os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            if not _compat_stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            raw = os.read(fd, MAX_GH_INPUT + 1)
+        finally:
+            os.close(fd)
+        if len(raw) > MAX_GH_INPUT:
+            return None
+        lines = raw.decode("utf-8-sig").splitlines()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError):
+        return None
+
+    def scalar(value):
+        value = value.strip()
+        if not value:
+            raise ValueError()
+        if value.startswith('"'):
+            result = json.loads(value)  # YAML's JSON-compatible double-quoted subset, including Unicode escapes
+            if not isinstance(result, str):
+                raise ValueError()
+            return result
+        if value.startswith("'"):
+            if not re.fullmatch(r"'(?:[^']|'')*'", value):
+                raise ValueError()
+            return value[1:-1].replace("''", "'")
+        if value[0] in '>|{[&*!?' or re.search(r":(?:\s|$)", value):
+            raise ValueError()
+        return re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
+
+    aliases, inside, indent = {}, False, None
+    try:
+        for line in lines:
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if not line.startswith((" ", "\t")):
+                key, colon, value = line.partition(":")
+                name = scalar(key) if colon else None
+                if name == "<<":
+                    return None  # a YAML merge may introduce an alias map
+                inside = name == "aliases"
+                if inside and re.fullmatch(r"\{\}\s*(?:#.*)?", value.strip()):
+                    inside = False  # gh writes `aliases: {}` once its last alias is deleted
+                elif inside and value.strip() and not value.lstrip().startswith('#'):
+                    return None  # flow mapping, alias, tag, or another unsupported YAML shape
+                continue
+            if inside:
+                # Every alias sits at the same indent. A deeper line continues the previous value (YAML folds a
+                # plain scalar onto following lines), so `ship: pr` + `    merge 7 --body=a:b` is `pr merge 7 …`.
+                if indent is None:
+                    indent = len(line) - len(line.lstrip(" \t"))
+                elif len(line) - len(line.lstrip(" \t")) != indent:
+                    return None
+                name, colon, value = line.strip().partition(":")
+                if not colon:
+                    return None
+                name, value = scalar(name), scalar(value)
+                if name in aliases:
+                    return None
+                aliases[name] = value
+    except (ValueError, TypeError):
+        return None
+    return aliases
+
+
+def gh_positionals(words: list[Word]) -> list[tuple[int, Word]]:
+    """gh's own arguments that aren't flags (-R/--repo and other value flags skip their value), with their index."""
+    out, i = [], 1
+    while i < len(words):
+        text = words[i].text
+        if text == "--":
+            out += [(j, w) for j, w in enumerate(words[i + 1:], i + 1)]
+            break
+        if text.startswith("-") and text != "-":
+            if text in GH_VALUE_FLAGS:
+                i += 1
+        else:
+            out.append((i, words[i]))
+        i += 1
+    return out
+
+
+def gh_input(word: Word, cmd, feed, cwd: str | None) -> str | None:
+    """What `--input X` or `-F name=@X` sends: a file's text, the command's own stdin text; None if it can't be seen."""
+    target = word.text
+    if word.dynamic:
+        return None
+    if target == "-":
+        texts = stdin_text(cmd, feed)
+        return "\n".join(texts) if texts else None
+    path = os.path.join(cwd or os.getcwd(), os.path.expanduser(target))
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read(MAX_GH_INPUT)
+    except OSError:
+        return None
+
+
+def check_merge(words: list[Word], cmd, feed, cwd: str | None, ctx: dict, known: dict, depth: int = 0) -> tuple[str, str] | None:
+    """`gh pr merge` in any spelling (flags anywhere, aliases), and `gh api` calls that merge a pull request or turn on
+    auto-merge (REST PUT …/pulls/N/merge; GraphQL mergePullRequest / enablePullRequestAutoMerge)."""
+    verdict = ("merge_pr", MERGE_REASON)
+    unsure = ("merge_pr", "this gh command can't be checked safely by Rynhult's guardrails (merging pull requests is a "
+                          "person's action); spell it out without variables")
+    if words[0].dynamic:  # $GH pr merge: unknown programs count only when the rest spells a merge
+        resolved = expand(words[0], known)
+        maybe, name = resolved is None, os.path.basename(resolved or "gh")
+    else:
+        maybe, name = False, os.path.basename(words[0].text)
+    if name != "gh" or depth > 4:
+        return None
+    args = gh_positionals(words)
+    texts = [expand(w, known) if w.dynamic else w.text for _, w in args[:2]]
+    if texts and (texts[0] is None or texts[0] == "pr" and len(texts) > 1 and texts[1] is None):
+        return None if maybe else unsure  # gh $SUB or gh pr $ACTION: could be anything
+    first = texts[0] if texts else ""
+    if texts[:2] == ["pr", "merge"]:
+        return verdict
+    if first == "alias" and len(texts) > 1:
+        if texts[1] == "import":
+            return ("merge_pr", "gh alias import can't be checked by Rynhult's guardrails; add aliases with gh alias set")
+        if texts[1] == "set" and len(args) > 3:
+            word = args[3][1]
+            text = "\n".join(stdin_text(cmd, feed)) or None if word.text == "-" else word.text
+            if word.dynamic or text is None:
+                return unsure
+            shell = any(w.text in ("-s", "--shell") for w in words[1:args[3][0]])
+            if check_gh_alias(("!" if shell and not text.startswith("!") else "") + text, [], cmd, feed, cwd, ctx, known, depth):
+                return verdict
+        return None
+    if first == "api":
+        return check_gh_api(words, args, cmd, feed, cwd, known)
+    if first and (first not in GH_COMMANDS or first in GH_ALIASABLE):  # an alias: what it expands to
+        # Command-local settings aren't the environment of this guard process. Never resolve
+        # aliases from a different configuration than the gh command will actually use.
+        if any(key in known for key in ('GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'HOME')):
+            return unsure
+        # Anything else in the same command line (or a substitution in this one) could rewrite the alias file
+        # before gh reads it, so what this guard reads now may not be what gh runs.
+        if not maybe and (ctx.get("compound") or any(getattr(part, "subs", None) for part in
+                                                     cmd.assigns + cmd.words + [target for _, target in cmd.redirs])):
+            return ("merge_pr", "a gh alias or extension can't be checked safely by Rynhult's guardrails alongside "
+                                "other commands, which could change its definition first; run it as a command of its own")
+        aliases = gh_aliases()
+        if aliases is None:
+            return ("merge_pr", "this gh alias file can't be checked safely by Rynhult's guardrails; "
+                    "use a plain alias or spell out the command")
+        expansion = aliases.get(first)
+        if expansion is not None and check_gh_alias(expansion, words[args[0][0] + 1:], cmd, feed, cwd, ctx, known, depth):
+            return verdict
+    return None
+
+
+def check_gh_alias(expansion: str, rest: list[Word], cmd, feed, cwd, ctx, known, depth) -> bool:
+    if expansion.startswith("!"):  # a shell alias: gh runs it with sh -c
+        return walk(Parser(expansion[1:]).parse(), cwd, {**ctx, "vars": {}})[0] is not None
+    import shlex
+    try:
+        tokens = shlex.split(expansion)
+    except ValueError:
+        return True
+    return check_merge([Word("gh")] + [Word(t, "u" * len(t)) for t in tokens] + rest, cmd, feed, cwd, ctx, known,
+                       depth + 1) is not None
+
+
+def check_gh_api(words: list[Word], args: list, cmd, feed, cwd, known) -> tuple[str, str] | None:
+    verdict = ("merge_pr", MERGE_REASON)
+    if len(args) < 2:
+        return None
+    endpoint = args[1][1]
+    target = expand(endpoint, known) if endpoint.dynamic else endpoint.text
+    method, fields, payloads, unseen = None, False, [], False
+    i = 1
+    while i < len(words):
+        text, value = words[i].text, words[i + 1] if i + 1 < len(words) else None
+        option, equals, inline = text.partition("=") if text.startswith("--") else (text[:2], "", text[2:])
+        given = Word(inline, words[i].how[len(text) - len(inline):]) if (equals or inline) else value
+        if option in ("-X", "--method") and given is not None:
+            method = (expand(given, known) if given.dynamic else given.text) or "?"
+        elif option in ("-f", "--raw-field", "-F", "--field") and given is not None:
+            fields = True
+            field = expand(given, known) if given.dynamic else given.text
+            if field is None:
+                unseen = unseen or given.text.split("=", 1)[0] == "query"
+            elif option in ("-F", "--field") and "=@" in field:
+                content = gh_input(Word(field.split("=@", 1)[1], "u"), cmd, feed, cwd)
+                unseen = unseen or content is None
+                payloads.append(content or "")
+            else:
+                payloads.append(field)
+        elif option == "--input" and given is not None:
+            fields = True
+            content = gh_input(given, cmd, feed, cwd)
+            unseen = unseen or content is None
+            payloads.append(content or "")
+            if content is not None:
+                try:
+                    document = json.loads(content)
+                    query = document.get('query') if isinstance(document, dict) else None
+                    if isinstance(query, str):
+                        payloads.append(query)
+                except (ValueError, RecursionError):
+                    unseen = True
+        if given is value and option in GH_VALUE_FLAGS:
+            i += 1
+        i += 1
+    method = (method or ("POST" if fields else "GET")).upper()
+    def canonical_endpoint(value):
+        # gh accepts absolute URLs; API servers decode escapes and normalize dot segments.
+        path = urlsplit(value).path if value.startswith(('https://', 'http://')) else value.split('?', 1)[0]
+        return posixpath.normpath('/' + unquote(path).lstrip('/')).removeprefix('/api/v3').lstrip('/')
+    paths = [canonical_endpoint(p) for p in (target, endpoint.text) if p is not None]
+    if method != "GET" and any(MERGE_ENDPOINT.match(p) for p in paths):
+        return verdict
+    if target is None and method != "GET":
+        return verdict
+    if any(p.strip("/").lower() == "graphql" for p in paths) or target is None:
+        if any(MERGE_MUTATIONS.search(p) for p in payloads):
+            return verdict
+        if unseen and (target is None or canonical_endpoint(target).lower() == "graphql"):
+            return ("merge_pr", "this GraphQL query can't be read by Rynhult's guardrails (from a variable, an unreadable "
+                                "file or unseen stdin), and merging pull requests is a person's action")
+    return None
+
+
+def expand(word: Word, known: dict) -> str | None:
+    """The word's text with $NAME / ${NAME} replaced by values assigned earlier in this shell; None when any
+    expansion is something else ($(...), ${X:-...}, $1, an unknown or unsafe variable)."""
+    text, how, out, i = word.text, word.how, "", 0
+    while i < len(text):
+        if how[i] != "$":
+            out += text[i]
+            i += 1
+            continue
+        end = i
+        while end < len(text) and how[end] == "$":
+            end += 1
+        segment, pos = text[i:end], 0
+        while pos < len(segment):
+            match = VARIABLE.match(segment, pos)
+            if not match or (match.group(1) or match.group(2)) not in known:
+                return None
+            out += known[match.group(1) or match.group(2)]
+            pos = match.end()
+        i = end
+    return out
+
+
+FRESH_TEMP = "/tmp/.acc-mktemp"  # what $(mktemp ...) stands for: a new folder or file of the agent's own, in a temp folder
+
+
+def fresh_temp(assign: Word, name: str) -> bool:
+    """S=$(mktemp [-d] [-q] [-t] [TEMPLATE]): a brand-new temporary file or folder that this account owns."""
+    value = assign.tail(len(name) + 1)
+    if len(assign.subs) != 1 or len(assign.subs[0]) != 1 or not re.fullmatch(r"\$\(.*\)", value.text, re.S) \
+            or set(value.how) != {"$"}:
+        return False
+    node = assign.subs[0][0][0]
+    if not isinstance(node, Command) or node.assigns or node.redirs or not node.words or node.words[0].text != "mktemp":
+        return False
+    args = [w for w in node.words[1:]]
+    return all(not w.dynamic and (w.text in ("-d", "-q", "-t", "-u", "--directory", "--quiet")
+                                  or re.fullmatch(r"[A-Za-z0-9._-]*X{3,}[A-Za-z0-9._-]*", w.text)) for w in args)
+
+
+def remember(assign: Word, known: dict) -> None:
+    name, _, _ = assign.text.partition("=")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):  # S+=x, A[i]=x
+        known.pop(name.rstrip("+").split("[")[0], None)
+        return
+    if fresh_temp(assign, name):
+        known[name] = FRESH_TEMP
+        return
+    value = expand(assign.tail(len(name) + 1), known) if assign.subs == [] else None
+    if value and SAFE_VALUE.fullmatch(value):
+        known[name] = value
+    else:
+        known.pop(name, None)
+
+
+def target_path(word: Word, cwd: str | None, known: dict) -> str | None:
+    """The absolute path a delete target names, or None when it can't be known before the command runs."""
+    if word.tilde:
+        return None
+    path = expand(word, known) if word.dynamic else word.text
+    if path is None or not (os.path.isabs(path) or cwd is not None):
+        return None
+    return os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path))
+
+
+def all_mine(pattern: str) -> bool:
+    """Whether everything a delete would remove (the pattern's matches and all beneath them) belongs to this account:
+    agents may clean up their own temporary files, not anyone else's."""
+    uid, seen = os.getuid(), 0
+    for top in glob.glob(pattern) or [pattern]:
+        try:
+            if os.lstat(top).st_uid != uid:
+                return False
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if not os.path.isdir(top) or os.path.islink(top):
+            continue
+        for root, dirs, files in os.walk(top, onerror=lambda error: (_ for _ in ()).throw(error)):
+            for name in dirs + files:
+                seen += 1
+                if seen > MAX_OWNED_CHECK or os.lstat(os.path.join(root, name)).st_uid != uid:
+                    return False
+    return True
+
+
+def outside(word: Word, workspace: str, cwd: str | None, known: dict | None = None) -> bool:
+    """Whether a path may be outside the workspace (or, in a temp folder, may not be the agent's own). Unknown ($VAR
+    not assigned earlier in this shell, ~, a directory cd'd to dynamically) counts as outside; a glob is a pattern in
+    the directory it is written in (`*` is the workspace's children)."""
+    full = target_path(word, cwd, known or {})
+    if full is None:
+        return True
+    if (full + "/").startswith(TEMP_ROOTS) and full + "/" not in TEMP_ROOTS:
+        try:
+            return not all_mine(full)
+        except OSError:
+            return True
+    return not (workspace and full.startswith(workspace.rstrip("/") + "/"))
+
+
+def rm_options(words: list[Word]) -> tuple[bool, list[Word]]:
+    """Whether rm's options ask for a recursive delete, and its targets."""
+    recursive, targets, end = False, [], False
+    for word in words[1:]:
+        text = word.text
+        if end or not text.startswith("-") or text == "-":
+            targets.append(word)
+        elif text == "--":
+            end = True
+        elif long_option(text, RM_OPTIONS) == "--recursive" or (not text.startswith("--") and ("r" in text or "R" in text)):
+            recursive = True
+    return recursive, targets
+
+
+def check_rm(words: list[Word], workspace: str, cwd: str | None, known: dict | None = None) -> tuple[str, str] | None:
+    if not words[0].dynamic and os.path.basename(words[0].text) != "rm":
+        return None
+    recursive, targets = rm_options(words)
+    if not recursive:
+        return None
+    bad = [t.text for t in targets if outside(t, workspace, cwd, known)]
+    if bad:
+        if words[0].dynamic:
+            source = "an expansion" if words[0].subs else "a variable"
+            return "rm_outside", f"command name comes from {source}; cannot verify it safely with Rynhult's guardrails"
+        return "rm_outside", f"recursive delete outside the workspace ({bad[0]}) is blocked by Rynhult's guardrails"
+    return None
+
+
+def secret_path(path: str, cwd: str | None = None) -> bool:
+    """A file that holds secrets: .env files (not .env.example), private keys, sign-in tokens, credential folders, the
+    session's MCP and key files, other processes' environments. Relative paths are taken from cwd, and . and .. are
+    resolved, before the check. A glob counts when it could name one (`.en?`, `auth.jso[n]`)."""
+    home = HOME_PREFIX.match(path)
+    if home:
+        full = HOME + path[home.end():]
+    elif path.startswith("~"):  # ~user/...
+        full = "/" + path[1:]
+    elif RUN_DIR and re.match(r"\$((?:ACC|RYNHULT)_RUN_DIR\b|\{(?:ACC|RYNHULT)_RUN_DIR\})", path):
+        full = RUN_DIR + re.sub(r"^\$(\{(?:ACC|RYNHULT)_RUN_DIR\}|(?:ACC|RYNHULT)_RUN_DIR)", "", path)
+    elif os.path.isabs(path):
+        full = path
+    else:
+        full = os.path.join(cwd, path) if cwd else "/" + path
+    full = os.path.normpath(full)
+    name = os.path.basename(full)
+    if not name or SAFE_ENV.match(name) or name.endswith(".pub"):
+        return False
+    if SECRET_NAMES.match(name) or any(d in full + "/" for d in SECRET_DIRS) or any(full.endswith(f) for f in SECRET_FILES):
+        return True
+    if any(full.endswith(f) for f in SECRET_FOLDERS) or re.fullmatch(r"/proc/[^/]+/environ", full):
+        return True
+    if RUN_DIR and any(full == os.path.join(os.path.normpath(RUN_DIR), f) for f in RUN_SECRETS):
+        return True
+    if not re.search(r"[*?\[]", full):
+        return False
+    # `*` or `.*` could be anything: only a glob that starts like a name and spells out some of it counts
+    literal = name[:1] not in "*?[" and len(re.sub(r"\[[^\]]*\]|[*?]", "", name)) >= 3
+    return literal and (any(fnmatchcase(sample, name) for sample in SECRET_SAMPLES)
+                        or any(ends_like(full, f) for f in SECRET_FILES + SECRET_FOLDERS))
+
+
+def secret_command(words: list[Word]) -> bool:
+    """Commands that print a sign-in token or every environment variable (the session's keys among them)."""
+    name, rest = os.path.basename(words[0].text), [w.text for w in words[1:]]
+    if name == "gh" and rest[:2] == ["auth", "token"]:
+        return True
+    if name == "gh" and rest[:2] == ["auth", "status"] and any(a in ("-t", "--show-token") for a in rest):
+        return True
+    if name == "opencode" and rest[:2] == ["auth", "export"]:  # prints every saved credential
+        return True
+    return name == "printenv" and not [a for a in rest if not a.startswith("-")] or name == "env" and not rest
+
+
+def custom_match(custom: list, text: str) -> tuple[str, str] | None:
+    """The owner's own patterns: matched against the raw command text, and against each command's words as the shell
+    reads them (quotes removed), so `ter""raform destroy` is `terraform destroy`."""
+    for entry in custom:
+        try:
+            if re.search(entry.get("pattern", "(?!)"), text):
+                return "custom", entry.get("reason") or f"blocked by Rynhult's guardrails ({entry.get('pattern')})"
+        except re.error:
+            continue
+    return None
+
+
+def check(policy: dict, tool: str, args: dict, cwd: str, run_dir: str = "") -> tuple[str, str] | None:
+    global RUN_DIR
+    RUN_DIR = run_dir
+    if policy.get("explanation_only"):
+        return "explanation_read_only", "Explanation helpers cannot use tools. Return the walkthrough JSON only."
+    rules = policy.get("rules") or {}
+    workspace = policy.get("workspace") or cwd
+    for key in ("workdir", "Cwd", "cwd"):
+        directory = args.get(key)
+        if isinstance(directory, str) and directory:
+            cwd = os.path.normpath(os.path.join(cwd, directory))
+            break
+    commands = strings(args, COMMAND_KEYS)
+    paths = strings(args, PATH_KEYS) + patch_paths(args)
+    custom = [c for c in policy.get("custom") or [] if isinstance(c, dict)]
+    for command_text in commands:
+        verdict = custom_match(custom, command_text)
+        if verdict:
+            return verdict
+        try:  # parsed whatever the rules: the guard's own files are always protected
+            ctx = {"rules": rules, "workspace": workspace, "vars": {}, "aliases": {}, "custom": custom,
+                   "tool_approval": policy.get("tool_approval", False), "local_only": policy.get("local_only", False)}
+            verdict = walk(Parser(command_text).parse(), cwd, ctx)[0]
+        except RecursionError:  # nesting this deep is no accident: refuse rather than let it past unchecked
+            return "too_complex", "this command is nested too deeply for Rynhult's guardrails to check; split it up"
+        if verdict:
+            return verdict
+    if not READ_TOOLS.search(tool):  # a tool that may change the file
+        text = json.dumps({k: v for k, v in args.items() if k not in PATH_KEYS}).lower()
+        partial = any(k in args for k in ("old_string", "oldString", "edits", "input", "patch", "patchText"))  # an edit
+        for path in paths:
+            full = os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
+            if hook_settings(full):  # other settings in the same file may change, hooks (OpenCode: plugins) may not
+                words = ("plugin", "polic") if opencode_settings(full) else ("hook",)
+                if any(w in text for w in words) or not partial and mentions_hooks(full, tuple(w.encode() for w in words)):
+                    return own_files(path)
+            elif guarded(full):
+                return own_files(path)
+    if rules.get("secrets"):
+        for path in paths + strings(args, SEARCH_KEYS):
+            if secret_path(path, cwd):
+                return "secrets", f"{path} looks like a secret; Rynhult's guardrails keep agents out of secrets"
+    return None
+
+
+def respond(provider: str, verdict: tuple[str, str] | None) -> int:
+    if verdict is None:
+        return 0  # no output: the CLI's own permission rules apply
+    reason = verdict[1]
+    if provider == "cursor":
+        print(json.dumps({"permission": "deny", "user_message": reason, "agent_message": reason}))
+        return 0
+    if provider == "antigravity":
+        print(json.dumps({"decision": "deny", "reason": reason}))
+        return 0
+    # OpenCode: Rynhult's plugin rejects the call with the reason from stderr (exit status 2, as below)
+    if provider == "copilot":  # with exit status 2 it would only say "hook exited with code 2"
+        print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": reason}))
+        return 0
+    # Claude Code and Codex: exit status 2, the reason on stderr (and their JSON decision on stdout)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                             "permissionDecisionReason": reason}}))
+    print(reason, file=sys.stderr)
+    return 2
+
+
+def read_small(path: str) -> bytes:
+    """A launch file's bytes: a regular file, not a link or FIFO, at most 1 MiB."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1 << 20:
+            raise OSError(f"{path} is not a small regular file")
+        return os.read(fd, info.st_size + 1)
+    finally:
+        os.close(fd)
+
+
+def load_policy(run_dir: str) -> tuple[dict, tuple[str, str] | None]:
+    """The session's rules, or (when they are missing, unreadable or changed since launch) the verdict that blocks
+    everything. $ACC_GUARD_FILES lists the launch files' SHA-256 hashes (`name=hash ...`), set by the broker in the
+    CLI's own environment, which tool calls can't change; a session launched without rules has no guardrails.json."""
+    listed = environment.get("ACC_GUARD_FILES")
+    expected = {"guardrails.json": ""} if listed is None else dict(
+        item.split("=", 1) for item in listed.split() if "=" in item)
+    if "guardrails.json" not in expected:
+        return {}, None
+    tampered = ("tampered", "this session's guardrails ({}) are missing or were changed after launch, so Rynhult blocks every "
+                "tool call; restart the session from Rynhult to restore them")
+    data = {}
+    for name, digest in expected.items():
+        try:
+            data[name] = read_small(os.path.join(run_dir, name))
+        except OSError:
+            return {}, (tampered[0], tampered[1].format(name))
+        if digest and hashlib.sha256(data[name]).hexdigest() != digest:
+            return {}, (tampered[0], tampered[1].format(name))
+    try:
+        policy = json.loads(data["guardrails.json"])
+    except ValueError:
+        policy = None
+    if not isinstance(policy, dict):
+        return {}, (tampered[0], tampered[1].format("guardrails.json"))
+    return policy, None
+
+
+DEADLINE = 4.0  # seconds for a whole check: below every CLI's hook timeout (10 s or more), as some allow on a timeout
+
+
+class TooSlow(BaseException):
+    """Raised by the deadline's alarm; a BaseException so no rule's own error handling swallows it."""
+
+
+def decide(policy: dict, broken, tool: str, args: dict, cwd: str, run_dir: str, deadline: float = DEADLINE):
+    """(verdict, checker error): a check that runs past the deadline is refused, not let through."""
+    def alarm(signum, frame):
+        raise TooSlow()
+    previous = signal.signal(signal.SIGALRM, alarm)
+    signal.setitimer(signal.ITIMER_REAL, deadline)
+    try:
+        return broken or check(policy, tool, args, cwd, run_dir), None
+    except TooSlow:
+        return ("too_slow", "this command took Rynhult's guardrails too long to check, so it is refused; simplify it or "
+                "split it up"), None
+    except Exception as exc:  # a rule bug: refused (a crafted command must not switch the checks off), and recorded
+        return ("guard_error", "Rynhult's guardrails couldn't check this command, so it is refused; write it more simply or "
+                "split it up"), type(exc).__name__
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def main() -> int:
+    provider = sys.argv[1] if len(sys.argv) > 1 and re.fullmatch(r"[a-z0-9-]+", sys.argv[1]) else "unknown"
+    event = sys.argv[2] if len(sys.argv) > 2 and re.fullmatch(r"[A-Za-z]+", sys.argv[2]) else "PreToolUse"
+    raw = sys.stdin.read()
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    run_dir = environment.get("ACC_RUN_DIR")
+    if not run_dir:
+        return respond(provider, None)
+    policy, broken = load_policy(run_dir)
+    tool, args = tool_call(payload)
+    roots = payload.get("workspacePaths") or payload.get("workspace_roots") or []
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else (roots[0] if roots else policy.get("workspace") or os.getcwd())
+    verdict, error = decide(policy, broken, tool, args, cwd, run_dir)
+    record = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z", "provider": provider,
+              "event": event, "acc_session": environment.get("ACC_SESSION_ID", ""), "hook": payload}
+    if verdict:
+        record["guard"] = {"rule": verdict[0], "reason": verdict[1]}
+    if error:
+        record["guard_error"] = error  # visible in the session's Activity, so a checker bug gets noticed
+    try:
+        with open(os.path.join(run_dir, "events.jsonl"), "a") as handle:
+            handle.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
+    if provider == "claude" and event == "PermissionRequest" and verdict is not None:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+                                                "decision": {"behavior": "deny", "message": verdict[1]}}}))
+        return 0
+    # Plan mode ignores PreToolUse allows for mutating MCP tools. PermissionRequest
+    # is the supported approval boundary; never mislabel reports as read-only.
+    if (provider == "claude" and event == "PermissionRequest" and verdict is None
+            and payload.get("permission_mode") in ("plan", "auto")
+            and policy.get("rules", {}).get("team") is True
+            and re.fullmatch(r"mcp__acc-team__[a-z][a-z0-9]*(?:_[a-z0-9]+)*", tool)
+            and tool.removeprefix("mcp__acc-team__") in (
+                PLAN_AUTO_TEAM_TOOLS if payload.get("permission_mode") == "plan" else READ_ONLY_TEAM_TOOLS)):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+                                                "decision": {"behavior": "allow"}}}))
+        return 0
+    return respond(provider, verdict)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

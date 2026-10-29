@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "images": {
+    "default": {
+      "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "network": "none",
+      "providers": {
+        "claude": "/usr/local/bin/claude",
+        "codex": "/usr/local/bin/codex",
+        "copilot": "/usr/local/bin/copilot"
+      }
+    }
+  }
+}

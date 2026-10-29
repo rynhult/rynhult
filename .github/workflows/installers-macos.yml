@@ -1,0 +1,94 @@
+name: Installers (macOS)
+
+# Rynhult-<version>.pkg (docs/INSTALLER.md, piece 4): built and checked on every run, attached to the release on tags.
+# Everything that would change the runner as a user runs as a dry run; the last check installs the .pkg itself on the
+# (throwaway) runner from the command line, where the postinstall only says how to finish.
+on:
+  push:
+    tags: ['v[1-9]*']  # installers build at v1.0 and later, or by hand (workflow_dispatch); not for 0.x tags
+    branches: ['installer/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAMPLE: 'acc-node enroll --primary https://acc.example.com --trust system --code 3fa21c-0b9d4e-77aa01-c3d2e1 --name ci-mac'
+
+jobs:
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      # Pinned to commits (tags can be moved); Dependabot proposes updates.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Shellcheck
+        run: |
+          brew install shellcheck
+          shellcheck deploy/macos/*.sh deploy/macos/scripts/preinstall deploy/macos/scripts/postinstall
+      - name: Parser self-test (macOS's bash 3.2)
+        run: |
+          /bin/bash --version | head -n 1
+          /bin/bash deploy/macos/acc-setup.sh self-test tests/data/enroll-commands.txt
+      - name: Rynhult Setup, the whole flow as a dry run
+        run: |
+          /bin/bash deploy/macos/acc-setup.sh run --dry-run "$SAMPLE" | tee setup-dry-run.txt
+          grep -q '(dry run: nothing is changed)' setup-dry-run.txt
+          grep -q 'ok: macOS, user' setup-dry-run.txt
+          grep -q 'launchctl bootstrap gui/' setup-dry-run.txt  # install.sh's own dry run ran
+          grep -q 'acc-node enroll --primary https://acc.example.com --trust system --code <the code> --name ci-mac' setup-dry-run.txt
+          if grep -q 'WOULD FAIL' setup-dry-run.txt; then exit 1; fi
+          test ! -e "$HOME/Library/LaunchAgents/local.acc.broker.plist"
+          test ! -e "$HOME/Library/Logs/ACC/setup.log"
+      - name: A pasted command that isn't one is refused
+        run: |
+          status=0
+          /bin/bash deploy/macos/acc-setup.sh run --dry-run "$SAMPLE; touch /tmp/pwned" || status=$?
+          test "$status" = 2 && test ! -e /tmp/pwned
+      - name: Build the .pkg
+        run: deploy/macos/build-pkg.sh --out dist
+      - name: Check its payload and scripts
+        run: deploy/macos/check-pkg.sh dist/Rynhult-*.pkg
+      - name: Install it on the runner (command line) and dry-run the installed Rynhult Setup
+        run: |
+          sudo installer -pkg dist/Rynhult-*.pkg -target / -verboseR
+          src="/Library/Application Support/ACC/src"
+          test -x "$src/deploy/node/macos/install.sh"
+          test "$(stat -f %Su "$src/pyproject.toml")" = root
+          codesign --verify --strict "/Applications/ACC Setup.app"
+          pkgutil --pkg-info local.acc.pkg
+          "$src/deploy/macos/acc-setup.sh" run --dry-run "$SAMPLE" | tee installed-dry-run.txt
+          if grep -q 'WOULD FAIL' installed-dry-run.txt; then exit 1; fi
+          test ! -e "$HOME/Library/LaunchAgents/local.acc.node.plist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rynhult-macos-pkg
+          path: dist/Rynhult-*.pkg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'rynhult/rynhult' && vars.RYNHULT_PUBLICATION_APPROVED == 'true'
+    needs: pkg
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: rynhult-macos-pkg
+          path: dist
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The Windows installer's workflow may have made the release already, or be making it now.
+          release_flags=()
+          if [[ "$TAG" == *-* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" "${release_flags[@]}" -R "$GITHUB_REPOSITORY" --verify-tag --title "Rynhult $TAG" --notes "Rynhult $TAG" \
+            || gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$TAG" dist/Rynhult-*.pkg -R "$GITHUB_REPOSITORY" --clobber

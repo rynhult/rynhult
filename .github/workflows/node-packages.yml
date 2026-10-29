@@ -1,0 +1,79 @@
+name: Node packages
+
+# The node installers (deploy/node) on the three systems they target, without changing the runners' systems:
+# every install runs as a dry run (-WhatIf on Windows).
+on:
+  push:
+    branches: ['node/*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned to commits (tags can be moved); Dependabot proposes updates.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Shellcheck
+        run: |
+          # The node scripts at every severity; everything else at warning and above.
+          shellcheck deploy/node/install.sh deploy/node/acc-node deploy/node/macos/install.sh \
+            deploy/node/macos/acc-node deploy/node/windows/wsl-node.sh deploy/broker/acc-agent-add
+          git ls-files -z | while IFS= read -r -d '' f; do
+            if [ -f "$f" ] && head -n1 "$f" | grep -Eq '^#!.*/(env )?(ba|da)?sh\b'; then printf '%s\0' "$f"; fi
+          done | xargs -0 shellcheck -S warning
+      - name: Prerequisites a real install expects (tmux, uv)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q tmux
+          pipx install uv
+          # root runs uv, so the installer only trusts a root-owned one outside home folders (pipx's is the runner's)
+          sudo install -o root -g root -m 0755 "$(readlink -f "$(command -v uv)")" /usr/bin/uv  # the runner's /usr/local/bin is world-writable
+      - name: install.sh --dry-run
+        run: |
+          deploy/node/install.sh --dry-run --agent runner-agent | tee dry-run.txt
+          grep -q 'acc-agent-add runner-agent' dry-run.txt
+          grep -q 'systemctl enable acc-node.service' dry-run.txt
+          if grep -q 'WOULD FAIL' dry-run.txt; then exit 1; fi
+      - name: Tests
+        run: pipx run pytest --noconftest -q tests/test_node_packages.py  # stdlib only: no project install needed
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: macOS install.sh --dry-run
+        run: |
+          deploy/node/macos/install.sh --dry-run --render-dir "$RUNNER_TEMP/plists" | tee dry-run.txt
+          if grep -q 'WOULD FAIL' dry-run.txt; then exit 1; fi
+          test ! -e "$HOME/Library/LaunchAgents/local.acc.broker.plist"
+      - name: plutil -lint
+        run: plutil -lint deploy/node/macos/acc.plist.in "$RUNNER_TEMP"/plists/*.plist
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $findings = Invoke-ScriptAnalyzer -Path deploy/node/windows/install.ps1 -Severity Warning, Error
+          $findings | Format-Table -AutoSize | Out-String -Width 200
+          if ($findings) { exit 1 }
+      - name: install.ps1 -WhatIf (PowerShell 7)
+        shell: pwsh
+        run: ./deploy/node/windows/install.ps1 -WhatIf
+      # Most PCs run the script in Windows PowerShell 5.1.
+      - name: install.ps1 -WhatIf (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./deploy/node/windows/install.ps1 -WhatIf
+      - name: Nothing was registered
+        shell: pwsh
+        run: if (Get-ScheduledTask -TaskName 'Rynhult node (WSL)', 'ACC node (WSL)' -ErrorAction SilentlyContinue) { exit 1 }

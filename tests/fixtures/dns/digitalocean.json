@@ -1,0 +1,170 @@
+[
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com",
+    "response": {
+      "domain": {
+        "name": "example.com",
+        "ttl": 1800,
+        "zone_file": ""
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=1&per_page=100",
+    "response": {
+      "domain_records": [],
+      "links": {
+        "pages": {
+          "next": "https://api.digitalocean.com/v2/domains/example.com/records?page=2&per_page=100"
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=2&per_page=100",
+    "response": {
+      "domain_records": [],
+      "links": {}
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/v2/domains/example.com/records",
+    "response": {
+      "domain_record": {
+        "id": 123,
+        "name": "site",
+        "type": "A",
+        "data": "192.0.2.1",
+        "ttl": 300,
+        "priority": null,
+        "port": null,
+        "weight": null,
+        "flags": null,
+        "tag": null
+      }
+    },
+    "body": {
+      "type": "A",
+      "name": "site",
+      "data": "192.0.2.1",
+      "ttl": 300
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=1&per_page=100",
+    "response": {
+      "domain_records": [
+        {
+          "id": 123,
+          "name": "site",
+          "type": "A",
+          "data": "192.0.2.1",
+          "ttl": 300,
+          "priority": null,
+          "port": null,
+          "weight": null,
+          "flags": null,
+          "tag": null
+        }
+      ],
+      "links": {}
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/v2/domains/example.com/records/123",
+    "response": {
+      "domain_record": {
+        "id": 123,
+        "name": "site",
+        "type": "A",
+        "data": "192.0.2.2",
+        "ttl": 300,
+        "priority": null,
+        "port": null,
+        "weight": null,
+        "flags": null,
+        "tag": null
+      }
+    },
+    "body": {
+      "type": "A",
+      "name": "site",
+      "data": "192.0.2.2",
+      "ttl": 300
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=1&per_page=100",
+    "response": {
+      "domain_records": [
+        {
+          "id": 123,
+          "name": "site",
+          "type": "A",
+          "data": "192.0.2.99",
+          "ttl": 300,
+          "priority": null,
+          "port": null,
+          "weight": null,
+          "flags": null,
+          "tag": null
+        }
+      ],
+      "links": {}
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=1&per_page=100",
+    "response": {
+      "domain_records": [
+        {
+          "id": 123,
+          "name": "site",
+          "type": "A",
+          "data": "192.0.2.2",
+          "ttl": 300,
+          "priority": null,
+          "port": null,
+          "weight": null,
+          "flags": null,
+          "tag": null
+        }
+      ],
+      "links": {}
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/v2/domains/example.com/records/123",
+    "response": {}
+  },
+  {
+    "method": "GET",
+    "path": "/v2/domains/example.com/records?page=1&per_page=100",
+    "response": {
+      "domain_records": [
+        {
+          "id": 123,
+          "name": "site",
+          "type": "A",
+          "data": "192.0.2.99",
+          "ttl": 300,
+          "priority": null,
+          "port": null,
+          "weight": null,
+          "flags": null,
+          "tag": null
+        }
+      ],
+      "links": {}
+    }
+  }
+]

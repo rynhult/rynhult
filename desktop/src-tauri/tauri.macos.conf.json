@@ -1,0 +1,13 @@
+{
+  "productName": "Rynhult Mac spike",
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "shortDescription": "Rynhult macOS desktop spike (not a release)",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.macos.plist",
+      "infoPlist": "Info.macos.plist"
+    }
+  }
+}

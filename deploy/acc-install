@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# Install Rynhult on Linux (Debian/Ubuntu, systemd), as the main Rynhult or as an additional machine (docs/INSTALLER.md).
+#   sudo deploy/acc-install                                  a terminal wizard (whiptail) asks everything
+#   sudo deploy/acc-install --main [--yes]                   the main Rynhult: deploy/setup.sh with the answers
+#   sudo deploy/acc-install --node 'acc-node enroll …' [--yes]
+#                                                            an additional machine: deploy/node/install.sh, then enroll
+#   --yes       no questions: answers come from the flags and the environment (setup.sh's ACC_* variables)
+#   --dry-run   passed through to the installers: print every step, change nothing (no root needed)
+# ACC_INSTALL_ROOT (tests only, never as root): keep the log and look for an existing setup and acc-node inside that
+# private, canonical mode-0700 folder under /tmp instead of /. No path component may be a symlink. The installers it runs (deploy/setup.sh, deploy/node/install.sh) are not redirected: a test
+# replaces them, and the real ones refuse to change anything without root.
+# The --node command is the line from Host → Machines → Add machine. It is parsed, never run as given: only
+# `acc-node enroll --primary https://… (--trust system | --ca-fingerprint HEX) --code CODE --name NAME`. With
+# --code - (the Linux line, through the bootstrap) the code is one line of stdin, so it is on no command line; either
+# way it reaches acc-node enroll on stdin, never as an argument.
+set -euo pipefail
+
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+R=${ACC_INSTALL_ROOT:-}
+ACC_NODE=$R/usr/local/bin/acc-node
+LOG=$R/var/log/acc-install.log
+ACCD_ENV=$R/etc/default/accd
+
+# ------------------------------------------------------------- the parser --
+# parse_enroll_command TEXT: sets ENROLL_PRIMARY, ENROLL_TRUST (system|ca), ENROLL_FINGERPRINT, ENROLL_CODE and
+# ENROLL_NAME, or prints why not to stderr and returns 1. A leading `sudo` is allowed (install.sh's hint shows one).
+ENROLL_PRIMARY='' ENROLL_TRUST='' ENROLL_FINGERPRINT='' ENROLL_CODE='' ENROLL_NAME=''
+parse_enroll_command() {
+  local text=$1 primary='' trust='' fingerprint='' code='' name='' option value host port
+  local -a words
+  ENROLL_PRIMARY='' ENROLL_TRUST='' ENROLL_FINGERPRINT='' ENROLL_CODE='' ENROLL_NAME=''
+  # Pasted text often ends with a newline: trim spaces, tabs and line ends around it, then allow only these characters.
+  text=${text#"${text%%[![:space:]]*}"}
+  text=${text%"${text##*[![:space:]]}"}
+  if [ -z "$text" ]; then echo "the command is empty" >&2; return 1; fi
+  if [ ${#text} -gt 512 ]; then echo "the command is too long" >&2; return 1; fi
+  if [[ $text =~ [^A-Za-z0-9\ ./:_-] ]]; then
+    echo "the command has characters it never contains (quotes, \$, ;, |, & and the like): paste only the line from Add machine" >&2
+    return 1
+  fi
+  read -r -a words <<<"$text"
+  [ "${words[0]}" != sudo ] || words=("${words[@]:1}")
+  if [ ${#words[@]} -lt 2 ] || { [ "${words[0]}" != acc-node ] && [ "${words[0]}" != rynhult-node ]; } || [ "${words[1]}" != enroll ]; then
+    echo "expected a command that starts with: rynhult-node enroll" >&2; return 1
+  fi
+  set -- "${words[@]:2}"
+  while [ $# -gt 0 ]; do
+    option=$1
+    if [ $# -lt 2 ]; then echo "$option needs a value" >&2; return 1; fi
+    value=$2
+    shift 2
+    case $option in
+      --primary) [ -z "$primary" ] || { echo "--primary is given twice" >&2; return 1; }; primary=$value ;;
+      --trust)
+        [ -z "$trust" ] || { echo "give one of --trust and --ca-fingerprint, once" >&2; return 1; }
+        [ "$value" = system ] || { echo "--trust must be system" >&2; return 1; }
+        trust=system ;;
+      --ca-fingerprint)
+        [ -z "$trust" ] || { echo "give one of --trust and --ca-fingerprint, once" >&2; return 1; }
+        trust=ca fingerprint=$value ;;
+      --code) [ -z "$code" ] || { echo "--code is given twice" >&2; return 1; }; code=$value ;;
+      --name) [ -z "$name" ] || { echo "--name is given twice" >&2; return 1; }; name=$value ;;
+      *) echo "unexpected word in the command: $option" >&2; return 1 ;;
+    esac
+  done
+  if [ -z "$primary" ] || [ -z "$trust" ] || [ -z "$code" ] || [ -z "$name" ]; then
+    echo "the command needs --primary, --trust system or --ca-fingerprint, --code and --name" >&2; return 1
+  fi
+  # https://host[:port] and nothing more (a trailing slash aside): the address the dashboard is opened at.
+  primary=${primary%/}
+  if [[ ! $primary =~ ^https://([A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(:([0-9]{1,5}))?$ ]]; then
+    echo "--primary must be https://host or https://host:port" >&2; return 1
+  fi
+  host=${BASH_REMATCH[1]} port=${BASH_REMATCH[4]}
+  if [[ $host == *..* ]] || { [ -n "$port" ] && { [ $((10#$port)) -lt 1 ] || [ $((10#$port)) -gt 65535 ]; }; }; then
+    echo "--primary must be https://host or https://host:port" >&2; return 1
+  fi
+  if [[ ! $name =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || [ "$name" = local ]; then
+    echo "--name must be lowercase letters, digits and dashes (up to 40), not 'local'" >&2; return 1
+  fi
+  if [ "$code" != - ] && [[ ! $code =~ ^[0-9a-f]{6}(-[0-9a-f]{6}){3}$ ]]; then
+    echo "--code must look like 1a2b3c-4d5e6f-7a8b9c-0d1e2f" >&2; return 1
+  fi
+  if [ "$trust" = ca ]; then
+    fingerprint=${fingerprint,,}
+    if [[ ! $fingerprint =~ ^[0-9a-f]{64}$ ]]; then
+      echo "--ca-fingerprint must be 64 hex digits (the SHA-256 of the main Rynhult's CA)" >&2; return 1
+    fi
+  fi
+  ENROLL_PRIMARY=$primary ENROLL_TRUST=$trust ENROLL_FINGERPRINT=$fingerprint ENROLL_CODE=$code ENROLL_NAME=$name
+}
+
+# The enroll arguments, rebuilt from the parsed values (never from the pasted text).
+enroll_args() {
+  ENROLL_ARGS=(--primary "$ENROLL_PRIMARY")
+  if [ "$ENROLL_TRUST" = ca ]; then ENROLL_ARGS+=(--ca-fingerprint "$ENROLL_FINGERPRINT")
+  else ENROLL_ARGS+=(--trust system); fi
+  ENROLL_ARGS+=(--code - --name "$ENROLL_NAME")  # the code itself goes on stdin
+}
+
+# ------------------------------------------------------------- dialogs --
+# whiptail when there's a terminal and it's installed; plain prompts otherwise (a dry run never installs it).
+WT=''
+ui_init() {
+  [ "$INTERACTIVE" = 1 ] || return 0
+  if ! command -v whiptail >/dev/null && [ -z "$DRY" ] && command -v apt-get >/dev/null; then
+    echo "installing whiptail (the wizard's dialogs)"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q whiptail >/dev/null 2>&1 || true
+  fi
+  command -v whiptail >/dev/null && WT=1
+  return 0
+}
+TITLE="Rynhult setup"
+# ui_input VAR "question" default [password]: keeps a value already set in the environment.
+ui_input() {
+  local var=$1 question=$2 default=${3:-} kind=${4:-inputbox} answer
+  [ -z "${!var:-}" ] || return 0
+  if [ "$INTERACTIVE" != 1 ]; then printf -v "$var" '%s' "$default"; return 0; fi
+  if [ -n "$WT" ]; then
+    answer=$(whiptail --title "$TITLE" "--$kind" "$question" 10 72 "$default" 3>&1 1>&2 2>&3) || cancelled
+  elif [ "$kind" = passwordbox ]; then
+    read -r -s -p "$question: " answer </dev/tty; echo
+  else
+    read -r -p "$question${default:+ [$default]}: " answer </dev/tty
+  fi
+  printf -v "$var" '%s' "${answer:-$default}"
+}
+# ui_yesno VAR "question" default(yes|no)
+ui_yesno() {
+  local var=$1 question=$2 default=$3 answer
+  [ -z "${!var:-}" ] || return 0
+  if [ "$INTERACTIVE" != 1 ]; then printf -v "$var" '%s' "$default"; return 0; fi
+  if [ -n "$WT" ]; then
+    local flags=()
+    [ "$default" = yes ] || flags=(--defaultno)
+    if whiptail --title "$TITLE" "${flags[@]}" --yesno "$question" 10 72; then answer=yes; else answer=no; fi
+  else
+    read -r -p "$question (yes/no) [$default]: " answer </dev/tty
+    case ${answer,,} in y|yes) answer=yes ;; n|no) answer=no ;; *) answer=$default ;; esac
+  fi
+  printf -v "$var" '%s' "$answer"
+}
+ui_msg() {
+  if [ -n "$WT" ]; then whiptail --title "$TITLE" --msgbox "$1" 16 76; else printf '%s\n' "$1"; fi
+}
+cancelled() { echo "cancelled; nothing more was changed" >&2; exit 1; }
+
+choose_role() {
+  local answer
+  if [ -n "$WT" ]; then
+    answer=$(whiptail --title "$TITLE" --menu "What should this machine be?" 14 76 3 \
+      main "Main Rynhult: the dashboard (standalone, or the primary of several machines)" \
+      node "Additional machine: runs sessions for an existing Rynhult" \
+      cancel "Cancel" 3>&1 1>&2 2>&3) || cancelled
+  else
+    echo "What should this machine be?"
+    echo "  1) Main Rynhult: the dashboard (standalone, or the primary of several machines)"
+    echo "  2) Additional machine: runs sessions for an existing Rynhult"
+    echo "  3) Cancel"
+    read -r -p "Choose 1, 2 or 3: " answer </dev/tty
+    case $answer in 1) answer=main ;; 2) answer=node ;; *) answer=cancel ;; esac
+  fi
+  [ "$answer" != cancel ] || cancelled
+  ROLE=$answer
+}
+
+# ------------------------------------------------------------- the roles --
+# Run a step, show its output and keep it in the log (a dry run prints to the terminal only).
+redact() { awk '{secret=ENVIRON["CF_API_TOKEN"]; if (length(secret)) { rest=$0; out=""; while ((at=index(rest, secret)) > 0) { out=out substr(rest, 1, at-1) "[redacted]"; rest=substr(rest, at+length(secret)); } $0=out rest; } print; }' | sed -E 's|([A-Za-z][A-Za-z0-9+.-]*://)[^/@[:space:]]*@|\1[redacted]@|g; s/(([Bb][Ee][Aa][Rr][Ee][Rr]|[Bb][Aa][Ss][Ii][Cc])[[:space:]]+).*/\1[redacted]/g; s/(([Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Kk][Ee][Yy]|[Cc][Oo][Dd][Ee])[[:punct:]]?[[:space:]]*[:=][[:space:]]*).*/\1[redacted]/g; s/[[:xdigit:]]{6}(-[[:xdigit:]]{6}){3}/[redacted]/g'; }
+install_failure() {
+  local context=''
+  [ ! -f "$LOG" ] || context=$(tail -n 12 "$LOG" | redact | cut -c 1-300)
+  ui_msg "$*
+$context
+Full log: $LOG"
+}
+step() {
+  printf '+ %s\n' "$*" | redact
+  if [ -n "$DRY" ]; then "$@"; return; fi
+  "$@" 2>&1 | redact | tee -a "$LOG"
+  return "${PIPESTATUS[0]}"
+}
+
+main_role() {
+  local setup=("$REPO/deploy/setup.sh" --yes)
+  [ -z "$DRY" ] || setup+=(--dry-run)
+  if [ -f "$ACCD_ENV" ]; then
+    ui_msg "Rynhult is already set up on this machine: setup keeps /etc/default/accd and only updates what's installed."
+  else
+    # setup.sh's questions, defaults and variables (see its header).
+    ui_input ACC_OWNER "Linux user who owns Rynhult's projects" "${SUDO_USER:-}"
+    ui_input ACC_ZONE "Cloudflare DNS zone for HTTPS and published sites (leave empty for none: Caddy signs Rynhult's certificate itself)" ""
+    if [ -n "${ACC_ZONE:-}" ]; then
+      ui_input CF_API_TOKEN "Cloudflare API token with Zone:DNS:Edit on $ACC_ZONE (not shown)" "" passwordbox
+    fi
+    ui_input ACC_HOSTNAME "Name to open Rynhult at" "${ACC_ZONE:+rynhult.$ACC_ZONE}"
+    local detected
+    detected=$( (tailscale ip -4 2>/dev/null || true) | head -1)
+    [ -n "$detected" ] || detected=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' || true)
+    ui_input ACC_INTERNAL_IP "This machine's LAN/VPN address (Rynhult and private sites)" "$detected"
+    if [ -n "${ACC_ZONE:-}" ]; then
+      ui_input ACC_PUBLIC_IP "First public address (add more in Settings → Publishing; empty: private sites only)" ""
+    fi
+    ui_input ACC_AGENT_CLIS "Agent CLIs besides Claude Code (codex, copilot, antigravity, cursor, opencode; space-separated)" "codex"
+    ui_yesno ACC_DOCKER "Set up rootless Docker for the owner? Projects' compose stacks need it." yes
+    ui_yesno ACC_OLLAMA "Install Ollama to run agents on local models?" no
+    ui_yesno ACC_BACKUP "Turn on the daily backup?" yes
+  fi
+  export ACC_OWNER ACC_ZONE CF_API_TOKEN ACC_HOSTNAME ACC_INTERNAL_IP ACC_PUBLIC_IP ACC_AGENT_CLIS ACC_DOCKER \
+    ACC_OLLAMA ACC_BACKUP
+  if [ -n "$WT" ]; then clear; fi
+  echo "== Main Rynhult: running deploy/setup.sh${DRY:+ (dry run)}"
+  if step "${setup[@]}"; then
+    [ -n "$DRY" ] || ui_msg "Rynhult is installed. The next steps are at the end of the log ($LOG)."
+  else
+    local status=$?
+    [ -n "$DRY" ] || install_failure "Setup stopped with an error (exit $status). The log is in $LOG; fix what it says and run this again."
+    return "$status"
+  fi
+}
+
+node_role() {
+  local command=${NODE_COMMAND:-} status=0 error
+  if [ -z "$command" ]; then
+    [ "$INTERACTIVE" = 1 ] || { echo "--node needs the command from Host → Machines → Add machine" >&2; exit 2; }
+    while :; do
+      ui_input command "Paste the command from Host → Machines → Add machine on the main Rynhult" ""
+      if error=$(parse_enroll_command "$command" 2>&1); then
+        parse_enroll_command "$command"
+        [ "$ENROLL_CODE" = - ] || break
+        error="paste it with its code, not --code -"
+      fi
+      ui_msg "That isn't the Add machine command: $error"
+      command=''
+    done
+  else
+    parse_enroll_command "$command" || exit 2
+  fi
+  if [ "$ENROLL_CODE" = - ]; then
+    IFS= read -r ENROLL_CODE || true
+    if [[ ! $ENROLL_CODE =~ ^[0-9a-f]{6}(-[0-9a-f]{6}){3}$ ]]; then
+      echo "--code - needs the one-time code on one line of stdin" >&2; exit 2
+    fi
+    # The terminal back for the node installer's questions, when there is one.
+    if (: </dev/tty) 2>/dev/null; then exec </dev/tty; fi
+  fi
+  enroll_args
+  if [ -n "$WT" ]; then clear; fi
+  echo "== Additional machine '$ENROLL_NAME' for $ENROLL_PRIMARY${DRY:+ (dry run)}"
+  local install=("$REPO/deploy/node/install.sh" --install-prereqs)
+  [ -z "$DRY" ] || install+=(--dry-run)
+  step env ACC_INSTALL_ENROLLS=1 "${install[@]}" || status=$?
+  # A dry run's exit 2 means "a real install would stop here"; it still shows the enroll step.
+  if [ "$status" != 0 ] && { [ -z "$DRY" ] || [ "$status" != 2 ]; }; then
+    [ -n "$DRY" ] || install_failure "Installing the node stopped with an error (exit $status). The log is in $LOG."
+    return "$status"
+  fi
+  if [ -n "$DRY" ]; then
+    echo "+ $ACC_NODE enroll ${ENROLL_ARGS[*]}" | redact
+    return "$status"
+  fi
+  if printf '%s\n' "$ENROLL_CODE" | step "$ACC_NODE" enroll "${ENROLL_ARGS[@]}"; then
+    ui_msg "This machine is enrolled as $ENROLL_NAME. It shows as connected under Host → Machines on the main Rynhult."
+  else
+    status=$?
+    install_failure "Enrolling stopped with an error (exit $status). A code works once and for 10 minutes: create a new one with Add machine if it expired. The log is in $LOG."
+    return "$status"
+  fi
+}
+
+main() {
+  ROLE='' NODE_COMMAND='' YES='' DRY=''
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --main) ROLE=main ;;
+      --node) ROLE=node; NODE_COMMAND=${2:?--node needs the command from Add machine}; shift ;;
+      --yes|-y) YES=1 ;;
+      --dry-run) DRY=1 ;;
+      -h|--help) sed -n '/^# Install Rynhult/,/^#   --dry-run/s/^# \{0,1\}//p' "$0"; exit 0 ;;
+      *) echo "unknown option $1 (see --help)" >&2; exit 2 ;;
+    esac
+    shift
+  done
+  INTERACTIVE=1
+  if [ -n "$YES" ] || [ ! -t 0 ] || [ ! -t 1 ]; then INTERACTIVE=0; fi
+  if [ -n "$R" ]; then
+    # Bash supplies readonly real/effective UIDs: a PATH-provided `id` is not a privilege check.
+    if [ "$UID" = 0 ] || [ "$EUID" = 0 ]; then
+      echo "ACC_INSTALL_ROOT is for tests and is refused as root" >&2; exit 2
+    fi
+    case $R in /*) ;; *) echo "ACC_INSTALL_ROOT must be an absolute folder" >&2; exit 2 ;; esac
+    case $R in /tmp/*) ;; *) echo "ACC_INSTALL_ROOT must be a private folder under /tmp" >&2; exit 2 ;; esac
+    case $R in *'/../'*|*'/./'*|*/..|*/.|*//*) echo "ACC_INSTALL_ROOT must be canonical" >&2; exit 2 ;; esac
+    [[ $R != *[[:cntrl:]]* ]] || { echo "ACC_INSTALL_ROOT must not contain controls" >&2; exit 2; }
+    # Inspect ancestors before following the root, so even validation never probes a linked system directory.
+    local ancestor=/tmp segment
+    local -a root_parts
+    IFS=/ read -r -a root_parts <<< "${R#/tmp/}"
+    for segment in "${root_parts[@]}"; do
+      ancestor=$ancestor/$segment
+      [ ! -L "$ancestor" ] || { echo "ACC_INSTALL_ROOT contains a symlink: $ancestor" >&2; exit 2; }
+    done
+    [ -d "$R" ] || { echo "ACC_INSTALL_ROOT must be an existing folder other than /" >&2; exit 2; }
+    # Canonical spelling rejects traversal and linked ancestors before any install/log/enrollment step.
+    if [ "$(readlink -f -- "$R")" != "$R" ] || [ ! -O "$R" ] || [ "$(stat -c %a -- "$R")" != 700 ]; then
+      echo "ACC_INSTALL_ROOT must be canonical, owned by this user and mode 0700" >&2; exit 2
+    fi
+    local leaf part current
+    for leaf in var/log/acc-install.log var/log/acc-install.log.new etc/default/accd usr/local/bin/acc-node; do
+      current=$R
+      local -a parts
+      IFS=/ read -r -a parts <<< "$leaf"
+      for part in "${parts[@]}"; do
+        current=$current/$part
+        [ ! -L "$current" ] || { echo "ACC_INSTALL_ROOT contains a symlink: $current" >&2; exit 2; }
+      done
+    done
+  else
+    [ -n "$DRY" ] || [ "$EUID" = 0 ] || { echo "run as root: sudo $0 (or --dry-run)" >&2; exit 1; }
+  fi
+  [ -n "$DRY" ] && echo "(dry run: nothing is changed)"
+  if [ -z "$DRY" ]; then install -m 0600 /dev/null "$LOG.new" && mv "$LOG.new" "$LOG"; fi
+  ui_init
+  if [ -z "$ROLE" ]; then
+    [ "$INTERACTIVE" = 1 ] || { echo "without a terminal, choose --main or --node '<command>'" >&2; exit 2; }
+    choose_role
+  fi
+  case $ROLE in
+    main) main_role ;;
+    node) node_role ;;
+  esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

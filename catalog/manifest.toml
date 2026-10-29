@@ -1,0 +1,223 @@
+# Rynhult catalog: curated, pinned, read-before-vendoring. This file is edited by hand, through PRs only.
+# Items and profile changes made in the dashboard live in /srv/acc/catalog-local (see docs/wiki/Internal/Operations.md).
+# providers: which CLIs can use an item. Agents are subagents: Claude, Cursor, Antigravity and OpenCode receive them.
+# An upgrade is a new pin, a re-read of the diff, an update to this file and a PR. Rollback is git revert.
+
+[[skill]]
+id = "acc-workflow"
+name = "Rynhult project conventions"
+source = "Rynhult (this repository)"
+license = "MIT"
+providers = ["claude", "codex", "copilot", "antigravity", "cursor", "opencode"]
+notes = "Optional project conventions: existing docs, artifacts, ADRs, publishing and ports. Launch core and role rules are separate."
+
+[[skill]]
+id = "frontend-design"
+name = "Frontend design"
+source = "https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design"
+license = "Apache-2.0"
+providers = ["claude", "codex"]
+notes = "Markdown only."
+
+[[skill]]
+id = "web-interface-guidelines"
+name = "Web interface guidelines"
+source = "https://github.com/vercel-labs/web-interface-guidelines/tree/434b7f91364665f2f733b310ec54809bf8f37937"
+license = "MIT"
+providers = ["claude", "codex"]
+notes = "command.md wrapped as a SKILL.md; rules unchanged."
+
+[[skill]]
+id = "webapp-testing"
+name = "Web app testing (Playwright)"
+source = "https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/webapp-testing"
+license = "Apache-2.0"
+providers = ["claude", "codex"]
+notes = "Includes scripts/with_server.py (local server wrapper) and examples. Read in full."
+
+[[skill]]
+id = "systematic-debugging"
+name = "Systematic debugging"
+source = "https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3/skills/systematic-debugging"
+license = "MIT"
+providers = ["claude", "codex"]
+notes = "find-polluter.sh (test bisection) read in full. Skill-development test files omitted."
+
+[[skill]]
+id = "test-driven-development"
+name = "Test-driven development"
+source = "https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3/skills/test-driven-development"
+license = "MIT"
+providers = ["claude", "codex"]
+
+[[skill]]
+id = "writing-plans"
+name = "Writing plans"
+source = "https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3/skills/writing-plans"
+license = "MIT"
+providers = ["claude", "codex"]
+notes = "Rynhult adaptation: versioned plan_update, constraints, requirements, assignments and reports; no companion Superpowers skills required. Upstream MIT license retained."
+
+[[skill]]
+id = "verification-before-completion"
+name = "Verification before completion"
+source = "https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3/skills/verification-before-completion"
+license = "MIT"
+providers = ["claude", "codex"]
+
+[[skill]]
+id = "acc-council"
+name = "Rynhult Council (managed or sequential perspectives)"
+source = "Rynhult (this repository), adapted from ECC council (MIT)"
+license = "MIT (adaptation of ECC council)"
+providers = ["claude", "codex"]
+notes = "Managed voices and Judge within the frozen grant, or honestly labelled single-session perspectives. Read-only participants report findings; a permitted writer exports."
+
+[[skill]]
+id = "product-discovery"
+name = "Product discovery"
+source = "Rynhult (this repository)"
+license = "MIT"
+providers = ["claude", "codex", "copilot", "antigravity", "cursor", "opencode"]
+notes = "Audience, journeys, first-release scope, success and material questions; preserves the person's constraints."
+
+[[skill]]
+id = "visual-references"
+name = "Visual references"
+source = "Rynhult (this repository)"
+license = "MIT"
+providers = ["claude", "codex", "copilot", "antigravity", "cursor", "opencode"]
+notes = "Private reference intake; separates observations, annotations and proposed requirements; acknowledges unreadable images."
+
+[[skill]]
+id = "evidence-research"
+name = "Evidence research"
+source = "Rynhult (this repository)"
+license = "MIT"
+providers = ["claude", "codex", "copilot", "antigravity", "cursor", "opencode"]
+notes = "Primary sources, dates, confidence and counterevidence; read-only findings through reports."
+
+[[skill]]
+id = "migration-recovery"
+name = "Migration and recovery"
+source = "Rynhult (this repository)"
+license = "MIT"
+providers = ["claude", "codex", "copilot", "antigravity", "cursor", "opencode"]
+notes = "Engine-aware migration checks, backup and restore evidence, rollback or forward fix; no implied live authority."
+
+[[skill]]
+id = "impeccable"
+name = "Impeccable (design critique, audit, polish)"
+source = "https://github.com/pbakaus/impeccable/tree/1e46f67ee8222cba2e4d4b00f57c47c72847b457/.claude/skills/impeccable"
+license = "Apache-2.0"
+providers = ["claude", "codex"]
+notes = "Guidance-only adaptation of v4.6.0: SKILL.md setup rewritten; launcher binary (telemetry, update checks), scripts, live/generate modes, detector hooks, doctor and comp-review references removed. Reference guides otherwise unchanged."
+
+[[skill]]
+id = "ui-ux-pro-max"
+name = "UI/UX Pro Max (palettes, charts, UX rules lookup)"
+source = "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/56ea9cf174ed86786187daa9de0e6247cb0747e4/.claude/skills/ui-ux-pro-max"
+license = "MIT"
+providers = ["claude", "codex"]
+notes = "Offline, standard-library Python search over CSV data (styles, palettes, charts, 119 UX rules, stack guides). Plugin-root paths rewritten for Claude and Codex; tests and the data validator dropped; scripts read in full (no network; --persist writes into the project). Leans towards marketing sites. 2.3 MB."
+
+[[agent]]
+id = "architect"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/architect.md"
+license = "MIT"
+notes = "Read-only tools (Read, Grep, Glob); model opus."
+
+[[agent]]
+id = "planner"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/planner.md"
+license = "MIT"
+notes = "Read-only tools; model opus."
+
+[[agent]]
+id = "security-reviewer"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/security-reviewer.md"
+license = "MIT"
+
+[[agent]]
+id = "code-reviewer"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/code-reviewer.md"
+license = "MIT"
+notes = "Existing review agent, also bundled by the read-only Code reviewer profile."
+
+[[agent]]
+id = "silent-failure-hunter"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/silent-failure-hunter.md"
+license = "MIT"
+
+[[agent]]
+id = "e2e-runner"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/e2e-runner.md"
+license = "MIT"
+notes = "Rynhult adaptation: installed Playwright and browser cache, bounded verification, flakes reported without automatic quarantine. LICENSE-ECC retained."
+
+[[agent]]
+id = "a11y-architect"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/a11y-architect.md"
+license = "MIT"
+
+[[agent]]
+id = "database-reviewer"
+source = "https://github.com/affaan-m/ECC/blob/76aaa77df6adc5b889e689007bf99b9a4f74af34/agents/database-reviewer.md"
+license = "MIT"
+notes = "Rynhult adaptation: actual-engine review; PostgreSQL and Supabase guidance is conditional. Upstream credits and LICENSE-ECC retained."
+
+[[mcp]]
+id = "playwright"
+name = "Playwright browser"
+source = "https://github.com/microsoft/playwright-mcp (npm @playwright/mcp 0.0.83)"
+license = "Apache-2.0"
+providers = ["claude", "codex"]
+command = "/srv/acc/tools/mcp/node_modules/.bin/playwright-mcp"  # installed from deploy/mcp/package-lock.json, never npx
+args = ["--isolated", "--headless", "--browser", "chromium"]
+env = { PLAYWRIGHT_BROWSERS_PATH = "/srv/acc/tools/ms-playwright" }
+notes = "Local headless Chrome for Testing r1247 (shared, read-only). Isolated profile, no saved logins. Snapshots go to ./.playwright-mcp (git-ignored for the agent account)."
+
+[[mcp]]
+id = "github"
+name = "GitHub (read-only)"
+source = "https://github.com/github/github-mcp-server v2.0.2 (operator-provisioned binary in /srv/acc/tools; no repository checksum installer)"
+license = "MIT"
+providers = ["claude", "codex"]
+command = "/srv/acc/bin/acc-mcp-github"
+args = []
+notes = "--read-only, toolsets context, repos, issues, pull_requests, actions. Token from the session user's gh login at start, never stored in launch specs. Writes go through gh in the terminal."
+
+[[mcp]]
+id = "mslearn"
+name = "Microsoft Learn docs"
+source = "https://github.com/MicrosoftDocs/mcp (remote endpoint)"
+license = "CC-BY-4.0 (docs); hosted service"
+providers = ["claude"]
+url = "https://learn.microsoft.com/api/mcp"
+notes = "Remote, read-only documentation search. Queries leave the box. Opt-in for .NET/Azure work."
+
+[[deferred]]
+id = "council"
+source = "https://github.com/affaan-m/ECC/tree/76aaa77df6adc5b889e689007bf99b9a4f74af34/skills/council"
+license = "MIT"
+reason = "Retired legacy four-voice council; use acc-council. Original text and attribution remain in skills/council, with LICENSE and agents/LICENSE-ECC retained; not selectable or bundled by profiles."
+
+[[deferred]]
+id = "context7"
+reason = "Proprietary backend; community docs can carry prompt injection. Agents can read official docs with their own web tools."
+
+[[deferred]]
+id = "superpowers/brainstorming"
+reason = "Ships a local web server, and its companion loads assets from a third-party site."
+
+[[deferred]]
+id = "anthropic/mcp-builder"
+reason = "Its evaluation script calls the metered Anthropic API. Revisit for the Plugin/Addon profile."
+
+# Baseline for every Rynhult Codex session (least privilege, deterministic):
+# - remote plugins load non-deterministically at startup (M7 qualification) and some act on remote OpenAI
+#   services (Sites, Spaces), so every installed plugin is disabled explicitly;
+# - built-in skills that install skills from the internet or call image APIs are hidden.
+[codex]
+disable_installed_plugins = true
+hide_system_skills = ["skill-installer", "skill-creator", "imagegen"]

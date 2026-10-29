@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "enable_containers": false,
+  "install_packages": false,
+  "delete_existing_images": false,
+  "commands": ["preflight", "setup", "collect", "uninstall"],
+  "state": "/var/lib/acc/containers-qualification-kit",
+  "new_trees": ["/var/lib/acc/session-images", "/run/acc-image-import", "/etc/acc/containers/qualification (only if absent)"],
+  "files": ["/etc/apparmor.d/acc-podman (only if absent)", "/etc/apparmor.d/acc-podman-runtime (only if both distro profiles absent)", "/etc/sysctl.d/90-acc-containers-qualification.conf", "/srv/acc/containers/storage.conf", "/etc/acc/containers/policy.json", "/etc/acc/containers/qualification/<account>.json", "/etc/acc/containers/qualification/kit-plan.json"],
+  "settings": ["selected account linger (only if off)", "kernel.apparmor_restrict_unprivileged_userns (only 0 -> 1)", "load/unload only kit-created AppArmor profiles"],
+  "collector": ["one unique acc-cq-<uuid> transient namespace probe", "existing image_store.py as selected agent", "existing trusted-launcher driver as acc"],
+  "retained": ["root-only manifest, backups, staged reviewed archive, plan and JSON report", "driver-owned session checkouts and logs (owner-reviewed evidence)"]
+}

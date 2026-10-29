@@ -1,0 +1,50 @@
+[
+  {
+    "event": "SessionStart",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:session_start:0:0",
+    "trusted_hash": "sha256:a1a7058e12634a02786f589e9986f3fd64be030bc431bb2adef1b0789eb81236"
+  },
+  {
+    "event": "SessionEnd",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:session_end:0:0",
+    "trusted_hash": "sha256:34f11511024fd8f6b86e0357f6645d2ae4991ae978b1f6149f97ef14626658be"
+  },
+  {
+    "event": "UserPromptSubmit",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:user_prompt_submit:0:0",
+    "trusted_hash": "sha256:4ab93e9ae6073b7a28f6b3abeb3a9b2b46cd69a40011362cd178b637d259f2ec"
+  },
+  {
+    "event": "PermissionRequest",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:permission_request:0:0",
+    "trusted_hash": "sha256:b936c7602666c68e6ce0aea19523da40de65418f52d84dc706bf6aa604ddca9a"
+  },
+  {
+    "event": "Stop",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:stop:0:0",
+    "trusted_hash": "sha256:a2d022fbb3d6ed75cd3d11cb3fadd5ce9e60c52a600d8e4cb3f877c3da92a59b"
+  },
+  {
+    "event": "Interrupt",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:interrupt:0:0",
+    "trusted_hash": "sha256:cc12c67a7f0b80c9c56625a2753fe7715ad63d777c85eabba47d1b618056a07e"
+  },
+  {
+    "event": "PreToolUse",
+    "command": "/srv/acc/bin/acc-guard codex PreToolUse",
+    "key": "/home/alex-agent/.codex/hooks.json:pre_tool_use:0:0",
+    "trusted_hash": "sha256:f58a847bc3ae5e6b700f02389c5ea117a5cecb697334e08ee08a89bbc60f38c4"
+  },
+  {
+    "event": "PostToolUse",
+    "command": "/srv/acc/bin/acc-hook codex",
+    "key": "/home/alex-agent/.codex/hooks.json:post_tool_use:0:0",
+    "trusted_hash": "sha256:635d7e5cd4cdc10185472bb6dc03b2384b314ea7a5e81f5b2da9322d59a93afb"
+  }
+]

@@ -1,0 +1,79 @@
+name: Build pinned Caddy DNS candidates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch pinned Go toolchain and verify vendor checksum
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # CI only. Never executed by setup, accd or a destination helper.
+          GO_VERSION=$(python3 -c 'import json; print(json.load(open("deploy/dns/release.json"))["go"])')
+          curl --fail --proto '=https' --tlsv1.2 --max-filesize 100000000 -o go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+          GO_SHA256=$(python3 -c 'import json; print(json.load(open("deploy/dns/release.json"))["go_linux_amd64_sha256"])')
+          printf '%s  go.tar.gz\n' "$GO_SHA256" | sha256sum -c -
+          tar -xzf go.tar.gz
+          echo "$PWD/go/bin" >> "$GITHUB_PATH"
+      - name: Build exact pins and retain dependency lock
+        env:
+          GOARCH: ${{ matrix.arch }}
+          GOOS: linux
+          CGO_ENABLED: '0'
+          GOTOOLCHAIN: local
+          XCADDY_SKIP_CLEANUP: '1'
+          TMPDIR: ${{ github.workspace }}/build-lock
+          XCADDY_PRINT_VERSION: '0'
+        run: |
+          mkdir -p build-lock
+          XCADDY=$(python3 -c 'import json; print(json.load(open("deploy/dns/release.json"))["xcaddy"])')
+          # xcaddy runs on the builder, so install the host tool separately from target GOARCH.
+          GOARCH=amd64 go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY}"
+          python3 - <<'PY'
+          import json, os, subprocess
+          m=json.load(open('deploy/dns/release.json'))
+          args=[os.path.expanduser('~/go/bin/xcaddy'), 'build', m['caddy'], '--output', 'caddy-linux-'+os.environ['GOARCH']]
+          for module, commit in m['modules'].items():
+              args += ['--with', module+'@'+commit]
+          subprocess.run(args, check=True)
+          PY
+          go version -m "caddy-linux-${GOARCH}" > "caddy-linux-${GOARCH}.dependencies.txt"
+          sha256sum "caddy-linux-${GOARCH}" > "caddy-linux-${GOARCH}.sha256.candidate"
+      - name: Emit CycloneDX dependency SBOM
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib
+          arch=os.environ['ARCH']
+          components=[]
+          for line in pathlib.Path(f'caddy-linux-{arch}.dependencies.txt').read_text().splitlines():
+              fields=line.split()
+              if len(fields) >= 3 and fields[0] == 'dep':
+                  components.append({'type':'library','name':fields[1],'version':fields[2]})
+          manifest=json.load(open('deploy/dns/release.json'))
+          pathlib.Path(f'caddy-linux-{arch}.cdx.json').write_text(json.dumps({
+              'bomFormat':'CycloneDX','specVersion':'1.6','version':1,
+              'metadata':{'component':{'type':'application','name':'Caddy','version':manifest['caddy']}},
+              'components':components}, indent=2))
+          PYTHON
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a  # v3.0.0
+        with:
+          subject-path: caddy-linux-${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: caddy-dns-${{ matrix.arch }}-candidate
+          path: |
+            caddy-linux-*
+            build-lock/**/go.mod
+            build-lock/**/go.sum
+          retention-days: 30

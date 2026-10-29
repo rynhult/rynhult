@@ -1,0 +1,33 @@
+<!--{"path": "/security/", "title": "Security", "description": "How to report a vulnerability in Rynhult privately."}-->
+<div class="wrap">
+<div class="page-head">
+<h1>Report a vulnerability</h1>
+<p>Please report suspected vulnerabilities in Rynhult privately, not in a public issue.</p>
+</div>
+<div class="prose">
+<div class="notice">
+<p><strong>Email <a href="mailto:security@rynhult.dev">security@rynhult.dev</a>.</strong></p>
+</div>
+<h2>What to include</h2>
+<ul>
+<li>The affected version or commit.</li>
+<li>The impact, and what an attacker needs first.</li>
+<li>A minimal reproduction using artificial accounts and documentation addresses, such as <code>example.com</code> and <code>192.0.2.10</code>.</li>
+</ul>
+<p>Leave out credentials, tokens, personal data, private network details and session transcripts.</p>
+<h2>What happens next</h2>
+<p>The maintainer coordinates a fix and its disclosure with you. No response time or supported-version guarantee has been set yet.</p>
+<h2 id="release-key">Verify a source release</h2>
+<p>Download the <a href="/keys/rynhult-release-key.asc">public release key</a> and inspect it with <code>gpg --show-keys --with-subkey-fingerprint rynhult-release-key.asc</code>. Compare both full fingerprints with an independently trusted copy before importing:</p>
+<dl>
+<dt>Primary fingerprint (certification only)</dt>
+<dd><code>0C2C E126 57BD 833F B5B5 63B2 B555 F6E1 2799 0DB5</code></dd>
+<dt>Signing subkey fingerprint</dt>
+<dd><code>B072 4912 051F F1F2 74CD EE7F EDE4 F41B 077B D2A7</code></dd>
+</dl>
+<p>Stop if either differs. For a published source release, download its archive, <code>BUILD</code>, <code>SHA256SUMS</code> and <code>SHA256SUMS.asc</code> into one folder. After importing the checked key with <code>gpg --import rynhult-release-key.asc</code>, run <code>gpg --verify SHA256SUMS.asc SHA256SUMS</code>, then <code>sha256sum -c SHA256SUMS</code>. On macOS use <code>shasum -a 256 -c SHA256SUMS</code> for the checksum step.</p>
+<p>Do not install if the signature is missing or either check fails. <strong>Only SHA256SUMS is signed.</strong> Its hashes cover the listed files, not Git clones or release tags. A signature does not prove freshness or software safety. <strong>The in-app updater does not verify signatures yet.</strong> Release signing and upload are owner-run steps; publishing this key does not mean a release is already available or signed.</p>
+{{#release}}<h2>How Rynhult is secured</h2>
+<p>The <a href="/docs/Internal/Security/">Security</a> page in the docs describes Rynhult's own protections, and <a href="/docs/User-Guide/Guardrails/">Guardrails</a> explains what they do and don't stop.</p>{{/release}}
+</div>
+</div>

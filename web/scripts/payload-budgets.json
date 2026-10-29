@@ -1,0 +1,51 @@
+{
+  "pages": {
+    "sign-in": {
+      "roots": [
+        "src/pages/Auth.tsx"
+      ],
+      "js": {
+        "raw": 408169,
+        "gzip": 128429,
+        "brotli": 122198
+      },
+      "css": {
+        "raw": 64549,
+        "gzip": 12245,
+        "brotli": 11312
+      }
+    },
+    "board": {
+      "roots": [
+        "src/pages/Board.tsx"
+      ],
+      "js": {
+        "raw": 438866,
+        "gzip": 140332,
+        "brotli": 133532
+      },
+      "css": {
+        "raw": 64549,
+        "gzip": 12245,
+        "brotli": 11312
+      }
+    },
+    "session": {
+      "roots": [
+        "src/pages/SessionPage.tsx",
+        "src/components/Layout.tsx",
+        "src/components/Terminal.tsx"
+      ],
+      "js": {
+        "raw": 972314,
+        "gzip": 294570,
+        "brotli": 279567
+      },
+      "css": {
+        "raw": 68488,
+        "gzip": 13262,
+        "brotli": 12173
+      }
+    }
+  }
+}

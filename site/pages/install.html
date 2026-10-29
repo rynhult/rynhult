@@ -1,0 +1,40 @@
+<!--{"path": "/install/", "title": "Install", "phases": ["release"], "description": "What you need to install Rynhult on a Linux server, and where each install step is documented."}-->
+<div class="wrap">
+<div class="page-head">
+<h1>Install Rynhult</h1>
+<p>Rynhult runs on one Linux server, the main Rynhult, and you use it from a browser. Other machines can join later as nodes.</p>
+</div>
+<div class="prose">
+<div class="notice"><p>{{release.note}}</p></div>
+
+<h2>What you need</h2>
+<dl class="facts">
+<dt>Server</dt><dd>Ubuntu 24.04 or newer, or Debian 13 or newer, with systemd, on amd64 or arm64.</dd>
+<dt>Access</dt><dd>Your own user account on the server, with <code>sudo</code>.</dd>
+<dt>Network</dt><dd>Rynhult answers private addresses only: your LAN, a VPN or Tailscale. To use it away from home, connect through your VPN.</dd>
+<dt>Domain</dt><dd>Optional. With a Cloudflare zone, Rynhult gets a public certificate; without one, Caddy signs its own and you trust it on your devices.</dd>
+<dt>Agents</dt><dd>The agent CLIs you want to run, such as Claude Code, Codex or GitHub Copilot CLI, with your own subscriptions or API keys.</dd>
+</dl>
+
+<h2>Install the main Rynhult</h2>
+<ol class="steps">
+<li>Get Rynhult's source and start the installer, <code>acc/deploy/acc-install</code>, with <code>sudo</code>.</li>
+<li>Choose <strong>Main Rynhult</strong> and answer the questions. Each shows a default.</li>
+<li>When it finishes, add the DNS entry it lists and read the one-time setup token.</li>
+<li>Open Rynhult in a browser, set up your sign-in, and sign your agent account in to its CLIs.</li>
+</ol>
+<p>Each step, with every question the installer asks, is in <a href="/docs/User-Guide/Install/#main-rynhult-on-linux">Install → Main Rynhult on Linux</a>. Then continue with <a href="/docs/User-Guide/Getting-Started/">Getting started</a>.</p>
+
+<h2>Add nodes</h2>
+<p>A node runs sessions for your main Rynhult; you keep using the one dashboard. Linux machines, Macs, and Windows PCs through WSL2 can be nodes. See <a href="/docs/User-Guide/Install/#additional-machines">Additional machines</a> and <a href="/docs/User-Guide/Nodes/">Nodes</a>.</p>
+
+<h2>Use it on your phone</h2>
+<p>Open Rynhult in your phone's browser and add it to the home screen. Trust Rynhult's certificate first if it signs its own. See <a href="/docs/User-Guide/Connect-Your-Phone/">Connect your phone</a>. Native apps come after v1.0.</p>
+
+<h2>Other platforms</h2>
+<p>A Windows main runs Rynhult inside WSL2 (<a href="/docs/User-Guide/Install-Windows/">Install on Windows</a>). A Mac can be a node, but not a main yet (<a href="/docs/User-Guide/Install-macOS/">Install on a Mac</a>). Other Linux distributions are test installs until they are qualified.</p>
+
+<h2>Keep it current</h2>
+<p><a href="/docs/User-Guide/Updating/">Updating</a> covers updates and rollbacks, and <a href="/docs/User-Guide/Troubleshooting/">Troubleshooting</a> covers what to do when an install step stops.</p>
+</div>
+</div>

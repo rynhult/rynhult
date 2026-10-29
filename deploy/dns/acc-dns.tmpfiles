@@ -1,0 +1,3 @@
+d /run/acc-dns 0750 root acc -
+# Shared by acc-dns and acc-publish; exists before either runs, so neither creates it.
+f /run/acc-dns/caddy-config.lock 0600 root root -

@@ -1,0 +1,127 @@
+#!/usr/bin/python3 -I
+"""Ask Rynhult for publishing or a registry tool change. Requests never execute commands."""
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+import argparse
+import importlib.util
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="acc-request")
+    sub = parser.add_subparsers(dest="type", required=True)
+    for kind in ("publish", "unpublish"):
+        child = sub.add_parser(kind)
+        child.add_argument("--host", required=True)
+        child.add_argument("--port", type=int)
+        child.add_argument("--internal", action="store_true")
+        child.add_argument("--reason", default="")
+    tool = sub.add_parser("tool")
+    tool.add_argument("--manager", required=True)
+    tool.add_argument("--name", required=True)
+    tool.add_argument("--version")
+    tool.add_argument("--action", choices=("install", "remove"), default="install")
+    tool.add_argument("--reason", required=True)
+    work = sub.add_parser('work')
+    actions = work.add_subparsers(dest='work_action', required=True)
+    actions.add_parser('list')
+    for action in ('claim', 'release'):
+        command = actions.add_parser(action)
+        command.add_argument('--path', required=True)
+        if action == 'claim':
+            command.add_argument('--shared', action='store_true')
+    task = actions.add_parser('task')
+    task.add_argument('--text', required=True)
+    args = parser.parse_args()
+    root = environment.get("ACC_RUN_DIR")
+    if not root:
+        parser.error("only works inside a Rynhult session")
+    if args.type == 'work':
+        import uuid
+        request = {'type': 'work', 'action': args.work_action, 'request_id': uuid.uuid4().hex}
+        if hasattr(args, 'path'):
+            request['path'] = args.path
+        if hasattr(args, 'shared'):
+            request['shared'] = args.shared
+        if hasattr(args, 'text'):
+            request['text'] = args.text
+        if args.work_action == 'list':
+            try:
+                print((Path(root) / 'group-context.json').read_text()[:65536])
+            except FileNotFoundError:
+                print('Board context unavailable or stale; requesting a refresh.')
+    elif args.type == "tool":
+        path = Path(__file__).resolve().with_name("acc-tool-policy.py")
+        if not path.exists():
+            path = Path(__file__).resolve().parents[1] / "src/acc/tooling.py"
+        spec = importlib.util.spec_from_file_location("acc_tool_policy", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        try:
+            module.validate(args.manager, args.name, args.version)
+            if not args.reason.strip() or len(args.reason) > 500:
+                raise ValueError("reason must be 1-500 characters")
+        except ValueError as error:
+            parser.error(str(error))
+        request = {key: getattr(args, key) for key in ("type", "manager", "name", "version", "reason", "action")}
+    else:
+        request = {"type": args.type, "host": args.host, "access": "internal" if args.internal else "public",
+                   "reason": args.reason}
+        if args.port is not None:
+            request["port"] = args.port
+    record = {"ts": datetime.now(timezone.utc).isoformat(), "provider": "acc",
+              "acc_session": environment.get("ACC_SESSION_ID", ""),
+              "hook": {"hook_event_name": "AccRequest", "request": request}}
+    with (Path(root) / "events.jsonl").open("a") as out:
+        out.write(json.dumps(record) + "\n")
+    if args.type == 'work':
+        print(f"Queued work {args.work_action}: {request['request_id']}. Read $ACC_RUN_DIR/group-context.json for accepted/conflict/stale/refused; queued is not accepted.")
+    else:
+        print(f"Requested: {args.type}. It waits in the Rynhult Inbox for approval; nothing changes until then.")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

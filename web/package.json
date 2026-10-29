@@ -1,0 +1,52 @@
+{
+  "name": "rynhult-web",
+  "private": true,
+  "license": "MIT",
+  "version": "0.15.0-rc.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "test:workspace-names": "node --experimental-strip-types --test scripts/workspace-names.test.mjs",
+    "test:terminal": "node --test scripts/xterm-composition.test.mjs",
+    "test:contrast": "node --test scripts/theme-contrast.test.mjs",
+    "test:payload": "node --test scripts/check-bundle-size.test.mjs",
+    "report:payload": "node scripts/check-bundle-size.mjs --report",
+    "screenshots:wiki": "ACC_UPDATE_WIKI_SCREENSHOTS=1 playwright test --project=desktop"
+  },
+  "dependencies": {
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@lezer/highlight": "^1.2.5",
+    "@tanstack/react-query": "^5.104.5",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.1",
+    "codemirror": "^6.0.2",
+    "dompurify": "3.4.17",
+    "lucide-react": "^1.61.0",
+    "mermaid": "12.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "10.1.0",
+    "react-router-dom": "^7.18.4",
+    "remark-gfm": "4.0.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

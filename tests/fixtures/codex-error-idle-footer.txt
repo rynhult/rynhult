@@ -1,0 +1,6 @@
+    2 failed, 1924 passed, 20 skipped, 1 warning in 1277.03s (0:21:17)
+    + 9 lines (^t to expand)
+■ Selected model is at capacity. Please try a different model.
+› Ask Codex to do anything
+  GPT-6.1-Sol default · /srv/acc/workspaces/.worktrees/example
+  ? for shortcuts

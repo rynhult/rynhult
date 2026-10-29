@@ -1,0 +1,83 @@
+name: Release source bundle
+on:
+  push:
+    tags: ['v0.15.*', 'v[1-9]*']  # public 0.15 RC/stable; owner approval gate still applies
+permissions:
+  contents: read
+jobs:
+  # Dependency installs run package code (npm scripts, sdist builds), so they get a read-only token and a job of their
+  # own. The job that can write the release installs nothing (security review 9, SR9-2).
+  notices:
+    if: github.repository == 'rynhult/rynhult' && vars.RYNHULT_PUBLICATION_APPROVED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Required redistribution notices
+        run: |
+          python -m pip install uv==0.13.1
+          uv sync --frozen --python 3.12
+          npm ci --prefix web
+          uv run --frozen python scripts/third_party_notices.py --check
+  source:
+    needs: notices
+    if: github.repository == 'rynhult/rynhult' && vars.RYNHULT_PUBLICATION_APPROVED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Download pin inventory
+        run: python scripts/check_pins.py
+      - name: Build exact tagged source and checksum
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, tomllib
+          version = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          assert os.environ['TAG'] == f'v{version}', 'tag must match project version'
+          PY
+          python3 -I src/acc/bundle.py --source . --out dist
+          python3 - <<'PY'
+          import pathlib, tarfile
+          archive = next(pathlib.Path('dist').glob('acc-*.tar.gz'))
+          with tarfile.open(archive) as tar:
+              stamp = next(m for m in tar if m.name.endswith('/.acc-build'))
+              pathlib.Path('dist/BUILD').write_bytes(tar.extractfile(stamp).read())
+          PY
+          cd dist
+          sha256sum acc-*.tar.gz BUILD > SHA256SUMS
+      - name: Attach source to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          release_flags=()
+          if [[ "$TAG" == *-* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" "${release_flags[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Rynhult $TAG" --notes "Rynhult $TAG"
+          assets=(dist/acc-*.tar.gz dist/SHA256SUMS dist/BUILD)
+          # The private signing key never enters CI. See docs/PUBLISHING-THE-SOURCE.md for the rc.1 manual upload.
+          if [[ -f dist/SHA256SUMS.asc ]]; then
+            assets+=(dist/SHA256SUMS.asc)
+          else
+            echo "::notice::SHA256SUMS is unsigned until the owner signs it offline and uploads SHA256SUMS.asc."
+          fi
+          gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber

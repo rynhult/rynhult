@@ -1,0 +1,417 @@
+#!/usr/bin/python3 -I
+"""acc-publish: root helper that installs or removes Caddy sites for approved Rynhult publish requests.
+
+accd (user acc) drops structured requests into /srv/acc/publish/requests/<id>.json after the owner
+approves them. acc-publish.path starts this helper, which:
+  - validates the request (hostname shape, allowed zones, reserved names, port range, access level),
+  - renders the Caddy config ITSELF from fixed templates (it never accepts Caddy text),
+  - validates the whole config with `caddy validate`, installs it, reloads Caddy,
+  - writes /srv/acc/publish/results/<id>.json for accd (root:acc 0640).
+It only ever touches files it created (they carry the MARKER line).
+
+the owner's approval is checked in accd. Anything acc can write, acc could also forge, so this helper doesn't try to
+verify approval; it limits what any request can do: names in the configured zones only, never Rynhult's own host or a
+zone apex, ports in the dev/prod range, fixed templates, and an approver label it sanitises.
+Settings come from /etc/default/accd (ACC_WILDCARD_ZONE, ACC_PUBLISH_ZONES, ACC_ALLOWED_ORIGINS).
+"""
+from __future__ import annotations
+
+import os as _compat_os
+import runpy as _compat_runpy
+import stat as _compat_stat
+from pathlib import Path as _CompatPath
+
+
+def _compat_reader(relative):
+    # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
+    # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
+    here = _CompatPath(__file__).resolve()
+    mine = here.stat()
+    for candidate in (here.with_name("acc_env.py"), here.parent / relative):
+        try:
+            info = candidate.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+        if _compat_stat.S_ISREG(info.st_mode) and info.st_uid == mine.st_uid and not info.st_mode & 0o002 and (
+                not info.st_mode & 0o020 or info.st_gid == mine.st_gid):
+            if _compat_os.geteuid() == 0:
+                for path in (candidate, *candidate.parents):
+                    try:
+                        checked = path.stat(follow_symlinks=False)
+                    except OSError:
+                        break
+                    sticky = _compat_stat.S_ISDIR(checked.st_mode) and checked.st_mode & _compat_stat.S_ISVTX
+                    if checked.st_uid != 0 or (checked.st_mode & 0o022 and not sticky):
+                        break
+                else:
+                    return _compat_runpy.run_path(str(candidate))
+                break
+            return _compat_runpy.run_path(str(candidate))
+        break
+    print(f"{here.name}: refusing an unsafe or missing settings reader beside it", file=__import__("sys").stderr)
+    raise SystemExit(2)
+
+
+_compat = _compat_reader("../../src/acc/env.py")
+environment = _compat["environment"]
+Environment = _compat["Environment"]
+
+import fcntl
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+CREDENTIAL_MODULE = Path('/usr/local/lib/acc-dns/credentials.py')
+
+
+def managed_environment(text):
+    if re.fullmatch(r'CF_API_TOKEN=[A-Za-z0-9_-]{8,4096}\n', text):
+        token = text.split('=', 1)[1].strip()
+        return {'CF_API_TOKEN': token, 'ACC_DNS_CONFIG': 'dns cloudflare ' + json.dumps(token)}
+    import importlib.util
+    st = CREDENTIAL_MODULE.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
+        raise ValueError('credential_parser_refused')
+    spec = importlib.util.spec_from_file_location('acc_fixed_dns_credentials', CREDENTIAL_MODULE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.environment_values(text)
+
+ROOT = Path(environment.get("ACC_PUBLISH_ROOT", "/srv/acc/publish"))
+CADDY_DIR = Path(environment.get("ACC_CADDY_DIR", "/etc/caddy/acc.d"))
+CADDYFILE = Path(environment.get("ACC_CADDYFILE", "/etc/caddy/Caddyfile"))
+CADDY_ENV = Path(environment.get("ACC_CADDY_ENV", "/etc/caddy/cloudflare.env"))
+MANAGED_CADDY_ENV = Path("/etc/caddy/acc-dns/current.env")
+CADDY_BIN = environment.get("ACC_CADDY_BIN", "/usr/local/bin/caddy")
+def _zones(value: str) -> list[str]:
+    return [zone.strip().lower().rstrip(".") for zone in value.split(",") if zone.strip()]
+
+
+# Zones with an ACC-managed wildcard site: one-label subdomains become routes inside it, so they
+# reuse the wildcard certificate and never appear in Certificate Transparency logs.
+WILDCARD_ZONES = {zone: f"routes-{zone}" for zone in _zones(environment.get("ACC_WILDCARD_ZONE", ""))}
+# Zones requests may use (empty: any). Each zone's apex and www are reserved, as is Rynhult's own host.
+ZONES = _zones(environment.get("ACC_PUBLISH_ZONES", "")) or list(WILDCARD_ZONES)
+RESERVED = ({name for zone in {*ZONES, *WILDCARD_ZONES} for name in (zone, f"www.{zone}")}
+            | {urlparse(origin.strip()).hostname or "" for origin in environment.get("ACC_ALLOWED_ORIGINS", "").split(",")}) - {""}
+PORTS = range(8000, 8200)  # dev 8000-8099, prod 8100-8199 (host/CHEATSHEET.md)
+INTERNAL = "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 ::1 fd00::/8"
+MARKER = "# acc-publish managed"
+HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+ID_RE = re.compile(r"^[a-z0-9-]{4,64}$")
+ACTOR_RE = re.compile(r"[^A-Za-z0-9._@-]")
+
+
+class Refused(Exception):
+    pass
+
+
+def check(request: dict) -> dict:
+    action = request.get("action")
+    host = str(request.get("host", "")).lower()
+    if action not in ("apply", "remove"):
+        raise Refused(f"unknown action {action!r}")
+    if not ID_RE.fullmatch(str(request.get("id", ""))):
+        raise Refused("bad request id")
+    if not HOST_RE.fullmatch(host) or host in RESERVED or host.startswith(("*", "preview-")):
+        raise Refused(f"host {host!r} is not allowed")
+    if ZONES and not any(host.endswith("." + zone) for zone in ZONES):
+        raise Refused(f"host {host!r} is not in a zone Rynhult publishes to ({', '.join(ZONES)})")
+    # The approver only labels the file's comment line: letters, digits and . _ @ - (never a newline or brace).
+    actor = ACTOR_RE.sub("", str(request.get("actor", "")))[:64]
+    clean = {"id": request["id"], "action": action, "host": host, "actor": actor}
+    if action == "apply":
+        port = request.get("port")
+        if not isinstance(port, int) or port not in PORTS:
+            raise Refused(f"port must be in {PORTS.start}-{PORTS.stop - 1}")
+        if request.get("access") not in ("public", "internal"):
+            raise Refused("access must be public or internal")
+        clean.update(port=port, access=request["access"])
+    return clean
+
+
+def target(host: str) -> tuple[Path, bool]:
+    """(file path, is_route_inside_wildcard)."""
+    for zone, routes in WILDCARD_ZONES.items():
+        if host.endswith("." + zone) and host.count(".") == zone.count(".") + 1:
+            return CADDY_DIR / routes / f"{host}.caddy", True
+    return CADDY_DIR / f"{host}.caddy", False
+
+
+def render(request: dict, route: bool) -> str:
+    host, port, internal = request["host"], request["port"], request["access"] == "internal"
+    key = re.sub(r"[^a-z0-9]", "_", host)
+    header = f"{MARKER}: request {request['id']}, approved by {request['actor'] or 'unknown'}\n"
+    upstream = f"reverse_proxy localhost:{port} {{\n\t\ttransport http {{\n\t\t\tdial_timeout 5s\n\t\t}}\n\t}}"
+    if internal:
+        body = (f"\t@{key}_internal remote_ip {INTERNAL}\n"
+                f"\thandle @{key}_internal {{\n\t\t{upstream}\n\t}}\n"
+                f"\thandle {{\n\t\trespond \"Forbidden\" 403\n\t}}\n")
+    else:
+        body = f"\t{upstream}\n"
+    if route:  # body lines already carry one level of indentation, which is right inside `handle {`
+        return f"{header}@{key} host {host}\nhandle @{key} {{\n{body}}}\n"
+    safe_log = """	log {
+        output file /var/lib/caddy/acc-access.json {
+            mode 0600
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 336h
+        }
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers delete
+                resp_headers delete
+            }
+        }
+    }
+"""
+    return f"{header}{host} {{\n{body}{safe_log}}}\n"
+
+
+def caddy_env() -> dict:
+    env = {k: v for k, v in environment.items() if not k.startswith(('CF_', 'AWS_', 'AZURE_', 'ACC_DNS_', 'RYNHULT_DNS_'))}
+    directory = None
+    credential = None
+    try:
+        try:
+            directory = os.open(MANAGED_CADDY_ENV.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            pass
+        if directory is not None:
+            st = os.fstat(directory)
+            if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o700:
+                raise Refused('managed certificate directory refused')
+            try:
+                credential = os.open('current.env', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            if credential is not None:
+                st = os.fstat(credential)
+                if (st.st_uid != os.geteuid() or st.st_gid != os.getegid() or not stat.S_ISREG(st.st_mode) or
+                        st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+                    raise Refused('managed certificate file refused')
+                text = os.read(credential, 16385).decode()
+                if len(text.encode()) > 16384:
+                    raise Refused('managed certificate fields refused')
+                try:
+                    env.update(managed_environment(text))
+                except (ValueError, TypeError):
+                    raise Refused('managed certificate fields refused') from None
+                return env
+    except OSError:
+        raise Refused('managed certificate file refused') from None
+    finally:
+        if credential is not None:
+            os.close(credential)
+        if directory is not None:
+            os.close(directory)
+    if CADDY_ENV.exists():
+        for line in CADDY_ENV.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
+                env[key.strip()] = value.strip()
+    return env
+
+
+def validation_diagnostic(stderr: str | bytes, env: dict) -> str:
+    """Journal-only context: remove credential values before bounding and flattening output."""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode('utf-8', errors='replace')
+    secrets = set()
+    for key, value in env.items():
+        if re.search(r'token|secret|password|credential|api.?key|access.?key|dns_config', key, re.I):
+            if value:
+                secrets.add(value)
+            # Managed DNS directives embed credentials as JSON strings, including short secrets.
+            if key.endswith('DNS_CONFIG'):
+                for quoted in re.findall(r'"(?:[^"\\]|\\.)*"', value):
+                    try:
+                        secrets.add(json.loads(quoted))
+                    except ValueError:
+                        # Malformed operator configuration must not prevent the failure diagnostic.
+                        secrets.add(quoted[1:-1])
+    for value in sorted(secrets, key=len, reverse=True):
+        if value:
+            stderr = stderr.replace(value, '[redacted]').replace(json.dumps(value)[1:-1], '[redacted]')
+    stderr = re.sub(r'(?i)\bBearer\s+[^\s"\']+', 'Bearer [redacted]', stderr)
+    stderr = re.sub(
+        r"(?i)(\b[\w-]*(?:token|secret|password|credential|api[_-]?key|access[_-]?key)[\w-]*[\"']?\s*[:=]\s*)"
+        r"(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[^\s,;}]+)", r'\1[redacted]', stderr)
+    # Also withhold unidentified opaque token-like strings, not only known credential keys.
+    stderr = re.sub(r'[A-Za-z0-9_+/=-]{24,}', '[redacted]', stderr)
+    stderr = ''.join(char if char.isprintable() else ' ' for char in stderr)
+    return stderr[:2048]
+
+
+def validate() -> None:
+    # Bounded: these run under the Caddy configuration lock that DNS credential changes also wait for.
+    env = caddy_env()
+    try:
+        result = subprocess.run([CADDY_BIN, "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"],
+                                capture_output=True, text=True, env=env, cwd=CADDYFILE.parent, timeout=60)
+    except subprocess.TimeoutExpired as error:
+        print("acc-publish: caddy validate timed out: " + validation_diagnostic(error.stderr or "", env), file=sys.stderr)
+        raise Refused("caddy validate timed out") from None
+    if result.returncode:
+        print("acc-publish: caddy validate failed: " + validation_diagnostic(result.stderr or "", env), file=sys.stderr)
+        raise Refused("caddy validate failed; check the private configuration and credential generation")
+
+
+def reload() -> None:
+    try:
+        subprocess.run(["systemctl", "reload", "caddy"], check=True, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise Refused("caddy reload timed out; check the Caddy service") from None
+
+
+def apply(request: dict) -> str:
+    path, route = target(request["host"])
+    # Refuse if the host already has a site Rynhult did not publish, in either location: a route would be
+    # shadowed by a standalone site block, and a hand-written file must never be overwritten.
+    for candidate in {path, CADDY_DIR / f"{request['host']}.caddy"}:
+        if candidate.exists() and MARKER not in candidate.read_text():
+            raise Refused(f"{candidate} exists and is not managed by acc-publish")
+    backup = path.read_text() if path.exists() else None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render(request, route))
+    os.chmod(path, 0o644)
+    try:
+        validate()
+    except Refused:
+        if backup is None:
+            path.unlink()
+        else:
+            path.write_text(backup)
+        raise
+    reload()
+    zone = request["host"].split(".", 1)[1]
+    kind = f"route in the *.{zone} wildcard site" if route else "site"
+    return f"{request['host']} now serves localhost:{request['port']} ({request['access']}) as a {kind}"
+
+
+def remove(request: dict) -> str:
+    path, _ = target(request["host"])
+    if not path.exists():
+        return f"{request['host']} was not published"
+    content = path.read_text()
+    if MARKER not in content:
+        raise Refused(f"{path} is not managed by acc-publish")
+    path.unlink()
+    try:
+        validate()
+    except Refused:
+        path.write_text(content)
+        raise
+    reload()
+    return f"{request['host']} removed"
+
+
+def write_result(request_id: str, payload: dict) -> None:
+    results = ROOT / "results"
+    results.mkdir(exist_ok=True)
+    tmp = results / f".{request_id}.tmp"
+    tmp.write_text(json.dumps(payload))
+    os.chmod(tmp, 0o640)
+    try:
+        shutil.chown(tmp, group="acc")
+    except (LookupError, PermissionError):
+        pass
+    tmp.replace(results / f"{request_id}.json")
+
+
+def process(path: Path) -> dict:
+    request_id = path.stem
+    try:
+        request = check(json.loads(path.read_text()))
+        if request["id"] != request_id:
+            raise Refused("request id does not match file name")
+        detail = apply(request) if request["action"] == "apply" else remove(request)
+        result = {"ok": True, "detail": detail}
+    except (Refused, ValueError, subprocess.CalledProcessError) as error:
+        result = {"ok": False, "detail": str(error)}
+    if ID_RE.fullmatch(request_id):
+        write_result(request_id, result)
+    path.unlink(missing_ok=True)
+    return result
+
+
+def acquire_caddy_lock(timeout: float = 60) -> int | None:
+    """The lock shared with acc-dns, or None before the DNS helper is deployed (no DNS apply can race then).
+    Any failure is a refusal: Caddy never changes without it."""
+    fd = lock = None
+    try:
+        fd = os.open('/run', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        st = os.fstat(fd)
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            raise Refused('unsafe Caddy configuration lock parent')
+        try:
+            child = os.open('acc-dns', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            return None
+        os.close(fd)
+        fd = child
+        st = os.fstat(fd)
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            raise Refused('unsafe Caddy configuration lock parent')
+        lock = os.open('caddy-config.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+        st = os.fstat(lock)
+        if (st.st_uid != 0 or st.st_gid != 0 or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or
+                stat.S_IMODE(st.st_mode) != 0o600):
+            raise Refused('unsafe Caddy configuration lock')
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise Refused('Caddy configuration lock busy; try again') from None
+                time.sleep(.05)
+        acquired, lock = lock, None
+        return acquired
+    except OSError:
+        raise Refused('Caddy configuration lock unavailable; nothing changed') from None
+    finally:
+        for descriptor in (lock, fd):
+            if descriptor is not None:
+                os.close(descriptor)
+
+
+def refuse(path: Path, detail: str) -> dict:
+    result = {"ok": False, "detail": detail}
+    if ID_RE.fullmatch(path.stem):
+        write_result(path.stem, result)
+    path.unlink(missing_ok=True)
+    return result
+
+
+def main() -> int:
+    requests = sorted((ROOT / "requests").glob("*.json"))
+    for path in requests:
+        try:
+            lock = acquire_caddy_lock()
+        except Refused as error:
+            print(path.name, json.dumps(refuse(path, str(error))))
+            continue
+        try:
+            print(path.name, json.dumps(process(path)))
+        finally:
+            if lock is not None:
+                os.close(lock)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

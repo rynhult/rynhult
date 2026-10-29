@@ -1,0 +1,18 @@
+# Rynhult's SELinux policy module, needed only when Caddy runs confined (Fedora's caddy package: httpd_t) and
+# proxies to accd's socket (/run/accd.sock, labelled httpd_var_run_t by deploy/lib/selinux-labels.sh). accd runs
+# from a bin_t executable as unconfined_service_t; nothing else here is confined by Rynhult. Not loaded
+# automatically: an owner reviews and loads it during qualification (docs/LINUX-DISTROS.md):
+#   checkmodule -M -m -o rynhult.mod rynhult.te
+#   semodule_package -o rynhult.pp -m rynhult.mod
+#   semodule -i rynhult.pp
+# Never instead: setenforce 0, or semanage permissive -a httpd_t.
+module rynhult 1.0;
+
+require {
+    type httpd_t;
+    type unconfined_service_t;
+    class unix_stream_socket connectto;
+}
+
+# Caddy's reverse_proxy to unix//run/accd.sock (writing the socket file is httpd_var_run_t, already allowed).
+allow httpd_t unconfined_service_t:unix_stream_socket connectto;

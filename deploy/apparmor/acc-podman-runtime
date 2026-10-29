@@ -1,0 +1,19 @@
+# Install ONLY on a host without the distribution's /etc/apparmor.d/podman and /etc/apparmor.d/crun (Ubuntu 24.04 has
+# both; two profiles attaching to one path conflict). Owner, during container qualification:
+#   install -m 0644 deploy/apparmor/acc-podman-runtime /etc/apparmor.d/acc-podman-runtime
+#   apparmor_parser -r /etc/apparmor.d/acc-podman-runtime
+# User namespaces for Podman and crun at their resolved paths, nothing else. See deploy/apparmor/acc-podman.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile acc-podman-cli /usr/bin/podman flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-podman-cli>
+}
+
+profile acc-crun /usr/bin/crun flags=(unconfined) {
+  userns,
+
+  include if exists <local/acc-crun>
+}

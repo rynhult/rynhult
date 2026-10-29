@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+acc_compat_lib="$(dirname "$0")/acc-env.sh"
+[ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../deploy/lib/acc-env.sh"
+# shellcheck source=/dev/null
+. "$acc_compat_lib"
+# acc-wiki-check: check a project's wiki (docs/wiki/).
+# Every wiki: page links and images must resolve, and every image in .attachments must be used.
+# Public wikis (docs/wiki/.public) must also use artificial data only. Their page text and file names are scanned for:
+#   - identifiers on the local denylist (~/.config/acc/wiki-denylist; one per line, # comments; kept out of repos)
+#   - anything shaped like a secret, and email addresses outside example.com/.org/.net
+# Usage: acc-wiki-check [repo-root]   (exit 1 while anything is found; 0 when clean or there is no wiki)
+set -uo pipefail
+ROOT=${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
+WIKI="$ROOT/docs/wiki"
+DENY=${ACC_WIKI_DENYLIST:-$HOME/.config/acc/wiki-denylist}
+[ -d "$WIKI" ] || { echo "no wiki at $WIKI"; exit 0; }
+hits=0
+report() { echo "  $1"; hits=$((hits + 1)); }
+
+# Links and images (Azure DevOps rules: /Page/Sub links without .md, images under /.attachments).
+while IFS= read -r line; do report "$line"; done < <(/usr/bin/python3 -I - "$WIKI" <<'PY'
+import re, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+pages = {p.relative_to(root).with_suffix("").as_posix() for p in root.rglob("*.md") if ".attachments" not in p.parts}
+used = set()
+def resolve(target, page):
+    clean = target.split("#")[0].split("?")[0]
+    if clean.startswith("/"):
+        return clean[1:]
+    parts = page.split("/")[:-1]
+    for part in clean.split("/"):
+        if part == "..":
+            parts = parts[:-1]
+        elif part and part != ".":
+            parts.append(part)
+    return "/".join(parts)
+for md in sorted(root.rglob("*.md")):
+    page = md.relative_to(root).with_suffix("").as_posix()
+    text = re.sub(r"```.*?```", "", md.read_text(errors="replace"), flags=re.S)
+    for image, target in re.findall(r"(!?)\[[^\]]*\]\(([^)\s]+)", text):
+        if re.match(r"^[a-z]+:|^#", target, re.I):
+            continue
+        resolved = resolve(target, page)
+        if image:
+            used.add(resolved)
+            if not (root / resolved).is_file():
+                print(f"missing image: {page}.md -> {target}")
+        elif resolved.removesuffix(".md") not in pages:
+            print(f"broken link: {page}.md -> {target}")
+for image in sorted((root / ".attachments").glob("*")) if (root / ".attachments").is_dir() else []:
+    if image.relative_to(root).as_posix() not in used:
+        print(f"unused image: .attachments/{image.name}")
+PY
+)
+
+if [ ! -f "$WIKI/.public" ]; then
+  [ "$hits" -gt 0 ] && { echo "acc-wiki-check: $hits finding(s)."; exit 1; }
+  echo "acc-wiki-check: links and images ok (private wiki: no artificial-data check)"; exit 0
+fi
+
+if [ -f "$DENY" ]; then
+  patterns=$(grep -vE '^\s*(#|$)' "$DENY")
+  if [ -n "$patterns" ]; then
+    while IFS= read -r line; do report "denylisted: $line"; done < <(grep -rniF --include='*.md' --include='.order' -f <(printf '%s\n' "$patterns") "$WIKI")
+    while IFS= read -r file; do report "denylisted file name: ${file#$ROOT/}"; done < <(find "$WIKI" | grep -iF -f <(printf '%s\n' "$patterns"))
+  fi
+else
+  echo "warning: no denylist at $DENY; only secret and email patterns are checked"
+fi
+SECRETS='(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+while IFS= read -r line; do report "secret-like: $line"; done < <(grep -rnE --include='*.md' "$SECRETS" "$WIKI" | grep -viE 'EXAMPLE|xxxx')
+while IFS= read -r line; do report "real-looking email: $line"; done < <(grep -rnoE --include='*.md' '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$WIKI" | grep -viE '@(example\.(com|org|net)|[a-z0-9-]+\.example\.(com|org|net))$')
+
+if [ "$hits" -gt 0 ]; then
+  echo "acc-wiki-check: $hits finding(s). Fix links and images, and replace real data with artificial data (acc-workflow skill, wiki.md)."
+  exit 1
+fi
+echo "acc-wiki-check: clean"
