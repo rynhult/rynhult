@@ -132,7 +132,7 @@ test('Audit pages use stable cursors, Previous and filter reset', async ({ page 
     requests.push(params);
     expect(params.has('offset')).toBe(false);
     const older = params.get('before_id') === '20';
-    const row = { id: older ? 19 : 20, ts: '2026-10-29T12:00:00Z', actor: 'alex', action: 'demo.audit', target: null, detail: {} };
+    const row = { id: older ? 19 : 20, ts: '2026-10-29T12:00:00Z', actor: 'alex', action: 'demo.audit', target: older ? 'Older audit page' : 'Newest audit page', detail: {} };
     return route.fulfill({ json: { items: [row], has_more: !older, next_before: older ? null : 20 } });
   });
   await page.goto('/audit');
@@ -140,10 +140,12 @@ test('Audit pages use stable cursors, Previous and filter reset', async ({ page 
   const previous = page.getByRole('button', { name: 'Previous', exact: true });
   await expect(previous).toBeDisabled();
   await next.click();
+  await expect(page.getByText('alex · demo audit · Older audit page', { exact: true })).toBeVisible();
   await expect(next).toBeDisabled();
   expect(requests.at(-1)!.get('before_id')).toBe('20');
   await expect(previous).toBeEnabled();
   await previous.click();
+  await expect(page.getByText('alex · demo audit · Newest audit page', { exact: true })).toBeVisible();
   await expect(previous).toBeDisabled();
   await next.click();
   await expect(previous).toBeEnabled();
@@ -168,4 +170,40 @@ test('Audit budget errors invite narrower filters and never claim no matches', a
   await expect(page.getByText('0 entries on this page')).toBeVisible();
   await expect(page.getByText('No entries match.', { exact: true })).toBeVisible();
   await expectAxeClean(page);
+});
+
+test('the initial empty search debounce cannot reset an already selected audit page', async ({ page }) => {
+  await page.addInitScript(() => {
+    // Hold only search debounce callbacks. Freezing every browser timer also
+    // freezes unrelated lazy rendering, obscuring the cursor-reset regression.
+    const schedule = window.setTimeout.bind(window), cancel = window.clearTimeout.bind(window);
+    const pending = new Map<number, () => void>();
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay !== 300 || typeof handler !== 'function') return schedule(handler, delay, ...args);
+      const id = schedule(() => {}, 1_000_000);
+      pending.set(id, () => handler(...args));
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = id => { pending.delete(id!); cancel(id); };
+    (window as any).__flushSearchDebounce = () => {
+      const callbacks = [...pending.values()];
+      for (const id of pending.keys()) cancel(id);
+      pending.clear();
+      for (const callback of callbacks) callback();
+    };
+  });
+  await page.route('**/api/audit?*', route => {
+    const older = new URL(route.request().url()).searchParams.has('before_id');
+    return route.fulfill({ json: { items: [{ id: older ? 19 : 20, ts: '2026-10-29T12:00:00Z',
+      actor: 'alex', action: 'demo.audit', target: older ? 'Older audit page' : 'Newest audit page', detail: {} }],
+    has_more: !older, next_before: older ? null : 20 } });
+  });
+  await page.goto('/audit');
+  const next = page.getByRole('button', { name: 'Next', exact: true });
+  await expect(next).toBeEnabled();
+  await next.click();
+  await expect(page.getByText('alex · demo audit · Older audit page', { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).__flushSearchDebounce());
+  await expect(page.getByText('alex · demo audit · Older audit page', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Previous', exact: true })).toBeEnabled();
 });

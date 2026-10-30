@@ -9,6 +9,7 @@ import { Badge, Button, Card, CardHeader, ErrorNote, Field, Input, QueryState } 
 export type UpdateState = {
   version: string; build: string; latest?: string; latest_build?: string; notes?: string; published_at?: string; checked_at?: number;
   available: boolean; repository: string; automatic: boolean; time: string; timezone: string;
+  signature?: { status: 'verified' | 'missing' | 'unsigned_override'; primary?: string; detail?: string };
   blocked?: string; helper: boolean; pending: boolean; error?: string; session_notice: string;
   progress: { running?: boolean; ok?: boolean; detail?: string; rolled_back?: boolean; rollback_error?: string;
     steps?: { name: string; running?: boolean; ok?: boolean }[] };
@@ -25,23 +26,33 @@ function Controls({ state }: { state: UpdateState }) {
   const refresh = () => client.invalidateQueries({ queryKey: ['updates'] });
   const check = useMutation({ mutationFn: () => post('/api/updates/check'), onSuccess: refresh });
   const save = useMutation({ mutationFn: () => api('/api/updates/config', { method: 'PUT', json: { repository, automatic, time } }), onSuccess: refresh });
-  const apply = useMutation({ mutationFn: () => post('/api/updates/apply'), onSuccess: refresh });
+  const apply = useMutation({ mutationFn: (allowUnsigned: boolean) => post('/api/updates/apply', allowUnsigned ? { allow_unsigned: true } : undefined), onSuccess: refresh });
   const busy = state.pending || state.progress.running || apply.isPending;
+  const missingSignature = state.signature?.status === 'missing';
   return <div className="space-y-4 p-4 text-[13px]">
     <div className="flex flex-wrap items-center gap-2"><b>Rynhult {state.version}</b><code className="break-all text-xs text-muted">Build {state.build}</code>
       {state.available && <Badge tone="wait">Update available</Badge>}</div>
     {!state.repository && <p className="text-muted">Updates are off. Enter the GitHub owner/repository below and save to turn them on.</p>}
     <p className="text-muted">Last check: {state.checked_at ? date(state.checked_at) : 'Not checked yet'}</p>
     {state.error && <ErrorNote error={state.error} />}
+    {state.signature?.status === 'verified' && state.signature.primary && <p role="status" className="text-muted">
+      Signature verified (Rynhult Releases, key …{state.signature.primary.slice(-4)})
+    </p>}
+    {missingSignature && <p role="status" className="text-wait">{state.signature?.detail || 'Release signature is missing.'}</p>}
     {state.latest && <div className="space-y-2"><b>Latest: {state.latest}</b>{state.latest_build && <p className="break-all font-mono text-xs text-muted">Build {state.latest_build}</p>}{state.published_at && <p className="text-muted">Published {date(state.published_at)}</p>}
       <p className="whitespace-pre-wrap break-words text-muted">{state.notes || 'No release notes.'}</p></div>}
     <p className="text-muted">{state.session_notice}</p>
     {state.blocked ? <p role="status" className="text-wait">{state.blocked}</p> : !state.helper && <p className="text-muted">Run deploy/install.sh to install the update helper.</p>}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!state.repository || check.isPending || !!busy} onClick={() => check.mutate()}>{check.isPending ? "Checking…" : "Check now"}</Button>
-      {!state.blocked && state.available && <Button variant="primary" disabled={!state.helper || !!busy || !!state.error} onClick={async () => {
-        if (await confirm({ title: `Update to Rynhult ${state.latest}?`, body: `Rynhult makes a full backup first. The dashboard restarts and terminals disconnect briefly. ${state.session_notice}`, confirm: 'Back up and update' })) apply.mutate();
+      {!state.blocked && state.available && <Button variant="primary" disabled={!state.helper || !!busy || !!state.error || missingSignature} onClick={async () => {
+        if (await confirm({ title: `Update to Rynhult ${state.latest}?`, body: `Rynhult makes a full backup first. The dashboard restarts and terminals disconnect briefly. ${state.session_notice}`, confirm: 'Back up and update' })) apply.mutate(false);
       }}>Back up and update</Button>}
+      {!state.blocked && state.available && missingSignature && <Button disabled={!state.helper || !!busy || !!state.error} onClick={async () => {
+        if (await confirm({ title: `Update to ${state.latest} without a signature?`,
+          body: 'Rynhult cannot authenticate this release. Continue only after independently checking its source. This exception applies to this update only, is recorded in Audit, and still requires a backup and checksum checks.',
+          danger: true, hold: 500, confirm: 'Update without signature' })) apply.mutate(true);
+      }}>Update without signature…</Button>}
     </div>
     <div aria-live="polite" className="space-y-1">
       {busy && <p>Update in progress… The dashboard may reconnect while Rynhult restarts.</p>}

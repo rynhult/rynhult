@@ -24,9 +24,7 @@ export function AutomationFields({ provider, value, onChange, disabled = false }
     </>}
   </div>;
 }
-/** The session page shows goal and auto-resume state only once something is set (a status line with Stop goal); the
-    settings themselves open in a dialog from the header ("Goal and auto-resume"), so they never push the terminal down a
-    phone screen (UX review SE-6). */
+/** Goal state and editing live in Setup, keeping automation controls off the terminal. */
 export function SessionAutomation({ session, disabledReason, editing, onEditing }: {
   disabledReason?: string; session: { id: string; provider: string; automation?: Automation };
   editing: boolean; onEditing: (open: boolean) => void;
@@ -49,8 +47,9 @@ export function SessionAutomation({ session, disabledReason, editing, onEditing 
   const close = () => { setDraft(null); save.reset(); onEditing(false); };
   const shown = state.autoresume || goal || state.waiting || state.notice || (state.dispatch && state.dispatch.status !== 'sent');
   return <>
-    {shown && <section aria-label="Session automation"><Card className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 text-xs md:px-4 md:py-2.5 md:text-[13px]">
-      <span className="font-medium text-fg max-md:hidden">Goal &amp; auto-resume</span>
+    <section id="automation" aria-label="Session automation"><Card className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 text-xs md:px-4 md:py-2.5 md:text-[13px]">
+      <h2 className="font-medium text-fg">Goal &amp; auto-resume</h2>
+      {!shown && <span className="text-muted">No goal or auto-resume set.</span>}
       {state.autoresume && !state.waiting && <span className="text-muted">Resumes when the plan limit resets</span>}
       {state.waiting && <span role="status" className="text-muted">Waiting for the limit to reset at {new Date(state.waiting.reset * 1000).toLocaleString()}</span>}
       {state.notice && <span role="status" className="text-wait">{state.notice}</span>}
@@ -61,9 +60,9 @@ export function SessionAutomation({ session, disabledReason, editing, onEditing 
       </>}
       <span className="ml-auto flex items-center gap-1.5">
         {goal && <Button size="sm" disabled={save.isPending || goal.status === 'stopped'} onClick={() => save.mutate({ goal: null })}>Stop goal</Button>}
-        <Button size="sm" variant="ghost" onClick={() => onEditing(true)}>Edit</Button>
+        <Button size="sm" variant="ghost" onClick={() => onEditing(true)}>{shown ? "Edit" : "Goal and auto-resume"}</Button>
       </span>
-    </Card>{!editing && <ErrorNote error={save.error} />}</section>}
+    </Card>{!editing && <ErrorNote error={save.error} />}</section>
     <Dialog open={editing} onClose={close} title="Goal and auto-resume" dismissible={false}
       description="Off unless you turn them on. They belong to this session's person; owners can edit them too."
       footer={<>

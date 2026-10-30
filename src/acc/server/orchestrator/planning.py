@@ -300,7 +300,7 @@ def _field_words(field: str) -> str:
     return {"idea": "the idea", "scope": "the scope"}.get(field, field)
 
 
-def update(db, team_id: str, actor: str, body: dict) -> OrchestrationPlan:
+def update(db, team_id: str, actor: str, body: dict, *, warnings=None) -> OrchestrationPlan:
     """The lead's change. Refused if it touches something the person edited after the lead last read the plan; a
     change to something the person edited (and the lead has read) is recorded on the working list for them."""
     if set(body) - TOOL_FIELDS['plan_update']:
@@ -320,7 +320,7 @@ def update(db, team_id: str, actor: str, body: dict) -> OrchestrationPlan:
         touched.append('run_mode')
     for key, model in [('propose_constraints', Constraint), ('propose_requirements', Requirement)]:
         if key in body:
-            controls.edit_rows(db, team_id, actor, body[key], model, proposed=True)
+            controls.edit_rows(db, team_id, actor, body[key], model, proposed=True, warnings=warnings)
     overwritten = [f for f in touched if f in edits]
     for field in overwritten:
         edits.pop(field)
@@ -547,13 +547,16 @@ def lead_action(supervisor, caller_id: str, payload: dict):
         if action == 'plan_update' and set(payload) - (TOOL_FIELDS[action] | {'action', 'id'}):
             raise Refused('the lead cannot edit constraints or requirements; propose a change instead')
         redact = supervisor.vault.redactor(db, lead.vault_keys).deep
+        warnings = []
         if action == "plan_update":
-            update(db, team.id, actor, redact({k: payload[k] for k in TOOL_FIELDS[action] if k in payload}))
+            update(db, team.id, actor, redact({k: payload[k] for k in TOOL_FIELDS[action] if k in payload}), warnings=warnings)
         elif action == "plan_ready":
             ready(db, team.id, actor, redact(payload.get("reason")))
         else:
             raise Refused("unknown plan tool")
         out = view(db, team.id)
+        if warnings:
+            out['warnings'] = warnings
         db.commit()
         return out
 

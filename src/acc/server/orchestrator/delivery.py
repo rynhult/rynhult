@@ -667,8 +667,8 @@ def run_mode_notice(db, supervisor, team_id, mode, version):
 
 
 def nudge_lead(db, team_id, what):
-    """Queue one line to the lead saying the person changed something (an answer, the plan or NOW), in the person's own
-    write transaction. Coalesce only an unclaimed queued line: an in-flight delivery may already have caused the
+    """Queue person-edit notices or a separate system-origin proposal correction, in the write transaction.
+    Coalesce only an unclaimed queued line: an in-flight delivery may already have caused the
     lead to read its tools before its acknowledgement arrives. Keep one follow-up for later changes, delivered at
     the next idle prompt, rather than assuming the current turn will see them."""
     if not enabled():
@@ -677,12 +677,16 @@ def nudge_lead(db, team_id, what):
     if (lead is None or team is None or team.stopped or now() >= team.expires_at
             or lead.management != 'acc' or lead.desired_state != 'running'):
         return None
+    origin = NUDGE_ORIGIN + ('No difference found between current and proposed. ' if what == 'proposal' else 'your person ')
     pending = db.scalar(select(MessageDelivery).where(
         MessageDelivery.session_id == team_id, MessageDelivery.actor == 'supervisor',
-        MessageDelivery.state == 'queued', MessageDelivery.preview.startswith(NUDGE_ORIGIN + 'your person ')).limit(1))
-    changed = [words for key, words in NUDGE_WHAT.items() if key == what or pending is not None and words in pending.body]
-    said = ' and '.join([', '.join(changed[:-1]), changed[-1]] if len(changed) > 1 else changed)
-    text = NUDGE_ORIGIN + f'your person {said}. Read the working list and the plan (worklist, plan) before you go on.'
+        MessageDelivery.state == 'queued', MessageDelivery.preview.startswith(origin)).limit(1))
+    if what == 'proposal':
+        text = origin + 'Review the corrected proposal notes with worklist. No approval was requested or recorded.'
+    else:
+        changed = [words for key, words in NUDGE_WHAT.items() if key == what or pending is not None and words in pending.body]
+        said = ' and '.join([', '.join(changed[:-1]), changed[-1]] if len(changed) > 1 else changed)
+        text = NUDGE_ORIGIN + f'your person {said}. Read the working list and the plan (worklist, plan) before you go on.'
     if pending is None:
         pending = MessageDelivery(session_id=team_id, actor='supervisor', expires_at=team.expires_at)
         db.add(pending)

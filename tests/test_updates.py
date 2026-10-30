@@ -371,7 +371,7 @@ def test_same_version_different_release_build():
     assert not check("example/acc", "0.12.0", current_build="b" * 64, get=get)["available"]
 
 
-def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch):
+def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch, release_signer):
     from acc import update_helper
 
     source = tmp_path / "app"
@@ -389,6 +389,7 @@ def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch):
         "latest_build": build,
         "assets": {
             "SHA256SUMS": "https://api.github.com/repos/example/acc/releases/assets/1",
+            "SHA256SUMS.asc": "https://api.github.com/repos/example/acc/releases/assets/3",
             "acc-0.13.0.tar.gz": "https://api.github.com/repos/example/acc/releases/assets/2",
         },
     }
@@ -396,7 +397,10 @@ def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch):
 
     def fetch(url, *a, **kw):
         assert kw["asset"]
-        return (sha + "  acc-0.13.0.tar.gz\n").encode() if url.endswith("/1") else archive.read_bytes()
+        sums = (sha + "  acc-0.13.0.tar.gz\n").encode()
+        if url.endswith("/3"):
+            return release_signer.sign(sums)
+        return sums if url.endswith("/1") else archive.read_bytes()
 
     monkeypatch.setattr(update_helper, "fetch", fetch)
     job = update_helper.Transaction(

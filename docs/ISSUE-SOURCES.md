@@ -1,6 +1,6 @@
 # Issue sources
 
-Approved scope: Linear and GitLab (2026-10-22), plus owner-allowed self-hosted GitLab and Gitea/Forgejo (2026-10-23; PLAN).
+Approved scope: Linear and GitLab (2026-10-22), plus owner-allowed self-hosted GitLab and Gitea/Forgejo (2026-10-23; historical scope in `docs/archive/PLAN-to-rc1.md`).
 
 ## Model and credentials
 

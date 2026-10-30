@@ -220,7 +220,7 @@ sh "$REPO/deploy/lib/install-node.sh" >/dev/null
 else
   log "Node.js (the distribution's, 22 or newer)"
   "${PKG_INSTALL[@]}" "$(pkg_name "$PKG" nodejs)" "$(pkg_name "$PKG" npm)" >/dev/null
-  node -e 'process.exit(+process.versions.node.split(".")[0] < 22)' || die "Rynhult needs Node.js 22 or newer"
+  node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' || die "Rynhult needs Node.js 22 or newer"
 fi
 info "node $(node --version)"
 

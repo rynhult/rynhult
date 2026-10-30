@@ -1,8 +1,33 @@
 {
-  "phase": "coming-soon",
+  "phase": "release",
   "follow": "https://github.com/rynhult/rynhult",
-  "version": null,
+  "version": "0.15.0-rc.1",
   "channel": "public release candidate",
   "planned": "v0.15.0-rc.1",
-  "assets": []
+  "assets": [
+    {
+      "name": "acc-0.15.0-rc.1.tar.gz",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/acc-0.15.0-rc.1.tar.gz",
+      "description": "Source bundle for the Linux server install",
+      "sha256": "ab94f08bddd9284847295d7208d0a407684232b5a93b044ecf23acbbed7cc37e"
+    },
+    {
+      "name": "BUILD",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/BUILD",
+      "description": "Content build identity",
+      "sha256": "a702d036567387b849444f41c17a144646f83f26c4dcbceb2790f5dd3c50cace"
+    },
+    {
+      "name": "SHA256SUMS",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/SHA256SUMS",
+      "description": "Checksums for the files above",
+      "sha256": "655cf09b03c9bbff2cac49fbd95deb88e7c2ff2190e9d32d837aba70a8c77fd2"
+    },
+    {
+      "name": "SHA256SUMS.asc",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/SHA256SUMS.asc",
+      "description": "OpenPGP signature of SHA256SUMS (Rynhult Releases key)",
+      "sha256": "e99f124c4183dfa751a83b6587e936aa08c5f5ce6f6c642156edafdba61aff85"
+    }
+  ]
 }

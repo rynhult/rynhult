@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from acc.broker.files import MAX_UPLOAD, MAX_UPLOAD_BATCH
+
 from ..broker_client import BrokerError
 from ..models import AuditLog, Project, Session, Setting, VaultKey, VaultRetired
 from .context import Context
@@ -35,6 +37,17 @@ class Mutation(BaseModel):
     revision: str | None = Field(None, max_length=100)
     destination: str = Field('', max_length=4096)
     message: str | None = Field(None, min_length=1, max_length=2000)
+
+
+class UploadFile(BaseModel):
+    path: str = Field(max_length=4096)
+    data: str
+    overwrite: str = Field('refuse', pattern='^(refuse|replace|keep-both)$')
+    revision: str | None = Field(None, max_length=100)
+
+
+class UploadBatch(BaseModel):
+    files: list[UploadFile] = Field(default_factory=list, max_length=100)
 
 
 def router(ctx: Context) -> APIRouter:
@@ -140,6 +153,49 @@ def router(ctx: Context) -> APIRouter:
             'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
             'Content-Disposition': download_disposition(path)})
 
+    @api.post('/api/files/{kind}/{key}/upload')
+    async def upload(kind: str, key: str, body: UploadBatch, who=Depends(ctx.principal)):
+        with ctx.db() as s:
+            where, _ = location(s, kind, key, who)
+        total = 0
+        invalid = {}
+        for index, item in enumerate(body.files):
+            if len(item.data) > ((MAX_UPLOAD + 2) // 3) * 4:
+                invalid[index] = 'Upload exceeds the 4 MiB per-file limit.'
+                continue
+            try:
+                raw = base64.b64decode(item.data, validate=True)
+                total += len(raw)
+                if len(raw) > MAX_UPLOAD:
+                    invalid[index] = 'Upload exceeds the 4 MiB per-file limit.'
+            except ValueError:
+                invalid[index] = 'Invalid upload encoding.'
+        if total > MAX_UPLOAD_BATCH:
+            raise HTTPException(413, 'Uploads exceed the 16 MiB batch limit.')
+        results = []
+        for index, item in enumerate(body.files):
+            try:
+                if index in invalid:
+                    raise HTTPException(422, invalid[index])
+                if item.overwrite == 'replace':
+                    current = await call(where, action='download', rel=item.path)
+                    with ctx.db() as s:
+                        text = base64.b64decode(current['data'], validate=True).decode('utf-8', errors='replace')
+                        if redactor(s).text(text) != text:
+                            raise HTTPException(409, 'This file contains hidden secret values, so it cannot be replaced here.')
+                result = await call(where, action='upload', rel=item.path, data=item.data,
+                                    overwrite=item.overwrite, revision=item.revision)
+                results.append({'requested_path': item.path, **result})
+            except HTTPException as error:
+                results.append({'requested_path': item.path, 'error': str(error.detail)})
+        with ctx.db() as s:
+            safe = redact(s, {'files': results})
+            s.add(AuditLog(actor=who.username, action='files.upload', target=f'{kind}/{key}',
+                           detail={'files': [{k: v for k, v in row.items() if k in {
+                               'requested_path', 'path', 'size', 'conflict', 'error', 'previous_copy', 'incoming_copy'}} for row in safe['files']]}))
+            s.commit()
+        return safe
+
     @api.post('/api/files/{kind}/{key}')
     async def mutate(kind: str, key: str, body: Mutation, who=Depends(ctx.principal)):
         with ctx.db() as s:
@@ -155,9 +211,10 @@ def router(ctx: Context) -> APIRouter:
         result = await call(where, action=body.action, rel=body.path, content=body.content, revision=body.revision,
                             destination=body.destination, message=body.message, **person)
         with ctx.db() as s:
-            if not result.get('conflict'):
+            if not result.get('conflict') or result.get('incoming_copy'):
                 paths = [body.path] + ([body.destination] if body.action == 'rename' else [])
-                detail = {'paths': paths, 'operation': body.action}
+                detail = {'paths': paths, 'operation': body.action,
+                          **{k: result[k] for k in ('previous_copy', 'incoming_copy') if k in result}}
                 s.add(AuditLog(actor=who.username, action='files.delete' if body.action == 'delete' else 'files.write',
                                target=f'{kind}/{key}', detail=detail))
                 if result.get('commit'):

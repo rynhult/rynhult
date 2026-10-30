@@ -11,12 +11,15 @@ import secrets
 import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from .ops import OpError, _read_at, _walk_dirs
 
 MAX_TEXT = 1024 * 1024
+MAX_UPLOAD = 4 << 20
+MAX_UPLOAD_BATCH = 16 << 20
 MAX_DOWNLOAD = 4 * 1024 * 1024
 MAX_ENTRIES = 2000
 # Concrete-path equivalent of bin/acc-guard's secrets rule. Keep parity tests in test_files.py.
@@ -190,12 +193,12 @@ def commit(root, rel, data, mode, message, name, email):
     return {'commit': sha, **({'commit_warning': warning} if warning else {})}
 
 
-def operate(config, path, action='list', rel='', content='', revision=None, destination='', message=None, name=None, email=None):
+def operate(config, path, action='list', rel='', content='', revision=None, destination='', message=None, name=None, email=None, data='', overwrite='refuse'):
     with workspace(config, path) as (root, root_fd):
-        return _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email)
+        return _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite)
 
 
-def _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email):
+def _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite):
     components = parts(rel, directory=action == 'list')
     if protected(config, root, rel):
         raise OpError('This file or folder is protected (keys, passwords or Git\'s own files), so it can\'t be opened here.')
@@ -231,6 +234,59 @@ def _operate(config, root, root_fd, action, rel, content, revision, destination,
     with parent(config, root, root_fd, rel) as (fd, leaf):
         # Lock the directory descriptor: no lockfile can be redirected by an agent.
         fcntl.flock(fd, fcntl.LOCK_EX)
+        if action == 'upload':
+            if overwrite not in ('refuse', 'replace', 'keep-both'):
+                raise OpError('Unknown upload conflict choice.')
+            if not isinstance(data, str) or len(data) > ((MAX_UPLOAD + 2) // 3) * 4:
+                raise OpError('Upload exceeds the 4 MiB per-file limit.')
+            try:
+                raw = base64.b64decode(data, validate=True)
+            except ValueError:
+                raise OpError('Invalid upload encoding.') from None
+            if len(raw) > MAX_UPLOAD:
+                raise OpError('Upload exceeds the 4 MiB per-file limit.')
+            original = None
+            mode = 0o644
+            if _exists(fd, leaf):
+                original = _read_at(fd, leaf, MAX_UPLOAD)
+                if len(original) > MAX_UPLOAD:
+                    raise OpError('Existing file exceeds the 4 MiB replacement limit.')
+                conflict = {'conflict': True, 'revision': hashlib.sha256(original).hexdigest()}
+                if overwrite == 'refuse' or (overwrite == 'replace' and revision != conflict['revision']):
+                    return conflict
+                if overwrite == 'keep-both':
+                    stem, suffix = os.path.splitext(leaf)
+                    for number in range(1, 1001):
+                        candidate = f'{stem} ({number}){suffix}'
+                        candidate_rel = '/'.join([*components[:-1], candidate])
+                        if not _exists(fd, candidate) and not protected(config, root, candidate_rel):
+                            leaf, rel, original = candidate, candidate_rel, None
+                            break
+                    else:
+                        raise OpError('No free keep-both filename. Rename the upload and try again.')
+                else:
+                    mode = stat.S_IMODE(os.stat(leaf, dir_fd=fd, follow_symlinks=False).st_mode) & 0o777
+            elif overwrite == 'replace':
+                raise OpError('The original file disappeared. Refresh the folder before uploading again.')
+            temp = '.acc-save-' + secrets.token_hex(12)
+            try:
+                out = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=fd)
+                with os.fdopen(out, 'wb') as stream:
+                    stream.write(raw)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if original is None:
+                    os.link(temp, leaf, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+                else:
+                    kept = replace_preserving(fd, leaf, temp, rel, original, MAX_UPLOAD)
+                    if kept.get('conflict'):
+                        return {k: v for k, v in kept.items() if k != 'current'}
+                os.fsync(fd)
+            finally:
+                if _exists(fd, temp):
+                    os.unlink(temp, dir_fd=fd)
+            return {'path': rel, 'size': len(raw), 'revision': hashlib.sha256(raw).hexdigest(),
+                    **(kept if original is not None else {})}
         if action in ('read', 'download'):
             data = _read_at(fd, leaf, MAX_DOWNLOAD if action == 'download' else MAX_TEXT)
             if action == 'download':
@@ -264,14 +320,13 @@ def _operate(config, root, root_fd, action, rel, content, revision, destination,
                 if action == 'create':
                     os.link(temp, leaf, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
                 else:
-                    # Recheck after preparing the replacement, so concurrent external edits are detected.
-                    if _read_at(fd, leaf, MAX_TEXT) != original:
-                        return {'conflict': True, 'current': describe(_read_at(fd, leaf, MAX_TEXT))}
-                    os.replace(temp, leaf, src_dir_fd=fd, dst_dir_fd=fd)
+                    kept = replace_preserving(fd, leaf, temp, rel, original, MAX_TEXT)
+                    if kept.get('conflict'):
+                        return kept
                 os.fsync(fd)
             finally:
                 os.unlink(temp, dir_fd=fd) if _exists(fd, temp) else None
-            result = describe(data)
+            result = {**describe(data), **(kept if action == 'write' else {})}
             if message is not None:
                 try:
                     result.update(commit(root_fd, rel, data, mode, message, name, email))
@@ -308,6 +363,82 @@ def _exists(fd, name):
         return True
     except FileNotFoundError:
         return False
+
+
+def keep_copy(fd, name, kind):
+    """Keep a directory entry without following it or overwriting an existing name.
+
+    Copies remain until explicitly deleted. Automatic pruning could destroy the
+    only surviving external edit, so these are ordinary hidden workspace files.
+    """
+    for _ in range(10):
+        kept = f'.rynhult-{kind}-{time.time_ns()}-{secrets.token_hex(12)}'
+        try:
+            rename_exclusive(fd, name, fd, kept)
+            return kept
+        except FileExistsError:
+            continue
+    raise OpError('Could not choose an unused recovery filename. Reload the folder and try again.')
+
+
+def replace_preserving(fd, leaf, temp, rel, original, limit):
+    """Move aside, compare the moved entry, then publish without overwriting.
+
+    External writers need not take our advisory lock. Their moved inode remains
+    reachable even if they write through an already-open descriptor after the
+    comparison. A recreated destination is never replaced.
+    """
+    prefix = rel.rpartition('/')[0]
+
+    def path(name):
+        return f'{prefix}/{name}' if prefix else name
+
+    # Keep the submitted bytes first, even if moving/restoring the original or
+    # publishing later fails. The caller may safely clean its staging filename.
+    incoming = keep_copy(fd, temp, 'incoming')
+    os.fsync(fd)
+    try:
+        previous = keep_copy(fd, leaf, 'replaced')
+    except (OSError, OpError):
+        return replacement_conflict(fd, leaf, rel, limit, path(incoming), rel if _exists(fd, leaf) else None)
+    os.fsync(fd)
+    try:
+        unchanged = _read_at(fd, previous, limit) == original
+    except OSError:
+        unchanged = False  # a raced-in link/special file is never followed
+    if unchanged:
+        try:
+            os.link(incoming, leaf, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+        except OSError:
+            pass
+        else:
+            os.fsync(fd)
+            os.unlink(incoming, dir_fd=fd)
+            os.fsync(fd)
+            return {'previous_copy': path(previous),
+                    'notice': f'Replaced {rel} (the previous copy is kept as {path(previous)}).'}
+    # Restore the displaced entry only if nobody recreated the destination.
+    # Rename moves a symlink itself; it never opens its target.
+    try:
+        rename_exclusive(fd, previous, fd, leaf)
+        previous = leaf
+    except (OSError, OpError):
+        pass  # both kept entries remain reachable if restoration is unavailable
+    os.fsync(fd)
+    return replacement_conflict(fd, leaf, rel, limit, path(incoming), path(previous))
+
+
+def replacement_conflict(fd, leaf, rel, limit, incoming, previous):
+    try:
+        current = describe(_read_at(fd, leaf, limit))
+    except OSError:
+        current = {'binary': True}
+    return {'conflict': True, 'current': current, 'revision': current.get('revision'),
+            **({'previous_copy': previous} if previous else {}), 'incoming_copy': incoming,
+            'notice': (f'{rel} changed or could not be replaced. '
+                       + (f'Both copies are kept: {previous} and {incoming}. ' if previous else
+                          f'The original disappeared. Your incoming copy is kept as {incoming}. ')
+                       + 'Reload the folder before trying again.')}
 
 
 def validate_tree(config, root, rel, fd, budget=None, destination=None):

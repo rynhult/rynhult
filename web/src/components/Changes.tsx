@@ -72,7 +72,7 @@ function Feedback({ session, comments, setComments }: { session: SessionDetail; 
           </Button>
         )}
       </div>
-      {receipt && <p role="status" className="text-xs text-muted">Message queued; comments are kept until delivery is confirmed. See Message delivery above for status and retry.</p>}
+      {receipt && <p role="status" className="text-xs text-muted">Message queued; comments are kept until delivery is confirmed. See Details in the delivery indicator or open Activity for status and retry.</p>}
       <ErrorNote error={status.error} />
       <ul className="space-y-1 text-[12.5px]">
         {comments.map((c, i) => (

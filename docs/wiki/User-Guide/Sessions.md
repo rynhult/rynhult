@@ -67,7 +67,7 @@ Several agents in one project's folder see and change the same files. Tick **Own
 
 ## The session page
 
-The terminal keeps its input editor in place while background status refreshes. Browser spelling corrections and inline writing suggestions are disabled in this field so they cannot rewrite text already sent to the agent. Safari still supports ordinary typing, paste and composed text; only committed input is sent, once. Panels in other tabs do not keep polling while you type. Pending message deliveries refresh quickly; empty or settled delivery history checks less often, and pauses its timer while the browser tab is hidden.
+The terminal keeps its input editor in place while background status refreshes. Browser spelling corrections and inline writing suggestions are disabled in this field so they cannot rewrite text already sent to the agent. Safari still supports ordinary typing, paste and composed text; only committed input is sent, once. Chromium IME input also keeps a completed composition from being repeated by delayed browser input processing. Panels in other tabs do not keep polling while you type. Pending message deliveries refresh quickly; empty or settled delivery history checks less often, and pauses its timer while the browser tab is hidden.
 
 When the server build changes, **A new version is available — reload** appears above the page. Save or copy unsaved edits and unsent terminal text first, then choose **Reload** and confirm. The page stays open until you confirm. An older tab may need one manual reload before it can show update notices.
 
@@ -106,8 +106,8 @@ On a phone, the label and its reason sit under the session's name, so the termin
 
 ![The Needs you label on a phone, with the complete advisory reason visible](/.attachments/risk-labels-phone.png)
 
-- **Header.** Name (select the pencil to rename it), agent, status and what it's doing now, project, branch, handoff and artifact links, the tmux name, the conversation id (select it to copy) and the permission mode in words ("Accept edits"). Actions on the right: **Remote** (when Remote Control is on), **Export**, **Goal and auto-resume** (see [Goals](/User-Guide/Sessions#goals-and-automatic-continuation)), **Open in editor**, **Interrupt** and **Stop**. A local workspace session also has **Promote to project**.
-- **On a phone** the header is one line: name, status and project. **Details** holds the agent, branch, handoff and artifact links, ids, permission mode, **Export**, **Goal and auto-resume**, **Open in editor** and rename. On a touch screen, **Interrupt** and **Stop** are behind **⋯**, away from the terminal, so a stray tap can't stop an agent mid-edit. The tabs show **Terminal** and **Changes**; the others are under **More**, and a tab opened from a link is always shown.
+- **Header.** Name (select the pencil to rename it), agent, status and what it's doing now, project, branch, handoff and artifact links, the tmux name, the conversation id (select it to copy) and the permission mode in words ("Accept edits"). Actions on the right: **Remote** (when Remote Control is on), **Export**, **Open in editor**, **Interrupt** and **Stop**. A local workspace session also has **Promote to project**.
+- **On a phone** the header is one line: name, status and project. **Details** holds the agent, branch, handoff and artifact links, ids, permission mode, **Export**, **Open in editor** and rename. On a touch screen, **Interrupt** and **Stop** are behind **⋯**, away from the terminal, so a stray tap can't stop an agent mid-edit. The tabs show **Terminal** and **Changes**; the others are under **More**, and a tab opened from a link is always shown.
 
   ![A session on a phone: one-line header, Terminal and Changes tabs, More, and the key bar with Enter first](/.attachments/phone-terminal.png)
 
@@ -291,14 +291,32 @@ check it before submitting and report the browser, input method and steps.
 
 ### Messages sent to the agent
 
-**Message delivery** on the session page lists messages that are queued, blocked
-or awaiting submission confirmation. A queued receipt is not proof that the
-agent received the message.
+A compact **message waiting to deliver** indicator above the session tabs appears
+only while messages are queued, blocked, failed or awaiting confirmation. It
+leaves the terminal in place as deliveries change; nothing is shown when the
+queue is clear. On a phone it replaces the project/status text in the existing
+header row, with no extra row or blank delivery space; the session name and
+header actions remain available. A queued receipt is not proof that the agent
+received the message.
+
+Choose **Details** to open **Activity → Message delivery**, with the pending
+message's full text, state and terminal-control explanation. Completed deliveries
+stay in this history, with only their saved preview when the full body has been
+discarded. This does not keep message bodies longer than before.
+
+![Compact delivery status above the desktop terminal](/.attachments/session-delivery-1440.png)
+
+![The delivery indicator on a 390-pixel phone layout](/.attachments/session-delivery-390.png)
+
+![Message delivery details in Activity](/.attachments/session-delivery-details-1440.png)
+
+![Message delivery details on a phone](/.attachments/session-delivery-details-390.png)
 
 An open writable terminal holds typing control even if nobody is typing. Switch
 to **Activity** and close other terminal windows to release it. Queued messages
-retry automatically when the agent can accept input; **Retry delivery** checks
-the same message again without adding a copy. Permission questions still need
+retry automatically when the agent can accept input. **Retry** on the indicator
+checks queued entries again without adding copies; **Retry delivery** in Activity
+checks an individual queued message. Permission questions still need
 your answer in the terminal.
 
 If a message may already have been submitted, Rynhult does not paste it again
@@ -351,7 +369,7 @@ An optional [Orchestrator](/User-Guide/Orchestrator) lead groups helpers beneath
 
 ## Goals and automatic continuation
 
-Select **Goal and auto-resume** in a session's header (on a phone, under **Details**). The same two settings are in New session under **Advanced**, with the same name. These settings start off and belong to the session's person; owners can edit them too.
+Open the session's **Setup** tab (on a phone, under **More**), then choose **Goal and auto-resume** or **Edit** in that section. Its state and **Stop goal** stay in Setup, never above the terminal. A saved `?tab=spec#automation` link still opens this section. The same two settings are in New session under **Advanced**, with the same name. These settings start off and belong to the session's person; owners can edit them too.
 
 ![The Goal and auto-resume dialog](/.attachments/sessions-automation-settings.png)
 

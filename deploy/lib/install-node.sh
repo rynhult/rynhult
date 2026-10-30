@@ -5,7 +5,7 @@
 #   deploy/lib/install-node.sh [--dry-run]
 set -eu
 LIB=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-if node -e 'process.exit(+process.versions.node.split(".")[0] < 22)' 2>/dev/null; then
+if node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null; then
   echo "install-node: node $(node --version) is already here"
   exit 0
 fi

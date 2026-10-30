@@ -8,19 +8,21 @@ import { Button, Card, Dialog, Empty, ErrorNote, Field, Input, QueryState, Skele
 import { useConfirm } from "./confirm";
 import { lazyImport } from "../lib/lazyImport";
 
+import { FileUploads } from "./FileUploads";
+
 const FileEditor = lazy(() => lazyImport(() => import("./FileEditor")));
 const FileMarkdownPreview = lazy(() => lazyImport(() => import("./FileMarkdownPreview")));
 type Entry = { name: string; path: string; kind: "directory" | "file" | "unsupported"; size: number; status: string; protected: boolean };
 type Listing = { entries: Entry[]; working: boolean };
 type Read = { content?: string; revision: string; size: number; too_large?: boolean; binary?: boolean; media_type?: string; redacted?: boolean };
-type Saved = Read & { conflict?: boolean; current?: Read; commit?: string; commit_error?: string; commit_warning?: string };
+type Saved = Read & { conflict?: boolean; current?: Read; commit?: string; commit_error?: string; commit_warning?: string; notice?: string };
 const imageTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const audioTypes = new Set(["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"]);
 const videoTypes = new Set(["video/mp4", "video/webm"]);
 const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
-function Directory({ base, path, selected, onSelect, onManage }: {
-  base: string; path: string; selected: string; onSelect: (entry: Entry) => void; onManage: (entry: Entry) => void;
+function Directory({ base, path, selected, onSelect, onManage, onFolder }: {
+  base: string; path: string; selected: string; onSelect: (entry: Entry) => void; onManage: (entry: Entry) => void; onFolder: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const query = useQuery({ queryKey: ["files-tree", base, path], queryFn: () => api<Listing>(`${base}?path=${encodeURIComponent(path)}`) });
@@ -28,9 +30,9 @@ function Directory({ base, path, selected, onSelect, onManage }: {
     {(data) => <ul className="min-w-0">{data.entries.map((entry) => {
       const isDir = entry.kind === "directory";
       const open = expanded.has(entry.path);
-      const activate = () => { if (isDir) setExpanded((old) => { const next = new Set(old); if (next.has(entry.path)) next.delete(entry.path); else next.add(entry.path); return next; }); else onSelect(entry); };
+      const activate = () => { if (isDir) { onFolder(entry.path); setExpanded((old) => { const next = new Set(old); if (next.has(entry.path)) next.delete(entry.path); else next.add(entry.path); return next; }); } else { onFolder(entry.path.split("/").slice(0, -1).join("/")); onSelect(entry); } };
       return <li key={entry.path} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 36px" }}>
-        <div className={`relative flex min-w-0 items-center gap-1 rounded-md hover:bg-panel-2 ${selected === entry.path ? "bg-panel-2" : ""}`}>
+        <div data-upload-blocked={entry.protected || entry.kind === "unsupported" ? "true" : undefined} data-upload-folder={isDir && !entry.protected ? entry.path : undefined} className={`relative flex min-w-0 items-center gap-1 rounded-md hover:bg-panel-2 ${selected === entry.path ? "bg-panel-2" : ""}`}>
           {/* Stretch the existing semantic button over the decorative metadata. Keeping that text outside its
               label preserves the readable file/status name and WCAG label-in-name; Manage stays above the hit area. */}
           <button type="button" aria-label={`${isDir ? "Toggle" : "Open"} ${entry.path}${entry.status ? `, ${entry.status}` : ""}`} aria-expanded={isDir ? open : undefined}
@@ -46,7 +48,7 @@ function Directory({ base, path, selected, onSelect, onManage }: {
           </span>
           {!entry.protected && entry.kind !== "unsupported" && <Button size="sm" variant="ghost" className="relative z-10" aria-label={`Manage ${entry.path}`} onClick={() => onManage(entry)}>…</Button>}
         </div>
-        {isDir && open && <div className="ml-3 border-l border-line pl-1"><Directory base={base} path={entry.path} selected={selected} onSelect={onSelect} onManage={onManage} /></div>}
+        {isDir && open && <div className="ml-3 border-l border-line pl-1"><Directory base={base} path={entry.path} selected={selected} onSelect={onSelect} onManage={onManage} onFolder={onFolder} /></div>}
       </li>;
     })}</ul>}
   </QueryState>;
@@ -61,6 +63,8 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
   const [opened, setOpened] = useState<Read | null>(null);
   const [draft, setDraft] = useState("");
   const [editorVersion, setEditorVersion] = useState(0);
+  const openedScope = useRef<string | null>(null);
+  const [uploadFolder, setUploadFolder] = useState("");
   const [showTree, setShowTree] = useState(true);
   const phone = useMedia("(max-width: 767px)");
   const filePanel = useRef<HTMLElement>(null);
@@ -81,6 +85,9 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
   const [commitName, setCommitName] = useState("");
   const [commitEmail, setCommitEmail] = useState("");
   const dirty = opened?.content !== undefined && draft !== opened.content;
+  const dirtyNow = useRef(dirty);
+  dirtyNow.current = dirty;
+  useEffect(() => { setUploadFolder(""); }, [base]);
   const blocker = useBlocker(dirty);
   useEffect(() => {
     if (blocker.state !== "blocked") return;
@@ -96,8 +103,13 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
   }, [selected, file.isSuccess, focusSelected]);
   const identity = useQuery({ queryKey: ["files-identity"], queryFn: () => api<{ name: string; email: string }>("/api/files/identity") });
   useEffect(() => {
+    const scope = JSON.stringify([base, selected]);
+    // A read started while clean may finish after typing or an upload. Preserve
+    // both the draft and its original revision so Save still detects conflicts.
+    if (openedScope.current === scope && dirtyNow.current) return;
+    openedScope.current = scope;
     setOpened(file.data ?? null); setDraft(file.data?.content ?? ""); setConflict(null); setEditorVersion((v) => v + 1);
-  }, [file.data, selected]);
+  }, [base, file.data, selected]);
   useEffect(() => { setNotice(""); }, [selected]);
   useEffect(() => {
     if (!dirty) return;
@@ -110,9 +122,9 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
     onMutate: () => setNotice(""),
     mutationFn: (commit: boolean) => post<Saved>(base, { action: "write", path: selected, content: draft, revision: opened?.revision, ...(commit ? { message } : {}) }),
     onSuccess: (data) => {
-      if (data.conflict) { setConflict(data.current!); setNotice(""); return; }
+      if (data.conflict) { setConflict(data.current!); setNotice(data.notice ?? ""); void refresh(); return; }
       client.setQueryData(["files-read", base, selected], data);
-      setOpened(data); setConflict(null); setNotice(data.commit_error ?? data.commit_warning ?? (data.commit ? `Committed ${data.commit.slice(0, 12)} locally` : "Saved")); void refresh();
+      setOpened(data); setConflict(null); setNotice([data.notice ? `Saved. ${data.notice}` : "Saved", data.commit_error ?? data.commit_warning ?? (data.commit ? `Committed ${data.commit.slice(0, 12)} locally` : "")].filter(Boolean).join(" ")); void refresh();
     },
   });
   useEffect(() => { save.reset(); }, [base, selected, save.reset]);
@@ -148,10 +160,11 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
       <Button size="sm" onClick={() => { void refresh(); if (selected && !dirty) void file.refetch(); }}>Refresh files</Button>
       <Button size="sm" variant="ghost" onClick={() => { setCommitName(identity.data?.name ?? ""); setCommitEmail(identity.data?.email ?? ""); personal.reset(); setDialog("identity"); }}>Commit identity</Button>
     </div>
+    <FileUploads key={base} base={base} folder={uploadFolder} onFolder={setUploadFolder} onSaved={() => { void refresh(); if (!dirtyNow.current) void client.invalidateQueries({ queryKey: ["files-read", base] }); }}>
     <div className={`grid min-w-0 gap-3 ${showTree ? "lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]" : "grid-cols-1"}`}>
-      {showTree && <Card className="max-h-[32rem] min-w-0 overflow-auto p-2" aria-label="Folder tree">
-        <Directory base={base} path="" selected={selected} onSelect={(e) => void select(e)} onManage={(e) => { setTarget(e); setPathInput(e.path); mutation.reset(); setDialog("manage"); }} />
-      </Card>}
+      {showTree && <div data-upload-tree="true" role="region" aria-label="Folder tree" className="min-w-0"><Card className="max-h-[32rem] min-w-0 overflow-auto p-2">
+        <Directory base={base} path="" selected={selected} onFolder={setUploadFolder} onSelect={(e) => void select(e)} onManage={(e) => { setTarget(e); setPathInput(e.path); mutation.reset(); setDialog("manage"); }} />
+      </Card></div>}
       <section ref={filePanel} tabIndex={-1} aria-label="Selected file" className="min-w-0 scroll-mt-4"><Card className="min-w-0 space-y-3 p-3">
         {!selected ? <Empty>Select a file to open it. Protected files stay locked. M = modified · N = new · I = ignored.</Empty> : <>
           <div className="flex flex-wrap items-center justify-between gap-2"><span className="break-all font-mono text-xs">{selected}{dirty ? " · unsaved" : ""}</span>
@@ -189,10 +202,11 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
             </div>
           </>}
           <ErrorNote error={save.error} />
-          {notice && <p role="status" aria-label="File save status" className="text-xs text-muted">{notice}</p>}
+          {notice && <p role="status" aria-label="File save status" className="break-all text-xs text-muted">{notice}</p>}
         </>}
       </Card></section>
     </div>
+    </FileUploads>
     <Dialog open={dialog !== null} onClose={() => setDialog(null)} dismissible={false} title={dialog === "identity" ? "Commit identity" : dialog === "create" ? "New file" : dialog === "mkdir" ? "New folder" : `Manage ${target?.name ?? "file"}`} footer={<>
       <Button variant="ghost" onClick={() => setDialog(null)}>Cancel</Button>
       {dialog === "identity" ? <Button variant="primary" disabled={personal.isPending || !commitName.trim() || !commitEmail.trim()} onClick={() => personal.mutate()}>Save identity</Button>

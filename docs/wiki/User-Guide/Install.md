@@ -86,9 +86,10 @@ release files; do not bypass the check.
 
 **Only `SHA256SUMS` is signed.** Its verified hashes cover the listed files,
 not a Git clone or release tag. The source-install Git route below does not
-perform this verification. **The in-app updater does not verify signatures yet**;
-that is follow-up work. A valid signature does not establish freshness or prove
-the release has no bugs.
+perform this verification. Later builds add
+[updater signature checks](/User-Guide/Updating#release-signatures), but
+**the updater shipped in rc.1 does not verify signatures**. A valid signature
+does not establish freshness or prove the release has no bugs.
 
 ## Main Rynhult on Linux
 

@@ -2708,6 +2708,16 @@
     "other_member_status": 404
   },
   {
+    "method": "POST",
+    "path": "/api/files/{kind}/{key}/upload",
+    "source": "src/acc/server/api/files.py",
+    "handler": "upload",
+    "principal": "owner/member / installation API token",
+    "ownership": "Resolve kind/key to caller-owned project/session/workspace (owner override); Guide is shared read-only; path confined to root.",
+    "audit": "files.upload",
+    "other_member_status": 404
+  },
+  {
     "method": "GET",
     "path": "/api/issue-servers",
     "source": "src/acc/server/api/issue_sources.py",

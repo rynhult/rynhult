@@ -8,6 +8,7 @@ test.use({ storageState: AUTH_FILE });
 const state = {
   version: '0.15.0-rc.1', build: 'a'.repeat(64), latest: '0.15.0', notes: '<b>Release notes stay plain text</b>',
   available: true, checked_at: Date.now()/1000, repository: 'example/acc', automatic: false, time: '03:00',
+  signature: { status: 'verified', primary: '0C2CE12657BD833FB5B563B2B555F6E127990DB5' },
   timezone: 'UTC', helper: true, git_checkout: false, progress: {}, pending: false,
   session_notice: 'Agents keep running in tmux. Terminals disconnect briefly while the dashboard restarts.',
 };
@@ -227,4 +228,34 @@ test('machine helper failure detail is visible at desktop and phone widths', asy
     await expect(page.getByRole('status').filter({ hasText: 'node bundle version or build mismatch' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   }
+});
+
+for (const width of [1440, 390]) test(`release signature and explicit unsigned exception at ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  let missing = false;
+  let submitted: unknown;
+  const primary = '0C2CE12657BD833FB5B563B2B555F6E127990DB5';
+  await page.route('**/api/updates', route => route.fulfill({ json: { ...state,
+    signature: missing ? { status: 'missing', detail: 'Release signature is missing.' }
+      : { status: 'verified', primary, name: 'Rynhult Releases' } } }));
+  await page.route('**/api/updates/apply', route => {
+    submitted = route.request().postDataJSON();
+    return route.fulfill({ json: { queued: true } });
+  });
+  await page.goto('/settings#updates');
+  await expect(page.getByText('Signature verified (Rynhult Releases, key …0DB5)', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Update without signature…', exact: true })).toHaveCount(0);
+  missing = true;
+  await page.reload();
+  await expect(page.getByText('Release signature is missing.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back up and update', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Update without signature…', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('cannot authenticate');
+  expect(submitted).toBeUndefined();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(submitted).toBeUndefined();
+  await page.getByRole('button', { name: 'Update without signature…', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Update without signature', exact: true }).click();
+  await expect.poll(() => submitted).toEqual({ allow_unsigned: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });

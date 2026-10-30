@@ -125,7 +125,7 @@ def test_red_flags_require_acceptance(world):
 
 
 @pytest.mark.parametrize('failure', ['', 'checksum', 'unsafe', 'foreign', 'ambiguous', 'version', 'build'])
-def test_verified_release_download(tmp_path, failure):
+def test_verified_release_download(tmp_path, failure, release_signer):
     import hashlib
     import io
     import tarfile
@@ -144,7 +144,7 @@ def test_verified_release_download(tmp_path, failure):
     body = raw.getvalue()
     checksum = hashlib.sha256(body).hexdigest() if failure != 'checksum' else '0' * 64
     prefix = 'https://api.github.com/repos/example/acc/releases/assets/'
-    assets = {'acc-1.0.0.tar.gz': prefix + '1', 'SHA256SUMS': prefix + '2'}
+    assets = {'acc-1.0.0.tar.gz': prefix + '1', 'SHA256SUMS': prefix + '2', 'SHA256SUMS.asc': prefix + '3'}
     if failure == 'foreign':
         assets['acc-1.0.0.tar.gz'] = 'https://example.com/archive'
     release = {'latest': '1.0.0' if failure != 'version' else '2.0.0', 'assets': assets}
@@ -152,9 +152,10 @@ def test_verified_release_download(tmp_path, failure):
         release['latest_build'] = '0' * 64
     def get(url, token, **kwargs):
         assert token == tmp_path / 'token'
-        if url.endswith('/2'):
+        if url.endswith(('/2', '/3')):
             line = f'{checksum}  acc-1.0.0.tar.gz\n'
-            return (line * (2 if failure == 'ambiguous' else 1)).encode()
+            sums = (line * (2 if failure == 'ambiguous' else 1)).encode()
+            return sums if url.endswith('/2') else release_signer.sign(sums)
         assert url == prefix + '1'
         return body
     if failure:
@@ -368,7 +369,7 @@ def test_each_builtin_kind_restores_individually(world, kind, item_id):
         assert all(i.meta.get('origin') != 'restored' for i in catalog.pool(other).values())
 
 
-async def test_latest_api_uses_updates_repository_token_and_verified_snapshot(api, env, tmp_path, monkeypatch):
+async def test_latest_api_uses_updates_repository_token_and_verified_snapshot(api, env, tmp_path, monkeypatch, release_signer):
     import hashlib
 
     from acc import bundle, updates
@@ -383,9 +384,11 @@ async def test_latest_api_uses_updates_repository_token_and_verified_snapshot(ap
         assert token == env['settings'].data_dir / 'secrets/update_token'
         if url == 'https://api.github.com/repos/example/acc/releases/latest':
             return json.dumps({'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False, 'assets': [
-                {'name': 'acc-1.2.3.tar.gz', 'url': prefix + '1'}, {'name': 'SHA256SUMS', 'url': prefix + '2'}]}).encode()
-        if url == prefix + '2':
-            return f'{checksum}  acc-1.2.3.tar.gz\n'.encode()
+                {'name': 'acc-1.2.3.tar.gz', 'url': prefix + '1'}, {'name': 'SHA256SUMS', 'url': prefix + '2'},
+                {'name': 'SHA256SUMS.asc', 'url': prefix + '3'}]}).encode()
+        if url in (prefix + '2', prefix + '3'):
+            sums = f'{checksum}  acc-1.2.3.tar.gz\n'.encode()
+            return sums if url.endswith('/2') else release_signer.sign(sums)
         assert url == prefix + '1'
         return archive
     real_check, real_download = updates.check, updates.download_release

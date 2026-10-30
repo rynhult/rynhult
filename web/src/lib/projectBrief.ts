@@ -26,6 +26,6 @@ export type Fields = Record<string, string>;
 export interface Reference { reference_id: string; caption: string; guidance: string; url: string | null; media_type: string | null; size: number; document?: { status: string; error?: string; truncated?: boolean } }
 export interface Version { version: number; base_version: number; submitted: Fields; references: Reference[]; state: string;
   conflicts: string[]; actor: string; markdown: string; source?: string; citations?: Record<string, { reference: string; location: string }[]> }
-export interface BriefView { current_version: number; next_version: number; current: Version | null; history: Version[]; export_path: string; documents?: Reference[] }
+export interface BriefView { pending_proposal?: Version | null; latest_proposal?: Version | null; review_proposal?: Version | null; current_version: number; next_version: number; current: Version | null; history: Version[]; export_path: string; documents?: Reference[] }
 export interface BriefDraft { draft: Fields; references: Reference[]; base: number; exportPath?: string }
 export interface SavedBriefEvent { projectId: number; draft: BriefDraft; saved: Version }

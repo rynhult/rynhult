@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import select
 
 from ...update_helper import write_json
@@ -24,6 +24,11 @@ class ConfigIn(BaseModel):
 
 class FollowIn(BaseModel):
     enabled: bool
+
+
+class ApplyIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    allow_unsigned: StrictBool = False
 
 
 def router(ctx: Context):
@@ -61,9 +66,9 @@ def router(ctx: Context):
         return await service.check(who.username)
 
     @api.post("/apply", status_code=202)
-    async def apply(who=Depends(ctx.owner)):
+    async def apply(body: ApplyIn | None = None, who=Depends(ctx.owner)):
         try:
-            return service.request(who.username)
+            return service.request(who.username, allow_unsigned=bool(body and body.allow_unsigned))
         except ValueError as error:
             raise HTTPException(409, str(error)) from None
 

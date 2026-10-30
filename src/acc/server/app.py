@@ -256,7 +256,7 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     app.state.publisher = publisher
     app.state.db = db
     app.state.ctx = ctx
-    app.add_middleware(BodyLimit, max_bytes=MAX_BODY, larger={GIT_PREFIX: settings.backup_max_push, EXCHANGE_BODIES: 12 << 20, '/api/project-brief-references/': 15 << 20, re.compile(r'^/api/projects/[0-9]+/brief/documents$'): 56 << 20})
+    app.add_middleware(BodyLimit, max_bytes=MAX_BODY, larger={re.compile(r'^/api/files/(project|session|workspace)/[^/]+/upload$'): 24 << 20, GIT_PREFIX: settings.backup_max_push, EXCHANGE_BODIES: 12 << 20, '/api/project-brief-references/': 15 << 20, re.compile(r'^/api/projects/[0-9]+/brief/documents$'): 56 << 20})
 
     @app.middleware("http")
     async def write_intent(request: Request, call_next):

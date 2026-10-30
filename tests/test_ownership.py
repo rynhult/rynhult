@@ -169,6 +169,7 @@ MATRIX = {
     ("POST", "/api/projects/{project_id}/preview"): 404,
     ("GET", "/api/files/{kind}/{key}"): 404,
     ("POST", "/api/files/{kind}/{key}"): 404,
+    ("POST", "/api/files/{kind}/{key}/upload"): 404,
     ("GET", "/api/files/{kind}/{key}/read"): 404,
     ("GET", "/api/files/{kind}/{key}/download"): 404,
     ("POST", "/api/updates/machines/{name}/follow"): 403,

@@ -16,7 +16,8 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   expect(r.ok()).toBe(true);
   owned.push(sid);
   await page.goto(`/sessions/${sid}`);
-  await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);  // nothing set: no card
+  await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);  // always off the terminal
+  await page.goto(`/sessions/${sid}?tab=spec#automation`);
   await page.getByRole('button', { name: 'Goal and auto-resume', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Goal and auto-resume' });
   await settings.getByLabel('Resume when the limit resets').check();
@@ -26,7 +27,7 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   await expect(settings).toHaveCount(0);
   await expect(page.getByText(/\d \/ 5 continuations/)).toBeVisible();
   await page.reload();
-  await page.getByRole('button', { name: 'Goal and auto-resume', exact: true }).click();
+  await page.getByRole('region', { name: 'Session automation' }).getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(settings.getByLabel('Resume when the limit resets')).toBeChecked();
   await expect(settings.getByLabel('Goal text')).toHaveValue('Finish the example.lan demo');
   // A slow save must not erase what the person typed meanwhile (break-it B5); a double-click saves once.
@@ -54,8 +55,11 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   await settings.getByLabel('Goal text').fill('Continue the demo');
   await settings.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Goal status: running')).toBeVisible();
+  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
   await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').press('x');
+  await page.goto(`/sessions/${sid}?tab=spec#automation`);
   await expect(page.getByText('Goal status: person typed')).toBeVisible();
 });
 
@@ -84,6 +88,7 @@ test('launch controls default off and persist a bounded goal', async ({ page }, 
   expect(response.ok()).toBe(true);
   owned.push((await response.json()).id);
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]+$/);
+  await page.getByRole('tab', { name: 'Setup', exact: true }).click();
   await expect(page.getByText('Resumes when the plan limit resets')).toBeVisible();
   await expect(page.getByText(/\d \/ 3 continuations/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

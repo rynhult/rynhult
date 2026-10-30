@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
-import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle } from './helpers';
+import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle, waitForSessionState } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 let sessionId: string | undefined;
@@ -25,6 +25,7 @@ test.beforeEach(async ({ page }) => {
   expect(made.ok(), await made.text()).toBe(true);
   sessionId = (await made.json()).id;
   await page.goto(`/sessions/${sessionId}`);
+  await waitForSessionState(page, sessionId!, 'idle', 'claude_hook');
   await writable(page);
 });
 
@@ -133,6 +134,22 @@ test('composition commit followed by a key before timers flush never replays the
     textarea.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'é' }));
     textarea.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'é' }));
     textarea.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'd', code: 'KeyD', keyCode: 68, which: 68 }));
+  });
+  await page.keyboard.type('one');
+  await submittedOnce(page, 'review édone');
+});
+
+
+test('a Process-key fallback queued before composition never replays its commit', async ({ page }) => {
+  await page.keyboard.type('review ');
+  await page.locator('.xterm-helper-textarea').evaluate((textarea: HTMLTextAreaElement) => {
+    // Keep fallback work pending until this whole transaction completes.
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, which: 229 }));
+    textarea.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+    textarea.value += 'é';
+    textarea.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'é' }));
+    textarea.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'é' }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'd', code: 'KeyD', keyCode: 68, which: 68 }));
   });
   await page.keyboard.type('one');
   await submittedOnce(page, 'review édone');

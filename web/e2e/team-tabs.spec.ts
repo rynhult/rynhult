@@ -41,6 +41,79 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => { if (id) await page.request.post(`/api/sessions/${id}/team/stop`, { headers: await csrfHeaders(page) }); });
 
+for (const kind of ['recommended', 'no-recommendation', 'change', 'identical-change'] as const) {
+  test(`decision options answer in one tap: ${kind}`, async ({ page }, ti) => {
+    const phone = ti.project.name.endsWith('phone');
+    await page.setViewportSize({ width: phone ? 390 : 1440, height: phone ? 844 : 900 });
+    const root = `/api/teams/${id}/worklist`;
+    let title: string;
+    let answer: string;
+    if (kind === 'change' || kind === 'identical-change') {
+      const current = (await (await page.request.get(`/api/teams/${id}/plan`)).json()).constraints
+        .find((row: { text: string }) => row.text === 'Keep all notes private.');
+      const proposed = await team('plan_update', { reason: 'Review the sharing boundary',
+        propose_constraints: [{ id: current.id, text: kind === 'change' ? 'Share notes only with invited people.' : current.text }] });
+      if (kind === 'identical-change') expect(proposed.warnings.join(' ')).toContain('No difference found between current and proposed');
+      title = `Proposed change to ${current.id}`;
+      answer = 'accept';
+    } else {
+      title = kind === 'recommended' ? 'Where should the archive live?' : 'Who should see the restore preview?';
+      await team('worklist_add', { kind: 'decision', title,
+        options: [{ id: 'local', label: 'Keep it private', consequence: 'Only you can open it.' },
+          { id: 'team', label: 'Share with the team', consequence: 'Invited people can open it.' }],
+        ...(kind === 'recommended' ? { recommendation: { option: 'local', reason: 'Start with the smallest audience.' } }
+          : { default: { option: 'local' } }) });
+      answer = kind === 'recommended' ? 'local' : 'team';
+    }
+    await page.goto(`/sessions/${id}?tab=team#worklist`);
+    const card = page.getByRole('listitem', { name: title, exact: true });
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+    if (kind === 'identical-change') {
+      await expect(card).toContainText('No difference found between current and proposed');
+      await expect(card.getByRole('button', { name: 'Accept change', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('region', { name: 'Team tasks and notes' })).toContainText(title);
+    } else {
+      const label = kind === 'change' ? 'Accept change' : answer === 'local' ? 'Keep it private' : 'Share with the team';
+      const button = card.getByRole('button', { name: kind === 'recommended' ? /Keep it private.*Recommended/ : label, exact: kind !== 'recommended' });
+      await expect(button).toBeEnabled();
+      await expect(card.getByRole('button', { name: 'Discuss', exact: true })).toBeVisible();
+      if (kind !== 'recommended') await expect(card.getByText('Recommended', { exact: true })).toHaveCount(0);
+      if (kind === 'change') await expect(card).not.toContainText('Acceptance:');
+      await card.getByRole('button', { name: 'Change', exact: true }).click();
+      await expect(card.getByRole('textbox', { name: 'Different answer', exact: true })).toBeVisible();
+      await expect(card.getByRole('combobox')).toHaveCount(0);
+      await card.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expectAxeClean(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (kind === 'recommended' && phone) {
+        await expect(card.getByRole('button', { name: 'Edit blocking links', exact: true })).not.toBeVisible();
+        const more = card.getByRole('button', { name: `More actions for "${title}"`, exact: true });
+        await more.focus();
+        await page.keyboard.press('Enter');
+        await expect(card.getByRole('menuitem', { name: 'Edit blocking links', exact: true })).toBeFocused();
+        await expectAxeClean(page);
+        await page.keyboard.press('Escape');
+        await expect(more).toBeFocused();
+      }
+      await card.screenshot({ path: kind === 'recommended'
+        ? wikiShotPath(ti, `worklist-decision${phone ? '-phone' : ''}.png`)
+        : ti.outputPath(`card-${kind}-${phone ? '390' : '1440'}.png`) });
+      const sent = page.waitForRequest(r => r.url().includes(`${root}/items/`) && r.method() === 'PATCH');
+      await button.click();
+      const request = await sent;
+      expect(request.postDataJSON()).toEqual({ answer, revision: 1 });
+      await expect(card).toContainText('Answer from');
+      const stored = (await (await page.request.get(root)).json()).items.find((row: { title: string }) => row.title === title);
+      expect(stored.answer).toBe(answer);
+      return;
+    }
+    await expectAxeClean(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await card.screenshot({ path: wikiShotPath(ti, `worklist-no-difference${phone ? '-phone' : ''}.png`) });
+  });
+}
+
 test('Team tabs support deep links, keyboard navigation and phone layout', async ({ page }, info) => {
   await page.goto(`/sessions/${id}?tab=team#overview`);
   const tabs = page.getByRole('tablist', { name: 'Team sections' });
@@ -78,7 +151,7 @@ test('Team tabs support deep links, keyboard navigation and phone layout', async
   await page.screenshot({ path: wikiShotPath(info, `orchestrator-team-worklist${info.project.name.endsWith('phone') ? '-phone' : ''}.png`), fullPage: true });
 });
 
-test('decision Approve, Change and Discuss preserve card revision and open discussion', async ({ page }, info) => {
+test('decision options, Change and Discuss preserve card revision and open discussion', async ({ page }, info) => {
   const headers = await csrfHeaders(page);
   const url = `/api/teams/${id}/worklist/items`;
   const add = async (title: string) => {
@@ -90,7 +163,7 @@ test('decision Approve, Change and Discuss preserve card revision and open discu
   const first = await add('Choose a store');
   await page.goto(`/sessions/${id}?tab=team#worklist`);
   const card = page.getByRole('listitem', { name: 'Choose a store', exact: true });
-  await card.getByRole('button', { name: 'Approve', exact: true }).click();
+  await card.getByRole('button', { name: 'Local storage Recommended', exact: true }).click();
   await expect(card).toContainText('Answer from');
   const second = await add('Choose an archive');
   await page.reload();
@@ -189,7 +262,7 @@ test('answered decisions have their own section below open cards and can be reop
   await team('worklist_add', { kind: 'question', title: 'How many notes need recovery?' });
   await page.goto(`/sessions/${id}?tab=team#worklist`);
   const row = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Keep a restore preview?', exact: true }) });
-  await row.getByRole('button', { name: 'Approve', exact: true }).click();
+  await row.getByRole('button', { name: 'Yes Recommended', exact: true }).click();
   const section = page.getByRole('region', { name: 'Answered', exact: true });
   await expect(section).toContainText('Keep a restore preview?');
   await expect(section).toContainText(/Answer from .+ · .+\d{2}:\d{2}/);

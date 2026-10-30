@@ -15,8 +15,10 @@ from functools import cached_property
 from sqlalchemy import select
 
 from .. import __version__, bundle
+from ..release_signatures import SignatureError
 from ..update_helper import read_json, write_json
-from ..updates import BUILD, GIT_MESSAGE, REPO, SOURCE_ERRORS, ReleaseSourceError, available, check, repository
+from ..updates import BUILD, GIT_MESSAGE, REPO, SOURCE_ERRORS, ReleaseSourceError, available, repository
+from ..updates import signed_check as check
 from .ha import fence
 from .models import AttentionItem, AuditLog, Node, Observation, Setting
 
@@ -167,8 +169,9 @@ class Updates:
             except (ValueError, OSError) as error:
                 # Never propagate network exception text: it may contain a credential or a private URL.
                 generic = "Release check failed. Check the repository and token file, then try again."
-                message = SOURCE_ERRORS.get(error.kind, generic) if isinstance(error, ReleaseSourceError) else generic
-                value.update(error=message, available=False)
+                message = (str(error) if isinstance(error, SignatureError) else
+                           SOURCE_ERRORS.get(error.kind, generic) if isinstance(error, ReleaseSourceError) else generic)
+                value.update(error=message, available=False, signature=None)
             value["checked_at"] = time.time()
             self.store(value)
             self.audit(
@@ -195,7 +198,7 @@ class Updates:
                     s.commit()
             return self.state()
 
-    def request(self, actor):
+    def request(self, actor, *, allow_unsigned=False):
         state = self.state()
         if state["blocked"]:
             raise ValueError(state["blocked"])
@@ -205,13 +208,21 @@ class Updates:
             raise ValueError("Install the acc-update helper with deploy/install.sh")
         if state["pending"] or state["progress"].get("running"):
             raise ValueError("An update is already in progress")
+        missing = (state.get('signature') or {}).get('status') == 'missing'
+        if missing and not allow_unsigned:
+            raise ValueError('Release signature is missing. Confirm the unsigned exception explicitly to continue.')
+        if allow_unsigned and not missing:
+            raise ValueError('The unsigned exception is only available for a missing release signature.')
         request_id = uuid.uuid4().hex
         fence(self.db)
+        # Record explicit trust exceptions before the helper can observe the request.
+        # A failed audit must never leave an unsigned update ready to run.
+        self.audit("update.request", actor, state["latest"], {"from_version": __version__, "version": state["latest"],
+                                                             'allow_unsigned': allow_unsigned, 'id': request_id})
         write_json(
             self.settings.updates_dir / "requests" / f"{request_id}.json",
-            {"action": "update", "version": state["latest"]},
+            {"action": "update", "version": state["latest"], **({'allow_unsigned': True} if allow_unsigned else {})},
         )
-        self.audit("update.request", actor, state["latest"], {"from_version": __version__, "version": state["latest"]})
         return {"queued": True, "id": request_id}
 
     def bundle_descriptor(self):
@@ -281,7 +292,7 @@ class Updates:
                 "update.result",
                 "system",
                 helper.get("version", ""),
-                {k: helper[k] for k in ("from_version", "version", "ok", "rolled_back") if k in helper},
+                {k: helper[k] for k in ("from_version", "version", "ok", "rolled_back", "signature") if k in helper},
             )
             if helper.get('ok') is False:
                 self.ctx.supervisor.telemetry.capture(RuntimeError('Rynhult update failed'), 'update_failed', 'update')

@@ -69,7 +69,7 @@ No remote repository or release availability is inferred from a configured URL.
 6. Delete temporary snapshots and denylist copies when finished; retain the authoritative
    denylist privately. Re-run from the final committed HEAD for every release snapshot.
 
-The exporter excludes `docs/PLAN.md`, `docs/OPERATIONS.md`,
+The exporter excludes `docs/PLAN.md`, all `docs/archive/` (including historical plans), `docs/OPERATIONS.md`,
 `docs/SESSION_LOG.md`, `docs/handoffs/`, `docs/qualification/`,
 `docs/research/node-test-plan.md`, `docs/RELEASE-RC1-CHECKLIST.md` (owner-only release steps),
 `docs/RENAME-STAGE-2.md` (private rollout inventory), all `host/`, and
@@ -163,8 +163,20 @@ detect transfer corruption, not publisher identity: replacing both a download an
 its checksum defeats that protection. The owner signs **only `SHA256SUMS`**, offline.
 Its verified hashes authenticate listed files; archives, `BUILD`, release tags
 and attestations are not separately signed by this process.
-**The in-app updater does not verify signatures yet**; that remains follow-up
-work. Do not describe automatic updates as signature-verified.
+The updater in later source builds verifies the detached signature using only
+its installed public key before using any manifest hash. The privileged helper
+repeats the check. GnuPG is required. Missing signatures block normal/automatic
+updates; only an explicit, audited, one-update owner exception permits a missing
+signature, never an invalid one. Catalog release restore has no exception.
+The updater **as shipped in rc.1** did not perform this verification; installing
+a later verifier does not retroactively authenticate an earlier update.
+Node synchronization uses the enrolled main's separately authenticated rebuilt
+bundle, not independent verification of the public release archive.
+
+For key rotation, ship the next primary inside a release signed by an already
+installed key before switching signers. Revocations must likewise reach the
+installed anchor through a trusted update or reviewed manual reinstall; no
+network key refresh occurs. See the Guide's [update controls](wiki/User-Guide/Updating.md#release-signatures).
 
 The owner-generated public key is
 [`keys/rynhult-release-key.asc`](../keys/rynhult-release-key.asc), copied by both

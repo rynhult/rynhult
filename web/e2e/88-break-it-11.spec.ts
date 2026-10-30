@@ -28,14 +28,20 @@ test('a failed Stop goal tells the person it did not stop', async ({ page }, tes
   expect(response.ok(), await response.text()).toBeTruthy();
   const session = (await response.json()).id;
   try {
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/sessions/${session}`);
+    await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Setup', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Session automation' })).toBeVisible();
     await page.route(`**/api/sessions/${session}/automation`, route => route.fulfill({
       status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Controller unavailable; try again' }),
     }));
-    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Stop goal', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Session automation' }).getByRole('alert')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Session automation' })).toContainText('Controller unavailable; try again');
+    await expect(page.getByRole('button', { name: 'Stop goal', exact: true })).toBeEnabled();
+    await expect(page.getByText('Goal status: stopped', { exact: true })).toHaveCount(0);
     expect((await (await page.request.get(`/api/sessions/${session}`)).json()).automation.goal.text).toBe('Review the demo');
     await page.getByRole('region', { name: 'Session automation' }).screenshot({ path: testInfo.outputPath('stop-goal-error-phone.png') });
     await page.unroute(`**/api/sessions/${session}/automation`);

@@ -37,7 +37,10 @@ for (const managed of [true, false]) test(`${managed ? 'managed checkout' : 'reg
   await expectAxeClean(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   await page.screenshot({ path: testInfo.outputPath('confirmation.png') });
+  const deleted = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/delete`);
   await confirm.click();
+  expect((await deleted).ok()).toBeTruthy();
   await expect(dialog).toBeHidden();
   expect(existsSync(project.workspace_path)).toBe(!managed);
   await expect(page).toHaveURL(/\/projects$/);

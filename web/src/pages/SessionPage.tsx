@@ -1,4 +1,4 @@
-import { SessionDeliveries } from '../components/SessionDeliveries';
+import { DeliveryHistory, SessionDeliveries } from '../components/SessionDeliveries';
 import { Feature, useFeatures } from "../components/Feature";
 import { PreviewBadge } from "../components/Containers";
 import { CopyBlock } from "../components/InstallSteps";
@@ -7,7 +7,7 @@ import { useSingleMutation as useMutation } from "../lib/mutations";
 import { SessionAutomation } from "../components/SessionAutomation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, BookMarked, ChevronDown, Code2, Repeat, Download, ExternalLink, FolderUp, GitBranch, GitPullRequest, Pencil, TerminalSquare } from "lucide-react";
+import { ArrowLeft, BookMarked, ChevronDown, Code2,  Download, ExternalLink, FolderUp, GitBranch, GitPullRequest, Pencil, TerminalSquare } from "lucide-react";
 import { api, isNotFound, post } from "../lib/api";
 import { stamp, workspaceName, workspaceTopic } from "../lib/format";
 import type { AccEvent, AttentionItem, GithubSnapshot, Project, SessionDetail } from "../lib/types";
@@ -399,7 +399,7 @@ export function SessionPage() {
   const { id = "" } = useParams();
   const [search, setSearch] = useSearchParams();
   const tabParam = search.get("tab");
-  const requested: Tab = tabParam === "team" ? "Team" : tabParam === "activity" ? "Activity" : tabParam === "spec" ? "Setup" : tabParam === "handoffs" ? "Handoffs"
+  const requested: Tab = tabParam === "team" ? "Team" : tabParam === "activity" ? "Activity" : ["spec", "automation", "goal"].includes(tabParam ?? "") ? "Setup" : tabParam === "handoffs" ? "Handoffs"
     : tabParam === "files" ? "Files" : tabParam === "preview" ? "Preview" : tabParam === "changes" ? "Changes" : tabParam === "pull" ? "Pull request" : tabParam === "artifacts" ? "Artifacts" : "Terminal";
   const setTab = (t: Tab) =>
     setSearch(t === "Terminal" ? {} : { tab: t === "Activity" ? "activity" : t === "Handoffs" ? "handoffs" : t === "Changes" ? "changes" : t === "Pull request" ? "pull"
@@ -439,29 +439,28 @@ export function SessionPage() {
       className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-panel-2 px-3 text-[13px] font-medium text-fg transition-colors hover:bg-panel-3 underline underline-offset-2">
       <Download size={14} aria-hidden="true" /> Export</a>
   );
-  const automationButton = automation && (
-    <Button hidden={!feature("automation")} onClick={() => setEditingAutomation(true)}><Repeat size={14} aria-hidden="true" /> Goal and auto-resume</Button>
-  );
   return (
     <div className="flex h-full flex-col gap-3 px-4 pb-4 pt-3 md:gap-4 md:px-8 md:pb-6 md:pt-5">
-      <div className="max-md:hidden">
+      <div className="session-heading grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:grid-cols-[minmax(0,1fr)] md:gap-x-0">
+      <div className="col-span-full row-start-1 max-md:hidden">
         <PageHeader
           title={<span className="flex flex-wrap items-center gap-2.5">{session.name}<RenameButton session={session} /><ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} />{waiting && tab === "Terminal" ? <HeaderRisk session={session} />
             : <NowDoing session={session} className="max-w-[28rem] truncate text-[13px] font-normal text-muted" />}</span>}
           meta={<>{projectLink}{meta()}</>}
-          actions={<>{exportLink}{automationButton}{session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} /></>} />
+          actions={<>{exportLink}{session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} /></>} />
       </div>
       {/* Phones: name, state and project in one line; everything else under Details, so the terminal starts high
           on the screen (UX review SE-6). Interrupt and Stop sit behind "⋯" on touch (OV-4). */}
-      <header className="flex min-w-0 items-center gap-2 md:hidden">
-        <div className="min-w-0 flex-1">
-          <h1 className="flex min-w-0 items-center gap-2 text-[15px] font-semibold leading-tight">
+      <header className="contents md:hidden">
+        <div className="contents">
+          <h1 className="col-start-1 row-start-1 flex min-w-0 items-center gap-2 text-[15px] font-semibold leading-tight">
             <span className="truncate">{session.name}</span><StateBadge session={session} />
           </h1>
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted">{projectLink}
+          <div className="phone-session-meta col-start-1 row-start-2 flex min-w-0 items-center gap-2 text-xs text-muted">{projectLink}
             <NowDoing session={session} className="truncate" /></div>
-          {session.observed_state === "waiting_input" && <NeedsYouLine session={session} />}
+          {session.observed_state === "waiting_input" && <div className="col-start-1 row-start-3"><NeedsYouLine session={session} /></div>}
         </div>
+        <div className="col-start-2 row-start-1 row-span-3 flex items-center gap-2">
         <Popover label="Session details" wide trigger={<>Details <ChevronDown size={13} aria-hidden="true" /></>}>
           {(close) => (
             <div className="space-y-3 p-1.5">
@@ -470,22 +469,24 @@ export function SessionPage() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <RenameButton session={session} />{exportLink}
-                {feature("automation") && automation && <Button onClick={() => { close(); setEditingAutomation(true); }}><Repeat size={14} aria-hidden="true" /> Goal and auto-resume</Button>}
                 {session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}
               </div>
             </div>
           )}
         </Popover>
         <SessionActions session={session} compact />
+        </div>
       </header>
-      {feature("automation") && automation && <Feature name="automation"><SessionAutomation key={session.id} session={session} editing={editingAutomation} onEditing={setEditingAutomation}
-        disabledReason={session.launch_spec.inputs.endpoint ? "Goal and auto-resume need the provider plan, not a model endpoint." : undefined} /></Feature>}
-      {session.machine_offline && <p className="text-sm text-muted">Machine offline. Sessions check in when the machine returns.</p>}
-      {!session.machine_offline && session.last_error && <ErrorNote error={session.last_error} />}
-      {waiting && tab !== "Terminal" && <NeedsYou session={session} onTerminal={() => setTab("Terminal")} />}
-      <SessionDeliveries key={session.id} id={session.id} />
-      <SessionTabs session={session} tab={tab} setTab={setTab} />
+        <div className="pointer-events-none col-start-1 row-start-2 min-w-0 md:pointer-events-auto md:mt-4 md:h-8 md:pointer-coarse:h-11">
+          <SessionDeliveries key={session.id} id={session.id}
+            onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} />
+        </div>
+        <div className="col-span-full row-start-4 mt-3 md:mt-0"><SessionTabs session={session} tab={tab} setTab={setTab} /></div>
+      </div>
       <TabPanel id="session-tabs" value={tab} className="min-h-[420px] flex-1">
+        {session.machine_offline && <p className="text-sm text-muted">Machine offline. Sessions check in when the machine returns.</p>}
+        {!session.machine_offline && session.last_error && <ErrorNote error={session.last_error} />}
+        {waiting && tab !== "Terminal" && <NeedsYou session={session} onTerminal={() => setTab("Terminal")} />}
         <Suspense fallback={<div role="status" className="h-full min-h-[420px]">
           <Skeleton className="h-full min-h-[420px]" /><span className="sr-only">Loading tab…</span>
         </div>}>
@@ -516,13 +517,19 @@ export function SessionPage() {
           <div className="min-w-0">{session.management !== "external" && (isLive(session) || session.observed_state === "exited")
             ? <Terminal key={session.id} sessionId={session.id} live={isLive(session)} /> : <Activity id={session.id} />}</div>
         </div>}
-        {tab === "Activity" && <Activity id={session.id} />}
+        {tab === "Activity" && <div className="space-y-4"><DeliveryHistory id={session.id} focus={search.get("delivery") === "details"} /><Activity id={session.id} /></div>}
         {session.machine_offline && ["Files", "Changes", "Artifacts", "Preview", "Handoffs", "Team"].includes(tab) && <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card>}
         {tab === "Files" && !session.machine_offline && <Files kind="session" scopeKey={session.id} />}
         {tab === "Changes" && !session.machine_offline && <Changes session={session} />}
         {tab === "Pull request" && hasPullTab(session) && <PullRequestPanel session={session} />}
         {tab === "Artifacts" && !session.machine_offline && <Artifacts session={session} />}
-        {tab === "Setup" && <Setup key={session.id} session={session} />}
+        {tab === "Setup" && <div className="space-y-4">
+          {feature("automation") && automation && <Feature name="automation">
+            <SessionAutomation key={session.id} session={session} editing={editingAutomation} onEditing={setEditingAutomation}
+              disabledReason={session.launch_spec.inputs.endpoint ? "Goal and auto-resume need the provider plan, not a model endpoint." : undefined} />
+          </Feature>}
+          <Setup key={session.id} session={session} />
+        </div>}
         {tab === "Handoffs" && session.project_id !== null && !session.machine_offline && (session.standalone
           ? <KnowledgePanel projectId={session.project_id} sessionId={session.id} title="Findings" />
           : <SessionHandoffs session={session} />)}

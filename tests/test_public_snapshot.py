@@ -16,7 +16,7 @@ def source(tmp_path):
     repo = tmp_path / 'source'
     repo.mkdir()
     git(repo, 'init')
-    for name in ['README.md', 'docs/PLAN.md', 'docs/OPERATIONS.md',
+    for name in ['README.md', 'docs/PLAN.md', 'docs/archive/PLAN-to-rc1.md', 'docs/OPERATIONS.md',
                  'docs/SESSION_LOG.md', 'docs/handoffs/note.md', 'docs/qualification/result.md',
                  'docs/research/node-test-plan.md', 'host/private', 'docs/reviews/report.md',
                  'docs/RELEASE-RC1-CHECKLIST.md', 'docs/RENAME-STAGE-2.md',
@@ -115,13 +115,15 @@ def test_both_archive_paths_exclude_future_private_content(source, checkout):
     from acc.bundle import build
 
     repo, _, output = source
-    private = ['host/future/deep/inventory', 'docs/handoffs/future/note.md',
+    private = ['host/future/deep/inventory', 'docs/archive/future/plan.md',
+               'DoCs/ArChIvE/nested/history.md', 'docs/handoffs/future/note.md',
                'docs/reviews/future/report.md', 'docs/qualification/future/result.md',
                'docs/security/future/findings.md', 'DoCs/SeCuRiTy/nested/review.md',
                'docs/RENAME-STAGE-2.md', '.acc/artifacts/future/dry-run.json',
                'docs/runbooks/future/owner-setup.md', 'DoCs/RuNbOoKs/future/setup.md',
                'docs/drills/future/recovery.md',
                'docs/decisions/0050-owner-answers-2026-10-24-afternoon.md',
+               'docs/design/updater-signatures.md',
                'SpIkE/future/probe.py',
                'docs/drafts/future/owner-brief.md', 'docs/decisions/drafts/future/placement.md']
     public = ['docs/MULTIUSER.md', 'docs/wiki/Internal.md', 'docs/wiki/Internal/Architecture.md',
@@ -157,7 +159,7 @@ def test_both_archive_paths_exclude_future_private_content(source, checkout):
         assert 'README.md' in names
         assert 'deploy/github/ruleset-protect-main.json' in names
         assert not any(name == prefix or name.startswith(prefix + '/') for name in names for prefix in (
-            'host', 'docs/handoffs', 'docs/reviews', 'docs/qualification', 'docs/PLAN.md',
+            'host', 'docs/handoffs', 'docs/reviews', 'docs/qualification', 'docs/PLAN.md', 'docs/archive',
             'docs/OPERATIONS.md', 'docs/SESSION_LOG.md', 'docs/research/node-test-plan.md',
             'docs/RELEASE-RC1-CHECKLIST.md'))
 

@@ -471,22 +471,51 @@ you. It also keeps **Now**, the short summary you can correct with **Edit**.
 
 - **What the lead needs from you:** *Needs you* gives numbered steps; do them
   and choose **Mark done**, or describe the result and choose **Answer**.
-  A *Question* takes your written answer. A *Decision* gives options, consequences
-  and a recommendation. **Approve** accepts it; **Change** lets you choose
-  another option or write a different answer.
+  A *Question* takes your written answer. A *Decision* gives each option its own
+  button, with consequences below it. Select a button once to record that option.
+  A recommended option has the primary style and says **Recommended**; some cards
+  have no recommendation. There is no separate, disabled **Approve** button.
+  **Change** is for a different written answer: type it in **Different answer**
+  and choose **Save answer**. It does not open an option dropdown.
+  **Discuss** sends a question to the lead without answering the card.
 - Each open item raises one Inbox item, closed when handled. Decisions cannot
   be marked done or dismissed instead of answered.
 - **Team tasks and notes** holds open tasks and notes. **Answered** follows it,
   keeping answers and the lead's acknowledgement of what changed (*Read by the
   lead*), including who answered and when. **Reopen** returns a card to the open
-  list. Use **Add to the list** or reorder with the arrows; done/dismissed items
-  fold into **Done and dismissed**.
+  list. Use **Add to the list** or reorder with the arrows. On a phone, open
+  the card's **More actions** menu for **Move up**, **Move down** and
+  **Edit blocking links**; these utility controls stay out of the answer row.
+  Done/dismissed items fold into **Done and dismissed**.
+
+![A decision's options are buttons; the recommended option is labelled](/.attachments/worklist-decision.png)
+
+![The same one-tap options on a phone, with utility actions in the overflow menu](/.attachments/worklist-decision-phone.png)
+
+A proposed boundary change uses the same buttons: **Accept change** or
+**Keep current boundary**, even without a recommendation. A genuinely new
+boundary says **Current: No accepted boundary yet.** Empty acceptance text
+is not shown. Acceptance-only changes still require your decision.
+
+If both the boundary and its acceptance are unchanged, the card says
+**No difference found between current and proposed**. It becomes a note for
+the lead to review, not an approval request; new identical proposals also
+return a warning to the lead. Your accepted boundary is not changed.
+Unanswered, unedited cards from earlier versions are corrected when the list
+is read; recorded answers and your edited cards are kept. Corrections queue a
+system-origin notice to an active lead through confirmed delivery. If delivery
+is disabled, the lead sees the note on its next working-list read instead.
+
+![An identical proposal is a note rather than an approval request](/.attachments/worklist-no-difference.png)
+
+![An identical-proposal note on a phone](/.attachments/worklist-no-difference-phone.png)
 
 Each answer or card edit checks that card's revision, not the list's change
 counter. Edits to other cards do not block your answer. If this card changed,
 your unsaved answer stays beside the previous and current wording. Review it
 and choose **Resend answer**, **Resend decision** or **Resend blocking links**.
-A removed decision option must be replaced with a current choice. A changed
+A removed decision option stays visible as your previous choice, but cannot be
+resent. Select a current option button or use **Change** to write an answer. A changed
 constraint behind a proposal is different: ask the lead for a new proposal,
 rather than accepting an outdated boundary.
 
@@ -914,8 +943,8 @@ widens its grant. Read-only helpers can read these files without repository writ
 
 ### Queued messages and delivery confirmation
 
-A queued message has not reached the agent yet. The session's **Message delivery** panel shows messages waiting for input, messages blocked by terminal control, and unconfirmed submissions. A lead can inspect the same delivery state and notice with the helper's `status` tool.
+A queued message has not reached the agent yet. The session's compact delivery indicator appears for waiting or failed messages. **Details** opens **Activity → Message delivery**, with the message text, state and terminal-control explanation; delivery history stays there. A lead can inspect the same delivery state and notice with the helper's `status` tool.
 
-An open writable terminal reserves control even when nobody is typing. Switch the session to **Activity** and close other terminal windows to release it. Queued messages retry automatically as soon as the agent is idle and terminal control is available; **Retry delivery** checks again immediately without creating another message. A lead can retry that same queued entry with `message(helper=..., delivery=...)`, instead of sending the text again. Permission questions still need your answer in the terminal.
+An open writable terminal reserves control even when nobody is typing. Switch the session to **Activity** and close other terminal windows to release it. Queued messages retry automatically as soon as the agent is idle and terminal control is available; **Retry** on the indicator (or **Retry delivery** in Activity) checks again immediately without creating another message. A lead can retry that same queued entry with `message(helper=..., delivery=...)`, instead of sending the text again. Permission questions still need your answer in the terminal.
 
 Before typing, Rynhult clears the input line. If visible text remains, it stops and reports the conflict instead of appending. A submitted message needs confirmation from the agent's prompt hook or a submitted-text screen check. An unconfirmed submission is never automatically pasted again: check the terminal first, then use **Send again after checking** with the full message if necessary. Review comments stay on the Changes tab until their delivery is confirmed.

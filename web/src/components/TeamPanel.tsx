@@ -2,6 +2,7 @@ import { ProjectGatesCard } from './Gates';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TeamSection, teamPanelSections } from './TeamSection';
 import { TeamRunMode } from './PlanBoundaries';
+import { BriefProposalBanner } from './BriefProposalReview';
 import { TeamBrief } from './TeamBrief';
 import { permissionSummary } from "../lib/words";
 import { providerShort, useInstance } from "../lib/queries";
@@ -49,6 +50,7 @@ export function TeamPanel({ id, projectId }: { id: string; projectId: number }) 
     {orchestrator && <Tabs id={`team-sections-${id}`} label="Team sections" tabs={tabs} value={section}
       onChange={value => navigate({ pathname: location.pathname, search: location.search, hash: `#${value}` }, { state: { teamTabNavigation: true } })} />}
     {orchestrator && section === 'overview' && <TabPanel id={`team-sections-${id}`} value={section} className="space-y-4">
+      <BriefProposalBanner projectId={projectId} />
       <TeamSection teamId={id} panel="brief" title="Project brief" summary={brief.error ? 'Brief refresh failed; expand for details.' : brief.data ? `Pinned version ${brief.data.version}` : brief.isPending ? 'Loading brief…' : 'No pinned project brief'}><TeamBrief teamId={id} projectId={projectId} /></TeamSection>
       <TeamSection teamId={id} panel="plan" title="Plan" summary={planSummary}><Plan teamId={id} /></TeamSection>
     </TabPanel>}

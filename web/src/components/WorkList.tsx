@@ -1,15 +1,15 @@
 /** Orchestrator v2, slice 1: the team's working list and NOW (src/acc/server/orchestrator/worklist.py). Mounted on the
  *  Team tab; renders nothing while the server has orchestrator v2 off (the list answers 404). The lead's text is shown
- *  as plain text, never as HTML or links it chose. */
+ *  as plain text, never as HTML. Only exact local brief-review paths become additional navigation links. */
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, MoreHorizontal } from 'lucide-react';
 import { api, ApiError, isNotFound } from '../lib/api';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
 import { stamp } from '../lib/format';
 import { useSingleMutation as useMutation } from '../lib/mutations';
-import { Badge, Button, Card, CardHeader, ErrorNote, IconButton, Input, Note, Select, Textarea } from './ui';
+import { Badge, Button, Card, CardHeader, ErrorNote, IconButton, Input, Note, Popover, Select, Textarea } from './ui';
 
 type Kind = 'need' | 'decision' | 'question' | 'task' | 'note';
 type State = 'open' | 'answered' | 'ingested' | 'done' | 'dismissed';
@@ -163,10 +163,9 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
 }) {
   // A typed answer is kept for this tab until the card is answered: a refresh or Back brings it back.
   const replyKey = `answer:${item.id}`;  // item ids are unique across teams
-  const [changing, setChanging] = useState(!!conflict?.body.answer || !!conflict?.body.answer_text);
+  const [changing, setChanging] = useState(!!conflict?.body.answer_text);
   const [discussing, setDiscussing] = useState(false);
   const [reply, setReply] = useState(() => typeof conflict?.body.answer_text === 'string' ? conflict.body.answer_text : item.kind !== 'decision' && typeof conflict?.body.answer === 'string' ? conflict.body.answer : loadDraft<string>(replyKey) ?? '');
-  const [choice, setChoice] = useState(item.kind === 'decision' && typeof conflict?.body.answer === 'string' ? conflict.body.answer : item.recommendation?.option ?? '');
   const [blockEditing, setBlockEditing] = useState(!!conflict?.body.blocks);
   const [blockDraft, setBlockDraft] = useState((conflict?.body.blocks ?? item.blocks ?? []).join(', '));
   const [blockBase, setBlockBase] = useState(item);
@@ -175,12 +174,8 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
   }, [conflict, blockEditing, item.revision, item.blocks, blockBase, blockDraft]);
   // The card as it was when the person chose or typed (break-it review 2026-10-26). If the lead rewrites it meanwhile,
   // the answer isn't sent with a meaning the person didn't see: the card says so, and answering again is deliberate.
-  // Until the person touches it, the preselected choice follows the card's current recommendation.
   const [seen, setSeen] = useState<Item | null>(conflict?.before ?? null);
   const changedSince = seen !== null && seen.revision !== item.revision;
-  const recommended = item.recommendation?.option ?? '';
-  const [lastRecommended, setLastRecommended] = useState(recommended);
-  if (seen === null && recommended !== lastRecommended) { setLastRecommended(recommended); setChoice(recommended); }
   const answer = (value: string, custom = false) => {
     onChange(custom ? { answer_text: value } : { answer: value }, conflict || changedSince ? item : seen ?? item);
   };
@@ -194,9 +189,12 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
   const differences = conflict || changedSince ? cardChanges(conflict?.before ?? seen!, item) : [];
   const unansweredDecision = item.kind === 'decision' && item.answer === null;
   const labelOf = (id: string | null) => item.options?.find((o) => o.id === id)?.label ?? id;
+  const pendingChoice = item.kind === 'decision' ? conflict?.body.answer : undefined;
+  const canEditBlocks = (!closed || conflict?.body.blocks !== undefined) && (item.kind === 'decision' || item.kind === 'question');
+  const editBlocks = () => { setBlockDraft((item.blocks ?? []).join(', ')); setBlockBase(item); setBlockEditing(true); };
   return <li className="space-y-2 rounded-md border border-line p-3" aria-label={item.title}>
     <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={item.kind === 'need' || item.kind === 'decision' ? 'wait' : 'neutral'}>{KIND_WORDS[item.kind]}</Badge>
           {item.state !== 'open' && <Badge tone={item.state === 'done' ? 'ok' : 'neutral'}>{STATE_WORDS[item.state]}</Badge>}
@@ -209,18 +207,27 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
         <h4 className="break-words text-sm font-medium">{item.title}</h4>
       </div>
       {(conflict || changedSince) && <Note tone="wait" role="alert">
-        <p>{retry ? 'This card changed.' : 'Your edit was not saved.'} Your unsaved text is kept.</p>
+        <p>{retry ? 'This card changed.' : 'Your edit was not saved.'} Your unsaved answer or edit is kept.</p>
         {conflict && <p>{conflict.reason}</p>}
         {differences.length > 0 && <ul className="list-disc space-y-1 pl-4">{differences.map(line => <li className="whitespace-pre-wrap break-words" key={line}>{line}</li>)}</ul>}
         {retry && <p>Review the current card and resend your edit.</p>}
       </Note>}
-      {(up || down) && <div className="flex gap-1">
+      {(up || down || canEditBlocks && !blockEditing) && <Popover className="sm:hidden" label={`More actions for "${item.title}"`}
+        trigger={<MoreHorizontal size={16} aria-hidden="true" />} menu>{close => <>
+        {(up || down) && <>
+          <Button role="menuitem" size="sm" variant="ghost" className="w-full justify-start" disabled={!up || busy} onClick={() => { close(); up?.(); }}>Move up</Button>
+          <Button role="menuitem" size="sm" variant="ghost" className="w-full justify-start" disabled={!down || busy} onClick={() => { close(); down?.(); }}>Move down</Button>
+        </>}
+        {canEditBlocks && !blockEditing && <Button role="menuitem" size="sm" variant="ghost" className="w-full justify-start" disabled={busy}
+          onClick={() => { close(); editBlocks(); }}>Edit blocking links</Button>}
+      </>}</Popover>}
+      {(up || down) && <div className="hidden gap-1 sm:flex">
         <IconButton label={`Move "${item.title}" up`} icon={ArrowUp} disabled={!up || busy} onClick={up} />
         <IconButton label={`Move "${item.title}" down`} icon={ArrowDown} disabled={!down || busy} onClick={down} />
       </div>}
     </div>
     {!!item.blocks?.length && <p className="text-xs text-wait">Blocks: {item.blocks.join(', ')}{item.state === 'open' ? ' · waiting for your answer' : ''}</p>}
-    {(!closed || conflict?.body.blocks !== undefined) && (item.kind === 'decision' || item.kind === 'question') && (blockEditing
+    {canEditBlocks && (blockEditing
       ? <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => {
         e.preventDefault(); onChange({ blocks: blockDraft.split(',').map((k) => k.trim()).filter(Boolean) }, conflict ? item : blockBase);
       }}>
@@ -229,11 +236,21 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
         <Button size="sm" type="submit" disabled={busy}>{conflict?.body.blocks ? 'Resend blocking links' : 'Save blocking links'}</Button>
         <Button size="sm" onClick={() => setBlockEditing(false)}>Cancel</Button>
       </form>
-      : <Button size="sm" variant="ghost" onClick={() => { setBlockDraft((item.blocks ?? []).join(', ')); setBlockBase(item); setBlockEditing(true); }}>Edit blocking links</Button>)}
+      : <div className="hidden sm:block"><Button size="sm" variant="ghost" disabled={busy} onClick={editBlocks}>Edit blocking links</Button></div>)}
     {item.steps && <p className="whitespace-pre-wrap break-words text-sm text-muted">{item.steps}</p>}
-    {item.options && <ul className="space-y-1 text-sm">{item.options.map((o) => <li key={o.id}>
-      <span className="font-medium">{o.label}</span>{o.id === item.recommendation?.option && <Badge tone="accent" className="ml-1.5">Recommended</Badge>}
-      {o.consequence && <span className="text-muted"> · {o.consequence}</span>}
+    {[...new Set(item.steps.match(/\/projects\/[1-9][0-9]*\?brief_review=[1-9][0-9]*#project-brief/g) ?? [])].slice(0, 20).map(path =>
+      <Link key={path} to={path} className="inline-flex min-h-11 items-center text-sm text-accent underline">Review proposed brief</Link>)}
+    {item.options && <ul className="space-y-2 text-sm">{item.options.map((o) => <li key={o.id} className="space-y-1">
+      {answerable && item.kind === 'decision'
+        ? <Button size="sm" variant={o.id === item.recommendation?.option ? 'primary' : 'secondary'}
+          className="h-auto! min-h-7 max-w-full py-1.5 text-left pointer-coarse:min-h-11" disabled={busy}
+          aria-describedby={o.consequence ? `option-${item.id}-${o.id}` : undefined}
+          onClick={() => { setChanging(false); onChange({ answer: o.id }, item); }}>
+          <span className="min-w-0 whitespace-normal break-words">{o.label}</span>
+          {o.id === item.recommendation?.option && <span className="text-[11px] font-normal">Recommended</span>}
+        </Button>
+        : <><span className="font-medium">{o.label}</span>{o.id === item.recommendation?.option && <Badge tone="accent" className="ml-1.5">Recommended</Badge>}</>}
+      {o.consequence && <p id={`option-${item.id}-${o.id}`} className="break-words text-xs text-muted">{o.consequence}</p>}
     </li>)}</ul>}
     {item.recommendation && <p className="whitespace-pre-wrap break-words text-xs text-muted">Lead's reasoning: {item.recommendation.reason}</p>}
     {item.in_effect?.from === 'default' && <p className="flex flex-wrap items-baseline gap-1.5 rounded-md border border-line bg-panel-2 px-2.5 py-1.5 text-sm">
@@ -247,20 +264,18 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
     {answerable && (item.kind === 'decision'
       ? <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" size="sm" disabled={busy || !(item.recommendation?.option || item.default?.option)}
-            onClick={() => answer(item.recommendation?.option || item.default?.option || '')}>Approve</Button>
           <Button size="sm" disabled={busy} onClick={() => setChanging(!changing)}>Change</Button>
           <Button size="sm" disabled={busy} onClick={() => setDiscussing(!discussing)}>Discuss</Button>
         </div>
-        {changing && <form className="space-y-2" onSubmit={e => { e.preventDefault(); if (reply.trim()) answer(reply, true); else if (choice) answer(choice); }}>
-          <Select aria-label={`Choose for "${item.title}"`} value={choice} onChange={e => { setChoice(e.target.value); setReply(''); setSeen(item); }}>
-            <option value="">Choose an option</option>
-            {choice && !item.options?.some(o => o.id === choice) && <option value={choice} disabled>Previous choice no longer available</option>}
-            {item.options?.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </Select>
+        {pendingChoice && !changing && <div className="space-y-2">
+          <p className="break-words text-sm">Your previous choice: {conflict?.before.options?.find(o => o.id === pendingChoice)?.label ?? pendingChoice}.
+            {!item.options?.some(o => o.id === pendingChoice) && ' This option is no longer available. Choose a current option or write a different answer.'}</p>
+          <Button size="sm" disabled={busy || !item.options?.some(o => o.id === pendingChoice)} onClick={() => onChange({ answer: pendingChoice }, item)}>Resend decision</Button>
+        </div>}
+        {changing && <form className="space-y-2" onSubmit={e => { e.preventDefault(); if (reply.trim()) answer(reply, true); }}>
           <Textarea aria-label="Different answer" rows={2} maxLength={200} value={reply}
-            onChange={e => { setReply(e.target.value); if (seen === null) setSeen(item); }} placeholder="Or write a different answer" />
-          <div className="flex gap-2"><Button type="submit" size="sm" variant="primary" disabled={busy || (!item.options?.some(o => o.id === choice) && !reply.trim())}>{retry ? 'Resend decision' : 'Save answer'}</Button>
+            onChange={e => { setReply(e.target.value); if (seen === null) setSeen(item); }} placeholder="Write a different answer" />
+          <div className="flex gap-2"><Button type="submit" size="sm" variant="primary" disabled={busy || !reply.trim()}>{retry ? 'Resend decision' : 'Save answer'}</Button>
             <Button size="sm" onClick={() => setChanging(false)}>Cancel</Button></div>
         </form>}
       </div>

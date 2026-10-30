@@ -91,10 +91,8 @@ test('a lead decision sends its own revision, not the much newer list revision',
     await page.goto(`/sessions/${lead}?tab=team#worklist`);
     const card = page.getByRole('listitem', { name: original.title, exact: true });
     await expect(card).toContainText('Written by the team lead (an agent)');
-    await card.getByRole('button', { name: 'Change', exact: true }).click();
-    await card.getByRole('combobox').selectOption('private');
     const sent = page.waitForRequest(r => new URL(r.url()).pathname === `${root}/items/${original.id}` && r.method() === 'PATCH');
-    await card.getByRole('button', { name: 'Save answer', exact: true }).click();
+    await card.getByRole('button', { name: 'Keep names private', exact: true }).click();
     expect((await sent).postDataJSON()).toEqual({ answer: 'private', revision: 1 });
     await expect(card).toContainText('Answer from alex');
     const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
@@ -116,8 +114,6 @@ test('a removed decision option stays visible but cannot be resent as a differen
     const url = `${root}/items/${original.id}`;
     await page.goto(`/sessions/${lead}?tab=team#worklist`);
     const card = page.getByRole('listitem', { name: original.title, exact: true });
-    await card.getByRole('button', { name: 'Change', exact: true }).click();
-    await card.getByRole('combobox').selectOption('public');
     let raced = false;
     await page.route(`**${url}`, async route => {
       if (!raced && route.request().method() === 'PATCH') {
@@ -129,12 +125,11 @@ test('a removed decision option stays visible but cannot be resent as a differen
       }
       await route.continue();
     });
-    await card.getByRole('button', { name: 'Save answer', exact: true }).click();
+    await card.getByRole('button', { name: 'Names and times', exact: true }).click();
     await expect(card.getByRole('alert')).toContainText('This card changed');
-    await expect(card.getByRole('combobox')).toHaveValue('public');
+    await expect(card).toContainText('Your previous choice: Names and times.');
     await expect(card.getByRole('button', { name: 'Resend decision', exact: true })).toBeDisabled();
-    await card.getByRole('combobox').selectOption('private');
-    await card.getByRole('button', { name: 'Resend decision', exact: true }).click();
+    await card.getByRole('button', { name: 'Times only', exact: true }).click();
     await expect(card).toContainText('Answer from alex');
     expect((await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id).answer).toBe('private');
   } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
@@ -154,7 +149,10 @@ for (const state of ['open', 'done'] as const) test(`blocking-link conflict keep
     const url = `${root}/items/${original.id}`;
     await page.goto(`/sessions/${lead}?tab=team#worklist`);
     const card = page.getByRole('listitem', { name: original.title, exact: true });
-    await card.getByRole('button', { name: 'Edit blocking links', exact: true }).click();
+    if (page.viewportSize()!.width < 640) {
+      await card.getByRole('button', { name: `More actions for "${original.title}"`, exact: true }).click();
+      await card.getByRole('menuitem', { name: 'Edit blocking links', exact: true }).click();
+    } else await card.getByRole('button', { name: 'Edit blocking links', exact: true }).click();
     await card.getByRole('textbox', { name: /Blocking links for/ }).fill('R-1');
     let raced = false;
     await page.route(`**${url}`, async route => {
@@ -229,14 +227,12 @@ test('person reads NOW, answers a decision, edits, reorders and sees a conflict'
   await expect(yours.getByText('From Rynhult')).toHaveCount(0);
   const decision = yours.getByRole('listitem', { name: 'Which database?' });
   await expect(decision.getByText('Recommended')).toBeVisible();
-  await decision.getByRole('button', { name: 'Change', exact: true }).click();
-  await expect(decision.getByRole('combobox', { name: 'Choose for "Which database?"' })).toHaveValue('sqlite');
+  await expect(decision.getByRole('button', { name: 'SQLite Recommended', exact: true })).toBeVisible();
   await expect(page.getByText('Done and dismissed (1)')).toBeVisible();
   await expectAxeClean(page);
-  await page.screenshot({ path: wikiShotPath(testInfo, 'orchestrator-worklist.png'), fullPage: true });
+  if (page.viewportSize()!.width >= 640) await page.screenshot({ path: wikiShotPath(testInfo, 'orchestrator-worklist.png'), fullPage: true });
 
-  await decision.getByRole('combobox', { name: 'Choose for "Which database?"' }).selectOption('pg');
-  await decision.getByRole('button', { name: 'Save answer' }).click();
+  await decision.getByRole('button', { name: 'PostgreSQL', exact: true }).click();
   const tasks = page.getByRole('region', { name: 'Team tasks and notes' });
   await expect(page.getByRole('region', { name: 'Answered', exact: true }).getByRole('listitem', { name: 'Which database?' })).toContainText('Answer from alex');
   await expect(page.getByRole('region', { name: 'Answered', exact: true }).getByRole('listitem', { name: 'Which database?' })).toContainText('PostgreSQL');
@@ -247,10 +243,17 @@ test('person reads NOW, answers a decision, edits, reorders and sees a conflict'
   await expect(page.getByText('Pause the importer until the database is set up.')).toBeVisible();
 
   // Someone else changed the item first: the list reloads and says so; the second try lands.
-  await tasks.getByRole('button', { name: 'Move "Write the importer" down' }).click();
+  const moveDown = async (title: string) => {
+    if (page.viewportSize()!.width < 640) {
+      const row = tasks.getByRole('listitem', { name: title, exact: true });
+      await row.getByRole('button', { name: `More actions for "${title}"`, exact: true }).click();
+      await row.getByRole('menuitem', { name: 'Move down', exact: true }).click();
+    } else await tasks.getByRole('button', { name: `Move "${title}" down`, exact: true }).click();
+  };
+  await moveDown('Write the importer');
   await expect(page.getByRole('alert').filter({ hasText: 'This card changed' })).toBeVisible();
   await expect(tasks.getByRole('listitem', { name: 'Write the importer (lead renamed it)' })).toBeVisible();
-  await tasks.getByRole('button', { name: 'Move "Write the importer (lead renamed it)" down' }).click();
+  await moveDown('Write the importer (lead renamed it)');
   await expect(page.getByRole('alert').filter({ hasText: 'This card changed' })).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });

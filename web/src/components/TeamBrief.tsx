@@ -16,6 +16,7 @@ export function TeamBrief({ teamId, projectId }: { teamId: string; projectId: nu
   return <QueryState query={query}>{brief => <Card className="min-w-0 space-y-3 p-4">
     <CardHeader title={brief ? `Pinned project brief · version ${brief.version}` : 'No pinned project brief'}
       subtitle={brief ? `The brief suggested ${brief.suggested_run_mode === 'prepare' ? 'Prepare' : 'Build'}.` : 'This team has no saved project brief pinned to its scope.'} />
+    <p className="text-xs text-muted">Proposed versions are not selectable as saved scope. Use the proposal review above or Version history on the project to merge their fields onto the current brief, even when their base is older.</p>
     <ProjectBriefChoice key={brief?.version ?? 0} projectId={projectId} value={selected} onChange={setSelected} forGrant={false} />
     <Button type="button" disabled={pending || selected === undefined || selected === (brief?.version ?? 0)} onClick={async () => {
       setPending(true); setError(undefined);

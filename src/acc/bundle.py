@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 # Shared with the history-free exporter. Prefixes exclude future descendants too.
-PUBLIC_EXCLUDED = ('docs/PLAN.md', 'docs/OPERATIONS.md', 'docs/SESSION_LOG.md',
+PUBLIC_EXCLUDED = ('docs/design/updater-signatures.md', 'docs/PLAN.md', 'docs/archive', 'docs/OPERATIONS.md', 'docs/SESSION_LOG.md',
                    'docs/handoffs', 'docs/qualification', 'docs/research/node-test-plan.md', 'host', 'docs/reviews',
                    'docs/security', 'docs/drafts', 'docs/decisions/drafts', 'docs/runbooks', 'docs/drills',
                    'docs/RELEASE-RC1-CHECKLIST.md', 'docs/RENAME-STAGE-2.md',  # private release/rollout inventories

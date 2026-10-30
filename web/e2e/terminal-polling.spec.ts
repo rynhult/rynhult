@@ -52,6 +52,10 @@ test.afterEach(async ({ page }) => {
 
 test('parent polling and unchanged resize notifications leave the terminal input untouched', async ({ page }) => {
   await page.bringToFront();
+  let queued = true;
+  await page.route(`**/api/sessions/${id}/deliveries`, route => route.fulfill({ json: { deliveries: queued
+    ? [{ id: 'polling-demo', state: 'queued', preview: 'Queued context', notice: 'Waiting for terminal control' }] : [] } }));
+  const geometry = (await page.locator('.xterm').boundingBox())!;
   const field = page.locator('.xterm-helper-textarea');
   const original = await field.elementHandle();
   let polls = 0;
@@ -75,7 +79,7 @@ test('parent polling and unchanged resize notifications leave the terminal input
     field.value += 'composing';
     field.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: 'composing' }));
   });
-  for (let index = 0; index < 4; index++) {
+  for (let index = 0; index < 16; index++) {
     await page.waitForTimeout(800);
     await page.evaluate(() => {
       // ResizeObserver can notify again without changing character dimensions.
@@ -85,6 +89,16 @@ test('parent polling and unchanged resize notifications leave the terminal input
     expect(await original!.evaluate(node => node === document.querySelector('.xterm-helper-textarea'))).toBe(true);
     expect(await field.evaluate(node => document.activeElement === node)).toBe(true);
   }
+  await expect(page.getByRole('region', { name: 'Message delivery status' })).toBeVisible();
+  const withQueue = (await page.locator('.xterm').boundingBox())!;
+  expect(Math.abs(withQueue.y - geometry.y)).toBeLessThan(1);
+  expect(Math.abs(withQueue.height - geometry.height)).toBeLessThan(1);
+  queued = false;
+  await expect(page.getByRole('region', { name: 'Message delivery status' })).toHaveCount(0);
+  expect(await field.inputValue()).toBe(before + 'composing');
+  const settled = (await page.locator('.xterm').boundingBox())!;
+  expect(Math.abs(settled.y - geometry.y)).toBeLessThan(1);
+  expect(Math.abs(settled.height - geometry.height)).toBeLessThan(1);
   await expect.poll(() => polls).toBeGreaterThan(0);
   expect(await page.evaluate(() => (window as any).__focusLoss)).toBe(0);
   const frames = await page.evaluate(() => (window as any).__terminalResizes);

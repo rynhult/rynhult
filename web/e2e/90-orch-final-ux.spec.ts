@@ -387,14 +387,16 @@ test('new project keyboard journey saves a screenshot brief, prepares scope and 
     await page.keyboard.press('Enter');
     await expect(answer).toHaveCount(0);
     const proposal = page.getByRole('listitem').filter({ hasText: 'Book a room privately' })
-      .filter({ has: page.getByRole('button', { name: 'Change', exact: true }) });
-    await tabTo(page, proposal.getByRole('button', { name: 'Change', exact: true }));
+      .filter({ has: page.getByRole('button', { name: 'Accept change', exact: true }) });
+    // Decision options are one-tap buttons; Change opens a person-written answer.
+    await tabTo(page, proposal.getByRole('button', { name: 'Accept change', exact: true }));
+    const accepted = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.startsWith(`/api/teams/${build}/worklist/items/`)
+      && response.request().postDataJSON().answer === 'accept');
     await page.keyboard.press('Enter');
-    await tabTo(page, proposal.getByRole('combobox'));
-    await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown');
-    await expect(proposal.getByRole('combobox')).toHaveValue('accept');
-    await tabTo(page, proposal.getByRole('button', { name: 'Save answer', exact: true }));
-    await page.keyboard.press('Enter');
+    const savedAnswer = await accepted;
+    expect(savedAnswer.ok(), await savedAnswer.text()).toBeTruthy();
+    expect((await savedAnswer.json()).answer).toBe('accept');
     await page.getByRole('tab', { name: 'Overview', exact: true }).click();
     await expandTeamPanels(page);
     await expect(page.getByRole('region', { name: 'Requirements', exact: true })).toContainText('active');

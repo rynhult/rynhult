@@ -5,6 +5,13 @@ Rynhult follows [semantic versioning](https://semver.org). Stable tags use `vX.Y
 
 ## [Unreleased]
 
+- The main updater and latest-release Catalog restore verify detached OpenPGP
+  signatures on SHA256SUMS against the installed release key before trusting
+  archive hashes. Invalid, expired, revoked or unknown signatures refuse updates;
+  an owner can explicitly audit a one-update exception for a missing signature.
+  Settings → Updates shows the verified release-key suffix. Node sync retains
+  its separate enrolled-primary bundle trust path.
+
 ## [0.15.0-rc.1] - 2026-10-29
 
 These changes are included in **0.15.0-rc.1**, the first public release candidate of Rynhult, a self-hosted

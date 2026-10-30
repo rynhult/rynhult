@@ -29,7 +29,10 @@ test("Files: browse, Markdown preview, save, personal commit, conflict and phone
   await editor.fill("# Updated\n\nEdited in Rynhult.");
   await expect(page.getByRole("heading", { name: "Updated", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).dblclick();
-  await expect(page.getByRole("status", { name: "File save status" })).toContainText("Saved");
+  await expect(page.getByRole("status", { name: "File save status" })).toContainText("previous copy is kept as");
+  const saved = await page.getByRole("status", { name: "File save status" }).innerText();
+  const previous = saved.match(/\.rynhult-replaced-[0-9]+-[a-f0-9]+/)![0];
+  expect(readFileSync(`${root}/${previous}`, "utf8")).toContain("Original");
   expect(readFileSync(`${root}/notes.md`, "utf8")).toContain("Edited in Rynhult.");
   await page.getByRole("button", { name: fileRow("other.py") }).click();
   await expect(editor).toContainText("Hello");
@@ -57,11 +60,11 @@ test("Files: browse, Markdown preview, save, personal commit, conflict and phone
   expect(readFileSync(`${root}/notes.md`, "utf8")).toContain("Concurrent version.");
   await page.getByRole("button", { name: "Keep draft and use current revision" }).click();
   await page.getByRole("button", { name: "Save", exact: true }).dblclick();
-  await expect(page.getByRole("status", { name: "File save status" })).toContainText("Saved");
+  await expect(page.getByRole("status", { name: "File save status" })).toContainText("previous copy is kept as");
   expect(readFileSync(`${root}/notes.md`, "utf8")).toContain("Keep this version.");
   await editor.fill("# Files demo\n\nEdit Markdown with a live preview. Saves stay in the local repository.");
   await page.getByRole("button", { name: "Save", exact: true }).dblclick();
-  await expect(page.getByRole("status", { name: "File save status" })).toContainText("Saved");
+  await expect(page.getByRole("status", { name: "File save status" })).toContainText("previous copy is kept as");
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
   expect(accessibility.violations).toEqual([]);
   await page.getByRole("button", { name: "New folder", exact: true }).click();

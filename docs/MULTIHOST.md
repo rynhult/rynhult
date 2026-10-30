@@ -343,7 +343,7 @@ link. No public control-link fallback or autonomous offline scheduler is added.
 See decision 0058 and the Guide's Remote Access page.
 
 ### What changed from the plan, and why
-- PLAN.md said machines would push "signed with their machine key". Instead the primary decides when to push and
+- The archived plan (`docs/archive/PLAN-to-rc1.md`) said machines would push "signed with their machine key". Instead the primary decides when to push and
   mints a one-push token per project, and the broker pushes with it. A machine key would let any session on a node
   that can read acc-node's key push anywhere that machine is allowed, for as long as the key lives; a token names one
   project and lives for one push. The node link already authenticates the machine, so the token only has to say "this

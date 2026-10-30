@@ -61,7 +61,7 @@ build-backend = "hatchling.build"
 # Python sdists rebuild the Python wheel, not the server source installer. Keep private
 # checkout documents out independently of gitignore and the source-bundle exporter.
 [tool.hatch.build.targets.sdist]
-only-include = ["src/acc", "bin/acc-guard", "bin/acc_env.py", "pyproject.toml", "uv.lock", "LICENSE", "THIRD_PARTY_NOTICES.md"]
+only-include = ["src/acc", "bin/acc-guard", "bin/acc_env.py", "keys/rynhult-release-key.asc", "pyproject.toml", "uv.lock", "LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acc"]
@@ -69,6 +69,7 @@ packages = ["src/acc"]
 [tool.hatch.build.targets.wheel.force-include]
 "bin/acc-guard" = "acc/_scripts/acc-guard"
 "bin/acc_env.py" = "acc/_scripts/acc_env.py"
+"keys/rynhult-release-key.asc" = "acc/_release-key.asc"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

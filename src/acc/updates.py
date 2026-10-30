@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .release_signatures import MissingSignature, verify
+
 VERSION = re.compile(
     r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
@@ -60,7 +62,9 @@ def repository(source: str) -> str:
 
 
 def validate_request(data: object) -> str:
-    if not isinstance(data, dict) or set(data) != {"action", "version"} or data["action"] != "update":
+    if (not isinstance(data, dict) or set(data) - {"action", "version", "allow_unsigned"}
+            or not {"action", "version"} <= data.keys() or data["action"] != "update"
+            or type(data.get("allow_unsigned", False)) is not bool):
         raise ValueError("request must name only action update and version")
     if version(data["version"])[3] != 1:
         raise ValueError("updates must be stable releases")
@@ -170,7 +174,52 @@ def available(release: dict, current: str, current_build: str | None) -> bool:
     )
 
 
-def download_release(repo: str, latest: dict, stage: Path, token_file: Path | None = None, *, get=fetch) -> Path:
+def release_asset(repo, latest, name, token_file, limit, get):
+    url = latest.get('assets', {}).get(name, '')
+    if not re.fullmatch(r'https://api\.github\.com/repos/' + re.escape(repo) + r'/releases/assets/[0-9]+', url):
+        raise ValueError('release asset missing or outside the configured repository')
+    return get(url, token_file, limit=limit, asset=True)
+
+
+def release_manifest(repo, latest, token_file=None, *, get=fetch, allow_unsigned=False):
+    sums = release_asset(repo, latest, 'SHA256SUMS', token_file, 1 << 20, get)
+    try:
+        if not latest.get('assets', {}).get('SHA256SUMS.asc'):
+            raise MissingSignature()
+        try:
+            signature = release_asset(repo, latest, 'SHA256SUMS.asc', token_file, 128 << 10, get)
+        except ReleaseSourceError as error:
+            if error.kind != 'repository_missing':
+                raise
+            raise MissingSignature() from None
+    except MissingSignature:
+        if allow_unsigned is not True:
+            raise
+        return sums, {'status': 'unsigned_override'}
+    return sums, verify(sums, signature)
+
+
+def signed_check(repo, current, token_file=None, current_build=None, *, get=fetch):
+    latest = check(repo, current, token_file, current_build, get=get)
+    try:
+        sums, signature = release_manifest(repo, latest, token_file, get=get)
+        release_checksum(sums, latest['latest'])
+    except MissingSignature as error:
+        signature = {'status': 'missing', 'detail': str(error)}
+    return {**latest, 'signature': signature}
+
+
+def release_checksum(sums: bytes, target: str) -> str:
+    filename = f'acc-{target}.tar.gz'
+    hashes = [line.split()[0] for line in sums.decode('utf-8').splitlines()
+              if len(line.split()) == 2 and line.split()[1].lstrip('*') == filename]
+    if len(hashes) != 1 or not BUILD.fullmatch(hashes[0]):
+        raise ValueError('release checksum missing or ambiguous')
+    return hashes[0]
+
+
+def download_release(repo: str, latest: dict, stage: Path, token_file: Path | None = None, *, get=fetch,
+                     allow_unsigned=False, verification=None) -> Path:
     """Download and validate release source. Shared by the privileged updater and catalog restore.
 
     The caller owns and removes stage; this function never executes downloaded source.
@@ -181,23 +230,12 @@ def download_release(repo: str, latest: dict, stage: Path, token_file: Path | No
     if version(target)[3] != 1 or not REPO.fullmatch(repo):
         raise ValueError('not a stable release repository')
     filename = f'acc-{target}.tar.gz'
-    assets = latest.get('assets', {})
-
-    def asset(name, limit):
-        url = assets.get(name, '')
-        if not re.fullmatch(r'https://api\.github\.com/repos/' + re.escape(repo) + r'/releases/assets/[0-9]+', url):
-            raise ValueError('release asset missing or outside the configured repository')
-        return get(url, token_file, limit=limit, asset=True)
-
-    sums = asset('SHA256SUMS', 1 << 20).decode()
-    hashes = [line.split()[0] for line in sums.splitlines()
-              if len(line.split()) == 2 and line.split()[1].lstrip('*') == filename]
-    if len(hashes) != 1 or not BUILD.fullmatch(hashes[0]):
-        raise ValueError('release checksum missing or ambiguous')
+    raw_sums, signature = release_manifest(repo, latest, token_file, get=get, allow_unsigned=allow_unsigned)
+    checksum = release_checksum(raw_sums, target)
     stage.mkdir(parents=True, exist_ok=True)
     path = stage / 'release.tar.gz'
-    path.write_bytes(asset(filename, 256 << 20))
-    tree = bundle.unpack(path, stage / 'unpacked', target, hashes[0])
+    path.write_bytes(release_asset(repo, latest, filename, token_file, 256 << 20, get))
+    tree = bundle.unpack(path, stage / 'unpacked', target, checksum)
     if bundle.version_of(tree) != target:
         raise ValueError('release source version mismatch')
     identity = bundle.identity(tree)
@@ -205,4 +243,6 @@ def download_release(repo: str, latest: dict, stage: Path, token_file: Path | No
         raise ValueError('release build manifest does not match source')
     if bundle.installed_identity(tree) != identity:
         raise ValueError('release build identity mismatch')
+    if verification is not None:
+        verification['signature'] = signature
     return tree

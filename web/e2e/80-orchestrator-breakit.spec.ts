@@ -113,11 +113,11 @@ test('a decision has no Mark done or Dismiss until it is answered', async ({ pag
   await page.goto(`/sessions/${lead}?tab=team#worklist`);
   const yours = page.getByRole('region', { name: 'What the lead needs from you' });
   const decision = yours.getByRole('listitem', { name: 'Which delimiter?' });
-  await expect(decision.getByRole('button', { name: 'Approve' })).toBeVisible();
+  await expect(decision.getByRole('button', { name: 'Comma Recommended', exact: true })).toBeVisible();
   await expect(decision.getByRole('button', { name: 'Mark done' })).toHaveCount(0);
   await expect(decision.getByRole('button', { name: 'Dismiss' })).toHaveCount(0);
   await expect(yours.getByRole('listitem', { name: 'Who uses it?' }).getByRole('button', { name: 'Dismiss' })).toBeVisible();
-  await decision.getByRole('button', { name: 'Approve' }).click();
+  await decision.getByRole('button', { name: 'Comma Recommended', exact: true }).click();
   const answered = page.getByRole('region', { name: 'Answered', exact: true }).getByRole('listitem', { name: 'Which delimiter?' });
   await expect(answered.getByRole('button', { name: 'Mark done' })).toBeVisible();
 });
@@ -148,12 +148,18 @@ test('an answer chosen before the lead rewrote the options is refused, not recor
     recommendation: { option: 'comma', reason: 'Most files' }, default: { option: 'comma' } });
   await page.goto(`/sessions/${lead}?tab=team#worklist`);
   const row = page.getByRole('region', { name: 'What the lead needs from you' }).getByRole('listitem', { name: 'Which delimiter?' });
-  await row.getByRole('button', { name: 'Change', exact: true }).click();
-  await row.getByRole('combobox', { name: 'Choose for "Which delimiter?"' }).selectOption('tab');
-  await team(lead, 'worklist_update', { item: card.id, options: [{ id: 'comma', label: 'Tab' }, { id: 'tab', label: 'Semicolon' }],
-    recommendation: { option: 'comma', reason: 'Tab-separated exports are the norm here' } });
-  await page.waitForTimeout(4_000);  // the list refreshes under the person's choice
+  let raced = false;
+  await page.route(`**/api/teams/${lead}/worklist/items/${card.id}`, async route => {
+    if (!raced && route.request().method() === 'PATCH') {
+      raced = true;
+      await team(lead, 'worklist_update', { item: card.id, options: [{ id: 'comma', label: 'Tab' }, { id: 'tab', label: 'Semicolon' }],
+        recommendation: { option: 'comma', reason: 'Tab-separated exports are the norm here' } });
+    }
+    await route.continue();
+  });
+  await row.getByRole('button', { name: 'Tab', exact: true }).click();
   await expect(row.getByRole('alert')).toContainText('This card changed');
+  await expect(row).toContainText('Your previous choice: Tab.');
   const list = await (await page.request.get(`/api/teams/${lead}/worklist`)).json();
   const item = list.items.find((x: { id: number }) => x.id === card.id);
   expect(item.answer).toBeNull();

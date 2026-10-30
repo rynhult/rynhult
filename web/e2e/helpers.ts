@@ -132,6 +132,19 @@ export async function gitProject(page: Page, prefix: string) {
   return { id, folder, headers, slug };
 }
 
+/** Wait for the creation transaction and its exact destination, not a generic
+ * five-second URL assertion while a large Projects page/lazy route settles. */
+export async function createProjectFromDialog(page: Page, dialog: import('@playwright/test').Locator) {
+  const created = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/projects/new');
+  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+  const response = await created;
+  expect(response.status(), await response.text()).toBe(201);
+  const project = await response.json();
+  await page.waitForURL(url => url.pathname === `/projects/${project.id}`);
+  return project;
+}
+
 export async function csrfHeaders(page: Page) {
   const name = info().origin.startsWith("https:") ? "__Host-acc_csrf" : "acc_csrf";
   const csrf = (await page.context().cookies()).find((c) => c.name === name)!.value;
@@ -156,6 +169,16 @@ export async function waitForSessionState(page: Page, id: string, state: "idle" 
     timeout: test.info().timeout,
     intervals: [250],
   }).toBe(true);
+}
+
+/** A stop request is acceptance, not confirmation from every member's machine. */
+export async function waitForTeamStopped(page: Page, id: string) {
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/sessions/${id}/team`);
+    expect(response.ok()).toBe(true);
+    const team = await response.json();
+    return team.stopped && team.members.every((member: { stop_state?: string }) => member.stop_state !== 'stop requested');
+  }, { message: `Waiting for team ${id} stop confirmation`, timeout: test.info().timeout }).toBe(true);
 }
 
 export async function resetPairingThrottle(page: Page) {

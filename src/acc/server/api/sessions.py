@@ -1007,7 +1007,7 @@ def router(ctx: Context) -> APIRouter:
         return JSONResponse({'delivery': jsonable_encoder(result)}, status_code=200 if result['state'] == 'acknowledged' else 202)
 
     @api.get('/api/sessions/{acc_id}/deliveries')
-    def session_deliveries(acc_id: str, who=Depends(ctx.principal)):
+    def session_deliveries(acc_id: str, include_text: bool = False, who=Depends(ctx.principal)):
         with db() as s:
             session = ctx.session_for(s, who, acc_id)
             if not delivery.enabled():
@@ -1016,7 +1016,9 @@ def router(ctx: Context) -> APIRouter:
                 delivery.MessageDelivery.session_id == acc_id).order_by(
                     delivery.MessageDelivery.created_at.desc()).limit(20))
             return {'deliveries': supervisor.vault.redactor(s, session.vault_keys).deep(
-                [delivery.public(row) for row in rows])}
+                [{**delivery.public(row), **({'text': row.body or row.preview,
+                  'text_truncated': not bool(row.body) and len(row.preview.encode()) < row.bytes}
+                  if include_text else {})} for row in rows])}
 
     @api.post('/api/deliveries/{identifier}/retry')
     def retry_delivery(identifier: str, who=Depends(ctx.principal)):

@@ -36,10 +36,34 @@ explanation; a Save attempt focuses **Product or feature**. Leaving with unsaved
 3. To **Draft the brief from these documents**, start **New session → Advanced → With helpers**, leaving **Task** empty.
    The lead's kickoff asks it to read the documents, propose supported brief fields and cite the file and extracted
    page or section for every field. It then asks focused clarifying questions as working-list decision cards.
-   The proposal appears in **Version history** with source **documents**. Agent behavior still depends on the chosen model.
-4. Review the proposal and its citations. Choose individual fields and **Accept … fields from version N**.
-   Acceptance creates a new saved version; other fields keep their current values. Accept **References** too if the team should use the source files, so they can be assigned to helpers. The lead cannot accept its own proposal
-   or choose your run mode. Pin the accepted version in the team's **Project brief version** selector when ready.
+   When a proposal is newer than the saved brief (or there is no saved brief), the form and Team **Overview**
+   show **A brief drafted from your documents is ready to review**. Choose **Review**; kickoff and brief question
+   cards can also link directly to this review. Agent behavior still depends on the chosen model.
+4. Compare each field's **Current** and **Proposal** text, with the document name and page or section beside its
+   citations. Choose **Accept**, **Edit**, or **Skip** for each field, then **Save reviewed fields**. **Accept all**
+   explicitly takes every supplied field, including any edits you made. Fields absent from the proposal stay
+   unchanged. Skipped fields stay unchanged when saving reviewed fields; Accept all includes them too.
+   References are added to the current references rather than removing existing ones.
+5. Acceptance creates a new saved version and queues a notice to active project leads. It does not silently change
+   a team's pinned scope or run mode. Pin the accepted version in the team's **Project brief version** selector
+   when ready. The lead cannot accept its own proposal or choose your run mode.
+
+If you type or save while a newer proposal is pending, a once-only warning offers **Review** or **Continue**.
+Your typed draft is kept. Review acceptance saves separately from an unsaved form draft, so compare any resulting
+version conflict before saving that draft.
+
+A proposal based on version 0 remains reviewable after you save version 2. Open **Version history → Review proposed
+version N**, or use Team Overview's **Review proposed brief version N** link. Proposals cannot be selected in the
+team's saved-version selector until you accept their fields. Acceptance merges onto the current version, retaining
+unselected fields. If the saved brief changes while review is open, **Rebase onto current** shows the new current
+values and keeps your choices and edits; acceptance stays disabled until you rebase.
+
+The comparison uses two columns on desktop and stacks Current above Proposal on a phone. Each field has labelled
+keyboard-operable controls, and the review dialog keeps its Save actions visible.
+
+![A cited proposal reviewed field by field beside the current brief](/.attachments/brief-proposal-review-1440.png)
+
+![The same review stacked on a phone, including a field edited before acceptance](/.attachments/brief-proposal-review-390.png)
 
 ![Private document upload with a readable source and a retained extraction failure](/.attachments/project-brief-documents-desktop.png)
 

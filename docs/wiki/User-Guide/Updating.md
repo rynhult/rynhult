@@ -23,7 +23,7 @@ node; retrying the node's **Update** button does not install an RC build.
    select **Save update settings**. Leave it empty to turn checks off. The initial repository comes from the
    installation's source URL when it points to GitHub.
 3. When **Update available** appears, select **Back up and update**, read the confirmation and confirm. Rynhult first
-   backs up the database and secrets. A failed backup stops the update. Downloaded source must pass its checksum
+   backs up the database and secrets. A failed backup stops the update. Downloaded source must pass its release-signature, checksum
    and archive safety checks before installation starts.
 4. The dashboard restarts. Terminals disconnect briefly; agents keep running in tmux under their brokers.
    Reconnect after the restart and check the step results. If installation or health checks fail, Rynhult attempts to
@@ -33,6 +33,35 @@ A newer release creates one owner [Inbox](/User-Guide/Glossary#inbox) item per v
 available. The build identifies the actual source, so machines with the same version can still need an update.
 
 Source archives used for releases, installation and additional-machine downloads exclude host inventory, private handoffs, reviews, qualification material, rename/rollout inventories and private operational documents. They contain the public application source for that build. Keep private operational records in your own backups.
+
+## Release signatures
+
+After **Check now**, **Signature verified (Rynhult Releases, key …0DB5)** means the
+release's checksum list was signed by a key trusted by this installed Rynhult.
+The installation checks the signature again before using the checksum to unpack
+any downloaded source. It uses the bundled public key, never a key supplied by
+the download. The key suffix can change after an approved signing-key rotation.
+
+A bad, unknown, expired or revoked signature stops the update. The result explains
+why; ask the installation owner to check the release and trusted-key installation.
+GnuPG must be installed on the main; missing verification tools also stop updates.
+
+A missing signature disables **Back up and update**. Only after independently
+checking the release's source, an owner can choose **Update without signature…**
+and confirm the separate warning. Rynhult cannot authenticate that release. This
+exception is recorded in Audit and applies to that one update only; backup,
+checksum and archive safety checks still run. It never overrides an invalid
+signature. Automatic updates and Catalog restore do not take this exception.
+
+Key replacements must arrive through a release trusted by the installed key or
+an independently reviewed reinstall. An offline installation cannot learn a new
+revocation until its trusted key bundle is updated. A signature authenticates the
+release, not whether the server has shown you the newest release.
+
+Additional machines sync a rebuilt bundle from their enrolled main, authenticated
+by enrollment TLS and the main's checksum/build descriptor. This is a separate
+trust path: a node does not independently verify the public release's signature
+on that rebuilt archive. Source/git main installations retain this sync path.
 
 ## Schedule automatic installation
 

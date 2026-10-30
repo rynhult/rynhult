@@ -612,6 +612,9 @@ def sweep(db, team_id: str | None = None, now: datetime | None = None) -> int:
     helper works, stops or is gone. Returns how many items it raised."""
     if not enabled():
         return 0
+    if team_id:
+        from .planning_controls import refresh_proposals
+        refresh_proposals(db, team_id)
     now = now or datetime.now(timezone.utc)
     query = select(Session).where(Session.team_id.is_not(None), Session.parent_session_id.is_not(None))
     if team_id:

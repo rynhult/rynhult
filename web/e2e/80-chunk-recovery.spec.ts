@@ -65,7 +65,7 @@ for (const phone of [false, true]) {
         await expect(editor).toHaveText("# Keep this unsaved draft");
         expect(navigations).toBe(0);
         await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByRole("status", { name: "File save status" })).toHaveText("Saved");
+        await expect(page.getByRole("status", { name: "File save status" })).toContainText("Saved. Replaced README.md (the previous copy is kept as");
         await page.unroute(/\/assets\/FileMarkdownPreview-[^/]+\.js(?:\?.*)?$/);
         await banner.getByRole("button", { name: "Reload", exact: true }).click();
         await confirmation.getByRole("button", { name: "Reload", exact: true }).click();

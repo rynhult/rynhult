@@ -102,10 +102,8 @@ test('step 3: answering one card while the others keep their defaults', async ({
   await page.goto(`/sessions/${lead}?tab=team#worklist`);
   const card = page.getByRole('region', { name: 'What the lead needs from you' })
     .getByRole('listitem', { name: 'Which file formats in the first version?' });
-  await card.getByRole('button', { name: 'Change', exact: true }).click();
-  await card.getByRole('combobox', { name: 'Choose for "Which file formats in the first version?"' }).selectOption('both');
   await card.screenshot({ path: testInfo.outputPath('orchestrate-answer.png') });
-  await card.getByRole('button', { name: 'Save answer' }).click();
+  await card.getByRole('button', { name: 'CSV and Excel', exact: true }).click();
   await expect(page.getByText('Answer from alex', { exact: false }).first()).toBeVisible();
 });
 

@@ -62,6 +62,129 @@ async def test_constraints_and_requirements_are_person_owned_even_after_lead_rea
     assert (await on.patch(url, json={'version': 0, 'constraints': [{'text': 'stale'}]})).status_code == 409
 
 
+@pytest.mark.parametrize('field,proposal_field', [
+    ('constraints', 'propose_constraints'), ('requirements', 'propose_requirements'),
+])
+async def test_identical_boundary_proposal_flags_lead_without_requesting_approval(on, project, env, field, proposal_field):
+    x = await lead(on, project, env)
+    url = f"/api/teams/{x['id']}/plan"
+    original = (await on.patch(url, json={'version': 0, field: [{'text': 'Keep notes private'}]})).json()[field][0]
+    proposed = await plan(on, env, x, **{proposal_field: [{'id': original['id'], 'text': 'Keep notes private'}]})
+    assert proposed['ok'], proposed
+    assert 'No difference found between current and proposed' in proposed['result']['warnings'][0]
+    cards = (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items']
+    card = next(i for i in cards if original['id'] in i['title'])
+    assert card['kind'] == 'note' and card['answer'] is None and card['options'] is None
+    assert 'No difference found between current and proposed' in card['steps']
+    assert 'Acceptance:' not in card['steps']
+    assert (await on.get(url)).json()[field][0] == original
+    assert not (await on.patch(f"/api/teams/{x['id']}/worklist/items/{card['id']}",
+        json={'revision': card['revision'], 'answer': 'accept'})).is_success
+
+
+async def test_acceptance_only_proposal_is_a_real_change_and_new_boundary_has_no_current_text(on, project, env):
+    x = await lead(on, project, env)
+    url = f"/api/teams/{x['id']}/plan"
+    assert (await on.patch(url, json={'version': 0, 'requirements': [
+        {'text': 'Import CSV', 'acceptance': 'Accept valid files'}]})).is_success
+    result = await plan(on, env, x, propose_requirements=[
+        {'id': 'R-1', 'text': 'Import CSV', 'acceptance': 'Refuse invalid rows'}],
+        propose_constraints=[{'text': 'No uploads'}])
+    assert result['ok'], result
+    cards = (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items']
+    requirement = next(i for i in cards if 'R-1' in i['title'])
+    assert requirement['kind'] == 'decision'
+    assert 'Current acceptance: Accept valid files' in requirement['steps']
+    assert 'Proposed acceptance: Refuse invalid rows' in requirement['steps']
+    constraint = next(i for i in cards if 'C-1' in i['title'])
+    assert constraint['kind'] == 'decision'
+    assert 'Current: No accepted boundary yet.' in constraint['steps']
+    assert 'Proposed: No uploads' in constraint['steps']
+    assert 'Acceptance:' not in constraint['steps']
+    accepted = await on.patch(f"/api/teams/{x['id']}/worklist/items/{requirement['id']}",
+        json={'revision': requirement['revision'], 'answer': 'accept'})
+    assert accepted.is_success, accepted.text
+    assert (await on.get(url)).json()['requirements'][0]['acceptance'] == 'Refuse invalid rows'
+
+
+async def test_existing_identical_proposal_becomes_a_note_without_changing_the_boundary(on, project, env, monkeypatch):
+    from acc.server import attention
+    from acc.server.orchestrator import planning_controls as controls
+    monkeypatch.setenv('RYNHULT_ORCHESTRATOR_V2_DELIVERY', '1')
+    monkeypatch.setattr(delivery, 'wake', lambda supervisor: None)
+    x = await lead(on, project, env)
+    url = f"/api/teams/{x['id']}/plan"
+    original = (await on.patch(url, json={'version': 0, 'constraints': [{'text': 'No uploads'}]})).json()['constraints'][0]
+    with on.app.state.db() as db:
+        card = worklist.add(db, x['id'], f"session:{x['id']}", 'lead', {
+            'kind': 'decision', 'title': 'Proposed change to C-1',
+            'steps': 'Current: No uploads\nProposed: No uploads\nAcceptance: ',
+            'options': [{'id': 'accept', 'label': 'Accept change'}, {'id': 'keep', 'label': 'Keep current boundary'}]})
+        db.add(controls.PlanProposal(item_id=card.id, team_id=x['id'], kind='C', target_id='C-1',
+            base_version=1, text='No uploads', acceptance=''))
+        item_id, revision = card.id, card.revision
+        db.commit()
+    cards = (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items']
+    current = next(i for i in cards if i['id'] == item_id)
+    assert current['kind'] == 'note' and current['options'] is None and current['answer'] is None
+    assert current['revision'] > revision
+    assert 'No difference found between current and proposed' in current['steps']
+    seen = await request(on, env, x, 'worklist')
+    assert seen['ok'] and next(i for i in seen['result']['items'] if i['id'] == item_id)['kind'] == 'note'
+    assert (await on.get(url)).json()['constraints'][0] == original
+    assert (await on.patch(f"/api/teams/{x['id']}/worklist/items/{item_id}",
+        json={'revision': revision, 'answer': 'accept'})).status_code == 409
+    with on.app.state.db() as db:
+        queued = list(db.scalars(select(delivery.MessageDelivery).where(delivery.MessageDelivery.session_id == x['id'])))
+        notices = [row for row in queued if row.body.startswith(delivery.NUDGE_ORIGIN + 'No difference found')]
+        assert attention._open(db, f'worklist:{item_id}') is None
+        assert len(notices) == 1
+        assert any(row.body.startswith(delivery.NUDGE_ORIGIN + 'your person edited the plan.') for row in queued)
+        assert notices[0].actor == 'supervisor'
+        assert notices[0].body.startswith(delivery.NUDGE_ORIGIN)
+        assert 'No difference found between current and proposed' in notices[0].body
+        assert 'your person' not in notices[0].body[len(delivery.NUDGE_ORIGIN):]
+        assert 'No uploads' not in notices[0].body
+
+
+@pytest.mark.parametrize('person_edit', [{'steps': 'Keep my explanation.'}, {'answer': 'keep'}])
+async def test_proposal_refresh_preserves_person_edits_and_recorded_answers(on, project, env, person_edit):
+    x = await lead(on, project, env)
+    url = f"/api/teams/{x['id']}/plan"
+    assert (await on.patch(url, json={'version': 0, 'constraints': [{'text': 'Local only'}]})).is_success
+    assert (await plan(on, env, x, propose_constraints=[{'id': 'C-1', 'text': 'Invited people only'}]))['ok']
+    card = next(i for i in (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items'] if i['kind'] == 'decision')
+    edited = await on.patch(f"/api/teams/{x['id']}/worklist/items/{card['id']}",
+        json={'revision': card['revision'], **person_edit})
+    assert edited.is_success, edited.text
+    current = (await on.get(url)).json()
+    assert (await on.patch(url, json={'version': current['version'],
+        'constraints': [{'id': 'C-1', 'text': 'Invited people only'}]})).is_success
+    refreshed = (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items']
+    assert next(i for i in refreshed if i['id'] == card['id']) == edited.json()
+
+
+async def test_stale_legacy_proposal_loses_empty_acceptance_without_rebinding_its_current_text(on, project, env):
+    x = await lead(on, project, env)
+    url = f"/api/teams/{x['id']}/plan"
+    assert (await on.patch(url, json={'version': 0, 'constraints': [{'text': 'Local only'}]})).is_success
+    assert (await plan(on, env, x, propose_constraints=[{'id': 'C-1', 'text': 'Cloud allowed'}]))['ok']
+    with on.app.state.db() as db:
+        card = db.scalar(select(worklist.WorkItem).where(worklist.WorkItem.team_id == x['id'], worklist.WorkItem.kind == 'decision'))
+        card.steps = 'Current: Local only\nProposed: Cloud allowed\nAcceptance: '
+        item_id = card.id
+        db.commit()
+    current = (await on.get(url)).json()
+    assert (await on.patch(url, json={'version': current['version'],
+        'constraints': [{'id': 'C-1', 'text': 'Offline only'}]})).is_success
+    card = next(i for i in (await on.get(f"/api/teams/{x['id']}/worklist")).json()['items'] if i['id'] == item_id)
+    assert card['steps'] == 'Current: Local only\nProposed: Cloud allowed'
+    refused = await on.patch(f"/api/teams/{x['id']}/worklist/items/{item_id}",
+        json={'revision': card['revision'], 'answer': 'accept'})
+    assert refused.status_code == 409 and 'boundary changed' in refused.json()['detail']
+    assert (await on.get(url)).json()['constraints'][0]['text'] == 'Offline only'
+
+
 @pytest.mark.parametrize('provider,field,value', [('claude', 'permission_mode', 'plan'),
     ('codex', 'sandbox', 'read-only'), ('copilot', 'mode', 'plan')])
 async def test_prepare_lead_launch_has_provider_read_only_permission(on, project, env, provider, field, value):

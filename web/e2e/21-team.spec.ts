@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState } from './helpers';
+import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState, waitForTeamStopped, gitProject } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 const owned: string[] = [];
@@ -75,6 +75,36 @@ test('person explicitly grants Orchestrator and stops the team', async ({ page }
   owned.push(leadId);
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]{12}$/);
   await waitForSessionState(page, leadId, 'idle', 'claude_hook');
+  await page.getByRole('tab', { name: 'Team', exact: true }).click();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expandTeamPanels(page);
+  await expect(page.getByText('cursor · No profile · Runs without asking', { exact: true })).toBeVisible();
+  await expect(page.getByText('copilot · No profile · All permissions allowed', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Stop team', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop team', exact: true }).last().click();
+  await waitForTeamStopped(page, leadId);
+  owned.length = 0;
+  await expect(page.getByText('Stop confirmed', { exact: true })).toBeVisible();
+});
+
+// Runtime coverage owns a fresh grant. It does not depend on the preceding UI
+// test or spend its machine-confirmation budget repeating grant-form editing.
+test('a granted team reports a helper permission and stops every member', async ({ page }, testInfo) => {
+  const { id: projectId, folder, headers } = await gitProject(page, 'team-runtime');
+  writeFileSync(`${folder}/.gitattributes`, '*.psd filter=lfs diff=lfs merge=lfs -text\n');
+  execFileSync('git', ['-C', folder, 'add', '.gitattributes']);
+  execFileSync('git', ['-C', folder, '-c', 'user.name=Taylor', '-c', 'user.email=taylor@example.com',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', 'LFS fixture']);
+  const response = await page.request.post('/api/sessions', { headers, data: {
+    project_id: projectId, name: 'Taylor lead', provider: 'claude', worktree: true,
+    orchestrator: { agents: [{ agent: 'claude', profile: null }], machines: ['local'],
+      at_once: 3, total: 10, depth: 2, hours: 8 },
+  } });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const leadId = (await response.json()).id;
+  owned.push(leadId);
+  await page.goto(`/sessions/${leadId}`);
+  await waitForSessionState(page, leadId, 'idle', 'claude_hook');
   async function team(action: string, args: object = {}) {
     const id = randomUUID().replaceAll('-', '');
     appendFileSync(`${info().run_dir}/${leadId}/events.jsonl`, JSON.stringify({ acc_session: leadId,
@@ -100,8 +130,6 @@ test('person explicitly grants Orchestrator and stops the team', async ({ page }
   await page.getByRole('tab', { name: 'Settings', exact: true }).click();
   await expandTeamPanels(page);
   await expect(page.getByText('1 / 10')).toBeVisible();
-  await expect(page.getByText('cursor · No profile · Runs without asking', { exact: true })).toBeVisible();
-  await expect(page.getByText('copilot · No profile · All permissions allowed', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Morgan helper/ }).first()).toBeVisible();
   await expect(page.getByText('LFS files arrive as pointers; run git lfs checkout', { exact: true })).toBeVisible();
   control(helperId, 'permission');
@@ -120,6 +148,10 @@ test('person explicitly grants Orchestrator and stops the team', async ({ page }
   await page.goto(`/sessions/${leadId}?tab=team#settings`);
   await page.getByRole('button', { name: 'Stop team', exact: true }).click();
   await page.getByRole('button', { name: 'Stop team', exact: true }).last().click();
+  await waitForTeamStopped(page, leadId);
+  // Confirmation covers both members. Re-stopping them in afterEach adds two
+  // unnecessary broker round trips to an already completed UI journey.
+  owned.length = 0;
   await expect(page.getByText('Stop confirmed', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New session', exact: true }).click();
   await openAdvanced(page.getByRole('dialog', { name: 'New session', exact: true }));

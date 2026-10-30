@@ -84,3 +84,34 @@ export async function downloadFile(path: string, filename: string, json: unknown
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** Bounded Files batches expose transport progress; only a pre-handler CSRF mismatch may replay. */
+export async function uploadJson<T>(path: string, json: unknown, progress: (percent: number) => void): Promise<T> {
+  const body = JSON.stringify(json);
+  const send = (token: string) => new Promise<XMLHttpRequest>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.timeout = 120_000;
+    xhr.ontimeout = () => reject(new Error("Upload timed out. Check the folder before trying again."));
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("X-ACC-CSRF", token);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) progress(Math.round(e.loaded / e.total * 100)); };
+    xhr.onload = () => resolve(xhr);
+    xhr.onerror = () => reject(new Error("Upload connection lost. Check the folder before trying again."));
+    xhr.onabort = () => reject(new Error("Upload interrupted. Check the folder before trying again."));
+    xhr.send(body);
+  });
+  let response = await send(csrf());
+  if (response.status === 403 && response.getResponseHeader("X-ACC-CSRF-Error") === "mismatch") {
+    const fresh = await fetch("/api/auth/csrf", { credentials: "same-origin", cache: "no-store" });
+    if (fresh.ok) {
+      const token = await fresh.json();
+      if (typeof token.csrf === "string" && token.csrf) response = await send(token.csrf);
+    }
+  }
+  let result;
+  try { result = JSON.parse(response.responseText); } catch { throw new Error("Upload response unreadable. Check the folder before trying again."); }
+  if (response.status < 200 || response.status >= 300) throw new ApiError(response.status,
+    typeof result.detail === "string" ? result.detail : fieldErrors(result.detail) ?? "Upload refused.");
+  return result as T;
+}

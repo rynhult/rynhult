@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSessionState } from './helpers';
+import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSessionState, waitForTeamStopped, csrfHeaders } from './helpers';
 
 // Usability walkthrough of the Guide's "Orchestrate a project" (docs/wiki/User-Guide/Orchestrate-a-Project.md) as a new
 // person would follow it: every click uses the words the Guide gives. The server runs the preview with the plan and
@@ -9,13 +9,21 @@ import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSes
 // agent's would. One test, in the Guide's order, so a broken step names the Guide section it breaks.
 test.use({ storageState: AUTH_FILE });
 test.setTimeout(240_000);
+let ownedLead: string | undefined;
+test.afterEach(async ({ page }) => {
+  if (ownedLead) expect((await page.request.post(`/api/sessions/${ownedLead}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+  ownedLead = undefined;
+});
 
 async function team(lead: string, action: string, args: object = {}) {
   const id = randomUUID().replaceAll('-', '');
   appendFileSync(`${info().run_dir}/${lead}/events.jsonl`, JSON.stringify({ acc_session: lead,
     hook: { hook_event_name: 'AccTeam', request: { id, action, ...args } } }) + '\n');
   const file = `${info().run_dir}/${lead}/team/${id}.json`;
-  await expect.poll(() => existsSync(file)).toBeTruthy();
+  // Team tool requests share the durable queue with other running teams; a
+  // reply is asynchronous (the real CLI allows 180s), not a five-second RPC.
+  await expect.poll(() => existsSync(file), { timeout: test.info().timeout,
+    message: `Waiting for ${action} reply ${id} from team ${lead}` }).toBeTruthy();
   return JSON.parse(readFileSync(file, 'utf8')) as { ok: boolean; result?: any; error?: string };
 }
 
@@ -49,6 +57,7 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   const response = await launched;
   expect(response.ok(), await response.text()).toBeTruthy();
   const lead = (await response.json()).id as string;
+  ownedLead = lead;
   await expect(page).toHaveURL(new RegExp(`/sessions/${lead}`));
   await waitForSessionState(page, lead, 'idle', 'claude_hook');
   // "What you should see: ... Its Team tab shows the team."
@@ -81,9 +90,7 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   const yours = page.getByRole('region', { name: 'What the lead needs from you' });
   const card = yours.getByRole('listitem', { name: 'Which file formats first?' });
   await expect(card.getByText(/Default until you answer/)).toBeVisible();
-  await card.getByRole('button', { name: 'Change', exact: true }).click();
-  await card.getByRole('combobox', { name: 'Choose for "Which file formats first?"' }).selectOption('both');
-  await card.getByRole('button', { name: 'Save answer' }).click();
+  await card.getByRole('button', { name: 'CSV and Excel', exact: true }).click();
   await expect(card).toHaveCount(0);
   await page.getByLabel('Answer "Who will use the import page?"').fill('Two people in accounts');
   await yours.getByRole('listitem', { name: 'Who will use the import page?' }).getByRole('button', { name: 'Answer' }).click();
@@ -109,7 +116,11 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   // 4. Talk to the lead directly: its Terminal tab, as in any session.
   await page.goto(`/sessions/${lead}`);
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
-  await page.locator('.xterm').first().click();
+  const take = page.getByRole('button', { name: 'Take control', exact: true });
+  await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
+  if (await take.isVisible()) await take.click();
+  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('Please keep the first version small.');
   await page.keyboard.press('Enter');
   await expect.poll(() => existsSync(`${info().run_dir}/${lead}/fake.received`)
@@ -147,6 +158,8 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   // 7. Stop everything.
   await page.getByRole('button', { name: 'Stop team', exact: true }).click();
   await page.getByRole('button', { name: 'Stop team', exact: true }).last().click();
+  await waitForTeamStopped(page, lead);
+  ownedLead = undefined;
   await expect(page.getByRole('heading', { name: 'Stop confirmed', exact: true })).toBeVisible();
   const late = await team(lead, 'start', { name: 'Late helper', agent: 'claude', task: 'After the stop.' });
   expect(late.ok).toBe(false);

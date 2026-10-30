@@ -2,9 +2,17 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { environmentValue } from '../../src/acc/env.mjs';
 import { expect, test } from '@playwright/test';
-import { expandTeamPanels, AUTH_FILE, expectAxeClean, gitProject, info, openAdvanced } from './helpers';
+import { expandTeamPanels, AUTH_FILE, expectAxeClean, gitProject, info, openAdvanced, waitForSessionState, csrfHeaders } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
+const ownedLeads: string[] = [];
+test.beforeEach(() => { ownedLeads.length = 0; });
+test.afterEach(async ({ page }) => {
+  const headers = await csrfHeaders(page);
+  for (const id of ownedLeads) {
+    expect((await page.request.post(`/api/sessions/${id}/team/stop`, { headers })).ok()).toBeTruthy();
+  }
+});
 for (const codexSignedIn of [false, true]) test(`new teams show task profiles and let the person trim them (Codex signed in: ${codexSignedIn})`, async ({ page }, testInfo) => {
   const { id } = await gitProject(page, 'profile-defaults');
   const choices = [
@@ -54,6 +62,7 @@ test('person records boundaries and switches a running prepare lead to build', a
   } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const lead = (await created.json()).id;
+  ownedLeads.push(lead);
   await page.goto(`/sessions/${lead}?tab=team#overview`);
   const boundaries = page.getByRole('region', { name: 'Constraints and requirements', exact: true });
   await page.getByRole('tab', { name: 'Settings', exact: true }).click();
@@ -123,7 +132,13 @@ test('switching a running build lead to prepare stops helpers first and resumes 
   await page.getByRole('tab', { name: 'Settings', exact: true }).click();
   await expandTeamPanels(page);
   await page.getByRole('combobox', { name: 'Run mode', exact: true }).selectOption('prepare');
+  const resuming = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/sessions/${lead}/resume`);
   await page.getByRole('button', { name: 'Save run mode', exact: true }).click();
+  expect((await resuming).ok()).toBeTruthy();
+  // Wait for the actual resumed hook state, not a five-second assumption about
+  // the combined helper-stop/lead-stop/reconfiguration/resume operation.
+  await waitForSessionState(page, lead, 'idle', 'claude_hook');
   await expect(page.getByRole('status').filter({ hasText: 'Lead resumed' })).toContainText('Lead resumed');
   const resumed = await (await page.request.get(`/api/sessions/${lead}`)).json();
   expect(resumed.desired_state).toBe('running');
@@ -207,7 +222,11 @@ test('a failed resume keeps the saved mode and retries only resume, without anot
   await expect(page.getByRole('heading', { name: 'Run mode: Prepare', exact: true })).toBeVisible();
   const stopped = await (await page.request.get(`/api/sessions/${lead}`)).json();
   expect(stopped.desired_state).toBe('stopped');
+  const retried = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/sessions/${lead}/resume`);
   await settings.getByRole('button', { name: 'Resume lead', exact: true }).click();
+  expect((await retried).ok()).toBeTruthy();
+  await waitForSessionState(page, lead, 'idle', 'claude_hook');
   await expect(page.getByRole('status').filter({ hasText: 'Lead resumed' })).toContainText('Lead resumed');
   expect(writes).toBe(1);
   expect(resumes).toBe(2);
@@ -261,7 +280,9 @@ async function buildLead(page: import('@playwright/test').Page) {
       at_once: 2, total: 4, depth: 1, hours: 2 },
   } });
   expect(created.ok(), await created.text()).toBeTruthy();
-  return { lead: (await created.json()).id as string, headers };
+  const lead = (await created.json()).id as string;
+  ownedLeads.push(lead);
+  return { lead, headers };
 }
 
 test('material card blocks only linked phases and the person edits its links', async ({ page }) => {

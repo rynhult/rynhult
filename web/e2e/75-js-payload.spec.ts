@@ -54,6 +54,9 @@ for (const phone of [false, true]) {
     test("session defers Files and Changes until selected, keeping terminal and editor usable", async ({ page, request }, testInfo) => {
       const id = await sessionWithChanges(page, `payload-${phone ? "phone" : "desktop"}`);
       const headers = await csrfHeaders(page);
+      // The setup helper visits /sessions. Cancel that document's pending lazy
+      // requests before measuring a fresh session document under load.
+      await page.goto('about:blank');
       const scripts = new Set<string>();
       const assets = new Set<string>();
       page.on("request", (request) => {
@@ -103,6 +106,9 @@ for (const phone of [false, true]) {
     test("a Files deep link loads its editor without xterm or the Markdown preview until needed", async ({ page, request }) => {
       const id = await sessionWithChanges(page, `payload-files-${phone ? "phone" : "desktop"}`);
       const headers = await csrfHeaders(page);
+      // The setup helper visits /sessions. Cancel that document's pending lazy
+      // requests before measuring a fresh session document under load.
+      await page.goto('about:blank');
       const scripts = new Set<string>();
       page.on("request", (request) => { if (request.resourceType() === "script") scripts.add(new URL(request.url()).pathname); });
       try {

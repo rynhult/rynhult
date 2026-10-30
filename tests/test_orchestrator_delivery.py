@@ -180,6 +180,12 @@ async def test_queued_team_message_does_not_outlive_sender(v2, project, env, mon
     assert not (env['run_dir'] / helper['id'] / 'fake.received').exists()
 
 
+def replace_fake_fragment(source, old, new):
+    """Specialized provider fixtures must never silently skip their input behavior."""
+    assert source.count(old) == 1, 'fake provider input fragment changed; update the specialized fixture'
+    return source.replace(old, new)
+
+
 @pytest.fixture
 def raw_provider(env, tmp_path):
     """The fake CLI normally uses canonical input (Linux truncates those lines).
@@ -187,10 +193,11 @@ def raw_provider(env, tmp_path):
     """
     from pathlib import Path
     source = (Path(__file__).parent / 'fake_cli.py').read_text()
-    source = source.replace('\nctl = run_dir / "fake.ctl"',
+    source = replace_fake_fragment(source, '\nctl = run_dir / "fake.ctl"',
         '\nimport termios\nattrs = termios.tcgetattr(0)\nattrs[3] &= ~(termios.ICANON | termios.ECHO)\n'
         'termios.tcsetattr(0, termios.TCSANOW, attrs)\nctl = run_dir / "fake.ctl"')
-    source = source.replace('line = sys.stdin.readline()', "line = sys.stdin.readline().lstrip('\\x1b\\x15')")
+    source = replace_fake_fragment(source, 'line = raw.decode("utf-8")',
+                                   'line = raw.decode("utf-8").lstrip("\\x1b\\x15")')
     compile(source, '<raw fake>', 'exec')
     binary = tmp_path / 'fake-claude-raw'
     binary.write_text(source)
@@ -288,6 +295,10 @@ async def test_redaction_happens_before_queue_storage(v2, project, monkeypatch):
         assert 'SECRET_CANARY' not in stored.body
         assert '«key: demo»' in stored.body
     assert 'SECRET_CANARY' not in json.dumps(row, default=str)
+    response = await v2.get(f'/api/sessions/{sid}/deliveries?include_text=true')
+    assert response.status_code == 200
+    assert 'SECRET_CANARY' not in response.text
+    assert '«key: demo»' in response.json()['deliveries'][0]['text']
 
 
 async def test_committed_handoff_is_attached_as_partial_evidence(v2, project, env):
@@ -319,19 +330,19 @@ async def dropped_enter_v2(raw_provider, env, v2, request):
     binary = env['broker'].providers['claude']
     from pathlib import Path
     source = Path(binary).read_text()
-    needle = "line = sys.stdin.readline().lstrip('\\x1b\\x15')"
+    needle = '    line = raw.decode("utf-8").lstrip("\\x1b\\x15").replace("\\r\\n", "\\n")'
     drops = getattr(request, 'param', 1)
-    source = source.replace(needle, needle + f'''
-        pending = run_dir / 'fake.pending'
-        count = run_dir / 'fake.enters'
-        if not line.strip() and pending.exists():
-            line = pending.read_text()
-        attempt = int(count.read_text()) + 1 if count.exists() else 1
-        count.write_text(str(attempt))
-        if attempt <= {drops}:
-            pending.write_text(line)
-            print(line.strip(), end='', flush=True)
-            continue
+    source = replace_fake_fragment(source, needle, needle + f'''
+    pending = run_dir / 'fake.pending'
+    count = run_dir / 'fake.enters'
+    if not line.strip() and pending.exists():
+        line = pending.read_text()
+    attempt = int(count.read_text()) + 1 if count.exists() else 1
+    count.write_text(str(attempt))
+    if attempt <= {drops}:
+        pending.write_text(line)
+        print(line.strip(), end='', flush=True)
+        return
 ''')
     compile(source, '<dropped Enter fake>', 'exec')
     Path(binary).write_text(source)
@@ -373,6 +384,7 @@ async def test_delivery_and_report_reads_do_not_cross_people(v2, project, env, m
         assert (await member.get(f'/api/deliveries/{identifier}')).status_code == 404
         assert (await member.post(f'/api/deliveries/{identifier}/retry', headers=csrf(member))).status_code == 404
         assert (await member.get(f'/api/sessions/{sid}/deliveries')).status_code == 404
+        assert (await member.get(f'/api/sessions/{sid}/deliveries?include_text=true')).status_code == 404
         assert (await member.get(f'/api/sessions/{sid}/report')).status_code == 404
 
 
@@ -477,18 +489,19 @@ async def test_open_terminal_delivery_reports_conflict_and_retry_preserves_singl
 def input_tui(env, tmp_path):
     """Raw-mode fake TUIs, with an editable prompt rather than canonical readline.
 
-    Canonical fake_cli may already have read ghost text into Python's readline
+    The line-oriented fake may already have read ghost text into its pending
     buffer: a kernel Ctrl-U cannot clear that, unlike a real TUI's editor.
     """
     from pathlib import Path
     source = (Path(__file__).parent / 'fake_cli.py').read_text()
-    source = source.replace('\nctl = run_dir / "fake.ctl"', '''\nimport tty
+    source = replace_fake_fragment(source, '\nctl = run_dir / "fake.ctl"', '''\nimport tty
     tty.setraw(0)
-    pending_input = ""
     ctl = run_dir / "fake.ctl"'''.replace('    ', ''))
-    start = source.index('        line = sys.stdin.readline()', source.index('# A real submitted terminal line:'))
+    source = replace_fake_fragment(source, '\npending_input = b""\n', '\npending_input = ""\n')
+    start = source.index('    if select.select([sys.stdin], [], [], 0)[0]:', source.index('# A real submitted terminal line:'))
     end = source.index('    if ctl.exists():', start)
-    source = source[:start] + '''        character = os.read(0, 1).decode()
+    source = source[:start] + '''    if select.select([sys.stdin], [], [], 0)[0]:
+        character = os.read(0, 1).decode()
         if character == "\\x15":
             pending_input = ""
         elif character in ("\\r", "\\n"):
@@ -757,3 +770,22 @@ async def test_report_wakes_coordinating_parent_not_root_lead(v2, project, env):
         assert len(rows) == 1
         assert rows[0].session_id == parent['id']
         assert 'reported blocked' in rows[0].body
+
+
+async def test_delivery_details_show_full_pending_text_without_retaining_settled_bodies(v2, project):
+    sid = await launched(v2, project)
+    sup = v2.app.state.supervisor
+    await delivery.stop_worker(sup)
+    text = 'Full delivery detail. ' * 30
+    identifier = delivery.enqueue(sup, sid, '@api', text)['id']
+    compact = (await v2.get(f'/api/sessions/{sid}/deliveries')).json()['deliveries'][0]
+    assert 'text' not in compact and 'body' not in compact
+    detailed = (await v2.get(f'/api/sessions/{sid}/deliveries?include_text=true')).json()['deliveries'][0]
+    assert detailed['text'] == text and detailed['text_truncated'] is False
+    with sup.db() as db:
+        row = db.get(delivery.MessageDelivery, identifier)
+        delivery.transition(db, row, 'failed', error='submission_unconfirmed')
+        db.commit()
+    settled = (await v2.get(f'/api/sessions/{sid}/deliveries?include_text=true')).json()['deliveries'][0]
+    assert settled['text'] == text[:200] and settled['text_truncated'] is True
+    assert 'body' not in settled

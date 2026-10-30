@@ -265,7 +265,7 @@ if [ ${#missing_apt[@]} -gt 0 ] || [ -z "$UV" ]; then
 fi
 # Node.js 22+: what the agent CLIs installed with npm need (Host → Providers → Install on this machine). Not needed to
 # relay sessions, so only installed with --install-prereqs; otherwise a note.
-if node -e 'process.exit(+process.versions.node.split(".")[0] < 22)' 2>/dev/null; then
+if node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null; then
   ok "node $(node --version)"
 elif [ -n "$PREREQS" ] && [ "$PKG" = apt ]; then
   run sh "$REPO/deploy/lib/install-node.sh"

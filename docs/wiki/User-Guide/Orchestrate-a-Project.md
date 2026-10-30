@@ -188,10 +188,13 @@ In prepare mode, even a ready plan does not authorize code changes.
 
 Under **What the lead needs from you**:
 
-- On a **Decision** card, **Approve** accepts its recommendation or default.
-  **Change** opens the options and a **Different answer** box; choose an option
-  or write your answer, then **Save answer**. Without a recommendation/default,
-  use Change. A decision cannot be marked done/dismissed instead of answered.
+- On a **Decision** card, select any option button once to answer it. A
+  recommended option says **Recommended** and uses the primary style; cards
+  without a recommendation have the same direct option buttons, not a disabled
+  Approve. **Change** opens only the **Different answer** box; write an answer,
+  then **Save answer**. A decision cannot be marked done/dismissed instead of
+  answered. An identical boundary proposal becomes a note for the lead to
+  review instead of asking for approval; see [Working list](/User-Guide/Orchestrator#working-list).
 - **Discuss** opens **Message to lead**. **Send to lead** queues a discussion
   through the same confirmed delivery path as session messages. The card stays
   open, with its delivery status and an **Open lead conversation** link. The lead

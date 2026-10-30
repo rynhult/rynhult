@@ -211,7 +211,7 @@ def save(db, project_id, actor, fields, base_version, references=(), *, proposed
     return value
 
 
-def accept(db, project_id, number, actor, base_version, fields):
+def accept(db, project_id, number, actor, base_version, fields, edits=None):
     """The person takes named fields from an imported proposal; every other field stays as in the current brief.
 
     Imported Markdown is repository text (agents can edit it), so it is never promoted as a whole: only the fields
@@ -223,17 +223,20 @@ def accept(db, project_id, number, actor, base_version, fields):
     choices = set(FIELDS) | {'references'}
     if not isinstance(fields, list) or not fields or any(f not in choices for f in fields) or len(set(fields)) != len(fields):
         raise Refused('name the fields to accept from this proposal (field by field)')
+    edits = {} if edits is None else edits
+    if not isinstance(edits, dict) or set(edits) - (set(fields) - {'references'}):
+        raise Refused('edit only selected brief fields')
     head = header(db, project_id)
     current = db.get(BriefVersion, (project_id, head.version)) if head.version else None
     merged = dict(current.submitted if current else {})
     for key in fields:
         if key == 'references':
             continue
-        if key in row.submitted:
+        if key in edits:
+            merged[key] = edits[key]
+        elif key in row.submitted:
             merged[key] = row.submitted[key]
-        else:
-            merged.pop(key, None)
-    references = row.references if 'references' in fields else (current.references if current else [])
+    references = list(dict.fromkeys((current.references if current else []) + row.references)) if 'references' in fields else (current.references if current else [])
     value = save(db, project_id, actor, merged, base_version, references, original_markdown=row.original_markdown)
     db.add(AuditLog(actor=actor, action='brief.accept_fields', target=str(project_id),
                     detail={'proposal': number, 'version': value.version, 'fields': sorted(fields)}))
@@ -373,18 +376,47 @@ def version_out(db, row):
             'references': [reference_out(r) for r in _references(db, row.project_id, row.references)],
             'state': row.state, 'conflicts': row.conflicts, 'actor': row.actor, 'created_at': row.created_at.isoformat(),
             # An unaccepted import is repository text, not the person's: say so wherever it is shown.
+            'review_url': review_url(row.project_id, row.version),
             'source': (row.provenance or {}).get('source', 'repository import (not accepted)' if row.state == 'proposed' else 'person'),
             'citations': (row.provenance or {}).get('citations', {}),
             'markdown': markdown(row.project_id, row.version, row.submitted)}
 
 
-def view(db, project_id, history_before=None):
+def review_url(project_id, number):
+    return f'/projects/{project_id}?brief_review={number}#project-brief'
+
+
+def latest_proposal(db, project_id):
+    return db.scalar(select(BriefVersion).where(BriefVersion.project_id == project_id,
+        BriefVersion.state == 'proposed').order_by(BriefVersion.version.desc()).limit(1))
+
+
+def notify_accept(db, supervisor, project_id, number):
+    from . import delivery
+    if not delivery.enabled():
+        return
+    for lead in db.scalars(select(Session).join(Team, Team.id == Session.id).where(
+            Session.project_id == project_id, Session.management == 'acc', Session.desired_state == 'running',
+            Team.stopped.is_(False), Team.expires_at > utcnow())):
+        delivery.enqueue_in_transaction(db, supervisor, lead, 'supervisor',
+            f'Your person accepted project brief version {number}. Read the current brief and plan before continuing. '
+            f'Review: /projects/{project_id}#project-brief. This notice does not change your pinned scope or run mode.')
+
+
+def view(db, project_id, history_before=None, review_version=None):
     head = db.get(ProjectBrief, project_id)
     query = select(BriefVersion).where(BriefVersion.project_id == project_id)
     if history_before is not None:
         query = query.where(BriefVersion.version < history_before)
     history = list(db.scalars(query.order_by(BriefVersion.version.desc()).limit(20)))
-    return {'current_version': head.version if head else 0, 'current': version_out(db, db.get(BriefVersion, (project_id, head.version))) if head and head.version else None, 'history': [version_out(db, r) for r in history],
+    proposal = latest_proposal(db, project_id)
+    requested = db.get(BriefVersion, (project_id, review_version)) if review_version else None
+    if review_version and (requested is None or requested.state != 'proposed'):
+        raise Refused('no such proposed brief', 404)
+    return {'pending_proposal': version_out(db, proposal) if proposal and proposal.version > (head.version if head else 0) else None,
+            'latest_proposal': version_out(db, proposal) if proposal else None,
+            'review_proposal': version_out(db, requested) if requested else None,
+            'current_version': head.version if head else 0, 'current': version_out(db, db.get(BriefVersion, (project_id, head.version))) if head and head.version else None, 'history': [version_out(db, r) for r in history],
             'export_path': head.export_path if head else 'docs/PROJECT-BRIEF.md',
             'next_version': head.next_version if head else 1,
             'documents': [reference_out(r) for r in document_rows(db, project_id)]}
@@ -525,7 +557,8 @@ def question(db, team_id, body):
         raise Refused('a brief decision needs options and a reasoned recommendation')
     item = worklist.add(db, team_id, 'lead', f'session:{team_id}', {
         'kind': 'decision', 'title': (f'{field}: ' if REF.fullmatch(field) else '') + text(body.get('question'), 180, True),
-        'steps': f'Brief v{value["version"]}, {FIELDS.get(field, field)}. {text(body.get("reason", ""), 2000)}',
+        'steps': f'Brief v{value["version"]}, {FIELDS.get(field, field)}. {text(body.get("reason", ""), 2000)}'
+            + (f' Review proposed brief: {review_url(db.get(Session, team_id).project_id, proposal.version)}' if (proposal := latest_proposal(db, db.get(Session, team_id).project_id)) else ''),
         'blocks': blocks, 'options': options, 'recommendation': recommendation})
     if not isinstance(getattr(item, 'blocks', None), list) or set(item.blocks) != set(blocks):
         raise Refused('the worklist adapter must persist decision blocks; no unbound question was committed', 409)
@@ -768,6 +801,10 @@ def document_evidence(db, project_id, ids=None):
 
 
 def documents_kickoff(db, project_id):
+    proposal = latest_proposal(db, project_id)
+    if proposal:
+        return (f'A proposed brief v{proposal.version} is available for person review: {review_url(project_id, proposal.version)}. '
+                'Link brief decision cards directly to this review. Only the person may accept or edit proposed fields. ')
     if not any(not r.document.get('proposed_version') for r in document_rows(db, project_id)):
         return ''
     return ('Source documents await a brief draft. Call brief_documents to read their extracted text with page/section '
@@ -776,6 +813,7 @@ def documents_kickoff(db, project_id):
             'journeys, first_release/scope, later, success, design, constraints, uncertainty as supported) and citations '
             '(each field maps to a list of {reference: REF-n, location: exact extracted page/section}). '
             'Leave unsupported fields out; do not invent details. This creates a PROPOSED version with source documents, '
-            'for person review and field-by-field acceptance in Version history. Then ask targeted clarifying questions '
+            f'for person review and field-by-field acceptance at /projects/{project_id}#project-brief. Use the returned review_url '
+            'on the decision cards. Then ask targeted clarifying questions '
             'as working-list decision cards with explicit blocks (worklist_add when no accepted brief exists). '
             'Never accept the proposal yourself. Helpers receive only explicitly assigned documents. ')

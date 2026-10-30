@@ -26,7 +26,7 @@ from acc.server import supervisor as supervisor_module
 from acc.server.app import create_app
 from acc.server.config import Settings
 
-pytest_plugins = ["postgres_matrix"]
+pytest_plugins = ["postgres_matrix", "signing_keys"]
 
 REPO = Path(__file__).resolve().parents[1]
 

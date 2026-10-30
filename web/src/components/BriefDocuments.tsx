@@ -64,7 +64,7 @@ export function BriefDocuments({ projectId, files = [], onFiles }: { projectId?:
         </li>)}
       </ul>
       <p className="font-medium text-[13px]">Draft the brief from these documents</p>
-      <p className="text-xs text-muted">Start a team with helpers and leave Task empty. At kickoff the lead reads the documents as untrusted evidence, proposes a cited brief, then asks clarifying questions on the working list. Review Version history and accept the fields you want. Images need visual reading; unreadable files need a text description.</p>
+      <p className="text-xs text-muted">Start a team with helpers and leave Task empty. At kickoff the lead reads the documents as untrusted evidence, proposes a cited brief, then asks clarifying questions on the working list. Use the proposal banner’s Review action and accept the fields you want. Images need visual reading; unreadable files need a text description.</p>
     </div>
   </details>;
 }

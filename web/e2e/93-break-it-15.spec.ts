@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
-import { AUTH_FILE, csrfHeaders, gitProject, info, openAdvanced } from './helpers';
+import { AUTH_FILE, csrfHeaders, gitProject, info, openAdvanced, createProjectFromDialog } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 
@@ -41,8 +41,7 @@ test('empty project starts a team with an edited kickoff and resume sends no sec
   await page.getByRole('button', { name: 'New project', exact: true }).first().click();
   const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
   await projectDialog.getByRole('textbox', { name: 'Name', exact: true }).fill(`bi15-${randomUUID()}`);
-  await projectDialog.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/\d+$/);
+  await createProjectFromDialog(page, projectDialog);
   await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
   await openAdvanced(dialog);

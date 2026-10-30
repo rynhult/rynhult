@@ -102,7 +102,54 @@ def _person(db, actor):
         raise Refused('only the person changes constraints, requirements or run mode; propose a change instead')
 
 
-def edit_rows(db, team_id, actor, changes, model, *, source='person', brief_version=None, proposed=False):
+def _no_difference(row, text, acceptance):
+    return row.state == 'active' and row.text == text and getattr(row, 'acceptance', '') == acceptance
+
+
+def _proposal_steps(row, text, acceptance):
+    current = row.text if row.state != 'proposed_change' else 'No accepted boundary yet.'
+    lines = [f'Current: {current}', f'Proposed: {text}']
+    current_acceptance = getattr(row, 'acceptance', '') if row.state != 'proposed_change' else ''
+    if current_acceptance or acceptance:
+        lines += [f'Current acceptance: {current_acceptance or "None"}',
+                  f'Proposed acceptance: {acceptance or "None"}']
+    if _no_difference(row, text, acceptance):
+        lines.append('No difference found between current and proposed. The lead must review this proposal; no approval is needed.')
+    return '\n'.join(lines)
+
+
+def refresh_proposals(db, team_id):
+    """Repair open, unedited cards from older versions without rewriting any recorded answer."""
+    pending = db.execute(select(PlanProposal, worklist.WorkItem).join(
+        worklist.WorkItem, worklist.WorkItem.id == PlanProposal.item_id).where(
+        PlanProposal.team_id == team_id, worklist.WorkItem.kind == 'decision',
+        worklist.WorkItem.state == 'open', worklist.WorkItem.answer.is_(None),
+        worklist.WorkItem.owner_edited.is_(False)))
+    for proposal, item in pending:
+        model = Constraint if proposal.kind == 'C' else Requirement
+        row = db.get(model, (team_id, proposal.target_id))
+        if row is None:
+            continue
+        identical = _no_difference(row, proposal.text, proposal.acceptance)
+        if not identical and row.version != proposal.base_version:
+            # Remove only the old empty footer; never rebind a stale card to the current boundary.
+            steps = item.steps.removesuffix('\nAcceptance: ') if not proposal.acceptance else item.steps
+        else:
+            steps = _proposal_steps(row, proposal.text, proposal.acceptance)
+        if not identical and item.steps == steps:
+            continue
+        item.steps = steps
+        if identical:
+            item.kind, item.options, item.recommendation, item.default_answer, item.blocks = 'note', None, None, None, []
+        item.revision += 1
+        worklist._bump(worklist.run_for(db, team_id))
+        worklist._inbox(db, item, db.get(Session, team_id))
+        worklist._audit(db, 'system', team_id, 'proposal_review', item, no_difference=identical)
+        if identical:
+            delivery.nudge_lead(db, team_id, 'proposal')
+
+
+def edit_rows(db, team_id, actor, changes, model, *, source='person', brief_version=None, proposed=False, warnings=None):
     if not proposed:
         _person(db, actor)
     elif source == 'person':
@@ -157,12 +204,19 @@ def edit_rows(db, team_id, actor, changes, model, *, source='person', brief_vers
                 row.source, row.brief_version = source, brief_version
         touched.append(identity)
         if proposed:
+            identical = _no_difference(row, text, acceptance)
             item = worklist.add(db, team_id, actor, 'lead', {
-                'kind': 'decision', 'title': f'Proposed change to {identity}',
-                'steps': f'Current: {row.text}\nProposed: {text}\nAcceptance: {acceptance}',
-                'options': [{'id': 'accept', 'label': 'Accept change'}, {'id': 'keep', 'label': 'Keep current boundary'}]})
-            db.add(PlanProposal(item_id=item.id, team_id=team_id, kind=prefix, target_id=identity,
-                                base_version=row.version, brief_version=brief_version, text=text, acceptance=acceptance))
+                'kind': 'note' if identical else 'decision', 'title': f'Proposed change to {identity}',
+                'steps': _proposal_steps(row, text, acceptance),
+                **({} if identical else {'options': [
+                    {'id': 'accept', 'label': 'Accept change'}, {'id': 'keep', 'label': 'Keep current boundary'}]})})
+            if identical:
+                if warnings is not None:
+                    warnings.append(f'{identity}: No difference found between current and proposed. '
+                                    f'Review working-list note #{item.id}; no approval was requested.')
+            else:
+                db.add(PlanProposal(item_id=item.id, team_id=team_id, kind=prefix, target_id=identity,
+                                    base_version=row.version, brief_version=brief_version, text=text, acceptance=acceptance))
     db.flush()
     return touched
 
@@ -294,17 +348,18 @@ def draft_brief(db, team_id, actor, brief_version, requirements, constraints):
     if type(brief_version) is not int or brief_version < 1:
         raise Refused('brief_version is a positive integer')
     proposed = not _is_person(db, actor)
+    warnings = []
     touched = [f'requirement:{i}' for i in edit_rows(db, team_id, actor, requirements, Requirement,
-        source='brief', brief_version=brief_version, proposed=proposed)]
+        source='brief', brief_version=brief_version, proposed=proposed, warnings=warnings)]
     touched += [f'constraint:{i}' for i in edit_rows(db, team_id, actor, constraints, Constraint,
-        source='brief', brief_version=brief_version, proposed=proposed)]
+        source='brief', brief_version=brief_version, proposed=proposed, warnings=warnings)]
     plan = planning.plan_for(db, team_id)
     planning._save(db, plan, actor, f'Brief version {brief_version}: {"proposed" if proposed else "accepted"} rows')
     if not proposed:
         affected(db, plan, touched)
     db.add(AuditLog(actor=actor, action='plan.brief_draft', target=team_id, detail={
         'version': plan.version, 'brief_version': brief_version, 'proposed': proposed, 'fields': touched}))
-    return row_snapshot(db, team_id)
+    return {**row_snapshot(db, team_id), **({'warnings': warnings} if warnings else {})}
 
 
 def accept_proposal(db, item, actor):
@@ -317,6 +372,8 @@ def accept_proposal(db, item, actor):
     row = db.get(model, (item.team_id, proposal.target_id))
     if row is None or item.answer == 'accept' and row.version != proposal.base_version:
         raise Refused('the boundary changed since this proposal; ask for a new proposal', 409)
+    if _no_difference(row, proposal.text, proposal.acceptance):
+        raise Refused('No difference found between current and proposed; ask the lead to review this proposal', 409)
     if item.answer == 'accept':
         row.text, row.version, row.state = proposal.text, row.version + 1, 'active'
         if proposal.brief_version is not None:

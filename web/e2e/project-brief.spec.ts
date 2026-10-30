@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { AUTH_FILE, expectAxeClean, gitProject, info, wikiShotPath } from './helpers';
+import { AUTH_FILE, expectAxeClean, gitProject, info, wikiShotPath, createProjectFromDialog } from './helpers';
 import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -16,9 +16,7 @@ test('New project keeps the build description and starts a saved brief', async (
   await expect(description).toHaveValue('A private room booking board');
   await dialog.getByRole('radio', { name: 'Empty folder', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(`Booking ${randomUUID().slice(0, 8)}`);
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/\d+$/);
-  const id = Number(new URL(page.url()).pathname.split('/').at(-1));
+  const { id } = await createProjectFromDialog(page, dialog);
   const saved = await (await page.request.get(`/api/projects/${id}/brief`)).json();
   expect(saved.current.submitted.product).toBe('A private room booking board');
   expect(saved.current.actor).toBe('alex');
@@ -174,6 +172,7 @@ for (const action of ['retry', 'back'] as const) test(`saved launch failure can 
   expect(proposal.ok()).toBeTruthy();
   await page.goto(`/projects/${id}#project-brief`);
   await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('Revised private bookings');
+  await page.getByRole('dialog', { name: 'There is a proposed brief from your documents; review it first?' }).getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
   await dialog.getByRole('button', { name: /^Advanced/ }).click();
@@ -389,12 +388,14 @@ test('a saved brief cannot regress to stale query data before its refresh finish
   await page.getByRole('combobox', { name: 'Run mode', exact: true }).selectOption('build');
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
+  let savedRequest = false;
   await page.route(`**/api/projects/${id}/brief`, async route => {
-    if (route.request().method() === 'GET') await gate;
+    if (route.request().method() === 'POST') savedRequest = true;
+    if (route.request().method() === 'GET' && savedRequest) await gate;
     await route.continue();
   });
   try {
-    const refreshed = page.waitForRequest(request => request.method() === 'GET'
+    const refreshed = page.waitForRequest(request => savedRequest && request.method() === 'GET'
       && new URL(request.url()).pathname === `/api/projects/${id}/brief`);
     await page.getByRole('button', { name: 'Save project brief', exact: true }).click();
     await refreshed;
@@ -549,9 +550,7 @@ test('New project starts from private documents', async ({ page }) => {
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(`Docs ${randomUUID().slice(0, 8)}`);
   await dialog.getByText('Start from documents', { exact: true }).click();
   await dialog.getByLabel('Source documents').setInputFiles({ name: 'scope.txt', mimeType: 'text/plain', buffer: Buffer.from('Book rooms') });
-  await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/\d+$/);
-  const id = Number(new URL(page.url()).pathname.split('/').at(-1));
+  const { id } = await createProjectFromDialog(page, dialog);
   const brief = await (await page.request.get(`/api/projects/${id}/brief`)).json();
   expect(brief.documents[0].caption).toBe('scope.txt');
   expect(brief.current_version).toBe(0);

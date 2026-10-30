@@ -43,7 +43,14 @@ export function Audit() {
   const [query, setQuery] = useState("");
   const [cursors, setCursors] = useState<number[]>([]);
   const before = cursors.at(-1);
-  useEffect(() => { const timer = setTimeout(() => { setQuery(search.trim()); setCursors([]); }, 300); return () => clearTimeout(timer); }, [search]);
+  useEffect(() => {
+    const next = search.trim();
+    // An unchanged initial search is not a filter change. Its delayed callback
+    // must not reset a cursor the person selected while the page was loading.
+    if (next === query) return;
+    const timer = setTimeout(() => { setQuery(next); setCursors([]); }, 300);
+    return () => clearTimeout(timer);
+  }, [search, query]);
   const params = new URLSearchParams({ limit: "100", page: "true", ...(before !== undefined && { before_id: String(before) }), ...(query && { q: query }), ...(type && { action: type }), ...(actor && { actor }), ...(since && { since }) });
   const rows = useQuery({ queryKey: ["audit", type, actor, since, query, before], queryFn: () => api<{ items: AuditRow[]; has_more: boolean; next_before: number | null }>(`/api/audit?${params}`) });
   const people = useQuery({ queryKey: ["people"], queryFn: () => api<{ users: { username: string }[] }>("/api/users") });

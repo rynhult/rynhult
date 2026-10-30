@@ -72,9 +72,9 @@ def router(ctx: Context):
                 raise HTTPException(error.status, str(error)) from None
 
     @api.get('/api/projects/{project_id}/brief')
-    def read(project_id: int, history_before: int | None = None, who=Depends(ctx.principal)):
+    def read(project_id: int, history_before: int | None = None, review_version: int | None = None, who=Depends(ctx.principal)):
         with access(who, project_id) as (db, _):
-            return brief.view(db, project_id, history_before)
+            return brief.view(db, project_id, history_before, review_version)
 
     @api.post('/api/projects/{project_id}/brief')
     async def save(project_id: int, body: dict, who=Depends(ctx.principal)):
@@ -87,7 +87,7 @@ def router(ctx: Context):
                 if type(number) is not int or number < 1:
                     raise brief.Refused('choose a valid next brief version')
                 if number != row.next_version:
-                    raise brief.Refused('The next brief version changed. Go Back and click Launch to review it again.', 409)
+                    raise brief.Refused('The next brief version changed. Reload and review the latest brief before saving or launching.', 409)
             path = body.get('export_path', row.export_path)
             if refusal := brief.export_path_refusal(path):
                 raise brief.Refused(refusal)
@@ -114,7 +114,12 @@ def router(ctx: Context):
     @api.post('/api/projects/{project_id}/brief/versions/{number}/accept')
     async def accepted(project_id: int, number: int, body: dict, who=Depends(ctx.principal)):
         with access(who, project_id, write=True) as (db, project):
-            value = brief.accept(db, project_id, number, who.username, body.get('version'), body.get('fields'))
+            value = brief.accept(db, project_id, number, who.username, body.get('version'), body.get('fields'), body.get('edits'))
+            from ..supervisor_common import LaunchRefused
+            try:
+                brief.notify_accept(db, ctx.supervisor, project_id, value.version)
+            except LaunchRefused as error:
+                raise brief.Refused(f'Could not queue the lead notice; no fields accepted: {error}', 409) from None
             out, row = brief.version_out(db, value), brief.header(db, project_id)
             path = row.export_path
             digest = row.export_digest

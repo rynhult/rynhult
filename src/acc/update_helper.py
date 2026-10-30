@@ -127,7 +127,8 @@ class Transaction:
         latest = check(repo, current, token, bundle.installed_identity(self.source))
         if latest["latest"] != self.target or not latest["available"]:
             raise ValueError("requested version is no longer the newer stable release")
-        tree = download_release(repo, latest, self.stage, token, get=fetch)
+        tree = download_release(repo, latest, self.stage, token, get=fetch,
+                                allow_unsigned=self.config.get('allow_unsigned', False), verification=self.state)
         self.expected_build = bundle.identity(tree)
         return tree
 
@@ -410,7 +411,8 @@ def main():
                     options = {**config, "build": request["build"], "sha256": request["sha256"]}
                     result = NodeTransaction(root, source, data, target, options).apply()
                 else:
-                    result = Transaction(root, source, data, target, config).apply()
+                    result = Transaction(root, source, data, target,
+                                         {**config, 'allow_unsigned': request.get('allow_unsigned', False)}).apply()
                 write_json(root / "results" / f"{path.stem}.json", result, group)
             except (ValueError, OSError):
                 write_json(

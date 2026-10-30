@@ -8,7 +8,7 @@ Owner means the trusted installation owner. The installation bearer API token ha
 
 Audit cells name current durable actions (including delegated service actions), or explicitly record a gap/absence. They do not claim all reads, failures or denied operations are audited. Phase 2 must add scoped actor IDs, denial/access coverage, redaction and transactional outbox delivery. Existing raw detail fields are not a safe org audit projection. The gate enforces inventory completeness, not semantic authorization correctness; the existing cross-person tests and group tests exercise enforcement.
 
-**436 registered method/path pairs**, including both WebSockets.
+**437 registered method/path pairs**, including both WebSockets.
 
 | Method and route | Required principal | Resource ownership rule | Current audit action | Evidence |
 |---|---|---|---|---|
@@ -116,6 +116,7 @@ Audit cells name current durable actions (including delegated service actions), 
 | `POST /api/files/{kind}/{key}` | owner/member / installation API token | Resolve kind/key to caller-owned project/session/workspace (owner override); Guide is shared read-only; path confined to root. | files.commit, files.delete, files.write, read | [mutate](../src/acc/server/api/files.py) |
 | `GET /api/files/{kind}/{key}/download` | owner/member / installation API token | Resolve kind/key to caller-owned project/session/workspace (owner override); Guide is shared read-only; path confined to root. | none (file read/download/list; no durable access event) | [download](../src/acc/server/api/files.py) |
 | `GET /api/files/{kind}/{key}/read` | owner/member / installation API token | Resolve kind/key to caller-owned project/session/workspace (owner override); Guide is shared read-only; path confined to root. | none (file read/download/list; no durable access event) | [read](../src/acc/server/api/files.py) |
+| `POST /api/files/{kind}/{key}/upload` | owner/member / installation API token | Resolve kind/key to caller-owned project/session/workspace (owner override); Guide is shared read-only; path confined to root. | files.upload | [upload](../src/acc/server/api/files.py) |
 | `GET /api/gates` | owner/member / installation API token | Projects the caller can see (members: their own; group projects excluded); others' answer 404. | none (read) | [listing](../src/acc/server/api/gates.py) |
 | `POST /api/gates` | owner/member / installation API token | Projects the caller can see (members: their own; group projects excluded); others' answer 404. Off until an owner turns the host budget on; runs only the owner's fixed per-project command. | gate.queue | [queue](../src/acc/server/api/gates.py) |
 | `GET /api/gates/budget` | owner/member / installation API token | Installation-wide host test budget (read). | none (read) | [get_budget](../src/acc/server/api/gates.py) |

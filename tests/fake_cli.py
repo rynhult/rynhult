@@ -435,15 +435,30 @@ def on_signal(signum, _frame):
 signal.signal(signal.SIGHUP, on_signal)
 signal.signal(signal.SIGTERM, on_signal)
 ctl = run_dir / "fake.ctl"
+# Keep line assembly outside TextIOWrapper: select() cannot see its read-ahead
+# buffer, and readline() on a partial terminal edit blocks fake.ctl processing.
+pending_input = b""
+
+
+def received_line(raw: bytes) -> None:
+    line = raw.decode("utf-8").replace("\r\n", "\n")
+    with (run_dir / "fake.received").open("a") as received:
+        received.write(line)
+    hook("UserPromptSubmit", prompt=line.strip())
+
+
 while True:
     # A real submitted terminal line: echo alone is not evidence of submission.
     import select
     if select.select([sys.stdin], [], [], 0)[0]:
-        line = sys.stdin.readline()
-        if line:
-            with (run_dir / "fake.received").open("a") as received:
-                received.write(line)
-            hook("UserPromptSubmit", prompt=line.strip())
+        chunk = os.read(sys.stdin.fileno(), 65536)
+        pending_input += chunk
+        while b"\n" in pending_input:
+            line, pending_input = pending_input.split(b"\n", 1)
+            received_line(line + b"\n")
+        if not chunk and pending_input:  # Match readline's final partial line at EOF.
+            received_line(pending_input)
+            pending_input = b""
     if ctl.exists():
         command = ctl.read_text().strip()
         ctl.unlink()
