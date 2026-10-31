@@ -17,6 +17,22 @@ Host → Machines, or asking an owner. A failed refresh can keep the last receiv
 mean that data is current. On Providers, **Couldn't check again** keeps the last known status while you retry. For a
 service failure, open **Details** only if you need more information, and remove private information before sharing it.
 
+## Setup: Permission denied opening vault-key
+
+If setup reports `Permission denied` opening
+`/srv/acc/app/deploy/lib/vault-key` as the `acc` account, the administrator's strict
+file-creation mask may have left application folders unreadable by that account.
+This is fixed in rc.3: installers and updates explicitly use `umask 022` for code,
+while vault keys and private settings keep restrictive permissions.
+
+For rc.1 or rc.2, run `umask 022` in the administrator shell before the documented
+setup command. If a failed attempt already created inaccessible application files,
+inspect their ownership and permissions before retrying; changing the mask does
+not repair existing files. Never recursively open permissions on data or secrets.
+For an existing installation, follow [Updating](/User-Guide/Updating), or the
+[rc.1 upgrade procedure](/User-Guide/Upgrade-from-rc1), rather than running a newer
+setup over an older checkout.
+
 ## Browser and everyday controls
 
 | Symptom | Likely cause | What to check | Fix |

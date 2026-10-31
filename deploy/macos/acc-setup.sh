@@ -1,4 +1,6 @@
 #!/bin/bash
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 acc_compat_lib="$(dirname "$0")/acc-env.sh"
 [ -f "$acc_compat_lib" ] || acc_compat_lib="$(dirname "$0")/../lib/acc-env.sh"
 # shellcheck source=/dev/null

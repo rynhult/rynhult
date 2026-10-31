@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from .backup_policy import defaults, full_due
-from .maintenance import git_lock, lease, secrets_lock
+from .maintenance import git_lock, lease, secrets_lock, update_pending
 
 FORMAT = 1
 MAX_FILES = 100000
@@ -351,7 +351,7 @@ class Service:
                     copying.enter_context(lease(secrets_lock(self.settings.data_dir)))
                     barrier = locks.enter_context(ExitStack())
                     barrier.enter_context(lease(self.settings.data_dir / '.maintenance.lock'))
-                    if (self.settings.data_dir / '.update-in-progress').exists():
+                    if update_pending(self.settings.data_dir):
                         raise Refused("Rynhult was updating, so this backup didn't run. Back up again after the update.")
                     with sqlite3.connect(self.settings.data_dir / 'acc.db') as src:
                         size = src.execute('pragma page_count').fetchone()[0] * src.execute('pragma page_size').fetchone()[0]

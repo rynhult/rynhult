@@ -15,6 +15,8 @@
 #   --dry-run           print every step and change nothing (no root needed)
 # Then enroll the node with the command the dashboard shows (Host → Machines → Add machine); see docs/MULTIHOST.md.
 set -euo pipefail
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 
 # Phase B can be deployed independently of the normal installer: reload only,
 # never run setup, account helpers or restart services. Dry-run plans aliases only.

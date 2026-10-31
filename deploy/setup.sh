@@ -24,6 +24,8 @@
 # Needs: systemd, apt, Python 3.12+ (Ubuntu 24.04+, Debian 13+), amd64 or arm64. Nothing here is specific to
 # one machine; GPUs, disks and network are detected at run time by the host snapshot.
 set -euo pipefail
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 # Only dry runs may use the caller's discovery PATH.
 case " $* " in *" --dry-run "*) ;; *) export PATH=/usr/sbin:/usr/bin:/sbin:/bin ;; esac
 
@@ -365,7 +367,7 @@ fi
 # ------------------------------------------------------------- write config --
 if [ ! -f /etc/default/accd ]; then
   log "Writing /etc/default/accd"
-  accd_settings > /etc/default/accd
+  (umask 077; accd_settings > /etc/default/accd)
   chmod 0600 /etc/default/accd
   info "done"
 fi

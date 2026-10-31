@@ -2,6 +2,9 @@
 """Root-owned entry point; the source tree is root-owned too."""
 
 import os as _compat_os
+# Both offline and queued updates create service-readable application trees.
+# Private staging, backups and credentials retain their explicit modes.
+_compat_os.umask(0o022)
 import runpy as _compat_runpy
 import stat as _compat_stat
 from pathlib import Path as _CompatPath

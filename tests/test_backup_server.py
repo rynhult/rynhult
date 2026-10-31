@@ -1072,3 +1072,18 @@ async def test_restore_drill_keeps_the_selected_snapshot_in_state_and_audit(api,
     refused = await api.post('/api/host/backups/drill', json={
         'confirmed': True, 'target_id': target, 'backup_id': generation, 'snapshot_id': 'not-a-snapshot'})
     assert refused.status_code == 422
+
+
+def test_external_update_marker_blocks_capture_without_compatibility_signal(source):
+    from acc.maintenance import update_hold, update_marker
+    data = source.settings.data_dir
+    with update_hold(data):
+        legacy = data / '.update-in-progress'
+        legacy.unlink()
+        try:
+            assert update_marker(data).is_file()
+            with pytest.raises(backup.Refused, match='updating'):
+                source.capture()
+        finally:
+            legacy.touch(mode=0o600)
+    assert not list(source.staging.glob('*/manifest.json'))

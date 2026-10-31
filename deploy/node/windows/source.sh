@@ -1,4 +1,6 @@
 #!/bin/sh
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 # Fetch the main Rynhult's current source for Windows node setup. Exit 10 only for an unreachable main.
 # Usage: source.sh DEST PRIMARY system|ca FINGERPRINT
 set -eu

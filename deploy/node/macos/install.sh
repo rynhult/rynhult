@@ -1,4 +1,6 @@
 #!/bin/bash
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 # Add/remove only command aliases; never touch launchd or enrollment here.
 case " $* " in
   *" --aliases-only "*|*" --rollback-aliases "*)

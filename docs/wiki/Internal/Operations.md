@@ -281,7 +281,10 @@ procedure is not evidence that replacement recovery has been qualified.
 
 Never run manual git repack/GC/ref maintenance concurrently with capture without holding the tree's
 `.git-backup.lock` (the parent of the configured git directory). ACC receive, ref updates and orphan moves already
-use this lease. An interrupted updater leaves `data/.update-in-progress`; review the transaction before clearing it.
+use this lease. An interrupted updater leaves `/srv/acc/.update-state/.update-in-progress`; review the transaction before clearing it.
+The root-owned state directory is 0710 (service-group traversal only); its marker is 0600.
+An acc-owned `data/.update-in-progress` compatibility signal keeps rc.1 workers fenced without
+breaking their installer ownership check. Review either abandoned marker before retrying.
 A failed upload leaves its private `data/backup-service/staging/<backup-id>` generation for review. Only the newest
 complete one (signed manifest, latest `finished_at`) is kept, and none once no target is enabled: the next capture removes older ones (audit `backup.staging_discarded`, with count and bytes), because each is
 a plaintext copy of data that is still live and that the newer capture supersedes. Before this, an hourly failing

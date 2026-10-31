@@ -14,6 +14,8 @@
 #   each agent account: Claude, Codex and GitHub logins from the Providers page
 # Data that is NOT recreated: /srv/acc/data/acc.db (restore from backup), workspaces, transcripts.
 set -euo pipefail
+# Code and app trees must be readable by service accounts; secrets use explicit private modes.
+umask 022
 
 # Phase B can be deployed independently of the normal installer: reload only,
 # never run setup, account helpers or restart services. Dry-run plans aliases only.

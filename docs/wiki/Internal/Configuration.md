@@ -161,7 +161,7 @@ supply `--restic` to point at a separately verified temporary binary. Never use 
 Default policy: hourly schedule, two-hour stale threshold, 10 MiB/s transfer default, 48 hourly/30 daily/12 monthly
 retention, 90-day owner drill reminder. Private payload staging is bounded to 20 GiB cumulatively (the in-flight capture
 plus at most one retained failed upload), additionally limited by available free space with a 64 MiB reserve and scratch headroom. Uploads never prune automatically.
-`data/RESTORE-HOLD` causes quarantine before ordinary startup; `.update-in-progress` blocks capture across updates.
+`data/RESTORE-HOLD` causes quarantine before ordinary startup; `/srv/acc/.update-state/.update-in-progress` blocks capture across updates. Legacy markers in data also block capture until operator review.
 The whole-capture `.capture-update.lock` is separate from the shorter DB mutation barrier.
 See [Backups](/User-Guide/Backups) for kit custody and exclusions.
 
