@@ -5,12 +5,59 @@ Rynhult follows [semantic versioning](https://semver.org). Stable tags use `vX.Y
 
 ## [Unreleased]
 
-- The main updater and latest-release Catalog restore verify detached OpenPGP
-  signatures on SHA256SUMS against the installed release key before trusting
-  archive hashes. Invalid, expired, revoked or unknown signatures refuse updates;
-  an owner can explicitly audit a one-update exception for a missing signature.
-  Settings → Updates shows the verified release-key suffix. Node sync retains
-  its separate enrolled-primary bundle trust path.
+## [0.15.0-rc.2] - 2026-10-30
+
+Prepared from the merged work since rc.1 (#386–#391 and batch14). This is a
+release candidate, not a stable-release or publication announcement. See the
+[rc.2 release notes](docs/release-notes/0.15.0-rc.2.md) and
+[one-time upgrade from rc.1](docs/wiki/User-Guide/Upgrade-from-rc1.md).
+
+### Updates and recovery
+- **Release channel** in Settings → Updates offers **Stable** and **Release candidates**.
+  RC installations can discover and install newer signed candidates with owner
+  action; automatic installation remains stable-only. Linux/WSL nodes follow
+  their main's exact version/build, including RCs, after the old helper is refreshed.
+- The updater and latest-release Catalog restore verify detached OpenPGP signatures
+  on SHA256SUMS against the installed release key before trusting archive hashes.
+  Invalid, expired, revoked or unknown signatures refuse installation. The owner
+  can audit a one-update missing-signature exception only for a stable release;
+  RC signatures remain mandatory. Settings shows the verified key suffix.
+- A verified local source-bundle upgrade transaction provides the one-time hop
+  from rc.1, with backup, source swap, migrations, health checks and failure rollback.
+  The Guide distinguishes source-bundle and git installations, PostgreSQL recovery,
+  and the manual first refresh of Linux/WSL node helpers. Macs retain their installer route.
+
+### Requests, projects and Files
+- Import empty GitHub repositories without treating the missing initial branch as
+  a failed clone. Existing repositories keep their normal import path.
+- Agents receive accepted/refused request acknowledgements instead of waiting
+  indefinitely after a refusal. Replies come from authenticated server/node
+  channels and service-owned storage outside agent-writable spools; agents cannot
+  forge an authoritative reply by writing their own attachment.
+- One-tap working-list choices and image-access checks reduce repeated manual
+  replies. Image checks remain scoped to the exact model, execution machine and
+  account; an unknown image result does not qualify an image-required assignment.
+- Files supports bounded uploads, folder drops, explicit collision/replacement
+  choices and per-file results while preserving concurrent editor drafts.
+  Upload alerts are scoped to the affected view. Compact delivery controls and
+  document-backed brief proposals received follow-up fixes.
+- Guardrail false refusals were corrected while retaining launch and command
+  protections; guardrails remain a safety net, not a sandbox.
+
+### Installers and publication
+- Fix WSL's first-run account/password prompt and document the trusted administrator
+  setup path. Nodes install GitHub CLI with their prerequisites on Linux/WSL;
+  Macs install it through Homebrew. Missing-node GitHub login names the machine
+  and explains the remedy rather than reporting an internal failure.
+- Fix Fedora merged-sbin aliases, Arch broker Git context and stale-checkout reruns;
+  forward the non-apt opt-in through the wizard. EL uses pinned, package-scoped
+  sources for GitHub CLI, Compose and Caddy. RPM key/repository publication is
+  atomic per file. openSUSE's broad default sudo policy stays refused with owner
+  repair guidance. These fixes do not newly qualify additional distributions.
+- Node version checks use a numeric exit code on newer Node.js releases.
+- The site has refreshed release/download presentation. Public issue templates,
+  release records and download documentation were updated after rc.1 publication.
+  Preparing rc.2 does not publish its tag, signatures, assets or site deployment.
 
 ## [0.15.0-rc.1] - 2026-10-29
 

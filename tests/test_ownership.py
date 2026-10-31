@@ -27,6 +27,8 @@ def orchestrator_preview(monkeypatch):
 # with how a member is answered when it's someone else's: 404 (not theirs, existence not revealed) or 403
 # (owner-only).
 MATRIX = {
+    ("GET", "/api/projects/{project_id}/first-commit"): 404,
+    ("POST", "/api/projects/{project_id}/first-commit"): 404,
     ("GET", "/api/projects/{project_id}/delete"): 404,
     ("POST", "/api/projects/{project_id}/delete"): 404,
     ("GET", "/api/sessions/{acc_id}/deliveries"): 404,

@@ -162,19 +162,20 @@ print(get('codex'))
     assert result.stdout == 'loaded codex\n'
 
 
+@pytest.mark.parametrize('offline', [False, True])
 @pytest.mark.parametrize('unsafe', [None, 'writable-code', 'foreign-code', 'writable-parent', 'sticky-package'])
-def test_updater_loads_only_protected_explicit_source(tmp_path, unsafe):
-    script = tmp_path / 'sbin/acc-update'
-    script.parent.mkdir()
+def test_updater_loads_only_protected_explicit_source(tmp_path, unsafe, offline):
+    source = tmp_path / 'source'
+    script = source / 'deploy/updates/acc-update' if offline else tmp_path / 'sbin/acc-update'
+    script.parent.mkdir(parents=True)
     shutil.copy2(REPO / 'deploy/updates/acc-update', script)
     shutil.copy2(REPO / 'src/acc/env.py', script.with_name('acc_env.py'))
-    source = tmp_path / 'source'
     package = source / 'src/acc'
     package.mkdir(parents=True)
     marker = tmp_path / 'executed'
     (package / '__init__.py').write_text('')
-    target = package / 'update_helper.py'
-    target.write_text(f'from pathlib import Path\ndef main():\n    Path({str(marker)!r}).touch()\n    return 0\n')
+    target = package / ('offline_upgrade.py' if offline else 'update_helper.py')
+    target.write_text(f'from pathlib import Path\ndef main(argv=None):\n    Path({str(marker)!r}).touch()\n    return 0\n')
     for path in (script, script.with_name('acc_env.py'), package / '__init__.py', target):
         path.chmod(0o644)
     if unsafe == 'writable-code':
@@ -188,19 +189,22 @@ def test_updater_loads_only_protected_explicit_source(tmp_path, unsafe):
     code = """import os,runpy,sys
 from pathlib import Path
 real = Path.stat
+script, unsafe, target, offline = sys.argv[1:]
 def root_stat(path, *args, **kwargs):
     info = real(path, *args, **kwargs)
-    owner = 1 if sys.argv[2] == 'foreign-code' and str(path) == sys.argv[3] else 0
+    owner = 1 if unsafe == 'foreign-code' and str(path) == target else 0
     return os.stat_result((*tuple(info)[:4], owner, 0, *tuple(info)[6:]))
 Path.stat = root_stat
 os.geteuid = lambda: 0
-runpy.run_path(sys.argv[1], run_name='__main__')
+sys.argv = [script] + (['--offline'] if offline == 'True' else [])
+runpy.run_path(script, run_name='__main__')
 """
-    result = subprocess.run([sys.executable, '-I', '-c', code, str(script), str(unsafe), str(target)],
-                            env={**os.environ, 'ACC_UPDATE_SOURCE': str(source)}, capture_output=True, text=True, timeout=10)
+    result = subprocess.run([sys.executable, '-I', '-c', code, str(script), str(unsafe), str(target), str(offline)],
+                            env={**os.environ, 'ACC_UPDATE_SOURCE': str(tmp_path / 'wrong-source' if offline else source)}, capture_output=True, text=True, timeout=10)
     if unsafe:
         assert result.returncode == 2, result.stderr
-        assert 'unsafe update source' in result.stderr
+        assert ('unsafe update source' in result.stderr
+                or offline and 'unsafe or missing settings reader' in result.stderr)
         assert not marker.exists()
     else:
         assert result.returncode == 0, result.stderr

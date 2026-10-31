@@ -24,6 +24,28 @@ export { useAttention } from "../lib/queries";
 /** A session waiting on a prompt: the answer is in its terminal, never in the Inbox (owner decision 0008, Q2). */
 const PROMPTS = new Set(["needs_input"]);
 
+/** A fixed server-generated action; agent text never supplies URLs or request fields. */
+function CheckImageAccess({ action }: { action: NonNullable<AttentionItem['image_check']> }) {
+  const queryClient = useQueryClient();
+  const offline = useOffline();
+  const check = useMutation({
+    mutationFn: () => post<{ image_input: boolean | null; evidence: { outcome: string } }>('/api/providers/image-check', action),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['attention'] });
+      void queryClient.invalidateQueries({ queryKey: ['models'] });
+    },
+  });
+  return <div className="flex min-w-0 flex-col items-start gap-1">
+    <Button size="sm" disabled={check.isPending || offline} onClick={() => check.mutate()}>
+      {check.isPending ? 'Checking image access…' : 'Check image access'}
+    </Button>
+    <ErrorNote error={check.error} />
+    {check.data && <p role="status" className="text-xs text-muted">
+      {check.data.image_input === true ? 'Verified' : check.data.image_input === false ? 'Unavailable' : 'Unknown'} · {check.data.evidence.outcome}
+    </p>}
+  </div>;
+}
+
 /** Replacement recovery: a restored session the old main left running on a machine. Only an owner, verified again
  * within five minutes, stops that one pane; the session stays archived and nothing stops by itself. */
 function StopHeld({ sessionId }: { sessionId: string }) {
@@ -130,6 +152,7 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
             <KeyRound size={14} aria-hidden="true" /> Providers
           </Link>
         )}
+        {item.image_check && open && owner && <CheckImageAccess action={item.image_check} />}
         {item.kind === "publish_request" && item.publish_id && open && (
           <PublishActions request={{ id: item.publish_id, status: "pending_approval", action: publish?.action ?? "publish", host: publish?.host ?? "",
             port: publish?.port ?? null, access: publish?.access ?? null, replaces: publish?.replaces ?? null,

@@ -106,7 +106,9 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     secure = environment.get("ACC_E2E_HTTPS") == "1"
     scheme = "https" if secure else "http"
     origin = f"{scheme}://{environment.get('ACC_E2E_HOST', 'localhost')}:{port}"
-    settings = Settings(groups_remote_enabled=environment.get("ACC_GROUPS_REMOTE") == "1", host_label="acc-host", data_dir=state / "data", run_dir=run_dir, broker_socket=broker.socket_path,
+    replies_root = state / 'request-replies'
+    replies_root.mkdir(mode=0o711)
+    settings = Settings(request_replies_root=replies_root, groups_remote_enabled=environment.get("ACC_GROUPS_REMOTE") == "1", host_label="acc-host", data_dir=state / "data", run_dir=run_dir, broker_socket=broker.socket_path,
                         root_run_dir=state / "run-root", broker_env_dir=state / "broker-env", agent_home=home,
                         accounts_dir=state / "accounts", publish_dir=state / "publish", containers_dir=state / "containers",
                         hook_path=str(REPO / "bin/acc-hook"), statusline_path=str(REPO / "bin/acc-statusline"),

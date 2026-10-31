@@ -96,15 +96,16 @@ def test_github_checks():
 
     for tag, available in [("v0.13.0", True), ("v0.12.0", False), ("v0.11.0", False)]:
         assert (
-            check("example/acc", "0.12.0", get=lambda *a: json.dumps({"tag_name": tag}).encode())["available"]
+            check("example/acc", "0.12.0", get=lambda *a, **kw: json.dumps([{"tag_name": tag}]).encode())["available"]
             is available
         )
     for data in ({"tag_name": "v0.13.0", "prerelease": True}, {"message": "rate limit"}, {"tag_name": "garbage"}):
         with pytest.raises(ValueError):
-            check("example/acc", "0.12.0", get=lambda *a: json.dumps(data).encode())
+            check("example/acc", "0.12.0", get=lambda *a, **kw: json.dumps(data).encode())
 
 
-def test_helper_transaction_and_rollback(tmp_path):
+@pytest.mark.parametrize("target", ["0.13.0", "0.15.0-rc.3"])
+def test_helper_transaction_and_rollback(tmp_path, target):
     from acc.update_helper import Transaction
 
     events = []
@@ -137,7 +138,7 @@ def test_helper_transaction_and_rollback(tmp_path):
     source = tmp_path / "app"
     source.mkdir()
     (tmp_path / "new").mkdir()
-    job = Fake(tmp_path / "updates", source, tmp_path / "data", "0.13.0", {})
+    job = Fake(tmp_path / "updates", source, tmp_path / "data", target, {})
     result = job.apply()
     assert not result["ok"] and result["rolled_back"]
     assert events == ["backup", "download", "activate", "install", "health", "rollback"]
@@ -197,7 +198,7 @@ async def test_owner_api_check_and_dedupe(api, env, monkeypatch):
     monkeypatch.setattr(
         updating,
         "check",
-        lambda *a: {"latest": "0.13.0", "available": True, "notes": "<b>plain</b>", "published_at": "2026-10-22"},
+        lambda *a, **kw: {"latest": "0.13.0", "available": True, "notes": "<b>plain</b>", "published_at": "2026-10-22"},
     )
     assert (await api.post("/api/updates/check")).status_code == 200
     assert (await api.post("/api/updates/check")).status_code == 200
@@ -311,7 +312,7 @@ async def test_member_cannot_see_updates(api, env, member_accounts, monkeypatch)
 
     from acc.server import updating
 
-    monkeypatch.setattr(updating, "check", lambda *a: {"latest": "0.13.0", "available": True, "notes": ""})
+    monkeypatch.setattr(updating, "check", lambda *a, **kw: {"latest": "0.13.0", "available": True, "notes": ""})
     await api.post("/api/updates/check")
     await do_setup(api, env)
     link = (await api.post("/api/users/invites", json={"role": "member", "account": "dana-agent"})).json()["link"]
@@ -340,7 +341,7 @@ def test_network_errors_are_sanitized(monkeypatch, status):
         def open(self, *a, **kw):
             raise urllib.error.HTTPError("https://example.com/TOKEN", status, "TOKEN", {}, None)
 
-    monkeypatch.setattr(updates.urllib.request, "build_opener", lambda *a: Opener())
+    monkeypatch.setattr(updates.urllib.request, "build_opener", lambda *a, **kw: Opener())
     with pytest.raises(ValueError) as error:
         updates.fetch("https://api.github.com/repos/example/acc/releases/latest")
     assert "TOKEN" not in str(error.value)
@@ -349,7 +350,7 @@ def test_network_errors_are_sanitized(monkeypatch, status):
 
 def test_semver_prerelease_and_build_metadata():
     assert newer("1.0.0", "1.0.0-rc.1")
-    assert not newer("1.0.0-rc.2", "1.0.0-rc.1")  # candidates must be stable
+    assert not newer("1.0.0-rc.2", "1.0.0-rc.1")
     assert not newer("1.0.0+new", "1.0.0+old")
     with pytest.raises(ValueError):
         release({"tag_name": "v1.0.0-rc.1"}, "0.12.0")
@@ -364,14 +365,15 @@ def test_same_version_different_release_build():
     }
 
     def get(url, *args, **kwargs):
-        return ("b" * 64).encode() if url.endswith("/123") else json.dumps(metadata).encode()
+        return ("b" * 64).encode() if url.endswith("/123") else json.dumps([metadata]).encode()
 
     result = check("example/acc", "0.12.0", current_build="a" * 64, get=get)
     assert result["available"] and result["latest_build"] == "b" * 64
     assert not check("example/acc", "0.12.0", current_build="b" * 64, get=get)["available"]
 
 
-def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch, release_signer):
+@pytest.mark.parametrize("target", ["0.13.0", "0.15.0-rc.3"])
+def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch, release_signer, target):
     from acc import update_helper
 
     source = tmp_path / "app"
@@ -379,32 +381,32 @@ def test_helper_download_rechecks_release_and_build(tmp_path, monkeypatch, relea
     (source / "pyproject.toml").write_text('[project]\nversion="0.12.0"\n')
     new = tmp_path / "release"
     new.mkdir()
-    (new / "pyproject.toml").write_text('[project]\nversion="0.13.0"\n')
+    (new / "pyproject.toml").write_text(f'[project]\nversion="{target}"\n')
     archive = bundle.build(new, tmp_path / "bundles")
     sha = hashlib.sha256(archive.read_bytes()).hexdigest()
     build = bundle.identity(new)
     metadata = {
-        "latest": "0.13.0",
+        "latest": target,
         "available": True,
         "latest_build": build,
         "assets": {
             "SHA256SUMS": "https://api.github.com/repos/example/acc/releases/assets/1",
             "SHA256SUMS.asc": "https://api.github.com/repos/example/acc/releases/assets/3",
-            "acc-0.13.0.tar.gz": "https://api.github.com/repos/example/acc/releases/assets/2",
+            f"acc-{target}.tar.gz": "https://api.github.com/repos/example/acc/releases/assets/2",
         },
     }
-    monkeypatch.setattr(update_helper, "check", lambda *a: metadata)
+    monkeypatch.setattr(update_helper, "check", lambda *a, **kw: metadata)
 
     def fetch(url, *a, **kw):
         assert kw["asset"]
-        sums = (sha + "  acc-0.13.0.tar.gz\n").encode()
+        sums = (sha + f"  acc-{target}.tar.gz\n").encode()
         if url.endswith("/3"):
             return release_signer.sign(sums)
         return sums if url.endswith("/1") else archive.read_bytes()
 
     monkeypatch.setattr(update_helper, "fetch", fetch)
     job = update_helper.Transaction(
-        tmp_path / "updates", source, tmp_path / "data", "0.13.0", {"repository": "example/acc"}
+        tmp_path / "updates", source, tmp_path / "data", target, {"repository": "example/acc", "include_prereleases": True}
     )
     assert (job.download() / "pyproject.toml").is_file() and job.expected_build == build
 
@@ -428,7 +430,7 @@ def test_node_helper_uses_enrolled_primary_and_tls(tmp_path, monkeypatch):
         return archive.read_bytes()
 
     monkeypatch.setattr(update_helper, "fetch", fetch)
-    monkeypatch.setattr(update_helper, "check", lambda *a: pytest.fail("a node contacted GitHub"))
+    monkeypatch.setattr(update_helper, "check", lambda *a, **kw: pytest.fail("a node contacted GitHub"))
     job = update_helper.NodeTransaction(
         tmp_path / "updates",
         source,
@@ -483,7 +485,7 @@ async def test_daily_check_opt_in_time_and_result_audit(api, env, tmp_path, monk
     (root / "requests").mkdir(parents=True)
     calls = []
 
-    def check(*a):
+    def check(*a, **kw):
         calls.append(a)
         return {"latest": "99.0.0", "available": True, "notes": "demo"}
 
@@ -530,8 +532,8 @@ def test_rollback_refuses_a_database_symlink(tmp_path):
     job = Transaction(tmp_path / "updates", source, data, "99.0.0", {})
     job.saved = saved
     job.install_started = True
-    job.command = lambda *a: None
-    job.install = lambda *a: None
+    job.command = lambda *a, **kw: None
+    job.install = lambda *a, **kw: None
     with pytest.raises((ValueError, OSError)):
         job.restore()
     with sqlite3.connect(sentinel) as s:
@@ -695,7 +697,7 @@ async def test_corrupt_config_blocks_updates_and_can_be_explicitly_repaired(api,
     service = api.app.state.ctx.updates
     path = service.settings.data_dir / "updates-config.json"
     path.write_text(saved)
-    monkeypatch.setattr(updating, "check", lambda *a: pytest.fail("release check with corrupt config"))
+    monkeypatch.setattr(updating, "check", lambda *a, **kw: pytest.fail("release check with corrupt config"))
     service.store({"available": True, "latest": "99.0.0"})
     state = (await api.get("/api/updates")).json()
     assert state["config_error"] and "configuration" in state["blocked"].lower()
@@ -708,7 +710,7 @@ async def test_corrupt_config_blocks_updates_and_can_be_explicitly_repaired(api,
     assert "configuration" in caplog.text.lower()
     repaired = await api.put("/api/updates/config", json={"repository": "", "automatic": False, "time": "03:00"})
     assert repaired.status_code == 200 and not repaired.json().get("config_error")
-    assert json.loads(path.read_text()) == {"repository": "", "automatic": False, "time": "03:00", "follow": {}}
+    assert json.loads(path.read_text()) == {"repository": "", "automatic": False, "time": "03:00", "follow": {}, "include_prereleases": True, "release_channel": "rc"}
 
 
 async def test_unreadable_config_is_not_first_run(api, monkeypatch):
@@ -997,7 +999,7 @@ def test_public_rc_orders_between_installed_preview_and_stable_without_auto_opt_
 
     assert version('0.14.0') < version('0.15.0-rc.1') < version('0.15.0')
     assert version('0.15.0-rc.1') < version('0.15.0-rc.2') < version('0.15.0-rc.10')
-    assert not newer('0.15.0-rc.1', '0.14.0')  # manual RC installation only
+    assert not newer('0.15.0-rc.1', '0.14.0')  # Stable has no automatic RC opt-in
     assert not newer('0.14.0', '0.15.0-rc.1')
     assert newer('v0.15.0', 'v0.15.0-rc.1')
     assert release({'tag_name': 'v0.15.0'}, '0.15.0-rc.1')['available'] is True

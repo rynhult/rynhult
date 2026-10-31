@@ -825,3 +825,14 @@ async def test_a_replaced_or_failed_attempt_stays_closed_after_a_person_resumes_
     running_again(helper)
     late = await request(api, env, helper, 'report', status='done', summary='Failed helper says done')
     assert not late['ok'] and 'marked failed' in late['error'], late
+
+
+async def test_image_selection_refusal_has_deduplicated_check_action(runtime, api, env, project):
+    from test_team import request
+    caller, assignment = await assigned(api, env, project, requires=['image_input'])
+    for _ in range(2):
+        result = await request(api, env, caller, 'select', assignment=assignment['id'])
+        assert result['ok'] and result['result']['chosen'] is None
+    cards = [i for i in (await api.get('/api/attention')).json() if i['kind'] == 'image_check']
+    assert len(cards) == 1
+    assert cards[0]['image_check']['project_id'] == project['id']

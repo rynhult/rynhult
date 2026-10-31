@@ -17,6 +17,7 @@ class Settings:
     ha_auto_evaluate: bool = False  # owner deployment setting; dry-run only, never promotes
     database_url: str = ""  # ACC_DATABASE_URL; empty preserves local SQLite
     data_dir: Path = Path("/srv/acc/data")
+    request_replies_root: Path = Path("/var/lib/acc-request-replies")
     run_dir: Path = Path("/srv/acc/run")
     # Root's own sessions (external, e.g. the admin session) keep their spool under a root-owned parent, so no
     # agent can swap the directory root writes to and reads from.

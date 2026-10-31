@@ -420,6 +420,17 @@ async def select_action(supervisor,caller_id,payload):
         result=rank(need,allowed,machines,ready,preferences=policy,quota=quota,pin=pin,image_scope=runtime_scope(caller),
                     paused={p:v['paused'] for p,v in budget.items()}, remaining={p:v['remaining'] for p,v in budget.items()},
                     load=load,failures=failures)
+        if 'image_input' in need.get('requires', []) and result['chosen'] is None and runtime_scope(caller) == 'native':
+            from ..image_capabilities import request_check
+            # Probe only this project's actual machine/account, never silently check a different scope.
+            for candidate in result['candidates']:
+                if candidate['machine'] != (caller.project.host or 'local') or caller.run_as != caller.project.account:
+                    continue
+                models = ready.get((candidate['machine'], candidate['agent']), {}).get('models', [])
+                model = next((m for m in models if m.get('id') == candidate['model']), None)
+                if model is not None and model.get('image_input') is None and candidate['rejections'] == ['requirement image_input is not qualified']:
+                    request_check(db, caller.project, candidate['agent'], candidate['model'])
+                    break
         redactor=supervisor.vault.redactor(db,caller.vault_keys)
         safe_need=redactor.deep(need)
         result['reason']=redactor.text(result['reason'])

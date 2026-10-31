@@ -8,7 +8,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 def isolated_settings(root: Path, **overrides) -> Settings:
     values = {name: root / folder for name, folder in {
-        'data_dir': 'data', 'run_dir': 'run', 'root_run_dir': 'run-root', 'broker_socket': 'broker.sock',
+        'data_dir': 'data', 'request_replies_root': 'request-replies', 'run_dir': 'run', 'root_run_dir': 'run-root', 'broker_socket': 'broker.sock',
         'broker_env_dir': 'broker-env', 'accounts_dir': 'accounts', 'updates_dir': 'updates',
         'packages_dir': 'packages', 'containers_dir': 'containers', 'publish_dir': 'publish',
         'agent_home': 'homes/agent', 'catalog_local_dir': 'catalog-local', 'workspaces_root': 'workspaces',

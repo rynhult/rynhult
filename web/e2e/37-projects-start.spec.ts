@@ -54,3 +54,41 @@ test('Git author settings persist and let a fresh project commit without identit
   expect(execFileSync('git', ['-C', folder, 'log', '-1', '--format=%an <%ae>'], { encoding: 'utf8' }).trim())
     .toBe('Casey Example <casey@example.com>');
 });
+
+for (const width of [390, 1440]) test(`empty repository has an explicit local first-commit button at ${width}px`, async ({ page }) => {
+  const { mkdirSync, readFileSync } = await import('node:fs');
+  const { dirname } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { info } = await import('./helpers');
+  const name = `empty-${randomUUID()}`;
+  const folder = `${dirname(info().workspace)}/${name}`;
+  mkdirSync(folder);
+  execFileSync('git', ['init', '-q', '-b', 'main', folder]);
+  const headers = await csrfHeaders(page);
+  const response = await page.request.post('/api/projects', { headers, data: {
+    name, slug: name, workspace_path: folder, import_mode: 'managed',
+  } });
+  expect(response.ok(), await response.text()).toBe(true);
+  const project = await response.json();
+  await page.setViewportSize({ width, height: 900 });
+  // Stand in for the network clone only; state inspection and the commit use the real broker.
+  await page.route('**/api/projects/new', route => route.fulfill({ status: 201, json: project }));
+  await page.goto('/projects');
+  await page.getByRole('button', { name: 'New project', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+  await dialog.getByRole('radio', { name: 'Clone repository' }).click();
+  await dialog.getByRole('textbox', { name: 'Repository', exact: true }).fill('https://example.com/empty.git');
+  await dialog.getByRole('button', { name: 'Clone and add', exact: true }).click();
+  const imported = page.getByRole('dialog', { name: 'Project imported', exact: true });
+  await expect(imported.getByRole('button', { name: 'Make the first commit', exact: true })).toBeVisible();
+  await imported.getByRole('button', { name: 'Later — open project', exact: true }).click();
+  await page.goto(`/projects/${project.id}`);
+  const notice = page.getByRole('region', { name: 'First Git commit' });
+  await expect(notice).toContainText('nothing is pushed');
+  await notice.getByRole('button', { name: 'Make the first commit', exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  expect(readFileSync(`${folder}/README.md`, 'utf8')).toContain(`# ${name}`);
+  expect(execFileSync('git', ['-C', folder, 'log', '-1', '--format=%s'], { encoding: 'utf8' }).trim()).toBe('Initialize project');
+  await page.reload();
+  await expect(notice).toHaveCount(0);
+});

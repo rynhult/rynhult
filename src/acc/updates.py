@@ -23,6 +23,8 @@ GIT_MESSAGE = "This Rynhult runs from a git checkout: update it with git pull an
 
 
 SOURCE_ERRORS = {
+    'no_release': 'This repository has no published release yet.',
+    'no_stable_release': 'This repository has no stable release yet — select the Release candidates channel.',
     'repository_missing': 'Repository not found. Private repositories need a token in data/secrets/update_token.',
     'rate_limited': 'GitHub rate limited update checks. Try again later.',
     'access_denied': 'GitHub refused access. Check the update token and its repository permissions.',
@@ -47,10 +49,23 @@ def version(value: str) -> tuple:
     return (*tuple(int(match[i]) for i in (1, 2, 3)), 0 if prerelease else 1, ordered)
 
 
-def newer(candidate: str, current: str) -> bool:
+def selected_channel(config, current):
+    """Read the explicit channel, or migrate the earlier boolean preference."""
+    channel = config.get('release_channel')
+    if channel is None:
+        legacy = config.get('include_prereleases', version(current)[3] == 0)
+        if type(legacy) is not bool:
+            raise ValueError('invalid release channel')
+        channel = 'rc' if legacy else 'stable'
+    if channel not in ('stable', 'rc'):
+        raise ValueError('invalid release channel')
+    return channel
+
+
+def newer(candidate: str, current: str, include_prereleases=False) -> bool:
     try:
         target = version(candidate.removeprefix("v"))
-        return target[3] == 1 and target > version(current.removeprefix("v"))
+        return (target[3] == 1 or include_prereleases) and target > version(current.removeprefix("v"))
     except ValueError:
         return False
 
@@ -61,28 +76,34 @@ def repository(source: str) -> str:
     return value if parsed.scheme == "https" and parsed.hostname == "github.com" and REPO.fullmatch(value) else ""
 
 
-def validate_request(data: object) -> str:
+def validate_request(data: object, include_prereleases=False) -> str:
     if (not isinstance(data, dict) or set(data) - {"action", "version", "allow_unsigned"}
             or not {"action", "version"} <= data.keys() or data["action"] != "update"
             or type(data.get("allow_unsigned", False)) is not bool):
         raise ValueError("request must name only action update and version")
     if version(data["version"])[3] != 1:
-        raise ValueError("updates must be stable releases")
+        if not include_prereleases:
+            raise ValueError("updates must be stable releases on the Stable channel")
+        if data.get('allow_unsigned'):
+            raise ValueError('pre-release updates require a signature; no unsigned exception is allowed')
     return data["version"]
 
 
-def release(data: dict, current: str) -> dict:
-    if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
+def release(data: dict, current: str, include_prereleases=False) -> dict:
+    if not isinstance(data, dict) or data.get("draft") or (data.get("prerelease") and not include_prereleases):
         raise ValueError("not a stable release")
-    name = data.get("tag_name", "").removeprefix("v")
-    if version(name)[3] != 1:
+    if not isinstance(data.get("tag_name"), str):
+        raise ValueError("invalid release tag")
+    name = data["tag_name"].removeprefix("v")
+    if version(name)[3] != 1 and not include_prereleases:
         raise ValueError("not a stable release")
     return {
         "latest": name,
+        "prerelease": bool(data.get("prerelease")) or version(name)[3] == 0,
         "tag": data["tag_name"],
         "published_at": data.get("published_at"),
         "notes": str(data.get("body") or "")[:64000],
-        "available": newer(name, current),
+        "available": newer(name, current, include_prereleases),
         "assets": {
             a["name"]: a["url"]
             for a in data.get("assets", [])
@@ -143,11 +164,32 @@ def fetch(url: str, token_file: Path | None = None, limit: int = 4 << 20, contex
         raise ValueError("could not reach release source") from None
 
 
-def check(repo: str, current: str, token_file: Path | None = None, current_build: str | None = None, get=fetch) -> dict:
+def check(repo: str, current: str, token_file: Path | None = None, current_build: str | None = None, get=fetch, include_prereleases=None) -> dict:
     if not REPO.fullmatch(repo) or any(part in (".", "..") for part in repo.split("/")):
         raise ValueError("expected owner/repository")
-    data = json.loads(get(f"https://api.github.com/repos/{repo}/releases/latest", token_file))
-    result = release(data, current)
+    include_prereleases = version(current.removeprefix("v"))[3] == 0 if include_prereleases is None else include_prereleases is True
+    try:
+        data = json.loads(get(f"https://api.github.com/repos/{repo}/releases?per_page=30", token_file))
+    except ReleaseSourceError as error:
+        if error.kind != 'repository_missing':
+            raise
+        get(f"https://api.github.com/repos/{repo}", token_file)
+        raise ReleaseSourceError('no_release') from None
+    if not isinstance(data, list):
+        raise ValueError('invalid release list')
+    candidates = []
+    published = False
+    for row in data:
+        if not isinstance(row, dict) or row.get('draft'):
+            continue
+        published = True
+        try:
+            candidates.append(release(row, current, include_prereleases))
+        except ValueError:
+            continue
+    if not candidates:
+        raise ReleaseSourceError('no_stable_release' if published and not include_prereleases else 'no_release')
+    result = max(candidates, key=lambda item: version(item['latest']))
     build_url = result["assets"].get("BUILD")
     if build_url:
         if not re.fullmatch(
@@ -158,15 +200,15 @@ def check(repo: str, current: str, token_file: Path | None = None, current_build
         if not BUILD.fullmatch(build):
             raise ValueError("invalid release build")
         result["latest_build"] = build
-    result["available"] = available(result, current, current_build)
+    result["available"] = available(result, current, current_build, include_prereleases)
     return result
 
 
-def available(release: dict, current: str, current_build: str | None) -> bool:
+def available(release: dict, current: str, current_build: str | None, include_prereleases=False) -> bool:
     latest = release.get("latest")
-    if not latest or release.get("error"):
+    if not latest or release.get("error") or ((version(latest)[3] != 1 or release.get("prerelease")) and not include_prereleases):
         return False
-    return newer(latest, current) or (
+    return newer(latest, current, include_prereleases) or (
         version(latest) == version(current)
         and bool(current_build)
         and bool(release.get("latest_build"))
@@ -193,14 +235,14 @@ def release_manifest(repo, latest, token_file=None, *, get=fetch, allow_unsigned
                 raise
             raise MissingSignature() from None
     except MissingSignature:
-        if allow_unsigned is not True:
+        if allow_unsigned is not True or version(latest['latest'])[3] == 0 or latest.get('prerelease'):
             raise
         return sums, {'status': 'unsigned_override'}
     return sums, verify(sums, signature)
 
 
-def signed_check(repo, current, token_file=None, current_build=None, *, get=fetch):
-    latest = check(repo, current, token_file, current_build, get=get)
+def signed_check(repo, current, token_file=None, current_build=None, include_prereleases=None, *, get=fetch):
+    latest = check(repo, current, token_file, current_build, get=get, include_prereleases=include_prereleases)
     try:
         sums, signature = release_manifest(repo, latest, token_file, get=get)
         release_checksum(sums, latest['latest'])
@@ -219,7 +261,7 @@ def release_checksum(sums: bytes, target: str) -> str:
 
 
 def download_release(repo: str, latest: dict, stage: Path, token_file: Path | None = None, *, get=fetch,
-                     allow_unsigned=False, verification=None) -> Path:
+                     allow_unsigned=False, verification=None, include_prereleases=False) -> Path:
     """Download and validate release source. Shared by the privileged updater and catalog restore.
 
     The caller owns and removes stage; this function never executes downloaded source.
@@ -227,7 +269,7 @@ def download_release(repo: str, latest: dict, stage: Path, token_file: Path | No
     from . import bundle
 
     target = latest['latest']
-    if version(target)[3] != 1 or not REPO.fullmatch(repo):
+    if ((version(target)[3] != 1 or latest.get("prerelease")) and not include_prereleases) or not REPO.fullmatch(repo):
         raise ValueError('not a stable release repository')
     filename = f'acc-{target}.tar.gz'
     raw_sums, signature = release_manifest(repo, latest, token_file, get=get, allow_unsigned=allow_unsigned)

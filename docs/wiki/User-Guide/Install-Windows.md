@@ -89,6 +89,15 @@ The last page says **Rynhult is installed in WSL**. If Setup created your Linux 
    ```
 
 ## Add this PC to a Rynhult you already have
+
+GitHub login needs Ubuntu's `gh` package inside this PC's WSL distribution.
+Node setup with `--install-prereqs` installs it alongside git and tmux; Windows
+GitHub CLI or a working login on the main does not supply it inside WSL. If an
+older node reports **gh is not installed on** your PC's machine name, rerun its
+Linux node installer with `--install-prereqs` or have an administrator run
+`sudo apt install gh` inside that Ubuntu distribution. Then select the PC under
+**Providers → Machine** and retry **GitHub → Log in** as the agent account.
+
 1. On your main Rynhult, open **Host → Machines → Add machine**, name this PC (for example `alex-pc`) and copy the command it shows. It looks like this:
    ```
    rynhult-node enroll --primary https://rynhult.example.lan --trust system --code 3fa21c-0b9d4e-77aa01-c4d5e6 --name alex-pc
@@ -123,7 +132,7 @@ Before v1.0 there is no `Rynhult-Setup-<version>.exe`. **Add machine** then show
 4. In the Ubuntu window, paste the **Ubuntu command** from the tab and press Enter. It starts with `echo <code> | sudo sh -c 'set -eu; read code; …` and ends with `--code - --name alex-pc'`. It:
    - downloads this main Rynhult's source over HTTPS (`/api/nodes/bundle`), into a temporary folder it removes afterwards;
    - with a private certificate (Caddy's own), first checks the root certificate written into the command against its fingerprint, and stops before downloading anything if they differ. It never turns certificate checks off;
-   - runs the node installer, `deploy/node/install.sh --install-prereqs`, as root. It may ask whether to opt into [WSL isolation](#isolation-for-dedicated-wsl-nodes);
+   - runs the node installer, `deploy/node/install.sh --install-prereqs --no-wsl-isolate`, as root. Generated WSL commands keep isolation unchanged without questions, including when run through `wsl.exe` from PowerShell. The command prints a reminder to re-run the installer with `--wsl-isolate` later in Ubuntu on a dedicated node; see [WSL isolation](#isolation-for-dedicated-wsl-nodes);
    - enrolls the PC with the one-time code. The code is passed to `acc-node enroll` through a pipe (`--code -`), so it doesn't show in the process list or in sudo's log. Your shell history still has it; it works once, for 10 minutes.
 
 ### What you should see
@@ -204,7 +213,9 @@ restart first. You need a trusted root terminal in the existing node distributio
 If its installer does not recognize these flags, [update the node first](/User-Guide/Nodes#updating-a-node).
 
 1. In Ubuntu, run the node installer without `--update`. An interactive install
-   asks **Opt into WSL isolation? [y/N]**; the default is **No**. It then asks
+   prints **Opt into WSL isolation? Type y and Enter for yes; Enter alone keeps No.**
+   on its own line before waiting for your answer. Answer in the same PowerShell
+   or Ubuntu window: type `y` and press Enter for Yes, or press Enter alone for No. It then asks
    separately whether to disable Windows drive automount completely; that default
    is also **No**.
 2. For an explicit, unattended choice on an already installed node, run:

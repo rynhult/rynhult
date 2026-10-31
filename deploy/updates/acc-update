@@ -6,6 +6,7 @@ import runpy as _compat_runpy
 import stat as _compat_stat
 from pathlib import Path as _CompatPath
 
+
 def _compat_reader(relative):
     # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
     # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
@@ -47,7 +48,9 @@ import stat
 import sys
 from pathlib import Path
 
-package = Path(environment.get('ACC_UPDATE_SOURCE', '/srv/acc/app')) / 'src/acc'
+offline = sys.argv[1:2] == ['--offline']
+package = ((Path(__file__).resolve().parents[2] if offline else
+            Path(environment.get('ACC_UPDATE_SOURCE', '/srv/acc/app'))) / 'src/acc')
 try:
     if not package.is_absolute():
         raise ValueError('relative update source')
@@ -67,5 +70,9 @@ spec = importlib.util.spec_from_file_location('acc', init, submodule_search_loca
 module = importlib.util.module_from_spec(spec)
 sys.modules['acc'] = module
 exec(compile(init.read_bytes(), str(init), 'exec'), module.__dict__)
+if offline:
+    from acc.offline_upgrade import main
+    raise SystemExit(main(sys.argv[2:]))
 from acc.update_helper import main
+
 raise SystemExit(main())

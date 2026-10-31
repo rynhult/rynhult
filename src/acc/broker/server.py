@@ -88,6 +88,7 @@ class Broker:
             "screen_prompt": lambda p: ops.screen_prompt(self.config, p["tmux_name"], p["provider"]),
             "transcript_messages": lambda p: ops.transcript_messages(p["provider"], p["native_id"], p.get("stamp")),
             "transcript_exists": lambda p: ops.transcript_exists(p["provider"], p["native_id"]),
+            "project_first_commit": lambda p: ops.project_first_commit(self.config, p["path"], p.get("title", ""), bool(p.get("create")), p.get("name"), p.get("email")),
             "git_identity": lambda p: ops.git_identity(self.config, p["path"], p.get("name"), p.get("email"), bool(p.get("replace"))),
             "trust_workspace": lambda p: ops.trust_workspace(self.config, p["path"]),
             "claude_agents": lambda p: ops.claude_agents(self.config),

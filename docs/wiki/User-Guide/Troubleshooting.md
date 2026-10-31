@@ -1,5 +1,8 @@
 # Troubleshooting
 
+For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
+for the signed in-place rc.2 procedure, main first and then nodes.
+
 Find the symptom first, check the likely cause, then use the fix. This expanded
 guide is a **draft for the planned v0.15.0-rc.1**. Some cases describe safeguards
 or bugs fixed in current source, not a diagnosis of your installation.

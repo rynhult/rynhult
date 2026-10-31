@@ -24,7 +24,7 @@ Native applications follow v1, one platform at a time; the order is not chosen y
 (candidates: native Windows, macOS standalone, Linux desktop, iOS and Android).
 Existing desktop/mobile source is not a v1 app release. See [platform scope](/User-Guide/Install#v10-platform-scope).
 
-A **release candidate** (version 0.15.0-rc.1), not a stable release. It suits people comfortable running a Linux server, DNS and certificates, on a machine they can restore. Use the browser dashboard or installed phone web app; native apps remain post-v1. [Groups](/User-Guide/Groups) have authority controls, private same-host Git exchange and group sessions launched in private checkouts on the main. Containers per session ship as a **Preview**: off by default, on per project, and only on a host that has passed the container qualification.
+A **release candidate** (source version 0.15.0-rc.2, pending publication), not a stable release. It suits people comfortable running a Linux server, DNS and certificates, on a machine they can restore. Use the browser dashboard or installed phone web app; native apps remain post-v1. [Groups](/User-Guide/Groups) have authority controls, private same-host Git exchange and group sessions launched in private checkouts on the main. Containers per session ship as a **Preview**: off by default, on per project, and only on a host that has passed the container qualification.
 
 [Company sign-in](/User-Guide/Company-Sign-In-Entra) has an OIDC pilot, **off by default**
 and not yet qualified with a real tenant; directory provisioning and broader organization controls remain planned.

@@ -28,3 +28,15 @@ def test_installer_creates_the_backup_folder_the_unit_requires():
     install = (ROOT / 'deploy/install.sh').read_text()
     if 'ReadWritePaths=/var/backups/acc' in unit:
         assert 'install -d -o root -g root -m 0700 /var/backups/acc' in install
+
+
+def test_installer_questions_do_not_use_unterminated_read_prompts():
+    # read -p bypasses the newline a Windows console relay needs to display a full question.
+    for name in ('deploy/node/install.sh', 'deploy/acc-install', 'deploy/setup.sh'):
+        text = (ROOT / name).read_text()
+        assert not re.search(r'\bread\b[^\n;]*\s-[a-z]*p\b', text), name
+    wizard = (ROOT / 'deploy/acc-install').read_text()
+    assert 'read -r -s answer </dev/tty' in wizard
+    assert 'read -r answer </dev/tty' in wizard
+    setup = (ROOT / 'deploy/setup.sh').read_text()
+    assert 'read -r -s CF_API_TOKEN' in setup

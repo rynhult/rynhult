@@ -152,7 +152,9 @@ def test_main_setup_copy_removes_group_write_before_root_imports(tmp_path):
     stub(tools, 'rsync', '/bin/cp -a "$REPO/." "$APP/"')
     stub(tools, 'chown', 'exit 0')
     script = (REPO / 'deploy/setup.sh').read_text()
-    copy = script[script.index('    rsync -a --exclude='):script.index('  else\n    # An installed Rynhult of another version')]
+    start = script.index('    rsync -a --exclude=')
+    end = script.index('    chmod -R go-w "$APP"', start) + len('    chmod -R go-w "$APP"')
+    copy = script[start:end]
     result = run(['bash', '-eu', '-c', copy], REPO=str(source), APP=str(target),
                  PATH=f'{tools}:{os.environ["PATH"]}')
     assert result.returncode == 0, result.stderr

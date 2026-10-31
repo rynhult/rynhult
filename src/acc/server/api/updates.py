@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -19,6 +20,8 @@ class ConfigIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     repository: str = Field(max_length=200)
     automatic: bool = False
+    release_channel: Literal["stable", "rc"] | None = None
+    include_prereleases: StrictBool | None = None
     time: str = Field(default="03:00", pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
@@ -52,12 +55,20 @@ def router(ctx: Context):
             except ConfigError:
                 before = service.defaults()  # a complete explicit save repairs the file
                 before["repository"] = None  # discard stale release observations too
-            value = {**before, **body.model_dump()}
+            value = {**before, **body.model_dump(exclude_none=True)}
+            if body.release_channel is not None and body.include_prereleases is not None and (body.release_channel == 'rc') != body.include_prereleases:
+                raise HTTPException(422, 'Conflicting release channel preferences.')
+            if body.release_channel is not None:
+                value['release_channel'] = body.release_channel
+            elif body.include_prereleases is not None:
+                value['release_channel'] = 'rc' if body.include_prereleases else 'stable'
+            value['include_prereleases'] = value['release_channel'] == 'rc'
             write_json(ctx.settings.data_dir / "updates-config.json", value)
-            if before["repository"] != body.repository:
+            if before["repository"] != body.repository or before.get("include_prereleases") != value["include_prereleases"]:
                 service.store({})  # changing source requires a fresh release check
             service.audit(
-                "update.configure", who.username, body.repository, {"automatic": body.automatic, "time": body.time}
+                "update.configure", who.username, body.repository, {"automatic": body.automatic, "time": body.time,
+                                                                       "include_prereleases": value["include_prereleases"], "release_channel": value["release_channel"]}
             )
             return service.state()
 

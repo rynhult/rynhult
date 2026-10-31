@@ -9,6 +9,7 @@ acc_compat_lib="$(dirname "$0")/acc-env.sh"
 #   sudo deploy/acc-install --node 'acc-node enroll …' [--yes]
 #                                                            an additional machine: deploy/node/install.sh, then enroll
 #   --yes       no questions: answers come from the flags and the environment (setup.sh's ACC_* variables)
+#   --unqualified-distro  explicit test-install opt-in for recognised non-apt systems
 #   --dry-run   passed through to the installers: print every step, change nothing (no root needed)
 # ACC_INSTALL_ROOT (tests only, never as root): keep the log and look for an existing setup and acc-node inside that
 # private, canonical mode-0700 folder under /tmp instead of /. No path component may be a symlink. The installers it runs (deploy/setup.sh, deploy/node/install.sh) are not redirected: a test
@@ -123,9 +124,11 @@ ui_input() {
   if [ -n "$WT" ]; then
     answer=$(whiptail --title "$TITLE" "--$kind" "$question" 10 72 "$default" 3>&1 1>&2 2>&3) || cancelled
   elif [ "$kind" = passwordbox ]; then
-    read -r -s -p "$question: " answer </dev/tty; echo
+    printf '%s\n> ' "$question (input hidden):" >&2
+    read -r -s answer </dev/tty; printf '\n' >&2
   else
-    read -r -p "$question${default:+ [$default]}: " answer </dev/tty
+    printf '%s\n> ' "$question${default:+ [$default]}:" >&2
+    read -r answer </dev/tty
   fi
   printf -v "$var" '%s' "${answer:-$default}"
 }
@@ -139,7 +142,8 @@ ui_yesno() {
     [ "$default" = yes ] || flags=(--defaultno)
     if whiptail --title "$TITLE" "${flags[@]}" --yesno "$question" 10 72; then answer=yes; else answer=no; fi
   else
-    read -r -p "$question (yes/no) [$default]: " answer </dev/tty
+    printf '%s\n> ' "$question (yes/no) [$default]:" >&2
+    read -r answer </dev/tty
     case ${answer,,} in y|yes) answer=yes ;; n|no) answer=no ;; *) answer=$default ;; esac
   fi
   printf -v "$var" '%s' "$answer"
@@ -157,11 +161,12 @@ choose_role() {
       node "Additional machine: runs sessions for an existing Rynhult" \
       cancel "Cancel" 3>&1 1>&2 2>&3) || cancelled
   else
-    echo "What should this machine be?"
-    echo "  1) Main Rynhult: the dashboard (standalone, or the primary of several machines)"
-    echo "  2) Additional machine: runs sessions for an existing Rynhult"
-    echo "  3) Cancel"
-    read -r -p "Choose 1, 2 or 3: " answer </dev/tty
+    echo "What should this machine be?" >&2
+    echo "  1) Main Rynhult: the dashboard (standalone, or the primary of several machines)" >&2
+    echo "  2) Additional machine: runs sessions for an existing Rynhult" >&2
+    echo "  3) Cancel" >&2
+    printf '%s\n> ' "Choose 1, 2 or 3:" >&2
+    read -r answer </dev/tty
     case $answer in 1) answer=main ;; 2) answer=node ;; *) answer=cancel ;; esac
   fi
   [ "$answer" != cancel ] || cancelled
@@ -188,6 +193,10 @@ step() {
 main_role() {
   local setup=("$REPO/deploy/setup.sh" --yes)
   [ -z "$DRY" ] || setup+=(--dry-run)
+  [ -z "${UNQUALIFIED:-}" ] || setup+=(--unqualified-distro)
+  if ! command -v apt-get >/dev/null 2>&1; then
+    ui_msg "Non-apt mains are unqualified. A reviewed test install needs --unqualified-distro; see docs/LINUX-DISTROS.md for prerequisites and repositories."
+  fi
   if [ -f "$ACCD_ENV" ]; then
     ui_msg "Rynhult is already set up on this machine: setup keeps /etc/default/accd and only updates what's installed."
   else
@@ -253,6 +262,7 @@ node_role() {
   echo "== Additional machine '$ENROLL_NAME' for $ENROLL_PRIMARY${DRY:+ (dry run)}"
   local install=("$REPO/deploy/node/install.sh" --install-prereqs)
   [ -z "$DRY" ] || install+=(--dry-run)
+  [ -z "${UNQUALIFIED:-}" ] || install+=(--unqualified-distro)
   step env ACC_INSTALL_ENROLLS=1 "${install[@]}" || status=$?
   # A dry run's exit 2 means "a real install would stop here"; it still shows the enroll step.
   if [ "$status" != 0 ] && { [ -z "$DRY" ] || [ "$status" != 2 ]; }; then
@@ -273,13 +283,14 @@ node_role() {
 }
 
 main() {
-  ROLE='' NODE_COMMAND='' YES='' DRY=''
+  ROLE='' NODE_COMMAND='' YES='' DRY='' UNQUALIFIED=''
   while [ $# -gt 0 ]; do
     case $1 in
       --main) ROLE=main ;;
       --node) ROLE=node; NODE_COMMAND=${2:?--node needs the command from Add machine}; shift ;;
       --yes|-y) YES=1 ;;
       --dry-run) DRY=1 ;;
+      --unqualified-distro) UNQUALIFIED=1 ;;
       -h|--help) sed -n '/^# Install Rynhult/,/^#   --dry-run/s/^# \{0,1\}//p' "$0"; exit 0 ;;
       *) echo "unknown option $1 (see --help)" >&2; exit 2 ;;
     esac

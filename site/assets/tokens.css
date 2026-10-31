@@ -1,0 +1,138 @@
+/* Copied from rynhult-site source/styles/tokens.css at 3bec36dc9832a836b00c326a996c8893fb52fcb1. */
+/* rynhult.dev design tokens. Brand palette from docs/brand/README.txt; light and dark follow the visitor's system.
+   Periwinkle is reserved for interactive accents (links, focus, hover marks). Checked pairs: docs/design/contrast.md. */
+
+/* Noto Sans, the brand typeface: a self-hosted Latin subset with a variable weight axis (fonts/SOURCE.md).
+   Other scripts fall through to the system stack. Nothing is fetched from a third party. */
+@font-face {
+  font-family: "Noto Sans Site";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url(/fonts/noto-sans-latin-wght.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Brand palette (fixed) */
+  --charcoal: #10191F;
+  --slate: #263B46;
+  --frost: #B9CFE1;
+  --snow: #F0F3F3;
+  --periwinkle: #939EF2;
+  --text: #F2F5F4;
+  --muted-brand: #A4B4BE;
+
+  /* Semantic colour, light theme */
+  --bg: var(--snow);           /* page */
+  --surface: #FFFFFF;          /* raised planes: notes, frames */
+  --sunk: #E3E9EB;             /* recessed planes: code, quiet labels */
+  --ink: var(--charcoal);      /* body text */
+  --muted: #44555E;            /* secondary text */
+  --display: var(--slate);     /* selected display copy (brand: Slate on light, Frost on dark) */
+  --line: #C5D0D5;             /* decorative hairlines and dividers */
+  --line-strong: #75868F;      /* component boundaries that must read (3:1) */
+  --link: #3F4AB0;             /* Periwinkle, darkened for light surfaces (same hue) */
+  --focus: #3F4AB0;            /* focus ring, drawn outside the element */
+  --accent: #3F4AB0;           /* interactive highlights only: hover marks, current item */
+  --mark: var(--slate);        /* logo mark */
+  --word: #172832;             /* logo wordmark */
+  --button-bg: var(--charcoal);
+  --button-ink: var(--snow);
+  --band-1: #DCE4E8;           /* brand-geometry bands, decorative; ink stays readable on all three */
+  --band-2: #C8D5DC;
+  --band-3: #AFC2CD;
+
+  /* Type */
+  --font: "Noto Sans Site", "Noto Sans", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+  --mono: "Noto Sans Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --step--1: 0.9375rem;                                 /* 15px: captions, footer */
+  --step-0: 1.0625rem;                                  /* 17px: body */
+  --step-1: clamp(1.125rem, 1rem + 0.6vw, 1.3rem);      /* lead paragraphs */
+  --step-2: clamp(1.25rem, 1.1rem + 0.8vw, 1.5rem);     /* h3 */
+  --step-3: clamp(1.6rem, 1.3rem + 1.6vw, 2.15rem);     /* h2 */
+  --step-4: clamp(2.1rem, 1.6rem + 2.6vw, 3.2rem);      /* page titles */
+  --step-5: clamp(2.6rem, 1.4rem + 6.2vw, 5.4rem);      /* hero display */
+  --leading-tight: 1.02;
+  --leading-snug: 1.2;
+  --leading-body: 1.6;
+  --tracking-tight: -0.025em;
+  --tracking-snug: -0.015em;
+  --weight-body: 400;
+  --weight-medium: 500;
+  --weight-heading: 600;
+  --weight-strong: 700;
+
+  /* Space */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+  --section: clamp(3rem, 7vw, 5.5rem);                  /* vertical rhythm between sections */
+  --flow: 1rem;                                         /* default gap between stacked prose */
+
+  /* Shape. The identity is angular: no rounding by default, a 45° cut corner where a shape needs an edge. */
+  --radius-0: 0;
+  --radius-1: 2px;
+  --radius-2: 4px;
+  --cut: 0.7rem;                                        /* size of the clipped corner on buttons and frames */
+
+  /* Layout */
+  --measure: 66ch;                                      /* max line length for prose */
+  --page: 74rem;                                        /* page width */
+  --gutter: clamp(1rem, 4vw, 3rem);                     /* side gutter, never under 16px */
+  --target: 1.5rem;                                     /* 24px minimum interactive target */
+
+  /* Logo. Full lockup only at 160px or wider; clear space is half the mark height (mark = 76/112 of the lockup height). */
+  --logo-w: 10.5rem;                                    /* 168px */
+  --logo-clear: calc(var(--logo-w) * 112 / 429 * 76 / 112 / 2);
+  --logo-mark-w: 2.25rem;                               /* standalone mark: 36px */
+  --logo-mark-clear: calc(var(--logo-mark-w) * 0.76 / 2);
+
+  /* Motion. Two signature moments later (hero bands, feature tour); everything else at most one fade. */
+  --dur-1: 160ms;                                       /* hover, underline */
+  --dur-2: 320ms;                                       /* fade-in */
+  --dur-3: 720ms;                                       /* signature */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.6, 0, 0.3, 1);
+  --rise: 0.75rem;                                      /* distance a fade-in travels */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--charcoal);
+    --surface: #16232B;
+    --sunk: #0B1216;
+    --ink: var(--text);
+    --muted: var(--muted-brand);
+    --display: var(--frost);
+    --line: #2C434F;
+    --line-strong: #6E8491;
+    --link: var(--periwinkle);
+    --focus: #B9C0FA;
+    --accent: var(--periwinkle);
+    --mark: var(--frost);
+    --word: var(--text);
+    --button-bg: var(--frost);
+    --button-ink: var(--charcoal);
+    --band-1: #1C2C35;
+    --band-2: #263B46;
+    --band-3: #3A5463;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+    --rise: 0;
+  }
+}

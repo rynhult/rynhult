@@ -167,7 +167,7 @@ async def test_imported_unborn_repository_launch_has_plain_error_without_class_p
     subprocess.run(['git', 'init', '-q', '-b', 'main', str(folder)], check=True)
     response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude',
                                                    'name': 'Unborn import', 'worktree': True})
-    assert response.status_code == 502, response.text
+    assert response.status_code == 409, response.text
     detail = response.json()['detail']
-    assert detail.startswith("the project isn't a git repository with a commit yet"), detail
+    assert "Make the first commit" in detail and "project page" in detail
     assert 'OpError:' not in detail

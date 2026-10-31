@@ -21,9 +21,20 @@ pkg_qualified() { [ "$1" = apt ]; }
 # shellcheck source=/dev/null
 pkg_system() { (. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-${NAME:-Linux}}") || echo Linux; }
 
+# setup.sh loads os-release before selecting the Compose provider. ID_LIKE is a
+# space-separated ancestry list: EL derivatives often also list Fedora.
+pkg_enterprise_linux() {
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" rhel "*|*" centos "*|*" almalinux "*|*" rocky "*|*" ol "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # A Debian package name in this manager's naming.
 pkg_name() {
   case "$1:$2" in
+    dnf:docker-compose)
+      if pkg_enterprise_linux; then echo docker-compose-plugin; else echo docker-compose; fi ;;
     dnf:gnupg) echo gnupg2 ;;
     zypper:gnupg) echo gpg2 ;;
     pacman:python3) echo python ;;
@@ -31,6 +42,11 @@ pkg_name() {
     dnf:uidmap) echo shadow-utils ;;
     zypper:uidmap|pacman:uidmap) echo shadow ;;
     pacman:gh) echo github-cli ;;
+    dnf:dbus-user-session) echo dbus-daemon ;;
+    zypper:dbus-user-session) echo dbus-1 ;;
+    pacman:dbus-user-session) echo dbus ;;
+    dnf:whiptail|zypper:whiptail) echo newt ;;
+    pacman:whiptail) echo libnewt ;;
     zypper:nodejs) echo nodejs-default ;;
     zypper:npm) echo npm-default ;;
     *) echo "$2" ;;

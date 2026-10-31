@@ -382,10 +382,10 @@ async def test_latest_api_uses_updates_repository_token_and_verified_snapshot(ap
     prefix = 'https://api.github.com/repos/example/acc/releases/assets/'
     def get(url, token, **kwargs):
         assert token == env['settings'].data_dir / 'secrets/update_token'
-        if url == 'https://api.github.com/repos/example/acc/releases/latest':
-            return json.dumps({'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False, 'assets': [
+        if url == 'https://api.github.com/repos/example/acc/releases?per_page=30':
+            return json.dumps([{'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False, 'assets': [
                 {'name': 'acc-1.2.3.tar.gz', 'url': prefix + '1'}, {'name': 'SHA256SUMS', 'url': prefix + '2'},
-                {'name': 'SHA256SUMS.asc', 'url': prefix + '3'}]}).encode()
+                {'name': 'SHA256SUMS.asc', 'url': prefix + '3'}]}]).encode()
         if url in (prefix + '2', prefix + '3'):
             sums = f'{checksum}  acc-1.2.3.tar.gz\n'.encode()
             return sums if url.endswith('/2') else release_signer.sign(sums)

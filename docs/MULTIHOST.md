@@ -64,6 +64,25 @@ Channel ids are chosen by the primary (odd, increasing). Account names must matc
 refuses anything else and any socket outside its socket dir. Text messages after "ready": `{"t": "ping"}` /
 `{"t": "pong"}` every 20 s; three missed pongs end the connection.
 
+### Request acknowledgements
+
+A provisioned Linux node advertises `request-replies-v1`. The authenticated
+primary may then send `{"t":"request-replies","session_id":"…","replies":{…}}`.
+Only this control frame may exceed the ordinary 4096-character text limit, up to
+64 KiB; it contains at most 24 accepted/refused submission replies. The node
+service writes them beneath `/var/lib/acc-request-replies` (service-owned 0711
+root/session directories, 0644 files keyed by opaque request ID). The primary
+retries on reconcile/reconnect; identical content does not replace existing files.
+
+The agent broker cannot publish this channel. `acc-request` ignores writable
+run-folder replies and checks the protected store's owners, parent permissions,
+regular-file/size limits, session and request binding. Accepted means submitted
+to Inbox, not approved. No store, capability or trusted service principal means
+unconfirmed, never a writable-file fallback. Normal Linux main/node installers
+provision the store and unit write allowance. Older nodes, same-account Mac nodes
+and containers without a protected store retain Inbox submission but cannot
+confirm it through this channel.
+
 ## On the primary
 - `node` table: id, name, public key, status (pending/active/revoked), enrollment code hash + expiry, info, last seen,
   created by. Sessions and projects already have a `host` column (`local` by default); `host` names a node.
@@ -144,7 +163,7 @@ members get 403 and keep the scoped view of this machine). Nothing new listens: 
 text frames on the node's existing authenticated link.
 
 - **Capability.** A node that can answer says `host-v1` in its hello's `info.capabilities`. The primary keeps only the
-  capabilities it knows (`preview-v1`, `host-v1`). A node without it is never sent a request; the page says to update
+  capabilities it knows (including `preview-v1` and `host-v1`); unknown extensions are dropped. A node without it is never sent a request; the page says to update
   that machine.
 - **Frames.** `{"t": "host", "id"}` (primary → node) asks for the full snapshot; the node answers
   `{"t": "host-state", "id", "snapshot"}`. On connect and every 60 seconds the node also sends

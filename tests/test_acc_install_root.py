@@ -326,3 +326,37 @@ def test_test_root_identity_does_not_trust_path_id(machine, tmp_path):
     result = run('--main', '--yes', PATH=f'{tools}:{os.environ["PATH"]}')
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls.exists()
+
+
+def test_main_forwards_explicit_unqualified_distro(machine):
+    run, _, calls, _ = machine
+    result = run('--main', '--yes', '--dry-run', '--unqualified-distro', ACC_OWNER='alex')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '--unqualified-distro' in calls.read_text().splitlines()[0]
+
+
+def test_node_forwards_explicit_unqualified_distro(machine):
+    run, _, calls, _ = machine
+    command = 'rynhult-node enroll --primary https://acc.example.lan --trust system --code - --name pc'
+    result = run('--node', command, '--yes', '--dry-run', '--unqualified-distro', stdin=CODE + '\n')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '--unqualified-distro' in calls.read_text().splitlines()[0]
+
+
+def test_non_apt_main_names_the_explicit_test_install_flag(machine, tmp_path):
+    run, _, _, _ = machine
+    tools = tmp_path / 'without-apt'
+    tools.mkdir()
+    for folder in ('/usr/bin', '/bin'):
+        for entry in os.scandir(folder):
+            if entry.name != 'apt-get' and not (tools / entry.name).exists():
+                (tools / entry.name).symlink_to(entry.path)
+    for name in ('tailscale', 'ip'):
+        path = tools / name
+        if path.is_symlink():
+            path.unlink()
+        executable(path, '#!/bin/sh\nexit 0\n')
+    result = run('--main', '--yes', '--dry-run', PATH=str(tools), ACC_OWNER='alex')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Non-apt mains are unqualified' in result.stdout
+    assert '--unqualified-distro' in result.stdout

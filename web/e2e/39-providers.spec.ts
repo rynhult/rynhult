@@ -270,3 +270,16 @@ test('Software controls retain machine scope and account-specific reads', async 
     { action: 'auto', machine: null }, { action: 'update', machine: 'studio-mac' },
   ]);
 });
+
+// Node GitHub CLI prerequisites: keep the broker's machine-specific remedy visible.
+test("GitHub login displays the missing node CLI remedy", async ({ page }) => {
+  await page.route("**/api/accounts*", route => route.fulfill({ json: {
+    account: "agent", default_account: "agent", accounts: ["agent"], github: { logged_in: false },
+  } }));
+  const detail = "gh is not installed on alex-pc: rerun the Linux/WSL node installer with --install-prereqs, then retry GitHub login.";
+  await page.route("**/api/accounts/github/login*", route => route.fulfill({ status: 400, json: { detail } }));
+  await page.goto("/providers");
+  await page.getByRole("article", { name: "GitHub account", exact: true }).getByRole("button", { name: "Log in", exact: true }).click();
+  await page.getByRole("button", { name: "Start re-login", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText(detail, { exact: true })).toBeVisible();
+});

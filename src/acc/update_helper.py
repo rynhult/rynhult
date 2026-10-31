@@ -21,7 +21,17 @@ from pathlib import Path
 from acc.env import environment
 
 from . import bundle
-from .updates import BUILD, GIT_MESSAGE, check, download_release, fetch, repository, validate_request, version
+from .updates import (
+    BUILD,
+    GIT_MESSAGE,
+    check,
+    download_release,
+    fetch,
+    repository,
+    selected_channel,
+    validate_request,
+    version,
+)
 
 
 def read_json(path: Path, limit: int = 65536) -> dict:
@@ -124,11 +134,13 @@ class Transaction:
         token = Path(self.config["token_file"]) if self.config.get("token_file") else None
         repo = self.config.get("repository", "")
         current = bundle.version_of(self.source)
-        latest = check(repo, current, token, bundle.installed_identity(self.source))
+        latest = check(repo, current, token, bundle.installed_identity(self.source),
+                       include_prereleases=selected_channel(self.config, current) == "rc")
         if latest["latest"] != self.target or not latest["available"]:
-            raise ValueError("requested version is no longer the newer stable release")
+            raise ValueError("requested version is no longer the newer release")
         tree = download_release(repo, latest, self.stage, token, get=fetch,
-                                allow_unsigned=self.config.get('allow_unsigned', False), verification=self.state)
+                                allow_unsigned=self.config.get('allow_unsigned', False), verification=self.state,
+                                include_prereleases=selected_channel(self.config, current) == "rc")
         self.expected_build = bundle.identity(tree)
         return tree
 
@@ -358,7 +370,7 @@ class NodeTransaction(Transaction):
 def validate_node_request(data):
     if not isinstance(data, dict) or set(data) != {"action", "version", "build", "sha256"}:
         raise ValueError("invalid node update request")
-    validate_request({k: data[k] for k in ("action", "version")})
+    validate_request({k: data[k] for k in ("action", "version")}, include_prereleases=True)
     if not all(isinstance(data[k], str) and BUILD.fullmatch(data[k]) for k in ("build", "sha256")):
         raise ValueError("invalid node build or checksum")
     return data["version"]
@@ -385,6 +397,7 @@ def main():
             "repository": authorized_repo,
             "token_file": str(data / "secrets/update_token"),
             "group": group,
+            "include_prereleases": version(bundle.version_of(source))[3] == 0 if (source / "pyproject.toml").is_file() else False,
         }
         try:
             if not node_mode:
@@ -392,7 +405,7 @@ def main():
         except FileNotFoundError:
             pass
         # Configuration cannot override helper paths, commands or privileges.
-        config = {k: config[k] for k in ("repository", "token_file", "group")}
+        config = {k: config[k] for k in ("repository", "token_file", "group", "include_prereleases", "release_channel") if k in config}
         config["token_file"], config["group"] = str(data / "secrets/update_token"), group
         # Root-controlled service environment only; the acc-owned configuration cannot set these paths.
         config["health_socket"] = environment.get("ACC_UPDATE_HEALTH_SOCKET", "/run/accd.sock")
@@ -404,7 +417,7 @@ def main():
                 if len(path.stem) != 32 or any(c not in "0123456789abcdef" for c in path.stem):
                     raise ValueError("invalid request filename")
                 request = read_json(path, 1024)
-                target = validate_node_request(request) if node_mode else validate_request(request)
+                target = validate_node_request(request) if node_mode else validate_request(request, include_prereleases=selected_channel(config, bundle.version_of(source)) == "rc")
                 if not node_mode and (not authorized_repo or config["repository"] != authorized_repo):
                     raise ValueError("repository is not authorized by the root-owned service configuration")
                 if node_mode:

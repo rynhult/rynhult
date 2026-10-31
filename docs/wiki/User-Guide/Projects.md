@@ -72,6 +72,28 @@ Select **New project** (on Projects, in the Overview's **Get started** list, or 
 
 Slugs are unique, and `local` and anything starting with `local-` are reserved for Rynhult's **Local workspaces** groups (see [Workspaces](/User-Guide/Workspaces)).
 
+### Imported repositories without commits
+
+Cloning an empty repository does not automatically change it. After import,
+Rynhult offers **Make the first commit**. The same button appears on the project
+page for an empty registered folder or repository. You can choose **Later — open
+project** after import and use the button when ready.
+
+The button makes a `README.md` containing the project name and commits only that
+file through the project's agent account, using its configured Git author (or
+the owner's generated noreply identity when none is configured). It never pushes
+to GitHub or another remote. An existing commit is left unchanged; an existing
+README is never overwritten. If the folder already has a README, commit it
+manually instead. Other staged files stay outside this commit.
+
+**Own worktree** sessions and teams need a commit. If you try to start one first,
+the error tells you to open the project page and choose **Make the first commit**.
+Trust remains a separate choice; making a commit does not trust a repository.
+If Git metadata changes during the action or a link would redirect a write,
+Rynhult stops rather than writing through it. Ask the owner to inspect the repository before retrying.
+Existing metadata and any generated README are retained; the action does not
+remove them to hide a failed attempt.
+
 ## Trust
 Agents ask before working in a folder they don't know. Trusting a project records its folder as trusted for every agent CLI, so sessions start without that question. Rynhult never answers it by typing.
 

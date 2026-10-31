@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1442,6 +1443,267 @@ def git_identity(config: BrokerConfig, path: str, name: str | None = None, email
         return result
 
 
+def project_first_commit(config: BrokerConfig, path: str, title: str = "", create: bool = False,
+                         name: str | None = None, email: str | None = None) -> dict:
+    """Pin workspace/Git directories; publish a README-only root commit only to an unborn ref.
+
+    No pathname validated by this operation is reopened for mutation. Git plumbing
+    uses inherited directory descriptors; publishing the ref uses pinned parents
+    and Git-compatible exclusive lock files, without touching the person's index.
+    """
+    target = _under_roots(config, path)
+    with ExitStack() as stack:
+        def directory(value, *, parent=None):
+            try:
+                fd = os.open(value, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            except OSError:
+                raise OpError("The project or its Git metadata changed or is not a regular directory. Reload and try again.") from None
+            stack.callback(os.close, fd)
+            return fd
+
+        root = directory(target)
+        fd_base = "/proc/self/fd" if Path("/proc/self/fd").is_dir() else "/dev/fd"
+        root_path = f"{fd_base}/{root}"
+        # Validate the identity actually opened, including ancestor replacement
+        # between resolve and open. The descriptor stays live through all writes.
+        _under_roots(config, root_path)
+        inherited = [root]
+        base_env = {k: v for k, v in environment.items() if not k.startswith("GIT_")}
+        safe_env = {**base_env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"}
+        prefix = ["git", "-C", root_path]
+        for key, value in (*HARDENED_GIT, ("core.splitIndex", "false"), ("core.sharedRepository", "false")):
+            prefix += ["-c", f"{key}={value}"]
+
+        def git(*args, input=None, identity_read=False):
+            return subprocess.run([*prefix, *args], input=input, capture_output=True, text=True, timeout=30,
+                                  env=base_env if identity_read else safe_env, pass_fds=tuple(inherited))
+
+        git("rev-parse", "--show-toplevel")  # read only, never use its mutable pathname
+        if '.git' not in os.listdir(root):
+            if os.listdir(root):
+                raise OpError("This folder contains files but has no Git repository. Initialise Git manually before making the first commit.")
+            if not create:
+                return {"needed": True, "created": False}
+            # Reserve metadata before any Git write. git init discovers .git
+            # and its children by name, so even a pinned worktree is insufficient.
+            try:
+                os.mkdir('.git', mode=0o755, dir_fd=root)
+            except FileExistsError:
+                raise OpError("The project changed while preparing Git. Reload and try again.") from None
+            bootstrap = directory('.git', parent=root)
+            for name_in_git in ('objects', 'refs'):
+                try:
+                    os.mkdir(name_in_git, mode=0o755, dir_fd=bootstrap)
+                except FileExistsError:
+                    raise OpError("Git metadata changed during initialization. Reload and try again.") from None
+                child = directory(name_in_git, parent=bootstrap)
+                for sub in ('info', 'pack') if name_in_git == 'objects' else ('heads', 'tags'):
+                    try:
+                        os.mkdir(sub, mode=0o755, dir_fd=child)
+                    except FileExistsError:
+                        raise OpError("Git metadata changed during initialization. Reload and try again.") from None
+                    directory(sub, parent=child)
+            for filename, content in (
+                ('HEAD', 'ref: refs/heads/main\n'),
+                ('config', '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n'),
+            ):
+                try:
+                    fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o644, dir_fd=bootstrap)
+                except FileExistsError:
+                    raise OpError("Git metadata changed during initialization. Reload and try again.") from None
+                with os.fdopen(fd, 'w') as output:
+                    output.write(content)
+        admin = directory('.git', parent=root)
+        inherited.append(admin)
+        prefix += [f"--git-dir={fd_base}/{admin}", f"--work-tree={root_path}"]
+        objects = directory('objects', parent=admin)
+        inherited.append(objects)
+        safe_env['GIT_OBJECT_DIRECTORY'] = f"{fd_base}/{objects}"
+        if git("rev-parse", "--verify", "HEAD^{commit}").returncode == 0:
+            return {"needed": False, "created": False}
+        history = git("rev-list", "--all", "--count")
+        if history.returncode or not history.stdout.strip().isdigit():
+            raise OpError("Git could not verify this repository's history. Repair it before making the first commit.")
+        if int(history.stdout.strip()):
+            raise OpError("This repository already has committed history. Switch to an existing branch instead of making another first commit.")
+        head = git("symbolic-ref", "-q", "HEAD")
+        ref = head.stdout.strip()
+        if head.returncode or not ref.startswith('refs/heads/') or git('check-ref-format', ref).returncode:
+            raise OpError("Git could not verify an unborn project branch. Repair HEAD before making the first commit.")
+        if not create:
+            return {"needed": True, "created": False}
+        author = {}
+        for key, supplied, fallback in (("name", name, "Rynhult"), ("email", email, "acc@example.com")):
+            configured = git('config', '--get', 'user.' + key, identity_read=True)
+            if configured.returncode not in (0, 1):
+                raise OpError("Git couldn't read this repository's author settings.")
+            value = configured.stdout.strip() or supplied or fallback
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or any(ord(c) < 32 or ord(c) == 127 or c in '<>' for c in value):
+                raise OpError("Enter a Git author name and email without control characters.")
+            if key == 'email' and not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', value):
+                raise OpError("Enter a valid Git author email address.")
+            author[key] = value
+        # Pin each branch parent; never follow replacement refs/heads symlinks.
+        parent = admin
+        for component in ref.split('/')[:-1]:
+            try:
+                os.mkdir(component, dir_fd=parent)
+            except FileExistsError:
+                pass
+            parent = directory(component, parent=parent)
+        leaf = ref.rsplit('/', 1)[1]
+        locks = []
+        lock_fds = {}
+        try:
+            for folder, filename in ((admin, 'HEAD.lock'), (parent, leaf + '.lock'), (admin, 'index.lock')):
+                try:
+                    lock = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=folder)
+                except OSError:
+                    raise OpError("Git is changing this repository. Wait for it to finish, then retry.") from None
+                stack.callback(os.close, lock)
+                locks.append((folder, filename, os.fstat(lock)))
+                lock_fds[(folder, filename)] = lock
+            current = git('symbolic-ref', '-q', 'HEAD')
+            # Packed refs and concurrent commits must also be checked under the
+            # ref lock, not just the absence of a loose branch file.
+            current_refs = git('show-ref')
+            if current.returncode or current.stdout.strip() != ref or current_refs.returncode != 1:
+                raise OpError("The repository changed while making the first commit. Reload the project before retrying.")
+            # Git writes only into private staging. Even with a pinned .git,
+            # Git follows index/object-child links inside that directory.
+            staging_name = stack.enter_context(tempfile.TemporaryDirectory(prefix='acc-first-commit-'))
+            staging = directory(staging_name)
+            inherited.append(staging)
+            os.mkdir('objects', dir_fd=staging)
+            staged_objects = directory('objects', parent=staging)
+            inherited.append(staged_objects)
+            index = _first_commit_read(admin, 'index', missing=True)
+            if index is not None:
+                fd = os.open('index', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=staging)
+                with os.fdopen(fd, 'wb') as output:
+                    output.write(index)
+            safe_env['GIT_INDEX_FILE'] = f"{fd_base}/{staging}/index"
+            safe_env['GIT_OBJECT_DIRECTORY'] = f"{fd_base}/{staged_objects}"
+            content = f"# {' '.join(str(title).split())[:200] or target.name}\n\nStarted from Rynhult. Session notes: docs/handoffs/.\n"
+            try:
+                readme = os.open('README.md', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=root)
+            except FileExistsError:
+                raise OpError("README.md already exists. Commit it manually; Rynhult will not overwrite it.") from None
+            with os.fdopen(readme, 'w') as output:
+                output.write(content)
+            blob = git('hash-object', '-w', '--stdin', input=content)
+            if blob.returncode == 0 and git('update-index', '--add', '--cacheinfo',
+                                              f"100644,{blob.stdout.strip()},README.md").returncode:
+                raise OpError("Git couldn't stage the new README. Commit it manually before retrying.")
+            tree = git('mktree', input=f"100644 blob {blob.stdout.strip()}\tREADME.md\n") if blob.returncode == 0 else blob
+            commit = git('-c', 'user.name=' + author['name'], '-c', 'user.email=' + author['email'],
+                         'commit-tree', tree.stdout.strip(), '-m', 'Initialize project') if tree.returncode == 0 else tree
+            if commit.returncode or not re.fullmatch(r'[0-9a-f]{40,64}', commit.stdout.strip()):
+                raise OpError("Git couldn't make the first commit. The README was retained; commit it manually before retrying.")
+            for result in (blob, tree, commit):
+                oid = result.stdout.strip()
+                if not re.fullmatch(r'[0-9a-f]{40,64}', oid):
+                    raise OpError("Git returned an invalid first-commit object. Commit the retained README manually.")
+                source = directory(oid[:2], parent=staged_objects)
+                data = _first_commit_read(source, oid[2:])
+                _first_commit_publish_object(objects, oid, data)
+            prepared_index = _first_commit_read(staging, 'index')
+            for fd, data in ((lock_fds[(admin, 'index.lock')], prepared_index),
+                             (lock_fds[(parent, leaf + '.lock')], (commit.stdout.strip() + '\n').encode())):
+                with os.fdopen(os.dup(fd), 'wb') as output:
+                    output.write(data)
+                    output.flush()
+                    os.fsync(output.fileno())
+            os.rename('index.lock', 'index', src_dir_fd=admin, dst_dir_fd=admin)
+            try:
+                # Atomic create, never replacement: reject even a writer that
+                # ignored Git's lock and created the unborn loose ref meanwhile.
+                os.link(leaf + '.lock', leaf, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+            except FileExistsError:
+                raise OpError("The repository changed while making the first commit. Reload the project before retrying.") from None
+            return {"needed": False, "created": True}
+        finally:
+            for folder, filename, identity in locks:
+                try:
+                    current = os.stat(filename, dir_fd=folder, follow_symlinks=False)
+                    if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                        os.unlink(filename, dir_fd=folder)
+                except FileNotFoundError:
+                    pass
+
+
+def _first_commit_read(parent: int, name: str, *, missing: bool = False) -> bytes | None:
+    """Read a pinned regular metadata file, never a link, device or pipe."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    except FileNotFoundError:
+        if missing:
+            return None
+        raise OpError("Git metadata disappeared. Reload the project before retrying.") from None
+    except OSError:
+        raise OpError("Git metadata must be regular files, not links. Repair it before retrying.") from None
+    with os.fdopen(fd, 'rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 64 * 1024 * 1024:
+            raise OpError("Git metadata is not a regular file of a supported size. Commit the README manually.")
+        data = source.read(info.st_size + 1)
+        if len(data) != info.st_size:
+            raise OpError("Git metadata changed while being read. Reload before retrying.")
+        return data
+
+
+def _first_commit_publish_object(objects: int, oid: str, data: bytes) -> None:
+    """Publish a loose object using only pinned parents and exclusive creation."""
+    try:
+        os.mkdir(oid[:2], mode=0o755, dir_fd=objects)
+    except FileExistsError:
+        pass
+    try:
+        parent = os.open(oid[:2], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=objects)
+    except OSError:
+        raise OpError("Git object metadata changed or contains a directory link. Repair it before retrying.") from None
+    temporary = 'tmp_acc_' + uuid.uuid4().hex
+    identity = None
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444, dir_fd=parent)
+        identity = os.fstat(fd)
+        with os.fdopen(fd, 'wb') as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(temporary, oid[2:], src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+        except FileExistsError:
+            if _first_commit_read(parent, oid[2:]) != data:
+                raise OpError("Git contains a conflicting object. Repair the repository before retrying.") from None
+    finally:
+        try:
+            current = os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            if identity and (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                os.unlink(temporary, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        os.close(parent)
+
+
+def _commit_project_readme(target: Path) -> None:
+    """Hardened README-only commit for newly created project folders."""
+    git_env = _hardened_env(target)
+    identity = []
+    for key, fallback in (("user.name", "Rynhult"), ("user.email", "acc@example.com")):
+        configured = _git(target, "config", "--get", key, env=git_env)
+        if configured.returncode or not configured.stdout.strip():
+            identity.extend(("-c", f"{key}={fallback}"))
+    if _git(target, "add", "--force", "--", "README.md", env=git_env).returncode:
+        raise OpError("Rynhult couldn't stage the project's README. Commit it manually and try again.")
+    if _git(target, *identity, "commit", "--no-verify", "--no-gpg-sign", "--only",
+            "-m", "Initialize project", "--", "README.md", env=git_env).returncode:
+        raise OpError("Rynhult couldn't make the project's first Git commit. Check Git author settings, then commit the README manually.")
+
+
 def make_workspace(config: BrokerConfig, parent: str, name: str, title: str, project: bool = False) -> dict:
     """A new local workspace: a git-initialised folder (no remote), as the agent user.
 
@@ -1467,21 +1729,7 @@ def make_workspace(config: BrokerConfig, parent: str, name: str, title: str, pro
     if result.returncode:
         raise OpError(f"git init failed: {result.stderr.strip()[-200:]}")
     if project:
-        # Run inside the owning account's broker. Carry configured identity into
-        # hardened Git, but never require signing or execute hooks/filters here.
-        git_env = _hardened_env(target)
-        identity = []
-        for key, fallback in (("user.name", "Rynhult"), ("user.email", "acc@example.com")):
-            configured = _git(target, "config", "--get", key, env=git_env)
-            if configured.returncode or not configured.stdout.strip():
-                identity.extend(("-c", f"{key}={fallback}"))
-        staged = _git(target, "add", "--force", "--", "README.md", env=git_env)
-        if staged.returncode:
-            raise OpError(f"Rynhult couldn't stage the new project's README: {staged.stderr.strip()[:200]}")
-        committed = _git(target, *identity, "commit", "--no-verify", "--no-gpg-sign", "--only",
-                         "-m", "Initialize project", "--", "README.md", env=git_env)
-        if committed.returncode:
-            raise OpError(f"Rynhult couldn't make the project's first Git commit: {committed.stderr.strip()[:200]}")
+        _commit_project_readme(target)
     return {"path": str(target)}
 
 

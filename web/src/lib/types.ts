@@ -204,6 +204,7 @@ export interface AuthState {
 }
 
 export interface AttentionItem {
+  image_check?: { project_id: number; provider: string; model: string } | null;
   bulk_dismissible?: boolean;
   id: number;
   kind: "needs_input" | "recovery_needed" | "crash_recovered" | "stop_failure" | "auth" | "publish_request" | "publish_failed" | "compose" | string;

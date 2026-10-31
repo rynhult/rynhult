@@ -11,6 +11,7 @@ import fcntl
 import grp
 import json
 import os
+import posixpath
 import runpy
 import stat
 import sys
@@ -86,17 +87,39 @@ class Host:
         parts = path.split('/')
         if not path.startswith('/') or any(p in ('.', '..', '') for p in parts[1:]):
             raise ValueError('invalid alias path')
-        fd = os.dup(self.fd)
-        try:
-            for part in parts[1:-1]:
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        # Only standard merged-bin/sbin links are accepted. Arbitrary linked
+        # parents (including a linked /etc or payload tree) remain refused.
+        merged = {'/bin': {'/usr/bin'}, '/sbin': {'/usr/bin', '/usr/sbin'},
+                  '/usr/sbin': {'/usr/bin'}, '/usr/local/sbin': {'/usr/local/bin'}}
+        for _ in range(8):
+            fd = os.dup(self.fd)
+            try:
+                resolved = []
+                for index, part in enumerate(parts[1:-1], 1):
+                    info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                    if stat.S_ISLNK(info.st_mode):
+                        logical = '/' + '/'.join([*resolved, part])
+                        target = os.readlink(part, dir_fd=fd)
+                        target = posixpath.normpath(posixpath.join('/' + '/'.join(resolved), target))
+                        owners = {self.owner, os.geteuid()} if self.user_mode else {self.owner}
+                        if info.st_uid not in owners or target not in merged.get(logical, set()):
+                            raise ValueError('untrusted alias directory link')
+                        # Restart from the pinned host root, never Path.resolve:
+                        # an absolute link in an offline host must stay offline.
+                        parts = (target + '/' + '/'.join(parts[index + 1:])).split('/')
+                        os.close(fd)
+                        break
+                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    os.close(fd)
+                    fd = child
+                    self.check(os.fstat(fd))
+                    resolved.append(part)
+                else:
+                    return fd, parts[-1]
+            except BaseException:
                 os.close(fd)
-                fd = child
-                self.check(os.fstat(fd))
-            return fd, parts[-1]
-        except BaseException:
-            os.close(fd)
-            raise
+                raise
+        raise ValueError('too many alias directory links')
 
     def info(self, path):
         try:

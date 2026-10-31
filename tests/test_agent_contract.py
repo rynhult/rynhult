@@ -210,6 +210,11 @@ async def test_launch_capabilities_recompute_saved_authority_without_mutating_sp
         inputs = LaunchInputs.from_dict(session.launch_spec.inputs)
         text = agent_contract.for_session(db, session, inputs)
         assert 'gates: off' in text
+        from acc.server.models import PortReservation
+        db.add(PortReservation(port=8102, project_id=project['id']))
+        db.flush()
+        text = agent_contract.for_session(db, session, inputs, publish_zones=['example.com'])
+        assert '8102' in text and 'example.com' in text
         db.add(Setting(key=gates.BUDGET_KEY, value={'enabled': True}))
         db.add(Setting(key=gates.COMMANDS_KEY, value={str(project['id']): {'full': ['true']}}))
         db.flush()
@@ -303,3 +308,15 @@ def test_root_handoff_uses_session_identity_not_missing_attempt():
     assert 'docs/handoffs/<date>-1234abcd-<slug>.md' in text
     assert 'session ID' in text
     assert '<attempt8>' not in text and 'Use your actual attempt ID' not in text
+
+
+@pytest.mark.parametrize('ports', [[], [8102, 8103]])
+def test_lead_gets_current_ports_and_zones(ports):
+    from acc.server import agent_contract
+    text = agent_contract.render(LaunchInputs(provider='claude'), position(0),
+                                 ports=ports, publish_zones=['example.com'])
+    assert 'example.com' in text
+    if ports:
+        assert '8102' in text and '8103' in text
+    else:
+        assert 'No ports are reserved' in text and 'need card' in text

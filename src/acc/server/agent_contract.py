@@ -60,7 +60,7 @@ def read_only(inputs):
 
 
 def render(inputs, session, *, limits=None, tools=(), queue=False, commands=False,
-           run_mode='build', v2=False, catalog=None, model=None, active=True):
+           run_mode='build', v2=False, catalog=None, model=None, active=True, ports=(), publish_zones=()):
     """Render from authority facts; never infer a role from a profile name or task text.
 
     `model` is qualified metadata for the exact selected model, not a provider-wide
@@ -101,6 +101,12 @@ def render(inputs, session, *, limits=None, tools=(), queue=False, commands=Fals
     parts = ['Rynhult role and effective capabilities', f'Role: {role}. {git}',
              'Nobody merges main; final merge to main and owner approvals belong to the person. '
              'These role rules take precedence over optional profile/skill Git and test conventions.']
+    if root:
+        parts.append('Project reserved ports: ' + (json.dumps(list(ports)) if ports else
+                     'No ports are reserved. Raise a need card asking the owner to reserve a port under Ports before requesting publication.') +
+                     '\nPublishing zones (server configuration, not an approval): ' +
+                     (json.dumps(list(publish_zones)) if publish_zones else
+                      'No zone restriction is configured; an available DNS zone and owner approval are still required.'))
     if readonly:
         parts.append('Do not write repository files, including handoffs. Persist findings through report '
                      '(findings_md when available); if unavailable, return them in the conversation. '
@@ -186,7 +192,7 @@ def _team_flags(files, provider):
     return json.loads(files.get(path, '{}')).get('mcpServers', {}).get('acc-team', {}).get('args', [])
 
 
-def for_session(db, session, inputs, catalog=None):
+def for_session(db, session, inputs, catalog=None, *, publish_zones=()):
     """Current saved authority for an actual launch/resume."""
     from .models import Team, utcnow
     from .orchestrator import gates, planning, team_actions, verification
@@ -204,7 +210,12 @@ def for_session(db, session, inputs, catalog=None):
     mode = getattr(plan, 'run_mode', None) or getattr(team, 'run_mode', None) or 'build'
     from .orchestrator.scope_notices import launch_scope
     _, scope = launch_scope(db, session)
-    return render(inputs, session, limits=team.limits if team else {}, tools=tools,
+    from sqlalchemy import select
+
+    from .models import PortReservation
+    ports = list(db.scalars(select(PortReservation.port).where(PortReservation.project_id == session.project_id)
+                            .order_by(PortReservation.port)))
+    return render(inputs, session, ports=ports, publish_zones=publish_zones, limits=team.limits if team else {}, tools=tools,
                   active=active, queue=gates.budget(db)['enabled'], commands=bool(gates.commands(db, session.project_id)),
                   run_mode=mode, v2=planning.enabled() and 'plan' in tools, catalog=catalog) + ('\n\n' + scope if scope else '')
 

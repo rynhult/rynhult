@@ -7,6 +7,54 @@ nodes. The main stays qualified on **Ubuntu 24.04+ and Debian 13+ with systemd**
 Linux desktop applications, RPMs, PKGBUILDs and AppImages are **post-v1**; native
 platforms will follow one at a time, in an order the owner has not chosen.
 
+## October 30 real-VM follow-up (coordinator qualification in progress)
+
+The coordinator supplied Fedora 44, AlmaLinux 10.2, Arch and openSUSE Leap 16
+installer failures. This change fixes scripts; it does not promote these systems
+to qualified. The repository audit retained in the internal qualification notes records package names/provides checked against official repository metadata,
+including Rocky 10 and Tumbleweed, and the remaining Enterprise Linux repository
+gaps.
+
+- `acc-install --main --unqualified-distro` now forwards the opt-in to setup;
+  explicit node wizard opt-ins are forwarded too. Non-apt main flows explain it.
+- Minimal-machine bootstrap prerequisites include curl, tar/gzip, git and CA
+  certificates. Non-apt main base packages now include tar. Debian/Ubuntu package
+  transactions remain unchanged.
+- dnf mains install base dependencies before adding GitHub's official RPM source.
+  The helper exports only the pinned successor primary from an isolated GnuPG
+  home, checks its fingerprint, then installs a local key file and a `gh`-scoped
+  repository with package and metadata signature checks. No dnf plugin is needed.
+  See [GitHub's rotation notice](https://github.com/cli/cli/issues/13118).
+- Round 5 EL main installs use Caddy's official `@caddy/caddy` COPR, restricted
+  to `caddy` with primary `4A76F92FF6D40440F8FC4F36C52191B1D605147E` pinned before
+  writing the key/repository. RPM signature checks stay enabled; COPR does not
+  publish signed repository metadata. No EPEL/CRB is enabled or needed for this
+  Caddy route. Fedora keeps its native Caddy package.
+- The audited EL10/EPEL10.2 sets lack `docker-compose`. Round 4 selects Docker's
+  `docker-compose-plugin` on EL by os-release ID/ancestry, with a fingerprint-pinned
+  RHEL RPM source scoped to that package. Podman finds the plugin in its standard
+  system plugin search paths; no Docker engine is installed. Fedora retains its
+  native `docker-compose`. Python `podman-compose` is not substituted for the
+  broker's JSON interfaces. Use `ACC_DOCKER=no` for a dashboard-only install.
+- Broker Git configuration uses the agent home, an explicit non-repository Git
+  directory and a clean child environment; it cannot discover the installer's
+  `/root/.git` or inherit `GIT_*` settings. Existing broad sudo authorization still
+  refuses; the Guide explains how an owner excludes agents from openSUSE's broad
+  default rule and validates it without weakening the check. Leap 16 may use
+  `/usr/etc/sudoers` with no `/etc/sudoers`: as root, copy `/usr/etc/sudoers` to
+  `/etc/sudoers` only if the latter is absent, add `User_Alias RYNHULT_AGENTS`
+  listing every agent, change each broad ALL line to
+  `ALL, !RYNHULT_AGENTS ALL=(ALL) ALL`, then run `visudo -c` and rerun setup.
+- Setup from an external checkout refuses a different installed version or
+  different same-version installer code. Matching installer files at the same
+  version continue from `/srv/acc/app`. Follow the Guide's retained-tree manual upgrade steps.
+- Alias preflight supports [Fedora's standard merged-bin/sbin directory links](https://fedoraproject.org/wiki/Changes/Unify_bin_and_sbin),
+  including `/usr/local/sbin -> bin`, inside the pinned host root. Arbitrary linked
+  parents and writable canonical targets still refuse.
+- Leap's missing SFTP subsystem affected the coordinator's file-copy harness.
+  Its `scp -O` workaround is not a Rynhult transport requirement: node bootstrap
+  and updates use HTTPS, and Git uses its own transport. No SFTP server is added.
+
 ## v1 node remainder (2026-10-27, main-370 audit)
 
 | Path | Current status | v1 treatment |
@@ -294,8 +342,7 @@ the [phase 4 desktop recipe](#desktop-local-package) lists the full Arch GUI dep
 | whiptail | newt | newt | libnewt |
 | tmux, git, curl, ca-certificates, jq, acl, rsync, smartmontools | same | same | same |
 
-`deploy/lib/pkg.sh` maps only what the node installer installs today (python3, gnupg, nodejs, npm); phase 2 adds
-the rest with the main installer. On Arch, a list refresh without a full upgrade (`pacman -Sy`) is a partial
+`deploy/lib/pkg.sh` maps the main/node names above, including session-bus and dialog packages; unknown names pass through unchanged. This historical table must be read with the October 30 repository audit and its release-specific repository requirements. On Arch, a list refresh without a full upgrade (`pacman -Sy`) is a partial
 upgrade, which Arch doesn't support. So the installer never refreshes there: run `pacman -Syu` first on a stale
 system. Phase 2 should say this when an install fails.
 

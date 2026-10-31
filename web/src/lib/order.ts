@@ -56,7 +56,7 @@ export const INBOX_GROUPS = [
 export type InboxGroupKey = (typeof INBOX_GROUPS)[number]["key"];
 
 export const inboxGroupOf = (item: Pick<AttentionItem, "kind" | "severity">): InboxGroupKey =>
-  item.kind === "needs_input" || item.kind === "recovery_needed" ? "waiting"
+  item.kind === "needs_input" || item.kind === "recovery_needed" || item.kind === "image_check" ? "waiting"
     : item.kind === "publish_request" || item.kind === "tool_request" ? "approvals"
       : item.severity === "info" ? "notes" : "alerts";
 

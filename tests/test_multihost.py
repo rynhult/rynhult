@@ -36,6 +36,7 @@ class StandInNode:
         self.texts: list[dict] = []
         self.package_gate = None  # test-only transport delay before helper execution
         self.relayed = 0  # data frames from the primary: broker calls that went through this node
+        self.reply_handler = None
         self.packages = HelperPackages(load_catalog(), packages_root) if packages_root else None
 
     async def run(self, url: str, signature_override: bytes | None = None):
@@ -58,6 +59,8 @@ class StandInNode:
                         if self.package_gate is not None and json.loads(message).get("t") == "packages":
                             await self.package_gate.wait()
                         self.texts.append(json.loads(message))
+                        if self.reply_handler and self.texts[-1].get('t') == 'request-replies':
+                            await self.reply_handler(ws, message)
                         if self.packages and self.texts[-1].get("t") == "packages":
                             self.packages.handle(self.texts[-1])
                             await self.report()
@@ -912,3 +915,66 @@ async def test_rename_capability_survives_handshake_and_is_cleared_on_old_reconn
         assert (await api.get('/api/nodes')).json()[0]['info'].get('capabilities', []) == []
     finally:
         await ws.close()
+
+
+async def test_request_acknowledgement_uses_authenticated_node_service_not_agent_spool(api, env, live, tmp_path):  # noqa: F811
+    from test_publish import agent_asks
+
+    from acc.node.client import Node as Daemon
+    from acc.node.config import NodeConfig
+    from acc.server.models import ToolRequest
+
+    key, node_id = await enroll(api)
+    protected = tmp_path / 'node-protected-replies'
+    protected.mkdir(mode=0o711)
+    daemon = Daemon(NodeConfig(primary='https://main.example.lan', node_id=node_id), key,
+                    packages=None, request_replies_root=protected)
+    node = StandInNode(env['settings'].broker_socket, key, node_id,
+                      info={'os': 'linux', 'capabilities': daemon.capabilities()})
+    node.reply_handler = daemon.handle_text
+    task = asyncio.create_task(node.run(live))
+    session = None
+    try:
+        await wait_for(lambda: _connected(api))
+        assert 'request-replies-v1' in (await api.get('/api/nodes')).json()[0]['info']['capabilities']
+        root = env['workspaces'] / 'remote-ack'
+        root.mkdir()
+        project = (await api.post('/api/projects', json={'slug': 'remote-ack', 'name': 'Remote ack',
+                                  'host': 'pc', 'workspace_path': str(root)})).json()
+        assert (await api.post(f"/api/projects/{project['id']}/trust")).status_code == 200
+        response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Remote requester'})
+        assert response.status_code == 201, response.text
+        session = response.json()
+        await wait_for(state_is(api, session['id'], 'idle'), timeout=20)
+        rid = 'f' * 32
+        # A forged legacy attachment cannot become a daemon-owned acknowledgement.
+        spool = env['run_dir'] / session['id']
+        (spool / 'request-replies.json').write_text(json.dumps({rid: {'status': 'accepted', 'approval_id': 'forged'}}))
+        file = protected / session['id'] / (rid + '.json')
+        assert not file.exists()
+        agent_asks(env, session, {'type': 'tool', 'manager': 'npm', 'name': 'prettier',
+                                'reason': 'Format output', 'request_id': rid})
+        await wait_for(lambda: file.exists())
+        envelope = json.loads(file.read_text())
+        assert envelope['session_id'] == session['id'] and envelope['request_id'] == rid
+        assert envelope['reply']['status'] == 'accepted' and envelope['reply']['approval_id'] != 'forged'
+        with api.app.state.db() as db:
+            approval = db.get(ToolRequest, envelope['reply']['approval_id'])
+            assert approval.session_id == session['id'] and approval.status == 'pending_approval'
+    finally:
+        if session:
+            await api.post(f"/api/sessions/{session['id']}/stop")
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_missing_github_cli_names_the_node_and_install_remedy(api, env, live, tmp_path):  # noqa: F811
+    env['broker'].providers['gh'] = str(tmp_path / 'missing-gh')
+    node, _, _ = await connect_standin(api, env, live, tmp_path)
+    before = node.relayed
+    result = await api.post('/api/accounts/github/login', params={'machine': 'pc'})
+    assert result.status_code == 400
+    assert result.json()['detail'].startswith('gh is not installed on pc:')
+    assert '--install-prereqs' in result.json()['detail']
+    assert node.relayed > before
+    assert not await audits(api, 'account.login_start')

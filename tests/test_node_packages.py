@@ -83,8 +83,12 @@ def test_node_units_point_at_opt_acc():
     assert "User=acc-node" in unit
     assert "ExecStart=/opt/acc/app/.venv/bin/python -I -m acc.node run" in unit
     assert "ConditionPathExists=/etc/acc-node.env" in unit
-    # agent software: acc-node writes only the helper's request folder; the helper's files are group acc-node
-    assert "\nReadWritePaths=-/srv/acc/packages/requests -/srv/acc/updates/requests\n" in unit and "ProtectSystem=strict" in unit
+    # The app stays under /opt/acc; helper requests retain their installed /srv paths.
+    # Only acc-node publishes authoritative replies; agents get read-only access.
+    writes = next(line.split('=', 1)[1].split() for line in unit.splitlines()
+                  if line.startswith('ReadWritePaths='))
+    assert writes == ['/var/lib/acc-request-replies', '-/srv/acc/packages/requests', '-/srv/acc/updates/requests']
+    assert 'ProtectSystem=strict' in unit
     assert "Environment=ACC_PACKAGES_GROUP=acc-node" in (NODE / "acc-packages.service.d-node.conf").read_text()
     for limit in ("MemoryMax=", "TasksMax=", "LimitNOFILE="):  # bounds whatever a primary asks of it
         assert f"\n{limit}" in unit, limit
@@ -1248,7 +1252,7 @@ def test_wsl_interactive_choices_are_explicit_and_default_no(stubs, tmp_path, an
             os.write(master, answers)
             stdout, stderr = process.communicate(timeout=30)
             assert process.returncode == (2 if b"WOULD FAIL" in stdout else 0), stdout + stderr
-        assert b"Opt into WSL isolation? [y/N]" in stderr
+        assert b"Opt into WSL isolation? Type y and Enter for yes; Enter alone keeps No.\n" in stderr
         assert expected.encode() in stdout
         assert (b"Also disable Windows drive automount completely?" in stderr) is answers.startswith(b"y")
         assert not conf.exists()
@@ -1282,3 +1286,67 @@ def test_macos_installer_ignores_planted_modules(mac, tmp_path):
                             capture_output=True, text=True, timeout=60)
     assert not marker.exists(), result.stdout + result.stderr
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_wsl_questions_are_complete_lines_before_waiting_for_tty_answers(stubs, tmp_path):
+    import pty
+    import select
+    import time
+
+    folder = tmp_path / 'broker'
+    broker_env(folder, 'alex-agent')
+    master, slave = pty.openpty()
+    process = subprocess.Popen(['bash', str(NODE / 'install.sh'), '--dry-run'], stdin=slave,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ,
+            'PATH':f"{stubs}:{os.environ['PATH']}", 'WSL_DISTRO_NAME':'Ubuntu-24.04',
+            'ACC_INSTALL_TEST_BROKER_ENV':str(folder), 'ACC_INSTALL_TEST_WSL_CONF':str(tmp_path / 'wsl.conf')})
+    try:
+        transcript = b''
+        for question, answer in [(b'Opt into WSL isolation?', b'y\n'),
+                                  (b'Also disable Windows drive automount completely?', b'\n')]:
+            chunk = b''
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if select.select([process.stderr], [], [], .1)[0]:
+                    data = os.read(process.stderr.fileno(), 8192)
+                    if not data:
+                        break
+                    chunk += data
+                if question in chunk and b'\n' in chunk.split(question, 1)[1]:
+                    break
+            assert question in chunk and b'\n' in chunk.split(question, 1)[1], chunk
+            assert process.poll() is None  # still waiting for this answer, not merely flushed on exit
+            transcript += chunk
+            os.write(master, answer)
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == (2 if b'WOULD FAIL' in stdout else 0), stdout + stderr
+        assert b'answer in this window' in transcript
+        assert b'automount restricted to root' in stdout
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+        process.stderr.close()
+        os.close(master)
+        os.close(slave)
+
+
+@pytest.mark.parametrize('flags', [('--no-wsl-isolate',), ('--update', '--no-wsl-isolate')])
+def test_generated_wsl_flags_never_wait_for_a_tty_answer(stubs, tmp_path, flags):
+    import pty
+    folder = tmp_path / 'broker'
+    broker_env(folder, 'alex-agent')
+    master, slave = pty.openpty()
+    try:
+        result = subprocess.run(['bash', str(NODE / 'install.sh'), '--dry-run', *flags], stdin=slave,
+            capture_output=True, timeout=30, env={**os.environ,
+                'PATH':f"{stubs}:{os.environ['PATH']}", 'WSL_DISTRO_NAME':'Ubuntu-24.04',
+                'ACC_INSTALL_TEST_BROKER_ENV':str(folder), 'ACC_INSTALL_TEST_WSL_CONF':str(tmp_path / 'wsl.conf')})
+        assert result.returncode == (2 if b'WOULD FAIL' in result.stdout else 0), result.stdout + result.stderr
+        assert b'Opt into WSL isolation?' not in result.stderr
+        assert b'Also disable Windows drive' not in result.stderr
+        assert not (tmp_path / 'wsl.conf').exists()
+    finally:
+        os.close(master)
+        os.close(slave)

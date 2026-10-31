@@ -932,6 +932,7 @@ and execution machine/account before assigning screenshot work. Only a current
 passing qualification makes `requires: ["image_input"]` eligible; no provider or
 model name implies support. The launch capabilities say verified, unavailable or
 unknown from this record. CLI/adapter changes require another check.
+An unknown, otherwise eligible model on the project's execution machine/account produces one owner-only **Check image access** card in the Inbox. Use its button instead of typing out image text for the agent. Unknown means not yet checked; agents may read their assigned images for their own work, clearly marked unverified, but unknown readings never qualify an image-required assignment.
 
 Assigned brief uploads are delivered privately under `.acc/private-references/`
 in the receiving session's worktree. The directory is git-ignored, not a project

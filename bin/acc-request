@@ -6,6 +6,7 @@ import runpy as _compat_runpy
 import stat as _compat_stat
 from pathlib import Path as _CompatPath
 
+
 def _compat_reader(relative):
     # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
     # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
@@ -45,9 +46,70 @@ import argparse
 import importlib.util
 import json
 import os
+import re
+import stat
 import sys
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+REPLY_ROOT = Path('/var/lib/acc-request-replies')
+
+
+def trusted_reply_owners():
+    import pwd
+    owners = {0}
+    for name in ('acc', 'acc-node'):
+        try:
+            owners.add(pwd.getpwnam(name).pw_uid)
+        except KeyError:
+            pass
+    return owners
+
+
+def reply(root, request_id):
+    # root is the writable event spool, NEVER a source of authenticated replies.
+    session_id = environment.get('ACC_SESSION_ID', '')
+    if not re.fullmatch('[a-z0-9]{8,32}', session_id) or not re.fullmatch('[0-9a-f]{32}', request_id):
+        return None
+    opened = []
+    try:
+        owners = trusted_reply_owners()
+        canonical = REPLY_ROOT.resolve(strict=True)
+        directory_access = getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY
+        fd = os.open('/', directory_access)
+        opened.append(fd)
+        for index, component in enumerate((*canonical.parts[1:], session_id)):
+            fd = os.open(component, directory_access | os.O_NOFOLLOW, dir_fd=fd)
+            opened.append(fd)
+            info = os.fstat(fd)
+            sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if info.st_uid not in owners or (info.st_mode & 0o022 and not sticky):
+                raise ValueError('untrusted acknowledgement directory')
+            if index >= len(canonical.parts) - 2 and info.st_mode & 0o066:
+                raise ValueError('acknowledgement directory permits listing or replacement')
+        fd = os.open(request_id + '.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        opened.append(fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022 or info.st_size > 4096:
+            raise ValueError('untrusted acknowledgement')
+        data = json.loads(os.read(fd, 4097))
+        if not isinstance(data, dict) or data.get('session_id') != session_id or data.get('request_id') != request_id:
+            return None
+        row = data.get('reply')
+    except (OSError, ValueError):
+        row = None
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+    if isinstance(row, dict) and row.get('status') == 'accepted' and isinstance(row.get('approval_id'), str):
+        print(f"Sent for approval: {request_id} (approval {row['approval_id']})")
+        return 0
+    if isinstance(row, dict) and row.get('status') == 'refused':
+        print(f"Refused: {row.get('reason', 'Request refused')}")
+        return 1
+    return None
 
 
 def main():
@@ -65,6 +127,8 @@ def main():
     tool.add_argument("--version")
     tool.add_argument("--action", choices=("install", "remove"), default="install")
     tool.add_argument("--reason", required=True)
+    status = sub.add_parser('status')
+    status.add_argument('request_id')
     work = sub.add_parser('work')
     actions = work.add_subparsers(dest='work_action', required=True)
     actions.add_parser('list')
@@ -79,8 +143,14 @@ def main():
     root = environment.get("ACC_RUN_DIR")
     if not root:
         parser.error("only works inside a Rynhult session")
+    if args.type == 'status':
+        if not re.fullmatch('[0-9a-f]{32}', args.request_id):
+            parser.error('request id must be 32 lowercase hexadecimal characters')
+        result = reply(root, args.request_id)
+        if result is None:
+            print(f'Queued, not confirmed — check acc-request status {args.request_id}')
+        return result if result is not None else 0
     if args.type == 'work':
-        import uuid
         request = {'type': 'work', 'action': args.work_action, 'request_id': uuid.uuid4().hex}
         if hasattr(args, 'path'):
             request['path'] = args.path
@@ -112,6 +182,7 @@ def main():
                    "reason": args.reason}
         if args.port is not None:
             request["port"] = args.port
+    request.setdefault("request_id", uuid.uuid4().hex)
     record = {"ts": datetime.now(timezone.utc).isoformat(), "provider": "acc",
               "acc_session": environment.get("ACC_SESSION_ID", ""),
               "hook": {"hook_event_name": "AccRequest", "request": request}}
@@ -120,7 +191,15 @@ def main():
     if args.type == 'work':
         print(f"Queued work {args.work_action}: {request['request_id']}. Read $ACC_RUN_DIR/group-context.json for accepted/conflict/stale/refused; queued is not accepted.")
     else:
-        print(f"Requested: {args.type}. It waits in the Rynhult Inbox for approval; nothing changes until then.")
+        deadline = time.monotonic() + 5
+        while True:
+            result = reply(root, request['request_id'])
+            if result is not None:
+                return result
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(.1)
+        print(f"Queued, not confirmed — check acc-request status {request['request_id']}")
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 
 const route = (file) => file.replace(/index\.html$/, "");
 const target = (out, href) => {
-  const path = decodeURIComponent(href.split("#")[0]);
+  const path = decodeURIComponent(href.split(/[?#]/)[0]);
   return path.endsWith("/") ? join(out, path, "index.html") : join(out, path);
 };
 
@@ -50,19 +50,19 @@ test("coming-soon points people at GitHub and says a release candidate is coming
   for (const { file, html } of builds["coming-soon"].pages) {
     assert.doesNotMatch(html, /href="\/(docs|install|download)\b/, `${file} links to a page that isn't built`);
     assert.doesNotMatch(html, /\{\{/, `${file} has an unfilled placeholder`);
-    assert.match(html, new RegExp(`<a href="${release.follow}">GitHub</a>`), `${file}: GitHub in the site nav`);
+    assert.match(html, new RegExp(`<a class="quiet-link" href="${release.follow}">GitHub</a>`), `${file}: GitHub in the site nav`);
   }
 });
 
 test("coming-soon doesn't claim Rynhult is open source yet; the release phase does", () => {
   const soon = "Rynhult will be open source under the <a href=\"/license/\">MIT licence</a> when the release candidate ships.";
   for (const { file, html } of builds["coming-soon"].pages) {
-    const footer = html.slice(html.indexOf('<footer class="site-footer">'));
+    const footer = html.slice(html.indexOf('<footer '));
     assert.ok(footer.includes(soon), `${file}: coming-soon footer wording`);
     assert.doesNotMatch(html, /is open source|MIT-licensed/, `${file}: claims it is open source already`);
   }
   for (const { file, html } of builds.release.pages) {
-    assert.ok(html.includes('Rynhult is open source under the <a href="/license/">MIT licence</a>.'), `${file}: release footer wording`);
+    assert.ok(html.includes('Self-hosted, open source under the MIT licence.'), `${file}: release footer wording`);
   }
 });
 
@@ -90,7 +90,7 @@ test("every page has the basics: language, one h1, title, description, skip link
       assert.match(html, /<title>[^<]+<\/title>/, where);
       assert.match(html, /<meta name="description" content="[^"]{20,}">/, where);
       assert.match(html, /<a class="skip" href="#main">/, where);
-      assert.match(html, /<main id="main">/, where);
+      assert.match(html, /<main id="main" tabindex="-1">/, where);
     }
   }
 });
@@ -161,11 +161,12 @@ const ratio = (a, b) => {
 };
 
 test("colour tokens meet WCAG AA in light and dark", () => {
-  const css = readFileSync(join(SITE, "assets/site.css"), "utf8");
-  const block = (text) => Object.fromEntries([...text.matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
-  const light = block(css.slice(0, css.indexOf("@media (prefers-color-scheme: dark)")));
-  const dark = { ...light, ...block(css.slice(css.indexOf("@media (prefers-color-scheme: dark)"), css.indexOf("*, *::before"))) };
-  const text = [["ink", "bg"], ["muted", "bg"], ["link", "bg"], ["call", "bg"], ["ink", "surface"], ["muted", "surface"],
+  const block = text => Object.fromEntries([...text.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(m => [m[1], m[2].trim()]));
+  const roots = name => [...readFileSync(join(SITE, 'assets', name), 'utf8').matchAll(/:root\s*\{([^}]+)\}/g)].map(m => block(m[1]));
+  const tokens = roots('tokens.css'), product = roots('site.css');
+  const light = {...tokens[0], ...product[0]};
+  const dark = {...light, ...tokens[1], ...product[1]};
+  const text = [["ink", "bg"], ["muted", "bg"], ["link", "bg"], ["display", "bg"], ["ink", "surface"], ["muted", "surface"],
     ["link", "surface"], ["ink", "sunk"], ["preview-ink", "preview-bg"], ["later-ink", "later-bg"], ["ok", "bg"], ["bg", "ink"]];
   const ui = [["focus", "bg"], ["mark", "bg"], ["focus", "surface"]];
   for (const [name, tokens] of [["light", light], ["dark", dark]]) {
@@ -182,4 +183,25 @@ test("before a release, no page claims a version is available", () => {
   for (const phase of PHASES) {
     for (const { file, html } of builds[phase].pages) assert.doesNotMatch(html, /\/releases\/download\//, `${phase} ${file}`);
   }
+});
+
+test('product-only build has stable CSS and no landing-owned paths', () => {
+  const out = join(scratch, 'product');
+  execFileSync(process.execPath, [join(SITE, 'build.mjs'), '--product-only', '--phase', 'release', '--out', out]);
+  const files = walk(out).map(f => f.slice(out.length + 1));
+  assert.ok(files.includes('site.css'));
+  assert.deepEqual(JSON.parse(readFileSync(join(out, 'release.json'))), {...release, phase:'release'});
+  assert.ok(files.includes('404.html') && files.includes('og.png') && files.includes('keys/rynhult-release-key.asc'));
+  assert.ok(!files.some(f => f === 'index.html' || f.startsWith('fonts/') || /^(favicon|icon-)/.test(f) || f === 'og-image.png'));
+  const html = readFileSync(join(out, 'docs/index.html'), 'utf8');
+  assert.match(html, /href="\/site\.css\?v=[0-9a-f]+"/);
+  const header = html.match(/<header[\s\S]*?<\/header>/)[0];
+  assert.match(header, /class="wrap cluster"/);
+  assert.match(header, /class="lockup"/);
+  assert.match(header, /class="mark"/);
+  assert.deepEqual([...header.matchAll(/class="quiet-link" href="[^"]+">([^<]+)/g)].map(m => m[1]), ['Docs','GitHub']);
+  const footer = html.match(/<footer[\s\S]*?<\/footer>/)[0];
+  assert.match(footer, /Rynhult \(RIN-hult\)/);
+  assert.match(footer, /class="visually-hidden"/);
+  for (const path of ['/docs/', '/install/', '/download/', '/security/', '/license/']) assert.ok(footer.includes(`href="${path}"`));
 });

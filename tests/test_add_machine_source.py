@@ -166,7 +166,7 @@ def test_private_ca_command_checks_the_ca_then_installs_and_enrolls(setup, syste
     result = execute(command, system, node, tools, home)
     assert result.returncode == 0, result.stderr
     pin = fingerprint_of(server.ca)
-    installer = "install --install-prereqs" if system == "wsl" else "install "
+    installer = "install --install-prereqs --no-wsl-isolate" if system == "wsl" else "install "
     assert record.read_text().splitlines() == [
         installer, f"acc-node enroll --primary {server.url} --ca-fingerprint {pin} --code - --name pc", f"stdin {CODE}"]
     assert server.hits == ["/api/nodes/bundle"]  # nothing fetched unverified: the CA came with the command
@@ -438,3 +438,13 @@ def test_machine_removal_guide_does_not_assign_the_legacy_task_to_current_instal
     guide = (Path(__file__).resolve().parents[1] / 'docs/wiki/User-Guide/Nodes.md').read_text()
     assert '**ACC node (WSL)** if you used the Windows installer' not in guide
     assert '**ACC node (WSL)** on older installs' in guide
+
+
+def test_generated_wsl_commands_do_not_depend_on_relayed_interactive_prompts():
+    from acc.server.config import Settings
+    script = script_of(source_command('wsl', ORIGIN, None, CODE, 'pc'))
+    assert 'install.sh --install-prereqs --no-wsl-isolate' in script
+    assert 're-run the installer with --wsl-isolate on a dedicated node' in script
+    recovery = update_recovery({'os':'linux', 'wsl':2, 'wsl_distro':'Ubuntu-24.04'}, Settings(allowed_origins=(ORIGIN,)), None)
+    assert recovery['command'].startswith("wsl -d 'Ubuntu-24.04' -u root --exec sh -c '")
+    assert 'install.sh --update --no-wsl-isolate' in recovery['command']

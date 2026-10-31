@@ -182,7 +182,13 @@ class Logins:
                     tty = spec.login_tty
                 except providers.CompileError as error:
                     raise LoginError(str(error)) from None
-            process = _spawn(argv, tty)
+            try:
+                process = _spawn(argv, tty)
+            except FileNotFoundError:
+                if provider == GITHUB:
+                    raise LoginError("gh is not installed: rerun the Linux/WSL node installer with --install-prereqs, "
+                                     "or install gh with Homebrew on a Mac, then retry GitHub login.") from None
+                raise
             flow = LoginFlow(provider, process, flow_type)
             flow_id = secrets.token_urlsafe(12)
             self.flows[flow_id] = flow

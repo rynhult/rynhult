@@ -159,13 +159,16 @@ else
     exit 1
   fi
   if [ "$wsl" != 0 ] && [ -z "$WSL_ISOLATE" ] && [ -t 0 ]; then
-    echo "Dedicated WSL node: isolation disables Windows programs and restricts Windows drives to root."
-    echo "It takes effect after wsl --shutdown from Windows, which stops all running WSL distributions."
-    read -r -p "Opt into WSL isolation? [y/N] " answer || answer=''
+    echo "The installer will ask 1–2 questions; answer in this window." >&2
+    echo "Dedicated WSL node: isolation disables Windows programs and restricts Windows drives to root." >&2
+    echo "It takes effect after wsl --shutdown from Windows, which stops all running WSL distributions." >&2
+    printf '%s\n> ' "Opt into WSL isolation? Type y and Enter for yes; Enter alone keeps No." >&2
+    read -r answer || answer=''
     case $answer in
       y|Y|yes|YES)
         WSL_ISOLATE=yes
-        read -r -p "Also disable Windows drive automount completely? [y/N] " answer || answer=''
+        printf '%s\n> ' "Also disable Windows drive automount completely? Type y and Enter for yes; Enter alone keeps No." >&2
+        read -r answer || answer=''
         case $answer in y|Y|yes|YES) WSL_AUTOMOUNT=disabled ;; esac ;;
     esac
   fi
@@ -220,7 +223,7 @@ if [ -x "$PYTHON" ] && "$PYTHON" -I -c 'import sys; sys.exit(sys.version_info < 
 else
   missing_apt+=(python3)
 fi
-for tool in tmux git; do
+for tool in tmux git gh; do
   if command -v "$tool" >/dev/null; then ok "$tool"; else missing_apt+=("$tool"); fi
 done
 # SELinux tooling is a prerequisite in its own right, even on a machine whose
@@ -248,6 +251,11 @@ if [ ${#missing_apt[@]} -gt 0 ] || [ -z "$UV" ]; then
       refresh=$(pkg_refresh_command "$PKG")
       # shellcheck disable=SC2086  # a fixed command, split on purpose
       [ -z "$refresh" ] || run $refresh
+      if [ "$PKG" = dnf ] && ! command -v gh >/dev/null; then
+        # Verify the official RPM key only after its curl/GnuPG dependencies exist.
+        run "${PKG_INSTALL[@]}" ca-certificates curl "$(pkg_name "$PKG" gnupg)"
+        run sh "$REPO/deploy/lib/gh-rpm-repo.sh"
+      fi
       mapfile -t names < <(packages "${missing_apt[@]}")
       run "${PKG_INSTALL[@]}" "${names[@]}"
     fi
@@ -309,6 +317,7 @@ else
 fi
 run install -d -o root -g root -m 0755 "$PREFIX" "$PREFIX/bin" /srv/acc
 run install -d -o root -g root -m 0755 "$PREFIX/catalog-local"
+run install -d -o acc-node -g acc-node -m 0711 /var/lib/acc-request-replies
 run install -d -o acc-node -g acc-node -m 0700 /var/lib/acc-node
 
 echo "== Rynhult in $PREFIX/app"

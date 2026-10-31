@@ -78,6 +78,7 @@ See [platform scope and native-app order](/User-Guide/Install#v10-platform-scope
 | [Admin features](/User-Guide/Admin-Features) | Owner controls for optional features and Previews |
 | [People and sign-in](/User-Guide/People-and-Sign-in) | Your sign-ins and password; inviting people (owners) |
 | [Updating Rynhult](/User-Guide/Updating) | Back up and update the main Rynhult; sync other machines |
+| [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1) | Signed in-place rc.2 upgrade and rollback, main then nodes |
 | [Status board](/User-Guide/Status-Board) | One full-screen view of every machine, project and running session, for a large display |
 | [Audit](/User-Guide/Audit) | Who changed what |
 | [Usage and bug reports](/User-Guide/Usage-and-Bug-Reports) | Optional sharing, report review, local history and deletion |

@@ -1,10 +1,9 @@
 # Rynhult
 
-The next planned public release is **v0.15.0-rc.1**, after the feature freeze
-(approximately November 9-13, 2026), together with `rynhult/rynhult` and
-`rynhult.dev`. Publication still needs a reviewed snapshot and explicit owner
-approval; clone and release URLs below describe the future release route.
-No public repository, npm CLI package or Docker image is promised available yet.
+The next release being prepared is **v0.15.0-rc.2**. The first public candidate,
+rc.1, is published at `rynhult/rynhult` and `rynhult.dev`; rc.2 still needs the
+owner's publication approval and release checks. This source change does not
+publish a release.
 
 **v1.0 scope:** the self-hosted Linux server, used from a browser on any client
 platform, including the phone web app. Existing Linux, macOS and Windows-through-WSL
@@ -15,9 +14,9 @@ is experimental, not part of the v1 application release. See
 
 Rynhult (spoken **RIN-hult**, formerly ACC) is the product name.
 
-**Version 0.15.0-rc.1** · [Changelog](CHANGELOG.md) · [User guide](docs/wiki/User-Guide.md) · [Internals](docs/wiki/Internal.md)
+**Version 0.15.0-rc.2** · [Changelog](CHANGELOG.md) · [User guide](docs/wiki/User-Guide.md) · [Internals](docs/wiki/Internal.md)
 
-> **Release candidate.** This is preparation for the first public Linux-server RC, not a stable release or a publication announcement. Use a machine you can restore, and read the [release notes](docs/release-notes/0.15.0-rc.1.md) for installation, upgrade and known issues.
+> **Release candidate.** This is preparation for the next public Linux-server RC, not a stable release or a publication announcement. Use a machine you can restore, and read the [release notes](docs/release-notes/0.15.0-rc.2.md) for installation, upgrade and known issues.
 
 Rynhult is a self-hosted dashboard for running and supervising **native** coding-agent CLI sessions (Claude Code, Codex, GitHub Copilot CLI, Google Antigravity CLI, Cursor CLI, OpenCode) on your own Linux machine, and optionally on other machines you add. You choose the agent, its profile and the work. Rynhult starts it in a real terminal (tmux), keeps it running across disconnects and reboots, tells you when it needs you, and keeps every project's code, wiki and deployments in one place.
 
@@ -165,7 +164,7 @@ Run these from the clone root. See [Development](docs/wiki/Internal/Development.
 
 ## Status and versioning
 
-Rynhult follows [semantic versioning](https://semver.org). The version lives in `pyproject.toml`, appears in **Settings → Updates**, and uses `vX.Y.Z` tags (candidates use `vX.Y.Z-rc.N`). 0.15.0-rc.1 is the first **public release candidate** for the self-hosted Linux server, browser dashboard and phone web app, with existing Linux, Windows-through-WSL2 and macOS nodes. Publication still needs the owner's approval and release checks; this version bump does not publish it. Native apps remain post-v1, and physical-device and recovery qualification are still separate checks.
+Rynhult follows [semantic versioning](https://semver.org). The version lives in `pyproject.toml`, appears in **Settings → Updates**, and uses `vX.Y.Z` tags (candidates use `vX.Y.Z-rc.N`). 0.15.0-rc.2 is the next **public release candidate** for the self-hosted Linux server, browser dashboard and phone web app, with existing Linux, Windows-through-WSL2 and macOS nodes. Publication still needs the owner's approval and release checks; this version bump does not publish it. Native apps remain post-v1, and physical-device and recovery qualification are still separate checks.
 
 **Known limitations in this candidate:**
 - The session terminal has a screen-reader mode and <kbd>F6</kbd> to leave it, but it hasn't been checked with NVDA or VoiceOver yet.

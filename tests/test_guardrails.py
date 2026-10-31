@@ -350,3 +350,13 @@ def test_long_launch_script_stays_inside_guard_protected_run_folder(tmp_path, co
     assert refused.returncode == 2
     record = json.loads((tmp_path / 'events.jsonl').read_text().splitlines()[-1])
     assert record['guard']['rule'] == 'own_files'
+
+
+def test_team_publish_help_pipeline_does_not_dump_secrets():
+    command = "git log -1 --format='%h %s'; npm test 2>&1 | grep -E '^ℹ (tests|pass|fail)'; npm run contrast -- --check 2>&1 | tail -1; acc-request publish --help 2>&1 | head -30"
+    assert rule(command) is None
+
+
+@pytest.mark.parametrize('command', ['env', 'printenv', 'cat .env', 'cat /proc/self/environ', 'cat /srv/acc/data/secrets/key'])
+def test_team_unblock_keeps_actual_secret_reads_blocked(command):
+    assert rule(command) == 'secrets'

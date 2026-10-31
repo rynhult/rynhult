@@ -1,4 +1,4 @@
-# rc.1 tester checklist
+# rc.2 tester checklist
 
 Tick each line as you go. The how-to for every step is in [RC-TESTING.md](RC-TESTING.md). Anything that doesn't
 work, or surprises you: review the in-app report first when available, then
@@ -11,20 +11,22 @@ See *Report a bug* in the tester kit for what to include.
 **Test scope:** the self-hosted Linux server, existing Linux/macOS/Windows-WSL nodes and the dashboard in
 desktop and phone browsers, including the installed phone web app. Native apps are outside v1, even where
 experimental source is present. They follow v1.0 one at a time, in an order not chosen yet: native Windows, macOS
-standalone, Linux desktop, iOS and Android are candidates, not immediate rc.1 follow-ups.
+standalone, Linux desktop, iOS and Android are candidates, not immediate rc.2 follow-ups.
 See [decision 0073](decisions/0073-v1-linux-server-scope.md).
 
 ## Install or upgrade
 
 - [ ] I'm testing on a machine I can wipe (ideally a virtual machine).
 - [ ] I downloaded the tarball, `BUILD`, `SHA256SUMS` and `SHA256SUMS.asc`; I compared both full release-key fingerprints, verified the signature, then `sha256sum -c SHA256SUMS` printed `OK` for both files.
-- [ ] **New install:** `acc-install` (Ubuntu/Debian) or `setup.sh --unqualified-distro` (Fedora, openSUSE, Arch)
+- [ ] **New install:** `acc-install` (Ubuntu/Debian) or `acc-install --main --unqualified-distro` (Fedora/EL, openSUSE, Arch; unqualified tests)
       finished without errors.
 - [ ] **Upgrade from 0.14:** the backup in `/var/backups/acc/<today>` has `acc.db` and `secrets`; the swap and
       `setup.sh --yes` finished; my projects and sessions are still there; I updated my other machines on each
-      machine (step 6; Host's **Update** refuses a release candidate).
+      machine (step 6; old node helpers need one manual refresh).
+- [ ] **Upgrade from rc.1:** I followed [the one-time upgrade guide](wiki/User-Guide/Upgrade-from-rc1.md), retained my backup/rollback information, checked the main, then updated nodes one at a time.
+- [ ] **Release channel** is deliberately set to **Release candidates** or **Stable**; I understand automatic installation remains stable-only.
 - [ ] I signed in (setup token on a new install, my usual sign-in after an upgrade).
-- [ ] **Settings → Updates** shows **Rynhult 0.15.0-rc.1** and a build.
+- [ ] **Settings → Updates** shows **Rynhult 0.15.0-rc.2** and a build.
 
 ## First 30 minutes
 

@@ -8,7 +8,7 @@ Owner means the trusted installation owner. The installation bearer API token ha
 
 Audit cells name current durable actions (including delegated service actions), or explicitly record a gap/absence. They do not claim all reads, failures or denied operations are audited. Phase 2 must add scoped actor IDs, denial/access coverage, redaction and transactional outbox delivery. Existing raw detail fields are not a safe org audit projection. The gate enforces inventory completeness, not semantic authorization correctness; the existing cross-person tests and group tests exercise enforcement.
 
-**437 registered method/path pairs**, including both WebSockets.
+**439 registered method/path pairs**, including both WebSockets.
 
 | Method and route | Required principal | Resource ownership rule | Current audit action | Evidence |
 |---|---|---|---|---|
@@ -294,6 +294,8 @@ Audit cells name current durable actions (including delegated service actions), 
 | `POST /api/projects/{project_id}/containers` | owner / installation API token | Trusted installation administrator; resource IDs do not delegate authority. | project.containers | [set_containers](../src/acc/server/api/containers.py) |
 | `GET /api/projects/{project_id}/delete` | authenticated principal (API token owner or browser) | Personal project: owner or owning member; others 404. Built-in and group projects refused. | none (read; no durable access event) | [deletion_plan](../src/acc/server/api/project_delete.py) |
 | `POST /api/projects/{project_id}/delete` | authenticated principal (API token owner or browser) | Personal project: owner or owning member; others 404. Built-in and group projects refused. | project.delete | [delete_project](../src/acc/server/api/project_delete.py) |
+| `GET /api/projects/{project_id}/first-commit` | authenticated person or API owner | ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects. | none (read only) | [first_commit_status](../src/acc/server/api/projects.py) |
+| `POST /api/projects/{project_id}/first-commit` | authenticated person or API owner | ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects. | project.first_commit (created only; no push) | [first_commit](../src/acc/server/api/projects.py) |
 | `GET /api/projects/{project_id}/git-identity` | authenticated person or API owner | ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects. | none (read only) | [get_git_identity](../src/acc/server/api/projects.py) |
 | `PUT /api/projects/{project_id}/git-identity` | authenticated person or API owner | ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects. | project.git_identity | [put_git_identity](../src/acc/server/api/projects.py) |
 | `GET /api/projects/{project_id}/github` | owner/member / installation API token | Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects. | none (read/protocol step; no durable access event) | [project_github](../src/acc/server/api/projects.py) |

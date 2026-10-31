@@ -182,6 +182,24 @@ class ReconcileMixin:
     async def _reconcile_one(self, db: DbSession, session: Session, pane: dict | None, *, spool_pending=False) -> None:
         if session.project is None:
             return  # detached, archived history has no workspace to reconcile
+        from .models import Observation
+        reply = db.get(Observation, 'request.reply.' + session.id)
+        sent = self.__dict__.setdefault('_request_replies_sent', {})
+        if reply and sent.get(session.id) != reply.observed_at:
+            import json
+            try:
+                from ..request_replies import publish
+                if host_of(session) == 'local':
+                    publish(self.settings.request_replies_root, session.id, reply.value)
+                    sent[session.id] = reply.observed_at
+                else:
+                    link = self.broker.hub.links.get(host_of(session)) if self.broker.hub else None
+                    if link and 'request-replies-v1' in link.info.get('capabilities', []):
+                        # Retry remote delivery until a later reconcile: queueing
+                        # a frame is not confirmation that the daemon persisted it.
+                        link.queue(json.dumps({'t': 'request-replies', 'session_id': session.id, 'replies': reply.value}))
+            except (BrokerError, OSError, ValueError):
+                pass  # stay unconfirmed; retry after store repair/reconnect
         # Reconcile holds the supervisor lock. Never wait on a folder lock here:
         # delete owns that folder lock before awaiting supervisor.stop().
         path = session.workdir or session.project.workspace_path
@@ -570,13 +588,15 @@ class ReconcileMixin:
                 return
         inputs = LaunchInputs.from_dict(session.launch_spec.inputs)
         run_dir = str(self.settings.session_run_dir(session))
+        self.__dict__.get('_request_replies_sent', {}).pop(session.id, None)
         # The vault's keys: given to the project, usable by the person who launched it, and (on another machine) only
         # those allowed there. Read at every start, so a key given or taken since applies at the next resume.
         files, catalog, delivery, refused = session.launch_spec.files, self.catalog, None, None
         from . import agent_contract
         from .orchestrator.scope_notices import launch_scope
         scope_version, _ = launch_scope(db, session)
-        files = agent_contract.apply(files, inputs, agent_contract.for_session(db, session, inputs, catalog))
+        files = agent_contract.apply(files, inputs, agent_contract.for_session(db, session, inputs, catalog,
+            publish_zones=self.settings.publish_zones or ((self.settings.wildcard_zone,) if self.settings.wildcard_zone else ())))
         try:
             delivery = self.vault.deliver(db, session.project_id, session.owner, host_of(session) != "local",
                                           self.catalog, inputs.mcps)

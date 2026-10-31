@@ -37,6 +37,18 @@ How the machine trusts your Rynhult is written into the command: `--trust system
 Sessions on a Linux machine can work in `/srv/acc/workspaces`, on a Mac in `~/acc-workspaces`. To allow other folders, run the machine's installer again with `--roots /srv/acc/workspaces:/data/projects` (see [Install](/User-Guide/Install#by-hand)).
 
 ## Agent software on the node
+
+GitHub sign-in needs GitHub CLI (`gh`) on that machine, not just on the main.
+Linux/WSL installers with `--install-prereqs` install it: apt uses `gh`, dnf uses
+the fingerprint-pinned GitHub RPM source, Arch uses `github-cli`, and openSUSE
+uses `gh`. Without that flag, a missing CLI is reported with an install hint.
+The Mac installer installs `gh` with Homebrew automatically. For an existing node,
+have its administrator rerun the installer with `--install-prereqs` (on recognised
+non-apt Linux systems also keep the explicit `--unqualified-distro` opt-in), or
+install the reviewed package, then retry **Providers → GitHub → Log in** with
+that machine selected. A missing CLI message names the machine; installing it on
+the main does not repair another machine's GitHub login.
+
 Each node runs the agent CLIs (Claude Code, Codex and so on) that are installed **on that node**, signed in as the account sessions run as. You manage both from the [main Rynhult](/User-Guide/Glossary#main): open **Providers**, pick the machine with **Machine** at the top (or select **Sign-ins and CLIs** under it on **Host → Machines**), then:
 - **Install**, **Update** or **Remove** a CLI on its tile (Ollama: under **Other software on** *machine*). On Linux and Windows the node's own root helper does it, with the same list and rules as the main Rynhult. On a Mac, Rynhult installs Codex and Copilot for you with Homebrew's npm; for the others, the card shows numbered steps with the provider's own install command and page (see [Connect an agent](/User-Guide/Connect-an-Agent)). Claude Code comes from Anthropic's signed apt repository: the first **Install** adds it (after checking the signing key's fingerprint) if the machine doesn't have it yet.
 - **Log in** or **Re-login** on a CLI's card: the CLI's own login runs on that machine, through its connection to Rynhult.
@@ -129,6 +141,9 @@ An offline workstation shows **Offline: workstation**, with its last seen time. 
 
 Offline sessions do not hold up search indexing for sessions on connected machines. Their saved history stays searchable; new conversation messages are indexed after reconnect.
 Queued team requests on an offline machine also wait without blocking team replies on connected machines.
+Request acknowledgements come from the main and are stored by the node service
+outside agent-writable session folders. Agents can read their acknowledgements
+but cannot create an authoritative reply by writing a file in their own spool.
 
 An Always-on outage past its threshold appears in **[Inbox](/User-Guide/Glossary#inbox) → Alerts**, the compact status line and the Overview status board, and sends an owner push notification if notifications are enabled and Rynhult is not visible on that device. **Acknowledge** does not hide the outage. Maintenance snoozes, including **Snooze 1 hour** in Inbox, hide the open alert until the snooze ends. Reconnect resolves the alert, ends maintenance snoozing, and records downtime in **Audit** and **Host**. An owner can change the role or threshold at any time; Rynhult re-evaluates the alert. Restarting the main Rynhult preserves recorded outages; a newly observed outage starts its threshold when Rynhult can observe it again.
 

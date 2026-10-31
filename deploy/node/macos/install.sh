@@ -22,7 +22,7 @@ acc_compat_lib="$(dirname "$0")/acc-env.sh"
 #   --roots A:B        folders sessions may work in (default: ~/acc-workspaces)
 #   --dry-run          print every step and change nothing
 #   --render-dir DIR   keep the rendered LaunchAgent plists in DIR (CI lints them)
-# Needs Homebrew (https://brew.sh); installs python, tmux, git and uv with it when missing.
+# Needs Homebrew (https://brew.sh); installs python, tmux, git, gh and uv with it when missing.
 # Everything lives in ~/Library/Application Support/ACC; logs in ~/Library/Logs/ACC. See docs/MULTIHOST.md.
 # Written for macOS's bash 3.2.
 set -euo pipefail
@@ -130,6 +130,7 @@ else
 fi
 if command -v tmux >/dev/null; then ok "tmux"; else run "$BREW" install tmux; fi
 if command -v git >/dev/null && git --version >/dev/null 2>&1; then ok "git"; else run "$BREW" install git; fi
+if command -v gh >/dev/null; then ok "gh"; else run "$BREW" install gh; fi
 UV=$(command -v uv || true)
 [ -n "$UV" ] || { [ -x "$BREW_PREFIX/bin/uv" ] && UV=$BREW_PREFIX/bin/uv; } || true
 if [ -n "$UV" ]; then ok "uv at $UV"; else run "$BREW" install uv; UV=$BREW_PREFIX/bin/uv; fi

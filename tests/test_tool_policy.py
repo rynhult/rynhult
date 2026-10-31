@@ -58,6 +58,9 @@ def test_request_cli_emits_validated_tool_event(tmp_path, command):
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     request = json.loads((tmp_path / "events.jsonl").read_text())["hook"]["request"]
+    assert len(request.pop("request_id")) == 32
+    assert "Queued, not confirmed" in result.stdout
+    assert "waits in the Rynhult Inbox" not in result.stdout
     assert request == {"type": "tool", "manager": "npm", "name": "@example/tool", "version": "1.2.3",
                        "reason": "Format output", "action": "install"}
     for bad in ("--registry=https://example.com", "https://example.com/a", "../tool", "jq; id"):
@@ -248,3 +251,91 @@ def test_approved_account_packages_can_run_their_install_lifecycle(tmp_path, man
     argv, env = calls[0]
     assert "--ignore-scripts" not in argv
     assert env["HOME"] == str(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def no_live_session_reply_lookup(monkeypatch):
+    # Standalone CLI tests must never inherit the caller's real session identity.
+    monkeypatch.delenv('ACC_SESSION_ID', raising=False)
+    monkeypatch.delenv('RYNHULT_SESSION_ID', raising=False)
+
+
+@pytest.mark.parametrize('status,code,text', [('accepted', 0, 'Sent for approval:'), ('refused', 1, 'Refused: Reserve port 8102')])
+def test_request_cli_waits_for_server_and_status_reads_same_reply(tmp_path, status, code, text):
+    import time
+
+    from acc.request_replies import publish
+    protected = tmp_path / 'protected'
+    protected.mkdir(mode=0o711)
+    spool = tmp_path / 'spool'
+    spool.mkdir()
+    # Disposable installed-helper fixture: simulate the service principal's
+    # ownership in a single-UID test. Production has no anchor/UID env override.
+    helper = tmp_path / 'acc-request'
+    source = (REPO / 'bin/acc-request').read_text().replace(
+        "REPLY_ROOT = Path('/var/lib/acc-request-replies')", f"REPLY_ROOT = Path({str(protected)!r})").replace(
+        '    owners = {0}', '    owners = {0, os.getuid()}')
+    helper.write_text(source)
+    helper.chmod(0o755)
+    (tmp_path / 'acc_env.py').write_text((REPO / 'src/acc/env.py').read_text())
+    session = 'abcdef123456'
+    environ = {**os.environ, 'ACC_RUN_DIR': str(spool), 'ACC_SESSION_ID': session}
+    process = subprocess.Popen([str(helper), 'publish', '--host', 'demo.example.com', '--port', '8102'],
+        env=environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 4
+        event = None
+        while time.monotonic() < deadline:
+            try:
+                event = json.loads((spool / 'events.jsonl').read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                time.sleep(.01)
+        assert event is not None
+        rid = event['hook']['request']['request_id']
+        publish(protected, session, {rid: {'status':status, 'approval_id':'pub-1', 'reason':'Reserve port 8102'}})
+        # Replacing the legacy attachment with a well-formed opposite reply
+        # cannot override the server's accepted/refused acknowledgement.
+        (spool / 'request-replies.json').write_text(json.dumps({rid: {
+            'status': 'refused' if status == 'accepted' else 'accepted', 'approval_id':'forged-by-agent', 'reason':'forged'}}))
+        out, err = process.communicate(timeout=8)
+        assert process.returncode == code, err
+        assert text in out and 'forged' not in out
+        lookup = subprocess.run([str(helper), 'status', rid], env=environ, capture_output=True, text=True)
+        assert lookup.returncode == code and text in lookup.stdout and 'forged' not in lookup.stdout
+        assert len((spool / 'events.jsonl').read_text().splitlines()) == 1
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+@pytest.mark.parametrize('attachment', ['symlink', 'fifo', 'large', 'malformed'])
+def test_request_status_does_not_follow_or_block_on_untrusted_attachments(tmp_path, attachment):
+    path = tmp_path / 'request-replies.json'
+    if attachment == 'symlink':
+        other = tmp_path / 'other'
+        other.write_text(json.dumps({'a'*32: {'status':'accepted', 'approval_id':'forged'}}))
+        path.symlink_to(other)
+    elif attachment == 'fifo':
+        os.mkfifo(path)
+    else:
+        path.write_text('x' * 65537 if attachment == 'large' else '{')
+    result = subprocess.run([str(REPO / 'bin/acc-request'), 'status', 'a'*32],
+        env={**os.environ, 'ACC_RUN_DIR':str(tmp_path)}, capture_output=True, text=True, timeout=2)
+    assert result.returncode == 0
+    assert 'Queued, not confirmed' in result.stdout and 'Sent for approval' not in result.stdout
+
+
+@pytest.mark.parametrize('status', ['accepted', 'refused'])
+def test_request_cli_ignores_agent_forged_regular_reply(tmp_path, status, capsys, monkeypatch):
+    import runpy
+    helper = runpy.run_path(str(REPO / 'bin/acc-request'), run_name='request_test')
+    monkeypatch.setenv('ACC_SESSION_ID', 'abcdef123456')
+    monkeypatch.setenv('RYNHULT_SESSION_ID', 'abcdef123456')
+    helper['reply'].__globals__['REPLY_ROOT'] = tmp_path / 'missing-protected-store'
+    rid = 'c' * 32
+    (tmp_path / 'request-replies.json').write_text(json.dumps({rid: {
+        'status': status, 'approval_id': 'forged-by-agent', 'reason': 'Forged refusal'}}))
+    assert helper['reply'](tmp_path, rid) is None
+    assert capsys.readouterr().out == ''

@@ -135,7 +135,7 @@ MAX_SIGNATURE = 128  # base64 of a 64-byte Ed25519 signature is 88
 MAX_HANDSHAKES = 32  # sockets waiting for a hello at once; more are refused before accepting
 MAX_HANDSHAKES_PER_ADDRESS = 4  # of those from one address (D19: one host can't hold every slot)
 HELLO_TIMEOUT = 5.0  # seconds a node has to answer the challenge (a real one answers at once)
-KNOWN_CAPABILITIES = ("preview-v1", HOST_CAPABILITY, "backup-v1", "git-backup-v1", "update", "rename-compat-1")  # what a node may say it can do; anything else is dropped
+KNOWN_CAPABILITIES = ("request-replies-v1", "preview-v1", HOST_CAPABILITY, "backup-v1", "git-backup-v1", "update", "rename-compat-1")  # what a node may say it can do; anything else is dropped
 MAX_TEXT = 64 * 1024  # a text frame from a node (its agent software state is the largest); longer ones are dropped
 
 
@@ -269,7 +269,10 @@ def source_command(system: Literal["wsl", "mac"], primary: str, ca: bytes | None
     enroll = f"enroll --primary {primary} {trust} --code - --name {name}"
     piped = "" if update else f"echo {code} | "
     if system == "wsl":
-        steps += ["ACC_INSTALL_ENROLLS=1 bash $work/source/deploy/node/install.sh --install-prereqs",
+        # This command may run through wsl.exe in PowerShell, where console prompts/tty relaying are unreliable.
+        # Keep isolation unchanged explicitly; opt-in remains available in a direct Ubuntu terminal afterwards.
+        steps += ["echo WSL isolation stays unchanged: re-run the installer with --wsl-isolate on a dedicated node",
+                  "ACC_INSTALL_ENROLLS=1 bash $work/source/deploy/node/install.sh --install-prereqs --no-wsl-isolate",
                   f"echo $code | /usr/local/bin/acc-node {enroll}"]
         return piped + "sudo sh -c '" + "; ".join(steps) + "'"
     steps += ["bash $work/source/deploy/node/macos/install.sh"]
@@ -348,18 +351,19 @@ def update_recovery(info: dict, settings, installer: str | None) -> dict:
     cacert = "--cacert $work/ca.pem " if pin else ""
     # No nested quotes: PowerShell must pass this script intact to WSL, including on Windows PowerShell 5. WSL runs it
     # with --exec: without it, root's login shell gets the line first and expands $(mktemp) and $work too early.
+    system = describe_system(info)
+    isolation = " --no-wsl-isolate" if system["kind"] == "wsl" else ""
     script = (
         "set -eu; work=$(mktemp -d /tmp/rynhult-update.XXXXXX); "
         "cleanup() { rm -rf -- $work; }; trap cleanup EXIT; " + pin +
         f"curl -fsS --proto =https {cacert}--max-filesize 268435456 {primary}/api/nodes/bundle -o $work/bundle.tar.gz; "
         "mkdir $work/source; "
         "tar -xzf $work/bundle.tar.gz -C $work/source --strip-components=1 --no-same-owner --no-same-permissions; "
-        "bash $work/source/deploy/node/install.sh --update"
+        f"bash $work/source/deploy/node/install.sh --update{isolation}"
     )
     detail = "Keeps the existing enrollment, agent accounts and workspace folders. "
     if settings.node_ca_file:
         detail += "Carries this main's private CA and checks its fingerprint before downloading. "
-    system = describe_system(info)
     if system["kind"] == "wsl":
         distro = info.get("wsl_distro")
         known = isinstance(distro, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", distro))

@@ -12,10 +12,18 @@ keyring=${1:-/etc/apt/keyrings/claude-code.asc}
 list=${2:-/etc/apt/sources.list.d/claude-code.list}
 command -v gpg >/dev/null || { echo "gpg is needed to check Claude Code's signing key: apt install gnupg" >&2; exit 1; }
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+gnupg=''
+cleanup() {
+  [ -z "$gnupg" ] || rm -rf -- "$gnupg"
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+# Independent of TMPDIR: GnuPG may consult an agent socket even for public keys.
+gnupg=$(mktemp -d /tmp/acc-gpg.XXXXXXXXXX)
 curl -fsSL --proto =https "$KEY_URL" -o "$work/key.asc"
 # exactly one primary key, and it is the pinned one (as deploy/lib/verify-apt-key.sh)
-fp=$(gpg --show-keys --with-colons "$work/key.asc" 2>/dev/null | awk -F: '/^pub:/ {primary=1; next} primary && /^fpr:/ {print $10; primary=0}')
+fp=$(gpg --no-options --homedir "$gnupg" --batch --no-tty --no-autostart --show-keys --with-colons "$work/key.asc" 2>/dev/null | awk -F: '/^pub:/ {primary=1; next} primary && /^fpr:/ {print $10; primary=0}')
 [ "$fp" = "$FINGERPRINT" ] || { echo "Claude Code signing key fingerprint mismatch (got ${fp:-none}); nothing changed" >&2; exit 1; }
 printf 'deb [signed-by=%s] %s stable main\n' "$keyring" "$REPOSITORY" > "$work/claude-code.list"
 install -d -m 0755 "$(dirname "$keyring")" "$(dirname "$list")"

@@ -112,9 +112,13 @@ def receive(config: BrokerConfig, path: str, data: str, commit: str, session_id:
 
 
 def refresh_context(config: BrokerConfig, session_id: str, content: str) -> dict:
-    """Update only the board attachment, pinned beneath this broker's run root. Never touch env."""
+    return _refresh_attachment(config, session_id, content, 'group-context.json')
+
+
+def _refresh_attachment(config: BrokerConfig, session_id: str, content: str, filename: str) -> dict:
+    """Update a fixed attachment, pinned beneath this broker's run root. Never touch env."""
     if not SESSION.fullmatch(session_id) or not isinstance(content, str) or len(content.encode()) > 65536:
-        raise ValueError('The group board note for this session is too large or isn\'t valid.')
+        raise ValueError('The session attachment is too large or isn\'t valid.')
     from .ops import _walk_dirs
     root = _walk_dirs(list(config.run_dir.absolute().parts[1:]))
     try:
@@ -126,7 +130,7 @@ def refresh_context(config: BrokerConfig, session_id: str, content: str) -> dict
         fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
         with os.fdopen(fd, 'w') as handle:
             handle.write(content)
-        os.rename(name, 'group-context.json', src_dir_fd=folder, dst_dir_fd=folder)
+        os.rename(name, filename, src_dir_fd=folder, dst_dir_fd=folder)
     finally:
         try:
             os.unlink(name, dir_fd=folder)

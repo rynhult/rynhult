@@ -89,6 +89,7 @@ fi
 runuser -u acc -- /usr/bin/python3 -I "$REPO/deploy/lib/vault-key" /srv/acc/data/secrets/vault.key /srv/acc/data/acc.db "${VAULT_OPTIONS[@]}"
 install -d -o acc -g acc -m 0755 /srv/acc/catalog /srv/acc/catalog-local  # catalog-local: items added from the dashboard
 install -d -o acc -g acc -m 0700 /srv/acc/git  # git backups: one bare repository per project (docs/MULTIHOST.md)
+install -d -o acc -g acc -m 0711 /var/lib/acc-request-replies
 install -d -o root -g acc -m 0751 /srv/acc/run  # one folder per agent account inside (acc-agent-add)
 install -d -o root -g acc -m 0750 /srv/acc/run-root  # root's own sessions: no agent can swap these folders
 install -d -o "$OWNER" -g "$OWNER" -m 0755 /srv/acc/workspaces

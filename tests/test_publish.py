@@ -390,3 +390,58 @@ async def test_unanswered_unpublish_blocks_retargeting_until_reconciled(api, wor
         'host': 'withdraw.example.com', 'port': 8101, 'access': 'public', 'replace': True})).json()
     refused = await wait_for(lambda: status_is(api, replacement['id'], 'failed'))
     assert 'reconciliation' in refused['detail'] and len(world['cf'].records) == 1
+
+
+async def test_agent_refusal_is_confirmed_and_actionable(api, project, env, world):
+    from acc.server.models import Observation
+    session = (await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Lead'})).json()
+    rid = 'a' * 32
+    agent_asks(env, session, {'type': 'publish', 'host': 'preview.example.com', 'port': 8102,
+                              'request_id': rid})
+    item = await wait_for(lambda: inbox(api, 'publish_failed'))
+    assert item['severity'] == 'warn'
+    assert 'Reserve port 8102' in item['detail'] and 're-file' in item['detail']
+    with api.app.state.db() as db:
+        replies = db.get(Observation, 'request.reply.' + session['id']).value
+        assert replies[rid]['status'] == 'refused'
+        assert "isn't reserved" in replies[rid]['reason']
+
+
+@pytest.mark.parametrize('kind', ['publish', 'tool'])
+async def test_agent_approval_reply_is_delivered_and_replays_do_not_duplicate(api, project, env, world, kind):
+    from sqlalchemy import select
+
+    from acc.server.models import PublishRequest, ToolRequest
+    model = PublishRequest if kind == "publish" else ToolRequest
+    await api.post(f"/api/projects/{project['id']}/ports", json={'port':8102})
+    session = (await api.post('/api/sessions', json={'project_id':project['id'], 'provider':'claude', 'name':'Lead'})).json()
+    rid = 'b' * 32
+    request = ({'type':'publish', 'host':'preview.example.com', 'port':8102, 'request_id':rid} if kind == 'publish'
+               else {'type':'tool', 'manager':'npm', 'name':'prettier', 'reason':'Format output', 'request_id':rid})
+    agent_asks(env, session, request)
+    await wait_for(lambda: inbox(api, 'tool_request' if kind == 'tool' else 'publish_request'))
+    async def delivered():
+        path = env['settings'].request_replies_root / session['id'] / (rid + '.json')
+        return json.loads(path.read_text()).get('reply') if path.exists() else None
+    reply = await wait_for(delivered)
+    assert reply['status'] == 'accepted'
+    with api.app.state.db() as db:
+        approval = db.get(model, reply['approval_id'])
+        assert approval.status == 'pending_approval'
+        assert approval.session_id == session['id']
+    agent_asks(env, session, request)
+    # Process the replay synchronously; no sleep can accidentally assert before ingestion.
+    api.app.state.supervisor.ingest_all()
+    with api.app.state.db() as db:
+        assert len(list(db.scalars(select(model).where(model.session_id == session['id'])))) == 1
+
+
+async def test_tool_refusal_is_returned_to_agent_and_warns_owner(api, project, env):
+    from acc.server.models import Observation
+    session = (await api.post('/api/sessions', json={'project_id':project['id'], 'provider':'claude', 'name':'Lead'})).json()
+    rid = 'c' * 32
+    agent_asks(env, session, {'type':'tool', 'manager':'sh', 'name':'anything', 'reason':'test', 'request_id':rid})
+    item = await wait_for(lambda: inbox(api, 'tool_failed'))
+    assert item['severity'] == 'warn' and 're-file' in item['detail']
+    with api.app.state.db() as db:
+        assert db.get(Observation, 'request.reply.' + session['id']).value[rid]['status'] == 'refused'

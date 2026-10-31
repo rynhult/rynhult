@@ -205,21 +205,24 @@ def test_iu_5_the_same_version_continues_from_the_installed_copy(tmp_path):
     assert result.returncode == 0 and 'ran the installed setup' in result.stdout
 
 
-# Checked, no change: no root update path takes a release candidate, and an RC only moves to a newer stable release.
-def test_no_root_update_path_takes_a_release_candidate(tmp_path):
+# Owner-approved RC channel supersedes the stable-only policy; default Stable still refuses RCs.
+def test_root_update_candidates_require_channel_and_signature(tmp_path):
     import pytest
 
     from acc.update_helper import validate_node_request
     from acc.updates import available, download_release, newer, validate_request
     with pytest.raises(ValueError):
         validate_request({'action': 'update', 'version': '0.15.0-rc.2'})
-    with pytest.raises(ValueError):
-        validate_node_request({'action': 'update', 'version': '0.15.0-rc.2', 'build': 'a' * 64, 'sha256': 'b' * 64})
+    assert validate_request({'action': 'update', 'version': '0.15.0-rc.2'}, include_prereleases=True) == '0.15.0-rc.2'
+    with pytest.raises(ValueError, match='signature'):
+        validate_request({'action': 'update', 'version': '0.15.0-rc.2', 'allow_unsigned': True}, include_prereleases=True)
+    assert validate_node_request({'action': 'update', 'version': '0.15.0-rc.2', 'build': 'a' * 64, 'sha256': 'b' * 64}) == '0.15.0-rc.2'
     with pytest.raises(ValueError, match='stable'):
         download_release('owner/repo', {'latest': '0.15.0-rc.2', 'assets': {}}, tmp_path / 'stage',
                          get=lambda *a, **k: pytest.fail('nothing is fetched for a candidate'))
     assert newer('0.15.0', '0.15.0-rc.1') and not newer('0.15.0-rc.2', '0.15.0-rc.1') and not newer('0.14.0', '0.15.0-rc.1')
     assert not available({'latest': '0.15.0-rc.2'}, '0.15.0-rc.1', 'c' * 64)
+    assert available({'latest': '0.15.0-rc.2'}, '0.15.0-rc.1', 'c' * 64, include_prereleases=True)
 
 
 import pytest  # noqa: E402

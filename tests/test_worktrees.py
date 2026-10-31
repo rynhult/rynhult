@@ -68,4 +68,4 @@ async def test_session_in_its_own_worktree(api, project, env):
 async def test_worktree_needs_a_git_project(api, project, env):
     response = await api.post("/api/sessions", json={"project_id": project["id"], "provider": "claude", "name": "x",
                                                      "worktree": True})
-    assert response.status_code == 502 and "git repository" in response.text  # the broker refused it (ACC convention)
+    assert response.status_code == 409 and "Make the first commit" in response.json()["detail"]

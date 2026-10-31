@@ -4,7 +4,7 @@ A deployment path for a small team: one Linux server, a browser on each person's
 computer or phone, and optional additional machines for agent sessions.
 Use the linked install pages for exact commands, platform requirements and screenshots.
 
-**Draft for the planned public release candidate, v0.15.0-rc.1.** This page does
+**Draft for the planned public release candidate, v0.15.0-rc.2.** This page does
 not announce that downloads are available. Use the reviewed source supplied for
 your candidate; do not substitute an unverified archive or an older installer.
 

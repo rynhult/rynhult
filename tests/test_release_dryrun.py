@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 from test_acc_install_root import machine  # noqa: F401
 
-from acc import bundle
+from acc import __version__, bundle
 from acc.updates import newer, version
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,7 +68,7 @@ def test_installer_from_built_linux_artifact_uses_only_the_fake_root(tmp_path, m
     if not artifact:
         pytest.skip('set RELEASE_TEST_LINUX to the dry-run Linux tarball')
     archive = Path(artifact)
-    extracted = bundle.unpack(archive, tmp_path / 'extracted', '0.15.0-rc.1',
+    extracted = bundle.unpack(archive, tmp_path / 'extracted', __version__,
                               hashlib.sha256(archive.read_bytes()).hexdigest())
     monkeypatch.setattr(installer, 'REPO', extracted)
     run, root, calls, _ = request.getfixturevalue('machine')

@@ -196,8 +196,17 @@ test('invite survives reload, two people conflict safely, and an ended sign-in c
     await expect(firstEditor).toHaveText('before either person');
     await expect(secondEditor).toHaveText('before either person');
     await firstEditor.fill('Alex saved');
-    await page.getByRole('button', { name: 'Save', exact: true }).dblclick();
-    await expect.poll(() => readFileSync(`${root}/shared.txt`, 'utf8')).toBe('Alex saved');
+    // Safe replacement briefly moves the previous inode to a recovery name.
+    // Wait for the completed write before reading: expect.poll does not retry
+    // an ENOENT thrown while the replacement is still being published.
+    const [saved] = await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/api/files/project/${pid}`)
+        && response.request().method() === 'POST'),
+      page.getByRole('button', { name: 'Save', exact: true }).dblclick(),
+    ]);
+    expect(saved.status()).toBe(200);
+    expect((await saved.json()).conflict).toBeFalsy();
+    expect(readFileSync(`${root}/shared.txt`, 'utf8')).toBe('Alex saved');
     await secondEditor.fill('Riley draft');
     await second.getByRole('button', { name: 'Save', exact: true }).dblclick();
     await expect(second.getByRole('heading', { name: 'File changed on disk' })).toBeVisible();

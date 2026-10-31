@@ -1,5 +1,8 @@
 # Updating Rynhult
 
+For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
+for the signed in-place rc.2 procedure, main first and then nodes.
+
 Owners can back up and update the [main Rynhult](/User-Guide/Glossary#main) from Settings, then sync the other machines to its exact source build.
 Members do not see update controls or release notifications. Installing updates automatically is off by default.
 
@@ -10,9 +13,10 @@ A leftover SQLite database is not a backup of PostgreSQL. Updating additional ma
 
 ## Update the main Rynhult
 
-The built-in updater offers stable releases only, not release candidates.
-On an RC, follow the release's manual upgrade instructions for the main and each
-node; retrying the node's **Update** button does not install an RC build.
+The built-in updater uses the release channel selected in Settings → Updates.
+Choose **Release candidates** to install the next signed RC in-app. Node **Update** then syncs the main's exact build.
+Installations still on 0.15.0-rc.1 predate the channel: upgrade them once by hand with
+[Upgrade from rc.1](/User-Guide/Upgrade-from-rc1), main first, then each node.
 
 1. Open **Settings → Updates**. Check the current version and build, the latest release, its notes and the last
    check. Rynhult checks once a day; **Check now** checks immediately.
@@ -46,12 +50,12 @@ A bad, unknown, expired or revoked signature stops the update. The result explai
 why; ask the installation owner to check the release and trusted-key installation.
 GnuPG must be installed on the main; missing verification tools also stop updates.
 
-A missing signature disables **Back up and update**. Only after independently
+A missing signature disables **Back up and update**. For stable releases only, after independently
 checking the release's source, an owner can choose **Update without signature…**
 and confirm the separate warning. Rynhult cannot authenticate that release. This
 exception is recorded in Audit and applies to that one update only; backup,
 checksum and archive safety checks still run. It never overrides an invalid
-signature. Automatic updates and Catalog restore do not take this exception.
+signature. Pre-releases, automatic updates and Catalog restore do not take this exception.
 
 Key replacements must arrive through a release trusted by the installed key or
 an independently reviewed reinstall. An offline installation cannot learn a new
@@ -123,7 +127,7 @@ Host shows the helper's failure detail or a cleanup warning; a cleanup warning d
   installed app and the full pre-update backup is under `updates/backups/`. Restore the database and secrets from
   the same backup; keep the secrets passphrase if backup encryption is enabled.
 - **Upgraded by hand (for example the next release candidate installed over the last):** `deploy/setup.sh` from a
-  new version refuses while another version is installed at `/srv/acc/app`; it never runs the old one instead. To
+  separate checkout refuses a different version already installed at `/srv/acc/app`. At the same version, setup continues from the installed copy only if its setup, main installer and Node installer files match the supplied files; differing installer code requires the manual upgrade below. To
   install the new one by hand, as root:
   1. Take a backup: `sudo acc-backup`.
   2. Stop Rynhult: `sudo systemctl stop accd.service accd.socket`.
@@ -238,3 +242,11 @@ then an administrator runs `--rollback-aliases` on the appropriate installer.
 This removes only links recorded as newly added by phase B. Pre-existing aliases,
 legacy executables, units, data and configuration remain. A changed link blocks
 rollback for manual review; never delete the conflicting object blindly.
+
+### Release channel
+
+In **Settings → Updates**, choose **Release channel: Stable** or **Release candidates**, save, then choose **Check now**. RC and beta installs default to Release candidates; stable installs default to Stable. You can explicitly choose either channel. Stable never offers pre-releases. Release candidates offers the highest newer stable or pre-release version: RC.2 can update to RC.3, then to the stable release. Drafts and downgrades are never offered.
+
+RC updates use the same backup, checksum, archive validation and rollback path as stable updates, and always require a verified signature. **Update without signature** is never available for a pre-release. **Install updates automatically** installs stable releases only; choose **Back up and update** yourself for an RC.
+
+A machine's **Update** action syncs its Linux/WSL node to this main's exact installed version and build, including RCs, using its enrolled main and trust. It never selects a newer GitHub release independently. Macs continue to use the installer or recovery command shown on Host.

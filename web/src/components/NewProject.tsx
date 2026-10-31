@@ -1,3 +1,4 @@
+import { FirstCommit, type FirstCommitState } from "./FirstCommit";
 import { BriefDocuments, uploadDocuments } from "./BriefDocuments";
 import { desktopBuild } from "../lib/desktop";
 import { useState } from "react";
@@ -20,6 +21,7 @@ export const projectSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-
  *  machines choose where: the folder is then made there, through that machine's broker, under its account's root. */
 export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (project: Project) => void }) {
   const queryClient = useQueryClient();
+  const [emptyImported, setEmptyImported] = useState<Project | null>(null);
   const instance = useInstance();
   const { owner } = useRole();
   const github = owner && !!instance.github;
@@ -50,16 +52,22 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
           host, account: remote && account ? account : null }));
       setCreatedProject(project);
       if (documentFiles.length) await uploadDocuments(project.id, documentFiles);
-      return project;
+      const state = source === "clone" ? await api<FirstCommitState>(`/api/projects/${project.id}/first-commit`) : null;
+      return { project, empty: !!state?.needed };
     },
-    onSuccess: (project) => {
+    onSuccess: ({ project, empty }) => {
+      if (empty) { setEmptyImported(project); return; }
+      finish(project);
+    },
+  });
+  function finish(project: Project) {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setName(""); setUrl(""); setDescription(""); setConfirmGithub(false);
       setDocumentFiles([]); setCreatedProject(null);
       onCreated?.(project);
       onClose();
-    },
-  });
+      setEmptyImported(null);
+  }
   // A repository URL or owner/name fills in the name, as people paste the URL first.
   const pasted = (value: string) => {
     setUrl(value);
@@ -71,6 +79,10 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
   const base = remote ? (root.data?.root ?? `${host}'s workspaces folder`) : (instance.workspaces_root ?? "your workspaces folder");
   const folder = `${base}/${slug || "<name>"}`;
   const runsAs = remote ? (account || root.data?.account || accounts[0] || "its agent account") : instance.agent_user;
+  if (emptyImported) return <Dialog open={open} onClose={() => finish(emptyImported)} title="Project imported">
+    <FirstCommit projectId={emptyImported.id} onDone={() => finish(emptyImported)} />
+    <Button variant="ghost" onClick={() => finish(emptyImported)}>Later — open project</Button>
+  </Dialog>;
   return (
     <Dialog open={open} onClose={onClose} dismissible={false} title="New project"
       description={desktopBuild ? "A local folder for agent sessions, created in the separate agent account." : `A folder for agent sessions, made on ${remote ? host : instance.host} for you. Nothing to set up there.`}

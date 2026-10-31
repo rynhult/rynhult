@@ -117,6 +117,14 @@ def no_leftover_fake_clis(request):
 
 
 @pytest.fixture(autouse=True)
+def isolated_request_reply_defaults(tmp_path, monkeypatch):
+    from acc import request_replies
+    # Node constructors must not even probe the installed host's acknowledgement
+    # store. Tests that need a provisioned store supply their own explicit path.
+    monkeypatch.setattr(request_replies, 'ROOT', tmp_path / 'unprovisioned-replies')
+
+
+@pytest.fixture(autouse=True)
 def isolated_orchestrator_environment(monkeypatch):
     """Legacy scenarios opt in to exactly the slices they exercise.
 
@@ -215,7 +223,10 @@ def env(tmp_path, monkeypatch, owned_tmux, request):
         containers_attach_root=tmp_path / "containers-attach",
         git_remote_base=str(tmp_path / "remotes"),
     )
+    replies_root = tmp_path / 'request-replies'
+    replies_root.mkdir(mode=0o711)
     settings = Settings(
+        request_replies_root=replies_root,
         data_dir=tmp_path / "data", run_dir=run_dir, root_run_dir=tmp_path / "run-root", broker_socket=broker.socket_path,
         hook_path=str(REPO / "bin/acc-hook"), statusline_path=str(REPO / "bin/acc-statusline"),
         ingest_interval=0.1, reconcile_interval=0.3, retry_backoff=(0.0, 0.0, 0.0),

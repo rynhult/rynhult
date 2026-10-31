@@ -26,8 +26,10 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-# Agent software: the only place it writes outside its state dir is the acc-packages helper's request folder.
-ReadWritePaths=-/srv/acc/packages/requests -/srv/acc/updates/requests
+# Outside its state dir, acc-node writes protected request acknowledgements and
+# the package/update helpers' request folders. Agents may read acknowledgements,
+# but their brokers cannot write this service-owned store. The app remains /opt/acc.
+ReadWritePaths=/var/lib/acc-request-replies -/srv/acc/packages/requests -/srv/acc/updates/requests
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictSUIDSGID=yes
 LockPersonality=yes

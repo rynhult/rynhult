@@ -527,3 +527,52 @@ def test_missing_macos_admin_group_keeps_strict_directory_permissions(tmp_path, 
             host.check(SimpleNamespace(st_mode=stat.S_IFDIR | 0o775, st_uid=os.geteuid(), st_gid=80))
     finally:
         os.close(host.fd)
+
+
+@pytest.mark.parametrize('absolute', [False, True])
+def test_merged_local_sbin_supports_preflight_install_and_rollback(tmp_path, absolute):
+    (tmp_path / 'etc').mkdir()
+    (tmp_path / 'usr/local/bin').mkdir(parents=True)
+    (tmp_path / 'usr/local/sbin').symlink_to('/usr/local/bin' if absolute else 'bin')
+    put(tmp_path, '/usr/local/bin/acc-agent-add')
+    before = snapshot(tmp_path)
+    m = api()
+    m['reconcile'](tmp_path, 'main', dry_run=True)
+    assert snapshot(tmp_path) == before
+    m['reconcile'](tmp_path, 'main')
+    link = tmp_path / 'usr/local/bin/rynhult-agent-add'
+    assert link.is_symlink() and os.readlink(link) == 'acc-agent-add'
+    m['reconcile'](tmp_path, 'main')
+    m['reconcile'](tmp_path, 'main', rollback=True)
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize('logical,target', [('/usr/sbin', 'bin'), ('/sbin', 'usr/bin'),
+                                           ('/sbin', 'usr/sbin'), ('/bin', 'usr/bin')])
+def test_standard_merged_bin_parents_remain_inside_offline_root(tmp_path, logical, target):
+    original = put(tmp_path, '/usr/bin/acc-demo')
+    link = tmp_path / logical.lstrip('/')
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
+    if target == 'usr/sbin':
+        (tmp_path / 'usr/sbin').symlink_to('bin')
+    host = api()['Host'](tmp_path)
+    try:
+        assert host.info(logical + '/acc-demo').st_ino == original.stat().st_ino
+        host.mutate(logical + '/rynhult-demo', 'acc-demo')
+        assert os.readlink(tmp_path / 'usr/bin/rynhult-demo') == 'acc-demo'
+        host.mutate(logical + '/rynhult-demo')
+        assert not (tmp_path / 'usr/bin/rynhult-demo').exists()
+    finally:
+        os.close(host.fd)
+
+
+def test_merged_parent_does_not_allow_writable_canonical_directory(tmp_path):
+    (tmp_path / 'etc').mkdir()
+    original = put(tmp_path, '/usr/local/bin/acc-agent-add')
+    (tmp_path / 'usr/local/sbin').symlink_to('bin')
+    original.parent.chmod(0o777)
+    before = snapshot(tmp_path)
+    with pytest.raises(ValueError, match='untrusted'):
+        api()['reconcile'](tmp_path, 'main')
+    assert snapshot(tmp_path) == before

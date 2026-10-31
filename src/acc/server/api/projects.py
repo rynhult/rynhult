@@ -153,6 +153,42 @@ def router(ctx: Context) -> APIRouter:
         # the owning account's broker, just like other workspace operations.
         return project_out(project)
 
+    @api.get("/api/projects/{project_id}/first-commit")
+    async def first_commit_status(project_id: int, who=Depends(ctx.principal)):
+        with db() as s:
+            project = ctx.project_for(s, who, project_id)
+        try:
+            return await broker.call('project_first_commit', account=project.account, host=project.host or 'local',
+                                     path=project.workspace_path)
+        except BrokerError as error:
+            raise refused(error)
+
+    @api.post("/api/projects/{project_id}/first-commit")
+    async def first_commit(project_id: int, who=Depends(ctx.principal)):
+        with db() as s:
+            project = ctx.project_for(s, who, project_id)
+            if project.import_mode != 'managed' or project.group_id is not None or project.archived:
+                raise HTTPException(409, 'Make the first commit only in an active managed personal project.')
+        async def commit():
+            with db() as s:
+                person = s.scalar(select(User).where(User.username == project.owner)) if project.owner else None
+                name = person.username if person else 'Rynhult'
+                email = f'{person.username if person else "rynhult"}@noreply.rynhult.invalid'
+            result = await broker.call('project_first_commit', account=project.account, host=project.host or 'local',
+                                       path=project.workspace_path, title=project.name, create=True, name=name, email=email)
+            with db() as s:
+                if result['created']:
+                    s.add(AuditLog(actor=who.username, action='project.first_commit', target=project.slug,
+                                   detail={'pushed': False}))
+                    s.commit()
+            return result
+        try:
+            return await supervisor.workspace_operations.run(project.workspace_path, commit, project.host or 'local')
+        except BrokerError as error:
+            if "README.md already exists." in str(error):
+                raise HTTPException(409, "README.md already exists. Commit it manually; Rynhult will not overwrite it.") from None
+            raise refused(error)
+
     @api.get("/api/projects/{project_id}/git-identity")
     async def get_git_identity(project_id: int, who=Depends(ctx.principal)):
         with db() as s:

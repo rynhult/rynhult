@@ -1,5 +1,8 @@
 # Install
 
+For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
+for the signed in-place rc.2 procedure, main first and then nodes.
+
 How to put Rynhult on a computer. Every computer is one of two things:
 
 - the **main Rynhult**: the dashboard everyone opens, standalone or with other machines attached;
@@ -38,15 +41,16 @@ provisioned PostgreSQL. The installers set up the normal main/node dependencies
 They can be rerun; follow the documented update flow rather than creating a new
 enrollment for an existing machine.
 
-The next planned public release is **v0.15.0-rc.1**, after the feature freeze
-(target November 9–13), alongside the public repository and site. This is a
-release candidate for the server/browser product, not a native desktop release.
-Until publication, use a reviewed source snapshot supplied by your administrator.
-Windows and Mac node installer availability is still checked separately; source
-installation remains available as documented below.
-Existing 0.14.0 installations do not automatically update to prereleases; RC
-installation is manual. Version order is `0.14.0 < 0.15.0-rc.1 < 0.15.0`, so
-stable 0.15.0 can be offered normally. Later RCs also require manual installation.
+The next candidate being prepared is **v0.15.0-rc.2**; rc.1 is already public.
+rc.2 still needs publication approval and release checks. Until it is published,
+use a reviewed source snapshot supplied by your administrator. This is the
+server/browser product, not a native desktop release. Windows and Mac nodes
+retain the documented source-install route.
+For an existing rc.1 installation, use the one-time manual
+[Upgrade from rc.1](/User-Guide/Upgrade-from-rc1) procedure. After that hop,
+**Release channel: Release candidates** can offer later signed RCs in-app.
+**Stable** never offers prereleases; automatic installation remains stable-only.
+Version order is `0.14.0 < 0.15.0-rc.1 < 0.15.0-rc.2 < 0.15.0`.
 Compatibility folders and services still use `acc`.
 
 The default update source changes with this refresh. Before upgrading an existing
@@ -95,8 +99,10 @@ does not establish freshness or prove the release has no bugs.
 
 ### Before you start
 - Ubuntu 24.04 or newer, or Debian 13 or newer, with systemd; amd64 or arm64. Fedora/RHEL, openSUSE and Arch aren't
-  qualified mains: setup recognises their managers and stops by default. On those systems, `sudo acc/deploy/setup.sh --unqualified-distro`
-  (not the `acc-install` wizard) allows a test install (Podman for [project](/User-Guide/Glossary#project) stacks, Claude Code from Anthropic's pinned native release).
+  qualified mains: setup recognises their managers and stops by default. On those systems, `sudo acc/deploy/acc-install --main --unqualified-distro`
+  explicitly allows a test install (Podman for [project](/User-Guide/Glossary#project) stacks, Claude Code from Anthropic's pinned native release).
+- On minimal dnf, zypper and pacman systems, install `curl`, `tar`, `gzip`, `git` and CA certificates before downloading, unpacking or cloning the source. For example: `sudo dnf install curl tar gzip git ca-certificates`, `sudo zypper install curl tar gzip git ca-certificates`, or `sudo pacman -S --needed curl tar gzip git ca-certificates`. On Arch, update the system with `pacman -Syu` first if repositories are stale; never use a standalone `pacman -Sy` refresh.
+- On AlmaLinux/Rocky/RHEL, GitHub CLI comes from GitHub's official RPM repository; setup verifies the pinned signing primary before enabling it. Project stacks use Podman with Docker's `docker-compose-plugin` from a separately fingerprint-pinned RPM repository restricted to that package. Setup installs no Docker engine or daemon for this path. Fedora keeps its distribution `docker-compose` package. EPEL's Python `podman-compose` is not substituted because the broker needs Compose's JSON interfaces. For Caddy on EL, setup adds Caddy's official COPR restricted to `caddy`, after verifying its pinned signing key; it does not require EPEL for that package. Setup does not enable EPEL/CRB. For a dashboard-only test, use `ACC_DOCKER=no`. Repository helpers verify signing keys before publishing each key and repository file through a temporary file in the same directory; interrupted publication preserves the previous file. Repository signing-key checks also work when the temporary staging path is deeply nested. These distributions remain unqualified.
 - A user account for yourself on it (Rynhult's projects belong to that user) and `sudo`.
 - Optional: a domain on Cloudflare and an API token for it (**Zone → DNS → Edit**). With one, Rynhult gets a public certificate and can publish project sites. Without one, Caddy signs Rynhult's certificate itself, and you add its root to your devices (see [Trust Rynhult's certificate](#trust-the-certificate-on-your-devices)).
 
@@ -106,7 +112,7 @@ For Cloudflare mode, also preinstall a reviewed Caddy build with its Cloudflare 
 sudo ACC_CADDY_SHA256=<approved-hash> acc/deploy/acc-install
 ```
 
-Without it a new Cloudflare build is refused. No-domain mode uses the signed apt package and needs no download hash.
+Without it a new Cloudflare build is refused. No-domain mode uses the distribution's signed Caddy package and needs no download hash.
 
 Linux root helpers run Python in isolated mode. They do not use `PYTHONPATH`,
 user-installed Python packages or modules beside the current working directory.
@@ -116,6 +122,33 @@ and rerun the reviewed installer. Do not work around the refusal with Python env
 variables or writable copies of helper modules. The optional device-CA tools
 also require their cryptography dependency in the reviewed system Python
 environment; they are not installed by the normal installer.
+
+### Agent accounts must have no sudo authorization
+
+Some openSUSE installations have `Defaults targetpw` and `ALL ALL=(ALL) ALL`:
+any account may request sudo using the root password. Rynhult correctly refuses
+such an agent account. Keep that refusal; changing its password or skipping the
+check does not remove the authorization.
+
+Leap 16 may have only the vendor file `/usr/etc/sudoers`. If `/etc/sudoers` is
+absent, have the administrator copy `/usr/etc/sudoers` to `/etc/sudoers` as root
+first; keep an existing administrator file. Then use `visudo` to list every agent
+in an alias and replace
+each broad allow rule with a rule that excludes that alias. For example, for two
+artificial agent accounts:
+
+```sudoers
+User_Alias RYNHULT_AGENTS = alex-agent, blair-agent
+ALL, !RYNHULT_AGENTS ALL=(ALL) ALL
+```
+
+This **replaces** the original broad rule; appending it while leaving another
+matching allow rule is insufficient. Keep the human/services owner outside the
+alias. Review included files and individual/group rules too, run `sudo visudo -c`,
+then check `sudo -n -l -U alex-agent` for an explicit denial and rerun setup.
+A standalone `!ALL` drop-in can still be listed as authorization by sudo and will
+not bypass Rynhult's strict check. Add future agent accounts to the exclusion
+before provisioning them.
 
 ### Steps
 1. Get Rynhult and start the installer:
@@ -206,7 +239,7 @@ sudo deploy/acc-install
 
 
 ### Add a Windows PC
-> **Before v1.0:** Windows and Mac installers are built only for v1.0.0 and later release tags, so on a pre-v1 Rynhult these tabs show commands that install from your main Rynhult's source instead (below). Release candidates (such as 0.15.0-rc.1) are server builds without Windows or Mac installers, so these tabs show the from-source commands too, with a note saying so. Already enrolled machines update from their row in **Host → Machines** (see [Update an older machine](/User-Guide/Nodes#update-an-older-machine)).
+> **Before v1.0:** Windows and Mac installers are built only for v1.0.0 and later release tags, so on a pre-v1 Rynhult these tabs show commands that install from your main Rynhult's source instead (below). Release candidates (such as 0.15.0-rc.2) are server builds without Windows or Mac installers, so these tabs show the from-source commands too, with a note saying so. Already enrolled machines update from their row in **Host → Machines** (see [Update an older machine](/User-Guide/Nodes#update-an-older-machine)).
 
 Windows 11 x64, an administrator account, virtualization enabled in firmware, and at least 20 GB free disk space for WSL, Ubuntu and Rynhult (allow more for projects). WSL is installed if missing and may need one restart. The PC needs outbound HTTPS to the main Rynhult. Sessions run in Linux inside Windows (WSL). Details: [Install on Windows](/User-Guide/Install-Windows).
 
@@ -228,7 +261,7 @@ Windows and Mac installers are built only for v1.0.0 and later. Before that, the
 Windows stops WSL a little while after the last Ubuntu window closes. The tab also shows an **optional** PowerShell block that adds the installer's task **Rynhult node (WSL)**, which starts Ubuntu in the background each time you sign in; run it once as administrator, or leave the Ubuntu window open instead. Details: [Install on Windows](/User-Guide/Install-Windows#add-this-pc-before-v10-no-installer).
 
 ### Add a Mac
-> **Before v1.0:** Windows and Mac installers are built only for v1.0.0 and later release tags, so on a pre-v1 Rynhult these tabs show commands that install from your main Rynhult's source instead (below). Release candidates (such as 0.15.0-rc.1) are server builds without Windows or Mac installers, so these tabs show the from-source commands too, with a note saying so. Already enrolled machines update from their row in **Host → Machines** (see [Update an older machine](/User-Guide/Nodes#update-an-older-machine)).
+> **Before v1.0:** Windows and Mac installers are built only for v1.0.0 and later release tags, so on a pre-v1 Rynhult these tabs show commands that install from your main Rynhult's source instead (below). Release candidates (such as 0.15.0-rc.2) are server builds without Windows or Mac installers, so these tabs show the from-source commands too, with a note saying so. Already enrolled machines update from their row in **Host → Machines** (see [Update an older machine](/User-Guide/Nodes#update-an-older-machine)).
 
 Needs macOS 13 or newer (Apple silicon or Intel), Homebrew, outbound HTTPS to the main Rynhult, and Node.js 22 or newer for agents installed with npm. To install Node.js:
 

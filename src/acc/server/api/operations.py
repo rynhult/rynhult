@@ -204,6 +204,9 @@ def router(ctx: Context) -> APIRouter:
             result['evidence']['outcome']='error'
         with db() as s:
             s.merge(Setting(key=key(account,machine,body.provider,body.model),value=result,updated_by=who.username))
+            if result['image_input'] is not None:
+                from ..image_capabilities import resolve_check
+                resolve_check(s, body.project_id, account, machine, body.provider, body.model)
             s.add(AuditLog(actor=who.username,action='image.check.finished',target=machine,detail=result))
             s.commit()
         return result

@@ -1,0 +1,147 @@
+/* Copied from rynhult-site source/styles/base.css at 3bec36dc9832a836b00c326a996c8893fb52fcb1. */
+/* Base and layout for rynhult.dev. Tokens live in tokens.css. No page sections here. */
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--weight-body) var(--step-0) / var(--leading-body) var(--font);
+  font-kerning: normal;
+  overflow-wrap: break-word;
+  min-height: 100vh;
+}
+img, svg, video { max-width: 100%; height: auto; display: block; }
+h1, h2, h3, h4, p, ul, ol, figure, blockquote { margin: 0; }
+ul[class], ol[class] { list-style: none; padding: 0; }
+code, kbd, pre { font-family: var(--mono); font-size: 0.9em; }
+pre { overflow-x: auto; }
+button { font: inherit; color: inherit; }
+
+/* Type */
+h1, h2, h3, h4 { font-weight: var(--weight-heading); line-height: var(--leading-snug); letter-spacing: var(--tracking-snug); text-wrap: balance; }
+h1 { font-size: var(--step-4); line-height: 1.1; letter-spacing: var(--tracking-tight); }
+h2 { font-size: var(--step-3); }
+h3 { font-size: var(--step-2); }
+.display { font-size: var(--step-5); font-weight: var(--weight-medium); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+.display.stacked > span { display: block; }
+.display .call { color: var(--display); }
+.lead { font-size: var(--step-1); line-height: 1.5; max-width: 36rem; }
+.narrow { max-width: 36rem; }
+.small { font-size: var(--step--1); }
+.muted { color: var(--muted); }
+.prose > * + * { margin-top: var(--flow); }
+.prose p, .prose li { max-width: var(--measure); }
+
+/* Links: Periwinkle (interactive accent). */
+a { color: var(--link); text-underline-offset: 0.18em; text-decoration-thickness: 1px; transition: text-decoration-thickness var(--dur-1) var(--ease-out); }
+a:hover { text-decoration-thickness: 2px; }
+.quiet-link { color: inherit; }
+
+/* Focus: a 3px ring 3px outside the element, so it always sits on the page background or surface (AA 3:1 in both themes). */
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: var(--radius-1); }
+:focus:not(:focus-visible) { outline: none; }
+
+/* Skip link: visible on focus, first in the tab order. Drawn like a primary button. */
+.skip { position: absolute; left: var(--gutter); top: -5rem; z-index: 10; }
+.skip:focus { top: var(--space-4); }
+main:focus { outline: none; }
+
+/* Layout */
+.wrap { width: 100%; max-width: var(--page); margin-inline: auto; padding-inline: var(--gutter); }
+.section { padding-block: var(--section); }
+.section + .section { border-top: 1px solid var(--line); }
+.stack > * + * { margin-top: var(--flow); }
+.cluster { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.site-header .wrap { justify-content: space-between; min-height: 4.25rem; }
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.nowrap { white-space: nowrap; }
+
+/* Buttons: 46px tall with one 45° cut corner from the fold of the mark. The cut is drawn on a pseudo-element
+   (an even-odd polygon for the outlined form), never with clip-path on the control itself, so the focus ring is not clipped.
+   Primary is ink on the page (Frost on dark); secondary is a 2px ink frame that works on any plane. */
+.button, .skip {
+  --cut-outer: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+  --cut-frame: polygon(evenodd, 0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%,
+    2px 2px, calc(100% - var(--cut) - 0.83px) 2px, calc(100% - 2px) calc(var(--cut) + 0.83px), calc(100% - 2px) calc(100% - 2px), 2px calc(100% - 2px));
+  position: relative; isolation: isolate;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: 2.875rem; min-width: var(--target); padding: 0 1.3rem;
+  font-weight: var(--weight-heading); text-decoration: none; line-height: 1.2;
+  color: var(--ink); background: transparent; border: 0; cursor: pointer;
+}
+.button::before, .skip::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--ink); clip-path: var(--cut-frame); }
+.button.primary, .skip { color: var(--button-ink); }
+.button.primary::before, .skip::before { background: var(--button-bg); clip-path: var(--cut-outer); }
+.button:hover, .skip:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+.button:focus-visible, .skip:focus-visible { border-radius: 0; }
+
+/* Logo. Inline SVG from docs/brand/logos with class-based fills, so one file serves both themes:
+   dark ink on light surfaces, light ink on dark. Full lockup only at 160px or wider; the standalone mark below that.
+   Clear space is half the mark height on every side. Never stretched, rotated or shadowed. */
+.logo { display: inline-flex; text-decoration: none; color: inherit; padding: var(--logo-clear); margin: calc(-1 * var(--logo-clear)); }
+.logo svg { height: auto; display: block; }
+.logo .lockup { width: var(--logo-w); }
+.logo .mark { width: var(--logo-mark-w); display: none; }
+.logo .m { fill: var(--mark); }
+.logo .w { fill: var(--word); }
+@media (max-width: 24rem) {
+  .logo { padding: var(--logo-mark-clear); margin: calc(-1 * var(--logo-mark-clear)); }
+  .logo .lockup { display: none; }
+  .logo .mark { display: block; }
+}
+
+/* Brand-geometry motifs: structural shapes from the angular R (an upright, a folded band, an open channel).
+   Flat fills only: no gradients, glows or blur. */
+
+/* 1. Bands: three parallel 45° bands with the open channel drawn as a rule, placed behind a hero or a tour. */
+.bands { position: absolute; inset: 0 0 0 auto; height: 100%; width: min(46vw, 40rem); z-index: 0; pointer-events: none; }
+.bands .b1 { fill: var(--band-1); }
+.bands .b2 { fill: var(--band-2); }
+.bands .b3 { fill: var(--band-3); }
+.bands .rule { stroke: var(--mark); stroke-width: 1.5; fill: none; opacity: 0.7; }
+.has-bands { position: relative; overflow: hidden; }
+.has-bands > .wrap { position: relative; z-index: 1; }
+@media (max-width: 52rem) { .bands { width: 70vw; opacity: 0.45; } }
+
+/* 2. Channel mark: the upright and the channel, as a short two-bar ornament above a heading. Hard stops, no gradient blend. */
+.channel-mark { display: block; width: 2.25rem; height: 0.3rem; margin-bottom: var(--space-4);
+  background: linear-gradient(90deg, var(--mark) 0 60%, transparent 60% 80%, var(--mark) 80% 100%); }
+
+/* 3. Cut frame: a surface with one clipped corner and a 1px readable boundary, for images, notes and the video poster. */
+.frame {
+  --cut-outer: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+  --cut-frame: polygon(evenodd, 0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%,
+    1px 1px, calc(100% - var(--cut) - 0.41px) 1px, calc(100% - 1px) calc(var(--cut) + 0.41px), calc(100% - 1px) calc(100% - 1px), 1px calc(100% - 1px));
+  position: relative; isolation: isolate;
+}
+.frame::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--surface); clip-path: var(--cut-outer); }
+.frame::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--line-strong); clip-path: var(--cut-frame); }
+.frame.pad { padding: var(--space-5); }
+.note { border-left: 4px solid var(--mark); background: var(--surface); padding: 0.85rem 1.1rem; max-width: 36rem; }
+
+/* 4. Upright rule: a vertical band beside a list item or step, echoing the upright of the R. */
+.upright { border-left: 4px solid var(--mark); padding-left: var(--space-4); }
+
+/* Motion. Keyframes exist only when the visitor allows motion; durations are also zeroed in tokens.css. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise { from { opacity: 0; transform: translateY(var(--rise)); } to { opacity: 1; transform: none; } }
+  @keyframes band-in { from { opacity: 0; transform: translate(6%, 6%); } to { opacity: 1; transform: none; } }
+  .fade-in { animation: rise var(--dur-2) var(--ease-out) both; }
+  .bands.signature path { animation: band-in var(--dur-3) var(--ease-out) both; }
+  .bands.signature .b2 { animation-delay: 80ms; }
+  .bands.signature .b3 { animation-delay: 160ms; }
+  .bands.signature .rule { animation-delay: 240ms; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@media print {
+  .skip, .bands { display: none; }
+  body { background: #fff; color: #000; }
+}

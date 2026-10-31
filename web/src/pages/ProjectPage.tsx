@@ -1,3 +1,4 @@
+import { FirstCommit } from "../components/FirstCommit";
 import { ProjectDeleteDialog } from "../components/ProjectDelete";
 import { GitIdentityCard } from "../components/GitIdentity";
 import { ProjectBrief } from '../components/ProjectBrief';
@@ -172,6 +173,7 @@ export function ProjectPage() {
   const start = (name: string, initial_prompt: string) => newSession({ mode: "project", project_id: p.id, name, worktree: true, initial_prompt });
   return (
     <Page wide>
+      {p.import_mode === "managed" && !p.archived && <FirstCommit key={p.id} projectId={p.id} />}
       <PageHeader title={p.name} description={p.notes}
         meta={<>
           <span className="font-mono">{p.workspace_path}</span>{p.machine_offline && <Badge>Machine offline</Badge>}{p.private_workspace && <Badge>Development · local only</Badge>}

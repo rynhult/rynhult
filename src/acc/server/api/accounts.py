@@ -77,6 +77,10 @@ def router(ctx: Context) -> APIRouter:
         try:
             flow = await broker.call("login_start", account=name, host=host, provider=provider)
         except BrokerError as error:
+            missing = "LoginError: gh is not installed:"
+            if provider == "github" and str(error).startswith(missing):
+                remedy = str(error)[len(missing):].strip()
+                raise HTTPException(400, f"gh is not installed on {host or 'this machine'}: {remedy}") from None
             raise refused(error)
         with db() as s:
             s.add(AuditLog(actor=who.username, action="account.login_start", target=provider,

@@ -316,7 +316,9 @@ class Relay:
 class Node:
     def __init__(self, config: NodeConfig, key: Ed25519PrivateKey, state_dir: Path | None = None, *,
                  ping_interval: float = 20, min_backoff: float = 1, max_backoff: float = 60,
-                 packages: Packages | None = AUTO):
+                 packages: Packages | None = AUTO, request_replies_root: Path | None = None):
+        from ..request_replies import ROOT
+        self.request_replies_root = request_replies_root or ROOT
         self.updates = Updates()
         self.config, self.key, self.state_dir = config, key, state_dir
         self.packages = backend(state_dir) if packages is AUTO else packages
@@ -381,7 +383,7 @@ class Node:
             presented = machine.fingerprint(self.state_dir)
             await ws.send(json.dumps({"t": "hello", "node_id": self.config.node_id, "signature": signature,
                                       **({"machine": presented} if presented else {}),
-                                      "info": {**await self.machine_info(), "capabilities": CAPABILITIES},
+                                      "info": {**await self.machine_info(), "capabilities": self.capabilities()},
                                       "accounts": broker_accounts(self.config.socket_dir)}))
             answer = json.loads(await asyncio.wait_for(ws.recv(), HANDSHAKE_TIMEOUT))
         except ConnectionClosed as closed:
@@ -393,6 +395,17 @@ class Node:
             raise ProtocolError(f"bad handshake message: {error}") from None
         if not isinstance(answer, dict) or answer.get("t") != "ready":
             raise ProtocolError("expected ready")
+
+    def capabilities(self):
+        capabilities = list(CAPABILITIES)
+        try:
+            info = self.request_replies_root.lstat()
+            import stat
+            if stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o066:
+                capabilities.append('request-replies-v1')
+        except OSError:
+            pass  # older/unprovisioned or same-account platforms remain unconfirmed
+        return capabilities
 
     async def machine_info(self) -> dict:
         info = node_info()
@@ -456,7 +469,7 @@ class Node:
             self.relay = None
 
     async def handle_text(self, ws: ClientConnection, message: str) -> None:
-        if len(message) > MAX_TEXT:
+        if len(message) > 65536:
             log.warning("ignoring a %d-character text message", len(message))
             return
         try:
@@ -464,9 +477,17 @@ class Node:
             kind = data.get("t")
         except (ValueError, AttributeError):
             data, kind = None, None
+        if len(message) > MAX_TEXT and kind != 'request-replies':
+            return  # only the bounded server acknowledgement batch gets the larger frame
         if kind == "update":
             await asyncio.to_thread(self.updates.handle, data)
             await ws.send(json.dumps(await self.update_message()))
+        elif kind == 'request-replies':
+            from ..request_replies import publish
+            try:
+                await asyncio.to_thread(publish, self.request_replies_root, data.get('session_id'), data.get('replies'))
+            except (OSError, ValueError, TypeError):
+                log.warning('Could not persist request acknowledgements; requests remain unconfirmed')
         elif kind == "ping":
             await ws.send(json.dumps({"t": "pong"}))
         elif kind == "pong":

@@ -32,13 +32,12 @@ const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&qu
 const write = (path, content) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
 
 // --- Shared chrome -------------------------------------------------------------------------------------------------
-// The brand kit's horizontal logo, inlined so its two inks follow the light/dark palette.
-const logo = readFileSync(join(SITE, "assets/logo.svg"), "utf8")
-  .replace(/<title>.*?<\/title>/, "").replace(/ role="img" aria-label="[^"]*"/, ' aria-hidden="true" focusable="false"')
-  .replace(/ width="\d+" height="\d+"/, "")
-  .replace('fill="#263B46"', 'class="m"').replace('fill="#172832"', 'class="w"');
-const css = readFileSync(join(SITE, "assets/site.css"));
-const cssName = `site.${createHash("sha256").update(css).digest("hex").slice(0, 10)}.css`;
+// Landing chrome copied from rynhult-site scripts/page.js and partials at 3bec36dc9832a836b00c326a996c8893fb52fcb1.
+const logo = ['logo-lockup.svg', 'logo-mark.svg'].map(name => readFileSync(join(SITE, 'assets', name), 'utf8')).join('\n');
+const css = Buffer.from(['tokens.css', 'base.css', 'site.css'].map(name => readFileSync(join(SITE, 'assets', name), 'utf8')).join('\n'));
+const cssName = 'site.css';
+const cssHash = createHash('sha256').update(css).digest('hex').slice(0, 10);
+const PRODUCT_ONLY = process.argv.includes('--product-only');
 const release = JSON.parse(readFileSync(join(SITE, "release.json"), "utf8"));
 const phaseArg = process.argv.indexOf("--phase");
 const PHASE = phaseArg > 0 ? process.argv[phaseArg + 1] : release.phase;
@@ -48,17 +47,13 @@ if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(release.follow)) throw new
 
 const NAV = SOON
   ? [["/#what", "Features"], ["/security/", "Security"], [release.follow, "GitHub"]]
-  : [["/install/", "Install"], ["/docs/", "Docs"], ["/download/", "Download"], ["/security/", "Security"]];
-const FOOTER = SOON
-  ? [[release.follow, "Rynhult on GitHub"], ["/security/", "Report a vulnerability"], ["/license/", "Licence"]]
-  : [["/docs/", "Docs"], ["/docs/User-Guide/FAQ/", "FAQ"], ["/security/", "Report a vulnerability"], ["/license/", "Licence"]];
+  : [["/docs/", "Docs"], [release.follow, "GitHub"]];
+const FOOTER = {"links": [{"id": "docs", "label": "Docs", "href": "/docs/"}, {"id": "install", "label": "Install", "href": "/install/"}, {"id": "download", "label": "Download", "href": "/download/"}, {"id": "security", "label": "Security", "title": "Report a vulnerability", "href": "/security/"}, {"id": "licence", "label": "Licence", "href": "/license/"}, {"id": "github", "label": "GitHub", "href": "{{release.follow}}"}, {"id": "youtube", "label": "@rynhult", "href": "https://www.youtube.com/@rynhult"}], "name": "Rynhult (RIN-hult)", "line": "Self-hosted, open source under the MIT licence."};
 
 function layout({ path, title, description, body, main = "main" }) {
   const full = path === "/" ? "Rynhult: self-hosted control for coding agents" : `${title} · Rynhult`;
-  const nav = NAV.map(([href, label]) => {
-    const current = path === href || (href.startsWith("/") && !href.includes("#") && path.startsWith(href));
-    return `<li><a href="${href}"${current ? ' aria-current="page"' : ""}>${label}</a></li>`;
-  }).join("");
+  const nav = NAV.map(([href, label]) => `<a class="quiet-link" href="${escape(href)}">${label}</a>`).join('\n      ');
+  const footerLinks = (SOON ? [FOOTER.links[4], FOOTER.links[3], FOOTER.links[5]] : FOOTER.links).map(link => ({...link, href: link.href.replace('{{release.follow}}', release.follow)}));
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -83,29 +78,33 @@ function layout({ path, title, description, body, main = "main" }) {
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="preload" href="/fonts/noto-sans-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/${cssName}">
+<link rel="stylesheet" href="/${cssName}?v=${cssHash}">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="site-header">
-<div class="wrap">
-<a class="logo" href="/" aria-label="Rynhult home">${logo}</a>
-<nav class="site-nav" aria-label="Site"><ul>${nav}</ul></nav>
-</div>
+    <div class="wrap cluster">
+      <a class="logo" href="/" aria-label="Rynhult home">
+        ${logo}
+      </a>
+      <nav class="cluster" aria-label="Site">
+      ${nav}
+      </nav>
+    </div>
 </header>
-<${main} id="main">
+<${main} id="main" tabindex="-1">
 ${body}
 </${main}>
-<footer class="site-footer">
-<div class="wrap">
-<p>${SOON
-  ? `Rynhult will be open source under the <a href="/license/">MIT licence</a> when the release candidate ships.`
-  : `Rynhult is open source under the <a href="/license/">MIT licence</a>.`} This site sets no cookies and loads nothing from other servers.</p>
-<ul>
-${FOOTER.map(([href, label]) => `<li><a href="${escape(href)}">${label}</a></li>`).join("\n")}
-</ul>
-</div>
-</footer>
+<footer class="site-footer section">
+    <div class="wrap">
+      <nav aria-label="Footer">
+        <ul class="cluster links">
+          ${footerLinks.map(link => `<li><a href="${escape(link.href)}"${link.title ? ` title="${escape(link.title)}"` : ''}>${escape(link.label)}${link.title ? `<span class="visually-hidden"> (${escape(link.title)})</span>` : ''}</a></li>`).join('\n          ')}
+        </ul>
+      </nav>
+      <p class="small colophon"><strong>${escape(FOOTER.name)}</strong> ${SOON ? 'Rynhult will be open source under the <a href="/license/">MIT licence</a> when the release candidate ships.' : escape(FOOTER.line)}</p>
+    </div>
+  </footer>
 </body>
 </html>
 `;
@@ -149,6 +148,7 @@ for (const name of readdirSync(join(SITE, "pages")).filter((n) => n.endsWith(".h
   if (!head) throw new Error(`${name}: missing JSON header comment`);
   const meta = JSON.parse(head[1]);
   if (!(meta.phases ?? ["coming-soon", "release"]).includes(PHASE)) continue;
+  if (PRODUCT_ONLY && meta.path === "/") { sitemap.push("/"); continue; }
   const body = fill(source.slice(head[0].length));
   const file = meta.path === "/404" ? "404.html" : join(meta.path, "index.html");
   write(join(OUT, file), layout({ ...meta, body }));
@@ -244,7 +244,7 @@ function navTree(items, current) {
 function docsNav(current) {
   const sections = tree.filter((t) => t.route !== "Home").map((section) =>
     `<h2><a href="${docsHref(section.route)}"${section.route === current ? ' aria-current="page"' : ""}>${escape(section.title)}</a></h2>${navTree(section.children, current)}`).join("");
-  const home = `<ul><li><a href="/docs/"${current === "Home" ? ' aria-current="page"' : ""}>Docs home</a></li></ul>`;
+  const home = `<ul><li><a href="/docs/"${current === "Home" ? ' aria-current="page"' : ""}>Docs home</a></li><li><a href="/install/">Install</a></li><li><a href="/download/">Download</a></li></ul>`;
   return `<nav class="docs-nav wide" aria-label="Docs">${home}${sections}</nav>
 <nav class="docs-nav narrow" aria-label="Docs (contents)"><details><summary>Contents</summary><div class="tree">${home}${sections}</div></details></nav>`;
 }
@@ -282,11 +282,14 @@ for (const name of attachments) {
 mkdirSync(join(OUT, "keys"), { recursive: true });
 copyFileSync(join(ROOT, "keys/rynhult-release-key.asc"), join(OUT, "keys/rynhult-release-key.asc"));
 write(join(OUT, cssName), css);
-for (const name of ["favicon.svg", "favicon.ico", "icon-180.png", "icon-192.png", "icon-512.png", "og.png"]) {
+for (const name of (PRODUCT_ONLY ? ["og.png"] : ["favicon.svg", "favicon.ico", "icon-180.png", "icon-192.png", "icon-512.png", "og.png"])) {
   copyFileSync(join(SITE, "assets", name), join(OUT, name));
 }
-mkdirSync(join(OUT, "fonts"), { recursive: true });
-copyFileSync(join(SITE, "assets/fonts/noto-sans-latin-wght.woff2"), join(OUT, "fonts/noto-sans-latin-wght.woff2"));
+if (!PRODUCT_ONLY) {
+  mkdirSync(join(OUT, "fonts"), { recursive: true });
+  copyFileSync(join(SITE, "assets/fonts/noto-sans-latin-wght.woff2"), join(OUT, "fonts/noto-sans-latin-wght.woff2"));
+}
+write(join(OUT, 'release.json'), JSON.stringify({ ...release, phase: PHASE }, null, 2) + '\n');
 for (const name of ["overview.png", "phone-overview.png"]) {
   mkdirSync(join(OUT, "media"), { recursive: true });
   copyFileSync(join(WIKI, ".attachments", name), join(OUT, "media", name));

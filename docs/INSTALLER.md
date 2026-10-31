@@ -32,7 +32,7 @@ get the code onto the machine, and making a private certificate automatic.
   executed as given: `--primary` must be https, `--name` must match the node name pattern, the code and
   fingerprint must have their shapes. Then it runs `deploy/node/install.sh` and `acc-node enroll` with exactly
   those values.
-- Flags: `--main`, `--node 'acc-node enroll …'`, `--yes`, `--dry-run` (passed through to the installers).
+- Flags: `--main`, `--node 'acc-node enroll …'`, `--yes`, `--unqualified-distro` (explicit test-install opt-in for recognised non-apt systems), `--dry-run` (passed through to the installers).
 - Output and the last lines of a failed step go to `/var/log/acc-install.log` (root only, 0600, new on every run).
   Tests drive a real run with `ACC_INSTALL_ROOT=<temporary folder>` (refused for real or effective UID 0).
   The folder must be canonical, owned by the unprivileged test user, mode 0700 and under `/tmp`; traversal,

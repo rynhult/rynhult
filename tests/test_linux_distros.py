@@ -10,7 +10,7 @@ import pytest
 from isolated_installers import dry_run_subject, restore_source_names
 
 REPO = Path(__file__).resolve().parents[1]
-HIDDEN = {'apt-get', 'dpkg', 'dnf', 'zypper', 'pacman', 'tmux', 'git', 'node', 'nodejs', 'uv',
+HIDDEN = {'apt-get', 'dpkg', 'dnf', 'zypper', 'pacman', 'tmux', 'git', 'gh', 'node', 'nodejs', 'uv',
           'selinuxenabled', 'semanage', 'restorecon'}
 
 
@@ -50,15 +50,15 @@ def node_dry_run(path, *extra):
 
 def test_debian_keeps_its_exact_commands(system):
     out = node_dry_run(system('apt-get')).stdout
-    assert '+ apt-get update -q\n+ env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tmux git\n' in out
+    assert '+ apt-get update -q\n+ env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tmux git gh\n' in out
     assert '+ sh ' + str(REPO / 'deploy/lib/install-node.sh') in out
     assert 'qualified' not in out and 'LINUX-DISTROS' not in out
 
 
 @pytest.mark.parametrize('manager,install,node', [
-    ('dnf', '+ dnf install -y -q --setopt=install_weak_deps=False tmux git', 'nodejs npm'),
-    ('zypper', '+ zypper --non-interactive --quiet install --no-recommends tmux git', 'nodejs-default npm-default'),
-    ('pacman', '+ pacman -S --needed --noconfirm tmux git', 'nodejs npm'),
+    ('dnf', '+ dnf install -y -q --setopt=install_weak_deps=False tmux git gh', 'nodejs npm'),
+    ('zypper', '+ zypper --non-interactive --quiet install --no-recommends tmux git gh', 'nodejs-default npm-default'),
+    ('pacman', '+ pacman -S --needed --noconfirm tmux git github-cli', 'nodejs npm'),
 ])
 def test_other_managers_are_recognised_but_need_an_explicit_test_install(system, manager, install, node):
     path = system(manager)
@@ -84,7 +84,7 @@ def test_missing_prerequisites_are_named_in_that_distribution(system):
     result = run_installer(['bash', str(REPO / 'deploy/node/install.sh'), '--dry-run', '--agent', 'alex-agent',
                              '--unqualified-distro'], capture_output=True, text=True, timeout=120,
                             env={**os.environ, 'PATH': system('zypper')})
-    assert 'missing tmux git: sudo zypper install tmux git' in result.stdout
+    assert 'missing tmux git gh: sudo zypper install tmux git gh' in result.stdout
 
 
 @pytest.mark.parametrize('manager', [None, 'dnf', 'zypper', 'pacman'])
@@ -377,7 +377,7 @@ def test_node_selinux_tools_are_independent_prerequisites(system, monkeypatch, m
     # installing tmux/git/uv first (nor on both SELinux tools being absent).
     path = system(manager)
     tools = Path(path)
-    for name in ('tmux', 'git', 'uv', 'node', 'selinuxenabled', 'semanage', 'restorecon'):
+    for name in ('tmux', 'git', 'gh', 'uv', 'node', 'selinuxenabled', 'semanage', 'restorecon'):
         target = tools / name
         target.unlink(missing_ok=True)
         if name != missing:
@@ -491,3 +491,111 @@ def test_selinux_label_failure_stops_the_helper(tmp_path, failing_tool):
     result = subprocess.run(['sh', str(subject), 'node'], capture_output=True, text=True,
                             env={**os.environ, 'PATH': f'{tools}:{os.environ["PATH"]}'})
     assert result.returncode == 42, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('manager,expected', [
+    ('apt', ['dbus-user-session', 'whiptail']),
+    ('dnf', ['dbus-daemon', 'newt']),
+    ('zypper', ['dbus-1', 'newt']),
+    ('pacman', ['dbus', 'libnewt']),
+])
+def test_session_bus_and_dialog_package_names(manager, expected):
+    out = subprocess.run(['sh', '-c', '. "$1"; pkg_name "$2" dbus-user-session; pkg_name "$2" whiptail',
+                          '-', str(REPO / 'deploy/lib/pkg.sh'), manager], check=True, capture_output=True, text=True)
+    assert out.stdout.splitlines() == expected
+
+
+@pytest.mark.parametrize('manager', ['apt', 'dnf', 'zypper', 'pacman'])
+def test_main_base_package_transaction_uses_native_names_and_bootstraps_gh_after_dependencies(tmp_path, manager):
+    source = (REPO / 'deploy/setup.sh').read_text()
+    start = source.index('if [ "$PKG" = apt ]; then', source.index('log "Base packages"'))
+    fragment = source[start:source.index('/usr/bin/python3 -I', start)]
+    calls = tmp_path / 'calls'
+    script = '''package() { printf 'packages %s\\n' "$*" >> "$CALLS"; }
+apt-get() { printf 'apt-get %s\\n' "$*" >> "$CALLS"; }
+sh() { printf 'helper %s\\n' "$*" >> "$CALLS"; }
+die() { exit 1; }
+source "$REPO/deploy/lib/pkg.sh"
+PKG_INSTALL=(package)
+''' + fragment
+    result = subprocess.run(['bash', '-eu', '-c', script], capture_output=True, text=True, timeout=10,
+                            env={**os.environ, 'PKG': manager, 'REPO': str(REPO), 'CALLS': str(calls), 'selinux': ''})
+    assert result.returncode == 0, result.stderr
+    rows = calls.read_text().splitlines()
+    if manager == 'apt':
+        assert rows == ['apt-get update -qq',
+                        'apt-get install -y -qq ca-certificates curl gnupg git tmux python3 python3-venv jq sqlite3 acl rsync smartmontools uidmap dbus-user-session gh']
+    else:
+        assert ' tar ' in rows[0]
+        if manager == 'dnf':
+            assert rows[0].split() == ['packages', 'ca-certificates', 'curl', 'tar', 'gnupg2', 'git', 'tmux', 'python3', 'jq', 'sqlite', 'acl', 'rsync', 'smartmontools', 'shadow-utils']
+            assert rows[1:] == [f'helper {REPO}/deploy/lib/gh-rpm-repo.sh', 'packages gh']
+        else:
+            assert len(rows) == 1
+            assert rows[0].split()[-1] == ('github-cli' if manager == 'pacman' else 'gh')
+
+
+@pytest.mark.parametrize('distro,like,expected', [
+    ('almalinux', 'rhel centos fedora', 'docker-compose-plugin'),
+    ('rocky', 'rhel centos fedora', 'docker-compose-plugin'),
+    ('rhel', 'fedora', 'docker-compose-plugin'),
+    ('centos', 'rhel fedora', 'docker-compose-plugin'),
+    ('ol', 'fedora', 'docker-compose-plugin'),
+    ('custom-el', 'rhel fedora', 'docker-compose-plugin'),
+    ('fedora', '', 'docker-compose'),
+])
+def test_podman_transaction_selects_el_plugin_without_changing_fedora(tmp_path, distro, like, expected):
+    source = (REPO / 'deploy/setup.sh').read_text()
+    start = source.index('  log "Podman for ')
+    fragment = source[start:source.index('  grep -q "^$ACC_OWNER:" /etc/subuid', start)]
+    calls = tmp_path / 'calls'
+    script = '''source "$REPO/deploy/lib/pkg.sh"
+package() { printf 'packages %s\\n' "$*" >> "$CALLS"; }
+sh() { printf 'helper %s\\n' "$*" >> "$CALLS"; }
+log() { :; }
+die() { exit 1; }
+PKG_INSTALL=(package)
+''' + fragment
+    result = subprocess.run(['bash', '-eu', '-c', script], capture_output=True, text=True, timeout=10,
+                            env={**os.environ, 'PKG': 'dnf', 'ID': distro, 'ID_LIKE': like,
+                                 'ACC_OWNER': 'alex', 'REPO': str(REPO), 'CALLS': str(calls)})
+    assert result.returncode == 0, result.stderr
+    rows = calls.read_text().splitlines()
+    assert rows[-1] == f'packages podman {expected}'
+    assert rows[:-1] == ([f'helper {REPO}/deploy/lib/docker-compose-rpm-repo.sh']
+                         if expected == 'docker-compose-plugin' else [])
+
+
+@pytest.mark.parametrize('manager', ['apt', 'zypper', 'pacman'])
+def test_compose_mapping_keeps_other_managers_unchanged(manager):
+    out = subprocess.run(['sh', '-c', '. "$1"; pkg_name "$2" docker-compose',
+                          '-', str(REPO / 'deploy/lib/pkg.sh'), manager], check=True, capture_output=True, text=True,
+                         env={**os.environ, 'ID': 'almalinux', 'ID_LIKE': 'rhel fedora'})
+    assert out.stdout.strip() == 'docker-compose'
+
+
+@pytest.mark.parametrize('manager,distro,like,needs_repo', [
+    ('dnf', 'almalinux', 'rhel centos fedora', True),
+    ('dnf', 'rocky', 'rhel centos fedora', True),
+    ('dnf', 'rhel', 'fedora', True),
+    ('dnf', 'fedora', '', False),
+    ('zypper', 'opensuse-leap', 'suse', False),
+    ('pacman', 'arch', '', False),
+])
+def test_caddy_transaction_bootstraps_official_repo_only_on_el(tmp_path, manager, distro, like, needs_repo):
+    source = (REPO / 'deploy/setup.sh').read_text()
+    start = source.index('if [ "$PKG" != apt ]; then', source.index('log "Caddy"'))
+    fragment = source[start:source.index('\ninfo "$(caddy version', start)]
+    calls = tmp_path / 'calls'
+    script = '''source "$REPO/deploy/lib/pkg.sh"
+package() { printf 'packages %s\\n' "$*" >> "$CALLS"; }
+sh() { printf 'helper %s\\n' "$*" >> "$CALLS"; }
+die() { exit 1; }
+PKG_INSTALL=(package)
+''' + fragment
+    result = subprocess.run(['bash', '-eu', '-c', script], capture_output=True, text=True, timeout=10,
+                            env={**os.environ, 'PKG': manager, 'ID': distro, 'ID_LIKE': like,
+                                 'REPO': str(REPO), 'CALLS': str(calls)})
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text().splitlines() == (
+        ([f'helper {REPO}/deploy/lib/caddy-rpm-repo.sh'] if needs_repo else []) + ['packages caddy'])

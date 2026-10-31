@@ -4190,5 +4190,25 @@
     "ownership": "Personal project: owner or owning member; others 404. Built-in and group projects refused.",
     "audit": "project.delete",
     "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/first-commit",
+    "source": "src/acc/server/api/projects.py",
+    "handler": "first_commit_status",
+    "principal": "authenticated person or API owner",
+    "ownership": "ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects.",
+    "audit": "none (read only)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects/{project_id}/first-commit",
+    "source": "src/acc/server/api/projects.py",
+    "handler": "first_commit",
+    "principal": "authenticated person or API owner",
+    "ownership": "ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects.",
+    "audit": "project.first_commit (created only; no push)",
+    "other_member_status": 404
   }
 ]

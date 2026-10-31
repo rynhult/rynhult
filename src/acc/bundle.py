@@ -30,6 +30,7 @@ PUBLIC_EXCLUDED = ('docs/design/updater-signatures.md', 'docs/PLAN.md', 'docs/ar
                    'docs/backup-costs.md', 'docs/publication-review-rc1.md',
                    'docs/research/competitors.md', 'docs/research/competitors-2026-10-22.md',
                    'docs/research/competitors-2026-10-27.md',
+                   'docs/research/competitors-2026-10-30.md',
                    'docs/decisions/0008-owner-answers-2026-10-22.md',
                    'docs/decisions/0020-owner-answers-2026-10-24.md',
                    'docs/decisions/0050-owner-answers-2026-10-24-afternoon.md',

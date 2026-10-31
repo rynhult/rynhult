@@ -429,6 +429,8 @@ def router(ctx: Context) -> APIRouter:
                     await broker.call("remove_worktree", account=account, host=host, repo=repo, path=worktree["path"])
                 raise
         except (LaunchRefused, CompileError, BrokerError) as error:
+            if isinstance(error, BrokerError) and "isn't a git repository with a commit yet" in str(error):
+                raise HTTPException(409, "This project has no Git commit yet. Open the project page and choose Make the first commit, then start the session or team again.") from None
             raise refused(error)
         with db() as s:
             session = s.get(Session, acc_id)

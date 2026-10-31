@@ -661,3 +661,24 @@ async def test_usage_warnings_are_evaluated_after_the_last_group_session_stops(w
     await w['owner'].app.state.ctx.supervisor.evaluate_budgets()
     with w['owner'].app.state.db() as s:
         assert s.scalar(select(AttentionItem.id).where(AttentionItem.source == 'group_board', AttentionItem.owner == 'alex'))
+
+
+def test_protected_request_reply_cannot_overwrite_session_keys(tmp_path):
+    from acc.request_replies import publish
+    root = tmp_path / 'protected'
+    root.mkdir(mode=0o711)
+    folder = root / 'aabbccddeeff'
+    folder.mkdir(mode=0o711)
+    secret = tmp_path / 'session.env'
+    secret.write_text('canary')
+    rid = 'a' * 32
+    (folder / (rid + '.json')).symlink_to(secret)
+    publish(root, 'aabbccddeeff', {rid: {'status': 'accepted', 'approval_id': 'pub-1'}})
+    assert secret.read_text() == 'canary'
+    assert not (folder / (rid + '.json')).is_symlink()
+    with pytest.raises(ValueError):
+        publish(root, '../escape', {})
+    folder.rename(root / 'other')
+    folder.symlink_to(root / 'other', target_is_directory=True)
+    with pytest.raises(OSError):
+        publish(root, 'aabbccddeeff', {})

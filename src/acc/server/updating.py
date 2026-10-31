@@ -17,7 +17,18 @@ from sqlalchemy import select
 from .. import __version__, bundle
 from ..release_signatures import SignatureError
 from ..update_helper import read_json, write_json
-from ..updates import BUILD, GIT_MESSAGE, REPO, SOURCE_ERRORS, ReleaseSourceError, available, repository
+from ..updates import (
+    BUILD,
+    GIT_MESSAGE,
+    REPO,
+    SOURCE_ERRORS,
+    ReleaseSourceError,
+    available,
+    repository,
+    selected_channel,
+    validate_request,
+    version,
+)
 from ..updates import signed_check as check
 from .ha import fence
 from .models import AttentionItem, AuditLog, Node, Observation, Setting
@@ -65,7 +76,7 @@ class Updates:
         )
 
     def defaults(self):
-        return {"repository": self.authorized_repository(), "automatic": False, "time": "03:00", "follow": {}}
+        return {"repository": self.authorized_repository(), "automatic": False, "include_prereleases": version(__version__)[3] == 0, "release_channel": "rc" if version(__version__)[3] == 0 else "stable", "time": "03:00", "follow": {}}
 
     def config(self):
         try:
@@ -76,12 +87,18 @@ class Updates:
             log.warning(CONFIG_ERROR)
             raise ConfigError(CONFIG_ERROR) from None
         value = {**self.defaults(), **saved}
+        try:
+            value['release_channel'] = selected_channel(saved, __version__)
+        except ValueError:
+            raise ConfigError(CONFIG_ERROR) from None
+        value['include_prereleases'] = value['release_channel'] == 'rc'
         repo, at, follow = value["repository"], value["time"], value["follow"]
         if (
             set(saved) - set(self.defaults())
             or not isinstance(repo, str) or len(repo) > 200
             or (repo and (not REPO.fullmatch(repo) or any(p in (".", "..") for p in repo.split("/"))))
             or type(value["automatic"]) is not bool
+            or type(value["include_prereleases"]) is not bool
             or not isinstance(at, str) or not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", at)
             or not isinstance(follow, dict)
             or any(not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", k) or type(v) is not bool for k, v in follow.items())
@@ -122,7 +139,6 @@ class Updates:
 
     def state(self):
         value = self.observation()
-        value["available"] = available(value, __version__, self.build)
         helper = self.helper_state()
         git = (self.settings.update_source / ".git").exists()
         config_error = None
@@ -131,6 +147,7 @@ class Updates:
         except ConfigError as error:
             config, config_error = self.defaults(), str(error)
             config["repository"] = ""
+        value["available"] = available(value, __version__, self.build, config["release_channel"] == "rc")
         selected = config["repository"]
         policy_block = (
             "Authorize this repository with ACC_UPDATE_REPOSITORY in root-owned /etc/default/accd and restart accd before installing updates."
@@ -163,7 +180,8 @@ class Updates:
                 return self.state()
             try:
                 latest = await asyncio.to_thread(
-                    check, repo, __version__, self.settings.data_dir / "secrets/update_token", self.build
+                    check, repo, __version__, self.settings.data_dir / "secrets/update_token", self.build,
+                    self.config()["include_prereleases"]
                 )
                 value.update({k: v for k, v in latest.items() if k != "assets"}, error=None)
             except (ValueError, OSError) as error:
@@ -204,10 +222,14 @@ class Updates:
             raise ValueError(state["blocked"])
         if not self.config()["repository"] or not state.get("available") or state.get("error"):
             raise ValueError("Check for a newer release first")
+        validate_request({"action": "update", "version": state["latest"], "allow_unsigned": allow_unsigned},
+                         include_prereleases=self.config()["release_channel"] == "rc")
         if not state["helper"]:
             raise ValueError("Install the acc-update helper with deploy/install.sh")
         if state["pending"] or state["progress"].get("running"):
             raise ValueError("An update is already in progress")
+        if (version(state['latest'])[3] == 0 or state.get('prerelease')) and (allow_unsigned or (state.get('signature') or {}).get('status') != 'verified'):
+            raise ValueError('Pre-release updates require a verified signature.')
         missing = (state.get('signature') or {}).get('status') == 'missing'
         if missing and not allow_unsigned:
             raise ValueError('Release signature is missing. Confirm the unsigned exception explicitly to continue.')
@@ -285,7 +307,7 @@ class Updates:
         if config["repository"] and time.time() - value.get("checked_at", 0) >= 86400:
             await self.check()
             value = self.observation()
-        value["available"] = available(value, __version__, self.build)
+        value["available"] = available(value, __version__, self.build, config["release_channel"] == "rc")
         helper = self.helper_state()
         if helper.get("finished_at") and helper.get("id") != value.get("result_id"):
             self.audit(
@@ -304,6 +326,8 @@ class Updates:
             config["automatic"]
             and config["repository"]
             and value.get("available")
+            and version(value["latest"])[3] == 1
+            and not value.get("prerelease")
             and not value.get("error")
             and now.strftime("%H:%M") >= config["time"]
             and value.get("automatic_day") != day

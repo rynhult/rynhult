@@ -345,30 +345,52 @@ class IngestMixin:
                             source='group_board', observed_at=now().timestamp()))
                         db.commit()
                 continue
-            if request.get("type") == "tool":
-                try:
-                    self.tools.request_session(session_id, **{k: v for k, v in request.items() if k != "type"})
-                except (ValueError, TypeError) as error:
-                    with self.db() as db:
-                        attention.raise_item(db, f"tool_refused:{session_id}", kind="tool_failed", severity="info",
-                                             source="tools", session_id=session_id, title=f"{name}: tool request refused",
-                                             detail=str(error)[:500])
-                        db.commit()
-                continue
-            if self.publisher is None:
-                continue
-            try:
-                self.publisher.request(action=request["type"], host=str(request.get("host", "")),
-                                       port=request.get("port") if isinstance(request.get("port"), int) else None,
-                                       access=request.get("access", "public"), requested_by=f"session {name}",
-                                       project_id=project_id, session_id=session_id,
-                                       reason=str(request.get("reason") or "")[:500])
-            except Exception as error:  # surface refusals to the owner instead of dropping them
+            request_id = request.get('request_id')
+            request_id = request_id if isinstance(request_id, str) and re.fullmatch('[0-9a-f]{32}', request_id) else None
+            if request_id:
                 with self.db() as db:
-                    attention.raise_item(db, f"publish_refused:{session_id}:{request.get('host')}", kind="publish_failed",
-                                         severity="info", source=f"session {name}", session_id=session_id,
-                                         title=f"{name} asked to {request.get('type')} {request.get('host')}",
-                                         detail=f"It wasn't sent for approval: {error}")
+                    previous = db.get(Observation, 'request.reply.' + session_id)
+                    if previous and request_id in previous.value:
+                        continue  # spool replay must not create a second approval request
+            kind = request.get('type')
+            try:
+                if kind == 'tool':
+                    approval_id = self.tools.request_session(session_id, **{
+                        k: v for k, v in request.items() if k not in ('type', 'request_id')})
+                else:
+                    if self.publisher is None:
+                        raise ValueError('Publishing is unavailable on this server.')
+                    approval_id = self.publisher.request(action=kind, host=str(request.get("host", "")),
+                        port=request.get("port") if isinstance(request.get("port"), int) else None,
+                        access=request.get("access", "public"), requested_by=f"session {name}",
+                        project_id=project_id, session_id=session_id, reason=str(request.get("reason") or "")[:500])
+                reply = {'status': 'accepted', 'approval_id': approval_id}
+            except Exception as error:  # refusal is a reply, never an unconfirmed promise of approval
+                reason = str(error)[:1000]
+                with self.db() as db:
+                    from .models import Project
+                    project = db.get(Project, project_id) if project_id else None
+                    fix = ('Check the tool coordinates and account policy, then ask the lead to re-file.' if kind == 'tool'
+                           else 'Check the publishing host and zone, then ask the lead to re-file.')
+                    if kind == 'publish' and "isn't reserved for this project" in reason:
+                        fix = f"Reserve port {request.get('port')} for {project.slug if project else 'this project'} under Ports, then ask the lead to re-file."
+                    reason += ' ' + fix
+                    attention.raise_item(db, f"{kind if kind == 'tool' else 'publish'}_refused:{session_id}:{request_id or request.get('host', '')}",
+                        kind='tool_failed' if kind == 'tool' else 'publish_failed', severity='warn',
+                        source='tools' if kind == 'tool' else f'session {name}', session_id=session_id,
+                        title=f'{name}: {kind} request refused', detail=f"It wasn't sent for approval: {reason}")
+                    db.commit()
+                reply = {'status': 'refused', 'reason': reason}
+            if request_id:
+                with self.db() as db:
+                    key = 'request.reply.' + session_id
+                    previous = db.get(Observation, key)
+                    replies = dict(previous.value) if previous else {}
+                    replies[request_id] = reply
+                    replies = dict(list(replies.items())[-24:])
+                    while len(json.dumps(replies).encode()) > 65536:
+                        del replies[next(iter(replies))]
+                    db.merge(Observation(key=key, value=replies, source='agent_request', observed_at=now().timestamp()))
                     db.commit()
 
     def _observe_remote(self, session: Session) -> None:

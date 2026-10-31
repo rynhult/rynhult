@@ -7,7 +7,7 @@ import { AUTH_FILE, info } from './helpers';
 test.use({ storageState: AUTH_FILE });
 const state = {
   version: '0.15.0-rc.1', build: 'a'.repeat(64), latest: '0.15.0', notes: '<b>Release notes stay plain text</b>',
-  available: true, checked_at: Date.now()/1000, repository: 'example/acc', automatic: false, time: '03:00',
+  available: true, checked_at: Date.now()/1000, repository: 'example/acc', automatic: false, include_prereleases: true, release_channel: 'rc', time: '03:00',
   signature: { status: 'verified', primary: '0C2CE12657BD833FB5B563B2B555F6E127990DB5' },
   timezone: 'UTC', helper: true, git_checkout: false, progress: {}, pending: false,
   session_notice: 'Agents keep running in tmux. Terminals disconnect briefly while the dashboard restarts.',
@@ -96,7 +96,7 @@ test('corrupt saved updater configuration is visible and an explicit save repair
     await updates.getByRole('button', { name: 'Save update settings' }).click();
     await expect(updates.getByText('Update settings saved.', { exact: true })).toBeVisible();
     await expect(updates.getByText(/Updater configuration is corrupt or unreadable/)).toHaveCount(0);
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ repository: '', automatic: false, time: '03:00', follow: {} });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ repository: '', automatic: false, include_prereleases: true, release_channel: 'rc', time: '03:00', follow: {} });
   } finally {
     writeFileSync(path, before);
   }
@@ -258,4 +258,43 @@ for (const width of [1440, 390]) test(`release signature and explicit unsigned e
   await page.getByRole('dialog').getByRole('button', { name: 'Update without signature', exact: true }).click();
   await expect.poll(() => submitted).toEqual({ allow_unsigned: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+});
+
+ test('pre-release preference is saved and no stable release is explained', async ({page}) => {
+  let saved: unknown;
+  const error = 'This repository has no stable release yet — select the Release candidates channel.';
+  await page.route('**/api/updates', r => r.fulfill({json:{...state, include_prereleases:false, release_channel:'stable', available:false, error}}));
+  await page.route('**/api/updates/config', r => {saved=r.request().postDataJSON(); return r.fulfill({json:state});});
+  await page.goto('/settings#updates');
+  await expect(page.getByText(error,{exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Release channel',exact:true})).toHaveValue('stable');
+  await page.getByRole('combobox',{name:'Release channel',exact:true}).selectOption('rc');
+  await page.getByRole('button',{name:'Save update settings'}).click();
+  await expect.poll(() => saved).toMatchObject({release_channel:'rc'});
+});
+
+ test('owner saves the real release channel and sees its audit entry', async ({page}) => {
+  const before = await (await page.request.get('/api/updates')).json();
+  try {
+    await page.goto('/settings#updates');
+    await page.getByRole('combobox',{name:'Release channel',exact:true}).selectOption('stable');
+    await page.getByRole('button',{name:'Save update settings'}).click();
+    await expect(page.getByText('Update settings saved.',{exact:true})).toBeVisible();
+    await expect.poll(async () => (await (await page.request.get('/api/updates')).json()).release_channel).toBe('stable');
+    const audit = await (await page.request.get('/api/audit?action=update.configure')).json();
+    expect(audit[0].detail.release_channel).toBe('stable');
+    await page.reload();
+    await expect(page.getByRole('combobox',{name:'Release channel',exact:true})).toHaveValue('stable');
+    await expect(page.getByText('Automatic installation applies to stable releases only.',{exact:false})).toBeVisible();
+  } finally {
+    const csrf = (await page.context().cookies()).find(c => /acc_csrf$/.test(c.name))!.value;
+    expect((await page.request.put('/api/updates/config',{headers:{'x-acc-csrf':csrf},data:{repository:before.repository,automatic:before.automatic,time:before.time,release_channel:before.release_channel}})).ok()).toBeTruthy();
+  }
+});
+for (const width of [1440,390]) test(`RC has no unsigned exception at ${width}`, async ({page}) => {
+  await page.setViewportSize({width,height:900});
+  await page.route('**/api/updates', r => r.fulfill({json:{...state,latest:'0.15.0-rc.3', signature:{status:'missing',detail:'Release signature is missing.'}}}));
+  await page.goto('/settings#updates');
+  await expect(page.getByRole('button',{name:'Back up and update',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Update without signature…',exact:true})).toHaveCount(0);
 });

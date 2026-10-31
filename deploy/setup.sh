@@ -54,7 +54,8 @@ ask() {  # ask VAR "question" default: keeps an existing value; prompts unless -
   local var=$1 question=$2 default=${3:-} answer
   [ -n "${!var:-}" ] && return
   if [ "$YES" = 1 ] || [ ! -t 0 ]; then printf -v "$var" '%s' "$default"; return; fi
-  read -r -p "    $question${default:+ [$default]}: " answer
+  printf '%s\n> ' "    $question${default:+ [$default]}:" >&2
+  read -r answer
   printf -v "$var" '%s' "${answer:-$default}"
 }
 yes_no() { case ${1,,} in n|no|0|false|off) return 1 ;; *) return 0 ;; esac; }
@@ -90,7 +91,7 @@ case $ARCH in amd64|arm64) ;; *) check "unsupported architecture $ARCH (amd64 or
 
 # Rynhult's units run it from /srv/acc/app: set up from there (clone it there first if this checkout lives elsewhere).
 if [ "$REPO" != "$APP" ] && [ -n "$DRY" ]; then
-  info "would copy this checkout to $APP (unless it's there already) and continue from there"
+  info "would copy this checkout to $APP if absent; an existing installed checkout requires the documented Updating procedure"
   APP=$REPO
 elif [ "$REPO" != "$APP" ]; then
   if [ ! -e "$APP" ]; then
@@ -106,13 +107,18 @@ elif [ "$REPO" != "$APP" ]; then
     chown -R root:root "$APP"
     chmod -R go-w "$APP"
   else
-    # An installed Rynhult of another version is never silently run instead of this one (a release candidate unpacked
-    # over the last would otherwise "upgrade" to the old version). Install and update review, IU-5.
-    installed=$(sed -n 's/^version = "\(.*\)"/\1/p' "$APP/pyproject.toml" 2>/dev/null)
-    this=$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO/pyproject.toml")
-    if [ "$installed" != "$this" ]; then
-      die "Rynhult ${installed:-of an unknown version} is installed at $APP; this setup is $this. Update from Settings → Updates, or by hand: see the wiki's Updating page (\"Upgraded by hand\"). Nothing was changed."
+    installed_version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$APP/pyproject.toml" 2>/dev/null || true)
+    source_version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO/pyproject.toml")
+    if [ -z "$source_version" ] || [ "$installed_version" != "$source_version" ]; then
+      die "Rynhult $installed_version is installed at $APP; this setup is $source_version. Follow the Guide's Updating page (Upgraded by hand), or use Settings → Updates. Nothing was changed."
     fi
+    # A matching release may continue from its installed copy, but version strings
+    # alone do not identify installer code in development/RC checkouts.
+    for installer in deploy/setup.sh deploy/install.sh deploy/lib/install-node.sh; do
+      if [ -f "$REPO/$installer" ] && ! cmp -s "$REPO/$installer" "$APP/$installer"; then
+        die "The installed checkout at $APP has different installer code for version $source_version ($installer). Follow the Guide's Updating page (Upgraded by hand), or use Settings → Updates. Nothing was changed."
+      fi
+    done
   fi
   exec "$APP/deploy/setup.sh" "$@"
 fi
@@ -175,8 +181,17 @@ if [ -n "$DRY" ]; then
     if yes_no "${ACC_DOCKER:-yes}"; then info "rootless Docker for $ACC_OWNER"; fi
   else
     info "base packages with $PKG (git, tmux, python3, sqlite, acl, …), the distribution's Node.js 22+, uv"
+    [ "$PKG" != dnf ] || info "GitHub CLI from its official RPM repository, signing primary pinned (deploy/lib/gh-rpm-repo.sh)"
+    if [ "$PKG" = dnf ] && pkg_enterprise_linux; then
+      info "Caddy from its official package-scoped COPR repository, signing primary pinned"
+    fi
     info "Claude Code from Anthropic's pinned native release (SHA-256 checked)"
-    if yes_no "${ACC_DOCKER:-yes}"; then info "Podman for $ACC_OWNER (project stacks)"; fi
+    if yes_no "${ACC_DOCKER:-yes}"; then
+      info "Podman for $ACC_OWNER (project stacks; $(pkg_name "$PKG" docker-compose))"
+      if [ "$(pkg_name "$PKG" docker-compose)" = docker-compose-plugin ]; then
+        info "Compose plugin from Docker's package-scoped RPM repository, signing primary pinned"
+      fi
+    fi
     [ -z "$selinux" ] || info "SELinux file contexts for Rynhult's paths (deploy/lib/selinux-labels.sh; the enforcing mode is never changed)"
   fi
   if yes_no "${ACC_OLLAMA:-no}"; then info "Ollama"; fi
@@ -206,10 +221,15 @@ apt-get update -qq
 apt-get install -y -qq ca-certificates curl gnupg git tmux python3 python3-venv jq sqlite3 acl rsync \
   smartmontools uidmap dbus-user-session gh >/dev/null
 else
-  base=(ca-certificates curl gnupg git tmux python3 jq sqlite3 acl rsync smartmontools uidmap gh)
+  base=(ca-certificates curl tar gnupg git tmux python3 jq sqlite3 acl rsync smartmontools uidmap)
+  [ "$PKG" = dnf ] || base+=(gh)
   [ -z "$selinux" ] || base+=(policycoreutils-python-utils)  # semanage, restorecon
   mapfile -t names < <(for name in "${base[@]}"; do pkg_name "$PKG" "$name"; done)
   "${PKG_INSTALL[@]}" "${names[@]}" >/dev/null
+  if [ "$PKG" = dnf ]; then
+    sh "$REPO/deploy/lib/gh-rpm-repo.sh" || die "couldn't verify GitHub CLI's RPM repository"
+    "${PKG_INSTALL[@]}" gh >/dev/null
+  fi
 fi
 /usr/bin/python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 12))' || die "Rynhult needs Python 3.12+ (this system has $(/usr/bin/python3 -I -V))"
 info "installed"
@@ -247,7 +267,11 @@ if yes_no "${ACC_DOCKER:-yes}" && [ "$PKG" != apt ]; then
   # Podman, as Fedora and openSUSE ship it; project stacks run through `podman compose` with the compose v2
   # provider (acc.broker.ops.compose_command), on the owner's Podman socket.
   log "Podman for $ACC_OWNER (project stacks; rootless, no root daemon)"
-  "${PKG_INSTALL[@]}" podman docker-compose >/dev/null
+  compose_package=$(pkg_name "$PKG" docker-compose)
+  if [ "$compose_package" = docker-compose-plugin ]; then
+    sh "$REPO/deploy/lib/docker-compose-rpm-repo.sh" || die "couldn't add Docker's Compose RPM repository"
+  fi
+  "${PKG_INSTALL[@]}" podman "$compose_package" >/dev/null
   grep -q "^$ACC_OWNER:" /etc/subuid || usermod --add-subuids 100000-165535 "$ACC_OWNER"
   grep -q "^$ACC_OWNER:" /etc/subgid || usermod --add-subgids 100000-165535 "$ACC_OWNER"
   loginctl enable-linger "$ACC_OWNER"
@@ -291,6 +315,9 @@ fi
 # Caddy from its own signed apt repository (distributions' packages can be too old for Rynhult's site config).
 log "Caddy"
 if [ "$PKG" != apt ]; then
+  if [ "$PKG" = dnf ] && pkg_enterprise_linux; then
+    sh "$REPO/deploy/lib/caddy-rpm-repo.sh" || die "couldn't verify Caddy's official COPR signing key"
+  fi
   "${PKG_INSTALL[@]}" caddy >/dev/null  # the distribution's signed package (Fedora, openSUSE)
 else
 CADDY_KEYRING=/usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -319,7 +346,8 @@ if [ -n "${ACC_ZONE:-}" ]; then
   info "$("$CF_CADDY" version | cut -d' ' -f1) with Cloudflare DNS, sha256 $(sha256sum "$CF_CADDY" | cut -c1-16)…"
   if [ ! -f /etc/caddy/cloudflare.env ]; then
     if [ -z "${CF_API_TOKEN:-}" ] && [ "$YES" = 0 ] && [ -t 0 ]; then
-      read -r -s -p "    Cloudflare API token (Zone:DNS:Edit on $ACC_ZONE; not shown): " CF_API_TOKEN; echo
+      printf '%s\n> ' "    Cloudflare API token (Zone:DNS:Edit on $ACC_ZONE; not shown):" >&2
+      read -r -s CF_API_TOKEN; printf '\n' >&2
     fi
     [ -n "${CF_API_TOKEN:-}" ] || die "a Cloudflare token is needed for $ACC_ZONE (set CF_API_TOKEN)"
     # The header goes on stdin (printf is a builtin), never on curl's command line, which every local account can read

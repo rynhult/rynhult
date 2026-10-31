@@ -35,10 +35,10 @@ def router(ctx: Context) -> APIRouter:
     api = APIRouter()
 
     def attention_out(item: AttentionItem, names: dict[str, tuple[str, str]], publishes: dict | None = None,
-                      tools: dict | None = None, show_risk: bool = True) -> dict:
+                      tools: dict | None = None, show_risk: bool = True, image_check: dict | None = None) -> dict:
         publishes = publishes or {}
         name, project = names.get(item.session_id or "", (None, None))
-        return {"id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
+        return {"image_check": image_check, "id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
                 "verified": item.verified, "title": item.title, "detail": item.detail,
                 "session_id": item.session_id, "session_name": name, "project": project,
                 "created_at": item.created_at, "updated_at": item.updated_at,
@@ -84,7 +84,9 @@ def router(ctx: Context) -> APIRouter:
             tool_ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "tool_request"]
             tools = {r.id: out(r) for r in s.scalars(select(ToolRequest).where(ToolRequest.id.in_(tool_ids)))}
             show_risk = risk_labels.enabled(s, who.username)
-            return [attention_out(i, names, publishes, tools, show_risk) for i in items]
+            from ..image_capabilities import check_action
+            return [attention_out(i, names, publishes, tools, show_risk,
+                                  check_action(s, i) if who.is_owner else None) for i in items]
 
     @api.post("/api/attention/dismiss")
     def dismiss_attention(body: DismissItems, who=Depends(ctx.principal)):

@@ -199,7 +199,7 @@ def test_release_check_authenticates_checksum_manifest(signed_release, release_s
                                               for name, url in latest['assets'].items()]}
 
     def get(url, *args, **kwargs):
-        return json.dumps(metadata).encode() if url.endswith('/latest') else get_asset(url, *args, **kwargs)
+        return json.dumps([metadata]).encode() if url.endswith('/releases?per_page=30') else get_asset(url, *args, **kwargs)
     result = signed_check('example/acc', '0.14.0', get=get)
     assert result['signature']['primary'] == release_signer.fingerprint
     assert result['available'] is True
@@ -219,8 +219,8 @@ def test_release_check_distinguishes_missing_from_bad_signature(signed_release, 
                                               for name, url in latest['assets'].items()]}
 
     def get(url, *args, **kwargs):
-        if url.endswith('/latest'):
-            return json.dumps(metadata).encode()
+        if url.endswith('/releases?per_page=30'):
+            return json.dumps([metadata]).encode()
         if url.endswith('/2') and failure == 'network':
             raise ValueError('could not reach release source')
         return get_asset(url, *args, **kwargs)

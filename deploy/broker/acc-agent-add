@@ -51,7 +51,14 @@ if [ "$role" = agents ]; then
     # sudo -l -U exits 0 whether or not the account may use sudo (Ubuntu 24.04's sudo; older builds exit 1 on denial),
     # so decide from its report: only the explicit denial passes; listed commands or anything unexpected refuses.
     if [[ "$sudo_policy" == *"may run the following commands"* ]]; then
-      echo "refusing: $account has sudo authorization (agents must not)" >&2; exit 1
+      echo "refusing: $account has sudo authorization (agents must not)" >&2
+      echo "A default such as 'ALL ALL=(ALL) ALL' with targetpw still grants sudo to agents." >&2
+      echo "On Leap 16, if /etc/sudoers is absent, copy /usr/etc/sudoers to /etc/sudoers first (as root)." >&2
+      echo "Use visudo to define 'User_Alias RYNHULT_AGENTS = $account' (list every agent)," >&2
+      echo "then exclude that alias from every broad allow rule: 'ALL, !RYNHULT_AGENTS ALL=(ALL) ALL'." >&2
+      echo "Keep the human/services owner outside that alias. Validate with visudo -c, then rerun." >&2
+      echo "A standalone !ALL deny can still appear as sudo authorization; the check is not bypassed." >&2
+      exit 1
     fi
     if { [ "$sudo_status" -ne 0 ] && [ "$sudo_status" -ne 1 ]; } || [[ "$sudo_policy" != "User $account is not allowed to run sudo on "* ]]; then
       echo "refusing: cannot verify sudo authorization for $account (sudo exit $sudo_status)" >&2; exit 1
@@ -153,8 +160,11 @@ PY
   fi
   # Project checkouts belong to their original owner and are shared through ACLs (acc-agent-share): tell git that
   # is expected.
-  runuser -u "$account" -- git config --global --get-all safe.directory | grep -qx '\*' \
-    || runuser -u "$account" -- git config --global --add safe.directory '*'
+  git_config=(runuser -u "$account" -- env -i HOME="$home" USER="$account" LOGNAME="$account"
+    PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$home/.gitconfig"
+    git -C "$home" --git-dir=/dev/null config --global)
+  "${git_config[@]}" --get-all safe.directory | grep -qx '\*' \
+    || "${git_config[@]}" --add safe.directory '*'
 fi
 
 limits=/etc/systemd/system/acc-broker@$account.service.d/limits.conf
