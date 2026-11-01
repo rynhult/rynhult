@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.308",
-    "@openai/codex": "0.164.0",
-    "@github/copilot": "1.0.102"
+    "@anthropic-ai/claude-code": "2.1.312",
+    "@openai/codex": "0.165.0",
+    "@github/copilot": "1.0.105"
   }
 }
