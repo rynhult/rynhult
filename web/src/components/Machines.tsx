@@ -1,3 +1,4 @@
+import {securityLink} from '../lib/security';
 import { Feature } from "./Feature";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -376,7 +377,8 @@ export function Machines() {
                   Planned downtime from {window.start} until it reconnects · {n.downtime_policy!.timezone} · {window.days.map(day => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day]).join(', ')}
                 </span>)}
                 {n.last_downtime_seconds != null && <span className="text-xs text-muted">Last downtime: {Math.round(n.last_downtime_seconds / 60)} min</span>}
-                {n.accounts.length > 0 && <span className="flex gap-1">{n.accounts.map((a) => <Badge key={a} tone="neutral">{a}</Badge>)}</span>}
+                {n.accounts.length > 0 && <span className="flex flex-wrap gap-1">{n.accounts.map((a) => <Link className="inline-flex min-h-11 min-w-11 items-center justify-center" key={a} to={securityLink({kind:"account",machine:n.name,account:a})} aria-label={`Security for ${a} on ${n.name}`}><Badge tone="neutral">{a}</Badge></Link>)}</span>}
+                {n.accounts.length > 0 && <span className="flex flex-wrap gap-1">{n.accounts.map((a) => <Link className="inline-flex min-h-11 min-w-11 items-center" key={a} aria-label={`Allowed folders · ${a} on ${n.name}`} to={`/settings/security/folders?machine=${encodeURIComponent(n.name)}&account=${encodeURIComponent(a)}`}><span className="text-xs underline">Allowed folders · {a}</span></Link>)}</span>}
                 {n.status === 'active' && <>
                   <span className="text-xs text-muted">Rynhult {n.info.version || 'unknown version'} · {n.info.build ? `build ${n.info.build.slice(0, 12)}` : 'unknown build'}</span>
                   {n.update_available && n.info.version && <Badge tone="wait">Update available</Badge>}

@@ -197,7 +197,7 @@ Passkey changes are disabled while Rynhult is offline. The controls work again a
 
 ## Find a section
 
-Settings opens at **Passkeys**. Use the labelled **Settings section** chooser to focus one section: **Personal** holds your own access devices, passkeys, password, sign-ins, notifications and notification devices, keys, risk labels and guardrails (and **Certificate** when it applies to you); owners also see **Instance** administration. **All sections** shows the full page and its grouped links for scanning. **Back to settings sections** returns to the chooser. Section links stay in the URL, so bookmarks, reload and the browser’s Back button work.
+Settings opens at **Passkeys**. Use the labelled **Settings section** chooser to focus one section: **Personal** holds your own access devices, passkeys, password, sign-ins, notifications and notification devices, keys, risk labels, Security and the old Guardrails link (and **Certificate** when it applies to you); owners also see **Instance** administration. **All sections** shows the full page and its grouped links for scanning. **Back to settings sections** returns to the chooser. Section links stay in the URL, so bookmarks, reload and the browser’s Back button work.
 
 Switching sections keeps unsaved drafts while you remain on Settings. Warnings and errors from other sections remain in **Settings needing attention**, with links to their controls. A section with an error also opens so its error and controls remain available. Choosing a section does not save its form. Leaving Settings or reloading can discard unsaved drafts.
 
@@ -267,3 +267,254 @@ Other providers stay Unknown until a restricted adapter is implemented and check
 ![Image access on a phone in light mode](../.attachments/image-access-390-light.png)
 ![Image access on desktop in dark mode](../.attachments/image-access-1440-dark.png)
 ![Image access on desktop in light mode](../.attachments/image-access-1440-light.png)
+
+
+## Security
+
+Open **Settings → Security**. Owners select **Instance defaults**, then a
+**Machine / agent account**, or an individual **Project**. Scope selections stay
+in the URL. Members can select only their own projects and read the effective
+protections; **Ask an owner** explains how to request a change. Other accounts,
+folder paths, private command patterns and budget metadata are not listed for members.
+
+### Scoped security policies
+
+**Effective now** shows the server's revision and when it was checked. Each row
+has its effective On/Off value and source, plus the separate unsaved override.
+**Default** means inherit, not turn everything On. **Custom** sets individual
+switches; **Use inherited setting** removes that scope's override. Turning off
+custom command blocks, budgets or Allowed folders keeps saved patterns, rules
+and roots. A switch is a guardrail, not an OS sandbox.
+
+Project inspection uses the project's execution owner, not the person viewing
+Settings. If people sharing an account have different saved tool exemptions,
+**Varies by person** replaces a single On/Off claim. Inspect a project for its
+owner's policy, or review an explicit account override for everyone bound to it.
+Security policy inspection and editing require a signed-in person browser;
+installation API tokens cannot enumerate these scopes.
+
+Changes are drafts until **Review changes**. Verify your sign-in with a passkey
+or password and authenticator when asked. The review names the exact scope,
+consequences, project list, retained child overrides and active sessions. Its
+preview is bound to your signed-in browser and expires after five minutes.
+**Cancel** changes nothing. Apply errors keep your draft; a changed revision
+requires reviewing current state, not a silent retry over another tab's choices.
+**Discard draft and reload** explicitly adopts the newer policy.
+
+**Unrestricted** turns off every configurable guardrail at the selected scope.
+Read every row, then choose **Apply Unrestricted**. It can permit accessible
+credential reads, file changes/deletes, account tool changes and pushes/merges
+using the agent's credentials. Authentication, owner approvals, vault access
+rules, OS permissions, machine isolation and audit remain enforced. Open
+**Always enforced — details** for the full boundary list. It is not a safe mode
+or permission to act as an owner. Provider prompts Off is supported only for
+qualified Claude/Codex mappings; other providers refuse it. Read-only and Prepare
+assignments remain read-only. With provider prompts On, a launch's permission,
+sandbox and approval choices can narrow this policy but cannot bypass it. The
+New session dangerous-mode confirmation does not create a Security exception.
+Unsupported raw provider arguments are refused. An old unsafe generation must
+start anew rather than resume.
+
+Allowed folders can be changed only for a machine/account. Projects inherit it.
+An instance/project request cannot promise an all-off scope while its account
+folder check stays On; the review names that exception. Child overrides remain
+in place and are listed, never silently cleared. Folder policy is still
+**Pending application** until the target confirms it, both when disabling and
+when re-enabling the check. **Desired: On** is not confirmed protection. A
+**Folder protection pending** badge remains visible even when every desired
+switch is On, and new launches/resumes stay blocked until acknowledgement.
+The account folder editor is available below; editing policy does not grant
+OS permissions. Filesystem access has a separate reviewed flow on qualified Linux targets.
+
+Turning Allowed folders On or Off also requests target acknowledgement with the
+unchanged roots as part of Apply. No session stop is required. An unavailable or
+unqualified target refuses a new Off preview with a plain explanation; keep On
+and reconnect, update or qualify the target. A change already published remains fenced; use **Review pending application** / **Retry reviewed application**, or
+review the roots once the target reconnects. Any recently verified owner can
+review and retry a published operation, even after another sign-in approved it.
+Retry checks the target’s durable status; if delivery never started and the preview
+expired, it restores the acknowledged baseline and returns to **Preview folders**
+for a fresh review, or lets you restore the acknowledged switch in Security. An unpublished change
+can be cancelled by restoring the acknowledged setting (or installer-default On);
+that cancellation is audited and removes its admission fence. Native agents keep their OS access
+and already-open files; no process is killed. Later broker operations use current
+policy, so tightening can refuse a later helper/file/Git operation outside the
+allowed roots. Turning Off permits other accessible repository paths, while
+mandatory system/service/credential-path checks remain. It grants no OS access.
+
+The persistent **Unrestricted** or **Custom security · N off** badge links to the
+switch details and Always enforced list. The sidebar reports current execution
+account policy; a phone shows it in the top bar too. A session header reports
+its **frozen launch revision**, and New session reports its actual compiled
+preview. Later policy changes do not relabel an older protected session.
+**Current protections On · N sessions on older settings** names the remaining
+frozen-generation gap without calling an all-On current policy Custom. Apply also
+reports whether the folder policy was acknowledged or remains pending, with a
+link to review/retry it in Allowed folders.
+Pending folder enforcement is explicitly marked and never labelled applied
+Unrestricted. An unavailable reading is not an all-protected claim.
+
+Saved changes, including tightening, **Default** and **Restore previous settings**,
+apply immediately to future launches and replacement sessions. Running sessions
+keep their frozen protections. Before apply, the review lists running sessions
+whose protections will be weaker than the saved policy; applying does not require
+stopping them. The Security page lists **N sessions on older settings**, and the
+persistent badge and each affected session's frozen-revision badge mark this gap.
+A session that starts between review and apply is checked again by the server.
+
+Use the listed **Stop** action and confirm it; an offline or unconfirmed stop stays
+listed. **Start a new session** opens the normal reviewed launch dialog for that
+project. Choose the provider and inputs again: automatic conversation/team-grant
+replay is not supported here. Current policy re-validates every new launch, team
+helper and schedule. Resuming an old weaker generation is refused; it does not
+upgrade the old conversation. Nothing is stopped or restarted automatically.
+Restore restores the selected scope's snapshot, not unrelated parent or child
+edits. Allowed-folder switch and root-list changes reload the account service without
+stopping agents or gates. Filesystem grant/undo retains its separate stop and
+acknowledgement requirements. The apply audit records the older session
+ids/count, including sessions that started since review. Recent policy reviews/saves appear on this page
+and in Audit. A persistent owner badge counts older sessions across **all**
+machines/accounts, while preserving the narrower scope's Off/pending details.
+An unconfirmed stop remains listed. For a removed machine only, an owner can
+confirm **Machine is gone** after independently checking it will not run again.
+This clears the record with an audit entry; it is not proof of a machine stop.
+Project deletion clears a leftover marker only after its normal process checks.
+Refused requests, conflicts and failed operations have distinct
+audit outcomes too; a server save is not a target-machine acknowledgement.
+
+The old **Tool approvals** editor links to this reviewed Security flow. Its
+unversioned save API is retired; existing person/project exemptions are preserved
+as inherited settings. Override them explicitly at an instance, account or
+project scope rather than using the retired editor.
+
+The old **Guardrails** section links here. Saved custom patterns remain visible
+at instance scope; editing them is temporarily read-only pending the safe scoped
+save integration. Personal risk-label preferences remain separate and cannot
+turn on an owner-disabled display policy. [Guardrails](/User-Guide/Guardrails)
+explains what each check does and what it cannot protect.
+
+![Security review on desktop](/.attachments/security-review-security-desktop-dark.png)
+
+![Security review on a phone](/.attachments/security-review-security-phone-dark.png)
+
+![Security review in the light theme](/.attachments/security-review-security-desktop-light.png)
+
+![Security review on a phone in the light theme](/.attachments/security-review-security-phone-light.png)
+
+## Allowed folders
+
+Owners open **Settings → Security → Allowed folders**. **Host → Agent accounts**
+and machine account badges link to the same editor with that machine/account
+selected. Members cannot inspect other accounts' roots or change their policy.
+
+The page distinguishes the saved roots, desired revision, applied revision and
+**Pending application** or **Unavailable** state. An unavailable service is not
+an empty folder list. The default workspace stays first and cannot be removed
+here. Allowing another root never changes where new projects are created.
+
+1. Verify your sign-in under **Settings → Passkeys**.
+2. Select the machine and its assigned agent account. Enter an exact existing
+   repository, such as `/home/alex/src/demo-api`, then **Check folder**. This
+   checks metadata/access without reading project contents or granting rights.
+3. Choose **Add to review** and **Preview folders**. Allowing a parent also permits
+   future child repositories. Review the listed account projects and retained roots.
+4. **Apply folder policy** reloads account-service policy without stopping sessions
+   or gates. It does not trust, move, initialize or delete a project, or grant
+   Unix permissions. Later service operations use the new roots and revision;
+   an operation outside a removed root can be refused even for an older session.
+
+An updated, separately provisioned and reviewed target folder service with
+interrupted-delivery recovery is required for changes.
+This build does not install or qualify it. If unavailable, keep the draft and ask
+an administrator for local setup; existing installer roots remain in use. Never
+interpret a saved request as target acknowledgement. A changed revision or machine
+identity needs a fresh preview. If an already-approved change is pending,
+**Review pending application** opens it for any recently verified owner;
+**Retry reviewed application** retries the approved roots when they can still be
+applied. An acknowledged old operation is not offered as a retry for a new switch.
+
+If delivery started but cannot finish, such as after a folder was removed or the
+administrator changed the account mapping, choose **Recover acknowledged policy**.
+Review the target's acknowledged roots and On/Off value, then confirm. Recovery
+closes the old delivery and reloads that acknowledged policy at a newer revision.
+It can widen or restrict later account-service access for running sessions; native
+launch protections and OS permissions remain unchanged. A lost recovery reply can
+be retried; if recovery is refused, refresh the pending review before confirming
+again. Unreachable targets keep the fence until they reconnect. After recovery,
+the last acknowledged value and direct Security link remain visible after reload:
+restore that setting in Security, or preview a fresh folder policy. If the values
+already match, choose **Review acknowledged folder policy** in Security and apply
+the unchanged review. This clears the recovered admission fence without changing
+a switch or reloading roots, even if a fresh folder preview was refused. Removing a
+root does not recall copied data or
+remove OS access, and an overlapping retained root can still permit the folder.
+
+### Grant and Undo filesystem access
+
+In **Allowed folders → Filesystem access**, choose **Review filesystem access**.
+Use an exact repository such as `/home/alex/src/demo-api`. Read only is selected
+initially; choose **Read and write — agent editing** only when intended. The
+suggested method is **Named-user ACL** for the assigned agent alone. The alternative
+**Purpose-specific shared group** adds only the associated human and agent to a
+new unprivileged group, changes the reviewed group ownership, and gives directories
+setgid/default inheritance. It never reuses a primary, sudo or container group.
+The new owning group gets exactly the reviewed read-only or read/write rights;
+the old group's effective rights are retained separately. Read-only verification
+also checks that the agent cannot write. Pre-existing access that still permits
+writing prevents a successful read-only result and requires review.
+
+**Preview access changes** does not grant permissions. Verify your sign-in when
+asked. Review the machine/account, folder identity, item count, required ancestor
+traverse-only entries and expandable exact permission changes. Stop affected
+sessions and cancel queued/running gates before applying. The target also checks
+for any remaining agent-account processes; it refuses while other processes run.
+It may restart the stopped account service to activate membership, not a running
+agent terminal. Explicit **Grant access** confirmation is required. Permission
+checks and ordinary reads do not receive repeated consequence confirmations.
+
+The account can read everything in a granted folder, including `.env`, keys and
+untracked files. Write access includes Git metadata and hooks. Secret-read
+checks are a safety net, not a filesystem boundary. Move secrets elsewhere when
+possible. Removing access cannot recall copies already taken. Default ACLs apply
+to normal new children, but restrictive file modes or replaced files can remove
+access later. This is a bounded recursive operation, not one atomic transaction.
+
+Only an independently qualified, separately installed Linux target helper can
+apply a grant. This build installs/enables no root worker. Named ACL and shared-group
+qualification are separate; unqualified, Mac and Windows-drive targets refuse OS
+changes. Use existing access/local setup instead. No chmod fallback is used on an
+unsupported filesystem. New policy roots refuse mount roots, bind aliases and nested mount crossings,
+including when Allowed folders is Off. Unchanged installer roots retain their
+legacy provenance. If safe mount checks are unavailable, use administrator setup.
+Reviewed-policy worktrees currently require administrator removal: the account
+service refuses pathname-only Git deletion rather than risking another folder.
+Private container checkout creation is also unavailable with reviewed folder
+policy until its creator supports pinned destinations. Neither restriction is
+removed by turning the Allowed folders switch Off. If Git fails after creating
+an ordinary worktree directory, that directory is retained for review; use a
+fresh name rather than reusing or automatically deleting an uncertain location.
+A new grant does not allow a broker root, trust a project,
+move its contents or widen a running session automatically.
+
+**Pending** means the target result is uncertain; new account work stays blocked.
+Use **Check target result**, rather than resubmitting the grant. **Cancel unstarted
+request** clears the fence only after the target permanently cancels that request;
+a delayed apply then cannot run. Started or partial changes require reviewed Undo.
+The original approving owner can inspect approved operations after signing in again,
+but cannot apply an unapproved preview from an old sign-in.
+
+**Review Undo** is a separate fresh review and confirmation. It restores only
+recorded inodes whose current permissions still match the helper's recorded result.
+It never deletes repository contents, branches or untracked work. Unknown new
+children, moved files and later permission changes produce **Needs repair**, not a
+claim that all access is revoked. Other ownership, groups, open descriptors or copies
+may retain access. Keep account processes stopped and ask the host administrator to
+review those conflicts. An uncertain Undo remains blocked; check its target result
+or explicitly review a new Undo for the original grant, then check older pending
+operations. Empty purpose groups are retained until an administrator confirms no
+other inode depends on them; only known helper-added memberships are removed.
+**Remove allowed folder** and **Undo access grant** remain separate actions.
+
+macOS and Windows drives use existing access only; no privacy, automount or WSL
+isolation setting changes here. Native agents can access anything their OS account
+can access: this root list is not a filesystem sandbox.

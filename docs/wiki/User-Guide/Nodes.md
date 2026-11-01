@@ -2,7 +2,7 @@
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
-A **node** is another machine that runs [sessions](/User-Guide/Glossary#session) for your Rynhult: a Linux server, a Windows PC or a Mac. You keep using one dashboard. A [project](/User-Guide/Glossary#project) lives on a machine (you choose it when you register the project), and its sessions run there: terminals, Changes, guardrails, search and the rest work the same. Rynhult never moves work to a machine by itself.
+A **node** is another machine that runs [sessions](/User-Guide/Glossary#session) for your Rynhult: a Linux server, a Windows PC or a Mac. You keep using one dashboard. A [project](/User-Guide/Glossary#project) has a default machine, chosen when you register it. New sessions start there unless you select another **Machine**, reuse a registered checkout or confirm **Clone on …**. Terminals, Changes, guardrails and search follow the session's recorded machine. Rynhult never moves work to a machine by itself.
 
 **v1.0 keeps existing node support:** Linux, macOS and Windows through WSL.
 The existing Linux node path is Debian/Ubuntu with systemd and Python 3.12+.
@@ -56,7 +56,7 @@ Each node runs the agent CLIs (Claude Code, Codex and so on) that are installed 
 Details: [Host and providers → On another machine](/User-Guide/Host-and-Providers#on-another-machine).
 
 ## What you should see
-Within a few seconds of enrolling, the machine shows on **Host → Machines** as connected, with its system, when it was last seen, its agent CLIs and its sign-ins. A badge tells the systems apart: **Linux** for a Linux server or VM, **WSL2** (blue) for a Windows PC, whose line reads like *Linux (WSL2) · Windows 11 (build 22631)*, and **macOS** for a Mac. The Windows version shows when the PC lets WSL ask it (WSL interop); otherwise it says *Windows version unknown*. A machine running an older Rynhult shows **unknown** until it's updated. The same badge is in the **Machine** picker on Providers. Choose **Machine** when creating or registering a project; **New session** uses that project's machine and names it under **Who**, rather than offering a separate Host override.
+Within a few seconds of enrolling, the machine shows on **Host → Machines** as connected, with its system, when it was last seen, its agent CLIs and its sign-ins. A badge tells the systems apart: **Linux** for a Linux server or VM, **WSL2** (blue) for a Windows PC, whose line reads like *Linux (WSL2) · Windows 11 (build 22631)*, and **macOS** for a Mac. The Windows version shows when the PC lets WSL ask it (WSL interop); otherwise it says *Windows version unknown*. A machine running an older Rynhult shows **unknown** until it's updated. The same badge is in the **Machine** picker on Providers. Choose **Machine** when creating or registering a project. In [New session](/User-Guide/New-Session#choose-another-machine), **Machine** under **Who** starts with that project's machine and lets you choose another enrolled machine for this launch.
 
 What a machine says about itself (its host name, system and version) is shown as plain text: Rynhult removes control characters, invisible characters and characters that reverse text direction, and turns line breaks into spaces, so a machine can't make its row read like something else.
 
@@ -342,3 +342,15 @@ use **Until it reconnects** instead of repeatedly extending the schedule.
 An authenticated new machine connection ends an **until reconnect** occurrence even if Rynhult restarted before
 recording the disconnect. Routine heartbeat reports do not end a scheduled occurrence. If the outage start was
 not observed, the audit records the reconnect without inventing an outage duration.
+
+
+### Account folder policy
+
+Owner machine-account badges in Host link to [Allowed folders in Security](/User-Guide/Settings#allowed-folders).
+The target machine and its current enrollment identity must acknowledge a reviewed
+root set. Offline or older machines remain pending/unavailable, not applied. This
+build does not install or enable a root worker. The separately reviewed
+[filesystem-access workflow](/User-Guide/Settings#grant-and-undo-filesystem-access)
+requires target-local qualification for named ACLs and, separately, shared groups.
+Unqualified targets use existing OS access/local setup. Installer roots keep their
+existing behavior until the target folder service is separately provisioned.

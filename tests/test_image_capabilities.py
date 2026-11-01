@@ -386,7 +386,11 @@ async def test_record_qualifies_real_selection_and_launch_then_cli_change_refuse
 
 async def test_image_check_respects_the_owner_budget_pause(api,project,monkeypatch):
     from acc.server import budgets
-    monkeypatch.setattr(budgets,'paused',lambda *_:['Paused window'])
+    def paused(db, owner, provider, *, project_id=None, machine=None, account=None):
+        assert project_id == project['id']
+        assert provider == 'claude'
+        return ['Paused window']
+    monkeypatch.setattr(budgets, 'paused', paused)
     async def ready(method,**_):
         return {'fetched_at':__import__('time').time(),'claude':[{'id':'fable'}]} if method=='model_catalog' else {'image_input':None}
     monkeypatch.setattr(api.app.state.supervisor.broker,'call',ready)

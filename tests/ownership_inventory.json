@@ -813,6 +813,36 @@
     "other_member_status": 404
   },
   {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/team/lifetime",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "team_lifetime",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "audit": "team.extend, team.remove_limit",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/team/resume",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "team_resume_preview",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "audit": "none (read-only resume preview)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/team/resume",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "team_resume",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "audit": "team.resume, session.resume",
+    "other_member_status": 404
+  },
+  {
     "method": "GET",
     "path": "/api/sessions/{acc_id}/events",
     "source": "src/acc/server/api/sessions.py",
@@ -2001,8 +2031,8 @@
     "path": "/api/guardrails",
     "source": "src/acc/server/api/settings_routes.py",
     "handler": "get_guardrails",
-    "principal": "owner/member / installation API token",
-    "ownership": "Installation guardrail description readable by every principal; editing remains owner-only.",
+    "principal": "signed-in person (no installation API token)",
+    "ownership": "Effective instance rules; custom patterns redacted for members.",
     "audit": "none (read/protocol step; no durable access event)"
   },
   {
@@ -2010,9 +2040,9 @@
     "path": "/api/guardrails",
     "source": "src/acc/server/api/settings_routes.py",
     "handler": "put_guardrails",
-    "principal": "owner / installation API token",
-    "ownership": "Trusted installation administrator; resource IDs do not delegate authority.",
-    "audit": "guardrails.update"
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Recently verified owner browser and explicit policy revision; stop affected sessions before tightening/custom block changes.",
+    "audit": "security.policy.applied; guardrails.update"
   },
   {
     "method": "GET",
@@ -2636,8 +2666,8 @@
     "path": "/api/tools/policy",
     "source": "src/acc/server/api/tools.py",
     "handler": "policies",
-    "principal": "owner / installation API token",
-    "ownership": "Trusted installation administrator; resource IDs do not delegate authority.",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Human owner read-only historical exemptions; changes require scoped Security preview/apply.",
     "audit": "none (read/protocol step; no durable access event)"
   },
   {
@@ -2645,9 +2675,9 @@
     "path": "/api/tools/policy",
     "source": "src/acc/server/api/tools.py",
     "handler": "policy",
-    "principal": "owner / installation API token",
-    "ownership": "Trusted installation administrator; resource IDs do not delegate authority.",
-    "audit": "tool.policy"
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Human owner read-only historical exemptions; changes require scoped Security preview/apply.",
+    "audit": "security.policy.refused (retired 410; token or missing verification 403)"
   },
   {
     "method": "GET",
@@ -4210,5 +4240,187 @@
     "ownership": "ctx.project_for; project owner only (instance owner may manage personal projects). Changes restricted to managed non-group projects.",
     "audit": "project.first_commit (created only; no push)",
     "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/effective",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "effective",
+    "principal": "signed-in person (no installation API token)",
+    "ownership": "Own project or owner-only instance view; members receive no source identifiers.",
+    "audit": "security.policy.refused/conflict/failed on denied reads; no successful read event"
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/scopes",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "scopes",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner-only registry and configured scope inventory.",
+    "audit": "security.policy.refused/conflict/failed on denied reads; no successful read event"
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/changes/preview",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "preview",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Recently verified owner browser; known scopes, revision and session-bound preview.",
+    "audit": "security.policy.preview; security.policy.refused/conflict/failed (safe outcome after rollback)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/changes/{change_id}/apply",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "apply",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Same recently verified owner browser and unexpired preview; CAS revision, confirmed stops for tightening.",
+    "audit": "security.policy.applied; security.policy.refused/conflict/failed (safe outcome after rollback)",
+    "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/changes/{change_id}",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "change",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner-only own preview status.",
+    "audit": "security.policy.refused/conflict/failed on denied reads; no successful read event",
+    "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/folders",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "folders",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner-only saved account roots and truthful target availability; no member roots or metadata.",
+    "audit": "security.policy.refused/conflict/failed on denied reads; no successful read event"
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/folders/check",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "check",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner-only concrete enrolled machine/assigned account. Browser-bound, expiring preview and revision CAS; stops and target/broker acknowledgement required for mutation.",
+    "audit": "security.folders.check"
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/folders/preview",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "preview",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner-only concrete enrolled machine/assigned account. Browser-bound, expiring preview and revision CAS; stops and target/broker acknowledgement required for mutation.",
+    "audit": "security.folders.preview"
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/folders/{operation_id}/apply",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "apply",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Recently verified approving owner browser; expiring preview, canonical machine/account, digest and revision CAS. Target/account-service acknowledgement required; policy reload does not require stopping sessions. OS grants remain separate.",
+    "audit": "security.folders.requested, security.folders.applied",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/folders/{operation_id}/retry",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "retry",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Any recently verified human owner; exact approved roots and switch, current machine identity and desired policy. Durable target status permits audited expired-unstarted delivery recovery; acknowledgement required, no policy reload stop requirement.",
+    "audit": "security.folders.recovered, security.folders.applied",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/folders/{operation_id}/recover",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "recover",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Any recently verified human owner; current published unacknowledged operation and canonical target. Target consent digest binds acknowledged roots/switch and mapping. Worker closes abandoned intent under lock and reloads only the acknowledged policy above its abandoned revision. No OS access grant.",
+    "audit": "security.folders.recovery_requested, security.folders.recovered",
+    "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/folders/operations/{operation_id}",
+    "source": "src/acc/server/api/security_folders.py",
+    "handler": "reviewed_operation",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Any recently verified human owner; only current published unacknowledged operations, bound to enrolled machine identity. Target status supplies a consent-bound recovery preview; unpublished previews remain browser-bound.",
+    "audit": "none (owner-only reviewed-operation read)",
+    "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/security/access",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "grants",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner browser approvals bound to approving login, canonical machine/account, digest, expiry and revision; agent/member cannot inspect or approve OS grants.",
+    "audit": "security.access.preview/requested/applied/partial/repair/undone; no contents or ACL ledger."
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/access/preview",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "preview",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner browser approvals bound to approving login, canonical machine/account, digest, expiry and revision; agent/member cannot inspect or approve OS grants.",
+    "audit": "security.access.preview/requested/applied/partial/repair/undone; no contents or ACL ledger."
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/access/{operation_id}/undo-preview",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "undo_preview",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner browser approvals bound to approving login, canonical machine/account, digest, expiry and revision; agent/member cannot inspect or approve OS grants.",
+    "audit": "security.access.preview/requested/applied/partial/repair/undone; no contents or ACL ledger.",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/access/{operation_id}/apply",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "apply",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner browser approvals bound to approving login, canonical machine/account, digest, expiry and revision; agent/member cannot inspect or approve OS grants.",
+    "audit": "security.access.preview/requested/applied/partial/repair/undone; no contents or ACL ledger.",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/access/{operation_id}/refresh",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "refresh",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Owner browser approvals bound to approving login, canonical machine/account, digest, expiry and revision; agent/member cannot inspect or approve OS grants.",
+    "audit": "security.access.preview/requested/applied/partial/repair/undone; no contents or ACL ledger.",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/access/{operation_id}/cancel",
+    "source": "src/acc/server/api/security_access.py",
+    "handler": "cancel",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Original approving owner, recently verified; target serializes cancellation tombstone against late apply. Cannot cancel started access.",
+    "audit": "security.access.cancelled; no contents or ACL ledger.",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/security/sessions/{session_id}/machine-gone",
+    "source": "src/acc/server/api/security_settings.py",
+    "handler": "machine_gone",
+    "principal": "signed-in human owner (no installation API token)",
+    "ownership": "Verified human owner confirms the exact removed machine; no enrolled/connected/local machine or running session; stop marker only, no process action.",
+    "audit": "security.session.stop_marker_cleared; security.policy.refused/conflict/failed on errors",
+    "other_member_status": 403
   }
 ]

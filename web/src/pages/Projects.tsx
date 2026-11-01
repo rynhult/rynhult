@@ -2,7 +2,8 @@ import { ProjectDeleteDialog } from "../components/ProjectDelete";
 import { CollectionTable, CollectionView, useCollectionView } from "../components/CollectionView";
 import { desktopBuild } from "../lib/desktop";
 import { useSingleMutation as useMutation } from "../lib/mutations";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { clearDraft, loadDraft, saveDraft } from "../lib/drafts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Archive as ArchiveIcon, ArrowRight, FolderGit2, FolderPlus, MoreHorizontal, Plus, ShieldCheck } from "lucide-react";
@@ -12,7 +13,7 @@ import { useNewSession } from "../components/newSession";
 import { needsYou } from "../lib/order";
 import { lineClass } from "../components/Changes";
 import { useInstance, useProjects, useRole, useSessions } from "../lib/queries";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, post } from "../lib/api";
 import type { ComposeReview, Container, Project } from "../lib/types";
 import { Badge, Button, Card, Dialog, Dot, Empty, ErrorNote, Field, Input, Page, PageHeader, Popover, SearchInput, Select, Skeleton, Toolbar } from "../components/ui";
@@ -23,10 +24,13 @@ import { NewProjectDialog } from "../components/NewProject";
 /** Register a folder that already exists (or one on another machine): the advanced path; New project makes one. */
 function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const { owner } = useRole();
+  const { owner, username } = useRole();
   const instance = useInstance();
   const root = instance.workspaces_root ?? "/srv/acc/workspaces";
-  const [form, setForm] = useState({ slug: "", name: "", workspace_path: "", repo: "", import_mode: "managed", host: "local", account: "" });
+  const blank = { slug: "", name: "", workspace_path: "", repo: "", import_mode: "managed", host: "local", account: "" };
+  const storeKey = `import-folder:${username ?? 'current'}`;
+  const [form, setForm] = useState(() => loadDraft<typeof blank>(storeKey) ?? blank);
+  useEffect(() => { saveDraft(storeKey, form); }, [storeKey, form]);
   const nodes = useNodes(open && owner);
   const slug = form.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const machineAccounts = form.host === "local" ? [] : ((nodes.data ?? []).find((n) => n.name === form.host)?.accounts ?? []);
@@ -35,11 +39,14 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
       ...form, slug, repo: form.repo || null, workspace_path: form.workspace_path || `${root}/${slug}`,
       account: form.host !== "local" && form.account ? form.account : null,
     }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["projects"] }); onClose(); },
+    onSuccess: () => { clearDraft(storeKey); setForm(blank); queryClient.invalidateQueries({ queryKey: ["projects"] }); onClose(); },
   });
   return (
     <Dialog open={open} onClose={onClose} title="Register a folder" description="A folder that already exists. Rynhult doesn't create or move it." dismissible={false}>
       <div className="space-y-4">
+        <p className="text-sm text-muted">Use where it is: no move, clone, Git initialization, commit or identity changes. Unregistering leaves the original folder intact.</p>
+        {owner ? <Link to={`/settings/security/folders?machine=${encodeURIComponent(form.host)}&account=${encodeURIComponent(form.account || machineAccounts[0] || instance.agent_user)}`}>Allowed folders in Security</Link>
+          : <p className="text-sm text-muted">Ask an owner to allow this folder if the agent account cannot use it.</p>}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name"><Input value={form.name} maxLength={200} onChange={(e) => setForm({ ...form, name: e.target.value, slug: form.slug || e.target.value })} autoFocus /></Field>
           <Field label="Slug"><Input value={slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} /></Field>
@@ -60,15 +67,15 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Select>
           </Field>
         )}
-        <Field label="Workspace path" hint={form.host === "local" ? `A folder that already exists in ${root}. To have Rynhult make one, use New project.` : `A folder on ${form.host} that its agent account can use (e.g. /srv/acc/workspaces/${slug || "<slug>"}).`}>
+        <Field label="Workspace path" hint={form.host === "local" ? `An existing folder the selected agent account is allowed and able to use. The default workspace is ${root}.` : `A folder on ${form.host} that its agent account can use (e.g. /srv/acc/workspaces/${slug || "<slug>"}).`}>
           <Input value={form.workspace_path} placeholder={`${root}/${slug || "<slug>"}`} onChange={(e) => setForm({ ...form, workspace_path: e.target.value })} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="GitHub repo (optional)"><Input value={form.repo} placeholder="owner/name" onChange={(e) => setForm({ ...form, repo: e.target.value })} /></Field>
           <Field label="Mode">
             <Select value={form.import_mode} onChange={(e) => setForm({ ...form, import_mode: e.target.value })}>
-              <option value="managed">Sessions allowed</option>
-              <option value="readonly">Read-only</option>
+              <option value="managed">Let agents work here</option>
+              <option value="readonly">Review only</option>
             </Select>
           </Field>
         </div>
@@ -217,7 +224,10 @@ export function Projects() {
   const { view, toggle } = useCollectionView("projects");
   const { host } = useInstance();
   const [deleting, setDeleting] = useState<Project | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [manualAdding, setAdding] = useState(false);
+  const [search, setSearch] = useSearchParams();
+  const adding = manualAdding || search.get('import') === 'existing';
+  const closeImport = () => { setAdding(false); const next = new URLSearchParams(search); next.delete('import'); setSearch(next, { replace: true }); };
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
@@ -331,7 +341,7 @@ export function Projects() {
         <Empty icon={FolderGit2} action={<Button variant="primary" onClick={() => setCreating(true)}><FolderPlus size={14} aria-hidden="true" /> New project</Button>}>
           No projects yet. Start one from an empty folder or a repository: Rynhult makes the folder for you.
         </Empty>)}</Card>}
-      <NewProject open={adding} onClose={() => setAdding(false)} />
+      <NewProject open={adding} onClose={closeImport} />
       {/* A new project opens its page, where New session is the next step (first-run review). */}
       {deleting && <ProjectDeleteDialog project={deleting} onClose={() => setDeleting(null)} />}
       <NewProjectDialog open={creating} onClose={() => setCreating(false)} onCreated={(made) => navigate(`/projects/${made.id}`)} />

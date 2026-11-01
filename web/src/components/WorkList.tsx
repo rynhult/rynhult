@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, MoreHorizontal } from 'lucide-react';
 import { api, ApiError, isNotFound } from '../lib/api';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
+import { useRole } from '../lib/queries';
 import { stamp } from '../lib/format';
 import { useSingleMutation as useMutation } from '../lib/mutations';
 import { Badge, Button, Card, CardHeader, ErrorNote, IconButton, Input, Note, Popover, Select, Textarea } from './ui';
@@ -24,7 +25,7 @@ interface Item {
   answer: string | null; answered_by: string | null; answered_at: string | null; note: string | null;
   source: string; owner_edited: boolean; links: { kind: string; id: string }[]; done_at: string | null;
 }
-interface List { now: string; now_updated_at: string | null; now_updated_by: string | null; now_revision: number; revision: number; idle_minutes: number; items: Item[] }
+interface List { project_id?: number; now: string; now_updated_at: string | null; now_updated_by: string | null; now_revision: number; revision: number; idle_minutes: number; items: Item[] }
 type ItemPatch = Partial<Pick<Item, 'answer' | 'blocks' | 'position' | 'state'>> & { answer_text?: string };
 interface ItemConflict { before: Item; current: Item; body: ItemPatch; reason: string }
 
@@ -93,7 +94,7 @@ export function WorkList({ teamId }: { teamId: string }) {
   const section = (title: string, items: Item[], empty: string) => <section aria-label={title} className="space-y-2">
     <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{title}</h3>
     {items.length ? <ol className="space-y-2">{items.map((item, index) =>
-      <ItemRow key={item.id} teamId={teamId} item={item} busy={change.isPending}
+      <ItemRow key={item.id} teamId={teamId} projectId={list.project_id} item={item} busy={change.isPending}
         conflict={cardConflicts[item.id]}
         onChange={(body, base = item) => change.mutate({ item: base, body })}
         up={index > 0 ? () => move(items, index, -1) : undefined}
@@ -112,7 +113,7 @@ export function WorkList({ teamId }: { teamId: string }) {
       {change.error && !(change.error instanceof ApiError && change.error.status === 409) ? <ErrorNote error={change.error} /> : null}
       {closed.length > 0 && <details className="text-sm" open={closed.some(i => !!cardConflicts[i.id]) || undefined}>
         <summary className="cursor-pointer text-xs text-muted">Done and dismissed ({closed.length})</summary>
-        <ol className="mt-2 space-y-2">{closed.map((item) => <ItemRow key={item.id} teamId={teamId} item={item} busy={change.isPending}
+        <ol className="mt-2 space-y-2">{closed.map((item) => <ItemRow key={item.id} teamId={teamId} projectId={list.project_id} item={item} busy={change.isPending}
           conflict={cardConflicts[item.id]} onChange={(body, base = item) => change.mutate({ item: base, body })} />)}</ol>
       </details>}
     </div>
@@ -158,10 +159,11 @@ function NowEditor({ teamId, list, onSaved }: { teamId: string; list: List; onSa
   </section>;
 }
 
-function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
-  teamId: string; item: Item; busy: boolean; conflict?: ItemConflict; onChange: (body: ItemPatch, base?: Item) => void; up?: () => void; down?: () => void;
+function ItemRow({ teamId, projectId, item, busy, conflict, onChange, up, down }: {
+  teamId: string; projectId?: number; item: Item; busy: boolean; conflict?: ItemConflict; onChange: (body: ItemPatch, base?: Item) => void; up?: () => void; down?: () => void;
 }) {
   // A typed answer is kept for this tab until the card is answered: a refresh or Back brings it back.
+  const { owner } = useRole();
   const replyKey = `answer:${item.id}`;  // item ids are unique across teams
   const [changing, setChanging] = useState(!!conflict?.body.answer_text);
   const [discussing, setDiscussing] = useState(false);
@@ -187,7 +189,7 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
   }, [replyKey, reply]);
   const retry = (!!conflict && conflict.current.revision !== conflict.before.revision) || changedSince;
   const differences = conflict || changedSince ? cardChanges(conflict?.before ?? seen!, item) : [];
-  const unansweredDecision = item.kind === 'decision' && item.answer === null;
+  const unansweredDecision = (item.kind === 'decision' || item.kind === 'need') && item.answer === null;
   const labelOf = (id: string | null) => item.options?.find((o) => o.id === id)?.label ?? id;
   const pendingChoice = item.kind === 'decision' ? conflict?.body.answer : undefined;
   const canEditBlocks = (!closed || conflict?.body.blocks !== undefined) && (item.kind === 'decision' || item.kind === 'question');
@@ -285,6 +287,14 @@ function ItemRow({ teamId, item, busy, conflict, onChange, up, down }: {
           placeholder={item.kind === 'need' ? 'Done, or what happened' : 'Your answer'} />
         <Button type="submit" variant="primary" size="sm" disabled={!reply.trim() || busy}>{retry ? 'Resend answer' : 'Answer'}</Button>
       </form>)}
+    {answerable && item.kind === 'need' && <div className="flex flex-wrap items-center gap-2">
+      {/image|poster|screenshot|picture|drawing|photo|reference/i.test(item.title + ' ' + item.steps) && <>
+        <p className="w-full text-xs text-muted">Unreadable reference? Check image access or upload a clearer file. Skipping does not change requirements or constraints.</p>
+        {owner && <Link className="inline-flex min-h-11 items-center text-sm text-accent underline" to="/settings#image-access">Check image access</Link>}
+        {projectId && <Link className="inline-flex min-h-11 items-center text-sm text-accent underline" to={`/projects/${projectId}#project-brief`}>Upload a reference</Link>}
+      </>}
+      <Button size="sm" disabled={busy} onClick={() => answer('Skip this input; do not change requirements or constraints without asking.')}>Skip this input</Button>
+    </div>}
     {item.kind === 'decision' && <CardDiscussion teamId={teamId} item={item} editing={discussing} onClose={() => setDiscussing(false)} />}
     <div className="flex flex-wrap gap-2">
       {/* A decision is closed by answering it (owner decision 2026-10-26): no Mark done or Dismiss until then. */}

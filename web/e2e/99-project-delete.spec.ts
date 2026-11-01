@@ -42,7 +42,7 @@ for (const managed of [true, false]) test(`${managed ? 'managed checkout' : 'reg
   await confirm.click();
   expect((await deleted).ok()).toBeTruthy();
   await expect(dialog).toBeHidden();
-  expect(existsSync(project.workspace_path)).toBe(!managed);
+  await expect.poll(() => existsSync(project.workspace_path)).toBe(!managed);
   await expect(page).toHaveURL(/\/projects$/);
 });
 

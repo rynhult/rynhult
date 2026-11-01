@@ -1422,6 +1422,8 @@ def command(cmd: Command, cwd: str | None, ctx: dict, feed) -> tuple[tuple[str, 
             if sub == "fetch" and any(w.dynamic or ":" in w.text and protected(Word(w.text.lstrip("+").rsplit(":", 1)[1]))
                                       for w in rest if not w.text.startswith("-")):
                 return ("team", "team members cannot switch to or rewrite main/master"), cwd
+        # Team integration authority is mandatory even when optional Security
+        # guardrails are Off for this generation.
         rules = {**rules, "push_default": True}
     verdict = check_push(words, here, rules)
     if verdict:

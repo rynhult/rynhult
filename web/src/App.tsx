@@ -20,6 +20,7 @@ const Layout = lazy(() => lazyImport(() => import("./components/Layout")).then((
 const HighAvailability = lazy(() => lazyImport(() => import("./pages/HighAvailability")).then((m) => ({ default: m.HighAvailability })));
 const WorkspaceFiles = lazy(() => lazyImport(() => import("./pages/WorkspaceFiles")).then((m) => ({ default: m.WorkspaceFiles })));
 const Overview = lazy(() => lazyImport(() => import("./pages/Overview")).then((m) => ({ default: m.Overview })));
+const AllowedFolders = lazy(() => lazyImport(() => import("./pages/AllowedFolders")));
 const Projects = lazy(() => lazyImport(() => import("./pages/Projects")).then((m) => ({ default: m.Projects })));
 const SessionPage = lazy(() => lazyImport(() => import("./pages/SessionPage")).then((m) => ({ default: m.SessionPage })));
 const InviteAccept = lazy(() => lazyImport(() => import("./pages/Auth")).then((m) => ({ default: m.InviteAccept })));
@@ -124,6 +125,7 @@ function AppContent() {
             <Route path="/audit" element={<OwnersOnly><Audit /></OwnersOnly>} />
             <Route path="/groups" element={<Feature name="groups" page><Groups /></Feature>} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/settings/security/folders" element={<OwnersOnly><AllowedFolders /></OwnersOnly>} />
             <Route path="/settings/remote-access" element={<OwnersOnly><Feature name="remote_access" page><RemoteAccess /></Feature></OwnersOnly>} />
             <Route path="/search" element={<Search />} />
             <Route path="/grid" element={<Grid />} />

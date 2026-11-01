@@ -405,6 +405,17 @@ class Node:
                 capabilities.append('request-replies-v1')
         except OSError:
             pass  # older/unprovisioned or same-account platforms remain unconfirmed
+        try:
+            import stat
+
+            socket = self.config.folder_policy_socket
+            if socket is None:
+                return capabilities
+            info = os.stat(socket, follow_symlinks=False)
+            if stat.S_ISSOCK(info.st_mode) and info.st_uid == 0:
+                capabilities.append('folder-policy-v1')
+        except OSError:
+            pass
         return capabilities
 
     async def machine_info(self) -> dict:
@@ -477,7 +488,7 @@ class Node:
             kind = data.get("t")
         except (ValueError, AttributeError):
             data, kind = None, None
-        if len(message) > MAX_TEXT and kind != 'request-replies':
+        if len(message) > MAX_TEXT and kind != 'request-replies' and not (kind == 'folder-policy' and len(message.encode()) <= 65536):
             return  # only the bounded server acknowledgement batch gets the larger frame
         if kind == "update":
             await asyncio.to_thread(self.updates.handle, data)
@@ -495,6 +506,16 @@ class Node:
         elif kind == "packages" and self.packages is not None and len(message) <= MAX_MESSAGE:
             self.packages.handle(data)  # checked there: catalog names and fixed actions only, rate-limited
             await self.send_packages(ws)
+        elif kind == 'folder-policy':
+            from .folder_policy import handle
+            tasks = getattr(self, '_tool_tasks', None)
+            if tasks is None:
+                self._tool_tasks = tasks = set()
+            if not any(getattr(t, 'folder_request', False) for t in tasks):
+                task = asyncio.create_task(handle(ws, data, self.config.node_id, self.config.folder_policy_socket))
+                task.folder_request = True
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
         elif kind == "host" and isinstance(data.get("id"), str) and len(data["id"]) <= 64:
             tasks = getattr(self, "_tool_tasks", None)
             if tasks is None:

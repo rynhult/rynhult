@@ -22,7 +22,7 @@ def wrapup(team, caller, at=None):
 def allowed(team, caller, action, at=None):
     at = at or utcnow()
     return bool(team and caller and caller.desired_state == 'running' and (
-        (not team.stopped and at < team.expires_at) or
+        (not team.stopped and (team.expires_at is None or at < team.expires_at)) or
         (wrapup(team, caller, at) and action in WRAPUP_ACTIONS)))
 
 
@@ -36,6 +36,8 @@ def require_action(db, caller, action):
 
 def deadline(db, team):
     # Bound to the original expiry, never to a delayed supervisor pass/restart.
+    if team.expires_at is None:
+        raise LaunchRefused('This team has no time limit to expire.')
     return team.expires_at + timedelta(minutes=wrapup_minutes(db))
 
 

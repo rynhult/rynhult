@@ -160,6 +160,7 @@ export interface MultiRunGroup {
 }
 
 export interface SessionDetail extends SessionSummary {
+  security_older_settings?: boolean;
   launch_spec: { inputs: Record<string, unknown>; files: Record<string, string>; digest: string };
   runs: Run[];
   editor: { ssh_host: string; path: string } | null;  // "Open in editor" (local sessions, when Rynhult knows its SSH host)

@@ -106,7 +106,10 @@ def test_transcript_id_must_be_a_uuid(env):
         ops.transcript_exists("claude", "*")
 
 
-async def test_peer_uid_not_allowed_is_disconnected(env):
+async def test_peer_uid_not_allowed_is_disconnected(env, monkeypatch):
+    # Root has a separate policy-publication channel; exercise an ordinary denied peer
+    # regardless of the account running the gates.
+    monkeypatch.setattr('acc.broker.server.peer_uid', lambda writer: 999998)
     config = dataclasses.replace(env["broker"], allowed_uids=frozenset({999999}))
     task = asyncio.create_task(serve(config))
     await wait_for(config.socket_path.exists)

@@ -163,6 +163,8 @@ def register(api, ctx):
                 with ctx.db() as s:
                     p = project_for(s, who, project_id)
                     for session in s.scalars(select(Session).where(Session.project_id == project_id)):
+                        from ..security_settings import clear_stop_marker
+                        clear_stop_marker(s, session, actor=who.username, reason='project_delete_checked')
                         session.deleted_project = {'slug': p.slug, 'name': p.name, 'host': session.host}
                         session.project_id = None
                         session.placement_id = None

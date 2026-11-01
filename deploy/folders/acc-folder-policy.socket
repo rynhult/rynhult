@@ -1,0 +1,15 @@
+[Unit]
+Description=Rynhult reviewed folder operations
+
+[Socket]
+ListenStream=/run/acc-folder-policy/helper.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=acc
+DirectoryMode=0750
+Accept=yes
+MaxConnections=4
+
+[Install]
+Alias=rynhult-folder-policy.socket
+WantedBy=sockets.target

@@ -136,6 +136,9 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
         <ErrorNote error={ack.error || snooze.error} />
       </div>
       <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-auto">
+        {item.session_id && (item.kind === 'team_expired' || item.kind === 'team_lifetime') && <Link to={`/sessions/${item.session_id}?tab=team#overview`} className="inline-flex min-h-11 items-center rounded-md border border-line-strong px-3 text-sm text-accent">
+          {item.kind === 'team_expired' ? 'Resume team' : 'Review team time limit'}
+        </Link>}
         {item.session_id && (
           <Link to={`/sessions/${item.session_id}`} className={clsx("inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2.5 text-[12.5px] font-medium",
             prompt && open ? "bg-accent text-accent-ink hover:brightness-110" : "border border-line-strong bg-panel-2 text-fg hover:bg-panel-3")}>

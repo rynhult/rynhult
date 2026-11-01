@@ -27,6 +27,17 @@ def orchestrator_preview(monkeypatch):
 # with how a member is answered when it's someone else's: 404 (not theirs, existence not revealed) or 403
 # (owner-only).
 MATRIX = {
+    ("POST", "/api/security/access/{operation_id}/cancel"): 403,
+    ("POST", "/api/security/access/{operation_id}/apply"): 403,
+    ("POST", "/api/security/access/{operation_id}/undo-preview"): 403,
+    ("POST", "/api/security/access/{operation_id}/refresh"): 403,
+    ("GET", "/api/security/folders/operations/{operation_id}"): 403,
+    ("POST", "/api/security/folders/{operation_id}/apply"): 403,
+    ("POST", "/api/security/folders/{operation_id}/retry"): 403,
+    ("POST", "/api/security/folders/{operation_id}/recover"): 403,
+    ('POST', '/api/security/changes/{change_id}/apply'): 403,
+    ('POST', '/api/security/sessions/{session_id}/machine-gone'): 403,
+    ('GET', '/api/security/changes/{change_id}'): 403,
     ("GET", "/api/projects/{project_id}/first-commit"): 404,
     ("POST", "/api/projects/{project_id}/first-commit"): 404,
     ("GET", "/api/projects/{project_id}/delete"): 404,
@@ -190,6 +201,9 @@ MATRIX = {
     ("GET", "/api/sessions/{acc_id}"): 404,
     ("GET", "/api/sessions/{acc_id}/team"): 404,
     ("POST", "/api/sessions/{acc_id}/team/stop"): 404,
+    ("POST", "/api/sessions/{acc_id}/team/lifetime"): 404,
+    ("GET", "/api/sessions/{acc_id}/team/resume"): 404,
+    ("POST", "/api/sessions/{acc_id}/team/resume"): 404,
     ("GET", "/api/sessions/{acc_id}/events"): 404,
     ("GET", "/api/sessions/{acc_id}/changes"): 404,
     ("GET", "/api/sessions/{acc_id}/explanation"): 404,
@@ -284,7 +298,7 @@ MATRIX = {
     ("PUT", "/api/containers/limits/{account}"): 403,  # owners only
     ("POST", "/api/projects/{project_id}/containers"): 403,
 }
-OWNER_ONLY = [("POST", "/api/providers/image-check"), ("PUT", "/api/gates/wrapup"), ("PUT", "/api/gates/projects/{project_id}/flakes"), ("POST", "/api/gates/{job_id}/accept-retry"), ("GET", "/api/admin-features"),("GET", "/api/remote-access/review"), ("POST", "/api/remote-access/apply"),
+OWNER_ONLY = [('GET', '/api/security/access'), ('POST', '/api/security/access/preview'), ('GET', '/api/security/folders'), ('POST', '/api/security/folders/check'), ('POST', '/api/security/folders/preview'), ('GET', '/api/security/scopes'), ('POST', '/api/security/changes/preview'), ("POST", "/api/providers/image-check"), ("PUT", "/api/gates/wrapup"), ("PUT", "/api/gates/projects/{project_id}/flakes"), ("POST", "/api/gates/{job_id}/accept-retry"), ("GET", "/api/admin-features"),("GET", "/api/remote-access/review"), ("POST", "/api/remote-access/apply"),
               ("POST", "/api/remote-access/off"), ("GET", "/api/remote-access"), ("PUT", "/api/remote-access"),
               ("GET", "/api/remote-access/policy"), ("GET", "/api/devices/pairings"),
               ("GET", "/api/telemetry"), ("GET", "/api/telemetry/preview"),
@@ -357,7 +371,7 @@ async def _idle(api, acc_id):
 
 
 def fill(path: str, w: dict) -> str:
-    return (path.replace("{team_id}", w["session"]["id"]).replace("{reference_id}", "REF-1").replace("{lead}", w["session"]["id"]).replace("{number}", "1").replace("{binding_id}", "a" * 32).replace("{report_id}", "not-your-report").replace("{id}", w["pairing"] if "/pairings/" in path else w["browser_device"]).replace("{identifier:int}", "1").replace("{entry_id}", "example-address").replace("{server_id}", "a" * 16).replace("{schedule_id}", w["schedule"]).replace("{project_id}", str(w["project"]["id"])).replace("{acc_id}", w["session"]["id"])
+    return (path.replace("{change_id}", "a" * 32).replace("{team_id}", w["session"]["id"]).replace("{reference_id}", "REF-1").replace("{lead}", w["session"]["id"]).replace("{number}", "1").replace("{binding_id}", "a" * 32).replace("{report_id}", "not-your-report").replace("{id}", w["pairing"] if "/pairings/" in path else w["browser_device"]).replace("{identifier:int}", "1").replace("{entry_id}", "example-address").replace("{server_id}", "a" * 16).replace("{schedule_id}", w["schedule"]).replace("{project_id}", str(w["project"]["id"])).replace("{acc_id}", w["session"]["id"])
             .replace("{target_id}", "a" * 32).replace("{folder}", "nothing-here").replace("{kind}", "project").replace("{key}", str(w["project"]["id"]))
             .replace("{item_id}", str(w["item"])).replace("{request_id}", "pub-ownertest01")
             .replace("{device_id}", str(w["device"])).replace("{user_id}", "1").replace("{invite_id}", "1")
@@ -497,6 +511,14 @@ def test_every_resource_route_is_covered(api):
         if key in OWNER_ONLY:
             # Device policy and DNS metadata deliberately require a human owner, unlike ctx.owner.
             human_owner = key in {
+                ('GET', '/api/security/folders'),
+                ('GET', '/api/security/access'), ('POST', '/api/security/access/preview'),
+                ('POST', '/api/security/folders/check'),
+                ('POST', '/api/security/folders/preview'),
+                ('POST', '/api/security/changes/preview'),
+                ('GET', '/api/security/scopes'),
+                ('GET', '/api/tools/policy'), ('PUT', '/api/tools/policy'),
+                ('PUT', '/api/guardrails'),
                 ('GET', '/api/dns/providers'),
                 ('GET', '/api/remote-access'), ('PUT', '/api/remote-access'),
                 ('GET', '/api/remote-access/policy'), ('GET', '/api/devices/pairings'),

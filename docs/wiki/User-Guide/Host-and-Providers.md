@@ -36,6 +36,8 @@ restore check) and independent S3 retention maintenance start off. See [Backups]
 
 **Agent accounts** shows, for each person's agent account, the CPU, memory and processes its [sessions](/User-Guide/Glossary#session) use against its limits, and its disk use (measured every 15 minutes).
 
+Owners can open **Allowed folders in Security** from Host. Machine account badges open that account's Security settings; **Allowed folders** opens its folder policy. These links have full-size tap targets on phones, including in **Add machine**.
+
 ### Another machine's details (owners)
 When Rynhult runs sessions on other machines ([Nodes](/User-Guide/Nodes)), owners can see each one's health on the same page.
 

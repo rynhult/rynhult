@@ -131,7 +131,7 @@ def decide(db, session, signal=None, assistant='', turn=None, now=None, usage_wi
         state.pop('notice', None)
     command = None
     waiting = state.get('waiting')
-    if budgets.paused(db, session.owner or '@api', session.provider):
+    if budgets.paused(db, session.owner or '@api', session.provider, project_id=session.project_id, machine=session.host, account=session.run_as):
         state['notice'] = 'Your budget pauses automated continuations'
     elif session.observed_state == 'idle':
         if waiting:

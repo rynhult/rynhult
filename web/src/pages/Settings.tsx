@@ -13,7 +13,7 @@ import { Devices } from "../components/Devices";
 import { NotificationDevices, NotificationSettings } from "../components/NotificationDevices";
 import { Passkeys } from "../components/Passkeys";
 import { PasswordCard, People, SignIns } from "../components/People";
-import { Guardrails } from "../components/Guardrails";
+import { SecuritySettings } from "../components/SecuritySettings";
 import { ToolPolicies } from "../components/Tools";
 import { Budgets } from "../components/Budgets";
 import { ContainerLimits } from "../components/Containers";
@@ -28,7 +28,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useInstance } from "../lib/queries";
 import type { AuthState } from "../lib/types";
 
-const PERSONAL = ['Access devices', 'Passkeys', 'Password', 'Sign-ins', 'Notifications', 'Notification devices', 'Keys', 'Risk labels', 'Guardrails', 'Certificate'];
+const PERSONAL = ['Access devices', 'Passkeys', 'Password', 'Sign-ins', 'Notifications', 'Notification devices', 'Keys', 'Risk labels', 'Guardrails', 'Security', 'Certificate'];
 const INSTANCE = ['Admin features', 'Remote access', 'Usage and bug reports', 'Updates', 'Publishing', 'People', 'Company sign-in', 'DNS', 'Issue sources', 'Tool approvals', 'Budgets', 'Selection allow-lists', 'Image access', 'Container limits'];
 const anchor = (name: string) => name.toLowerCase().replaceAll(' ', '-');
 const RENAMED: Record<string, string> = { 'your-devices': 'access-devices', devices: 'notification-devices' };
@@ -225,7 +225,8 @@ export function Settings() {
       {owner && <SettingsSection name="DNS"><DNSSettings /></SettingsSection>}
       {owner && <Feature name="issue_sources"><SettingsSection name="Issue sources"><IssueServers /></SettingsSection></Feature>}
       <Feature name="risk_labels"><SettingsSection name="Risk labels"><RiskLabelsSetting /></SettingsSection></Feature>
-      <SettingsSection name="Guardrails"><Guardrails owner={owner} /></SettingsSection>
+      <SettingsSection name="Guardrails"><Card><CardHeader title="Guardrails" subtitle="Guardrail switches now have one scoped editor in Security."/><div className="p-4"><Link className={buttonClass()} to="#security">Open Security settings</Link></div></Card></SettingsSection>
+      <SettingsSection name="Security"><SecuritySettings owner={owner}/></SettingsSection>
       {owner && <SettingsSection name="Tool approvals"><ToolPolicies /></SettingsSection>}
       {owner && <SettingsSection name="Budgets"><Budgets /></SettingsSection>}
       {owner && instance.orchestrator && <Feature name="orchestrator"><SettingsSection name="Selection allow-lists"><SelectionPreferences /></SettingsSection></Feature>}

@@ -162,6 +162,7 @@ async def test_reconcile_skips_a_stopped_session_whose_pane_is_gone(api, project
     {"desired_state": "running"}, {"observed_state": "exited"}, {"container": True}, {"team_stop_pending": True},
     {"multirun_stop_pending": True}, {"idle_since": "now"},
     {"multirun_id": "m1", "last_error": "stop not confirmed: still running"},
+    {"last_error": "stop not confirmed: still running"},
 ])
 def test_only_a_settled_stop_is_skipped(change):
     import datetime as dt

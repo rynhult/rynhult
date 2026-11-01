@@ -63,6 +63,8 @@ class SessionIn(BaseModel):
     automation: dict = Field(default_factory=dict)
     orchestrator: dict | None = None
     worktree: bool = False  # a project session in its own git worktree and branch
+    machine: str | None = Field(None, pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    clone_on_machine: bool = False
     budget_ok: bool = False  # launch even though the person's own budget pauses this agent
     initial_prompt: str | None = Field(None, max_length=20000)
     issue_source: IssueRef | None = None
@@ -118,7 +120,7 @@ class SessionIn(BaseModel):
 
     def inputs(self, catalog=None) -> LaunchInputs:
         fields = self.model_dump(exclude={"project_id", "topic", "workspace", "name", "confirm_dangerous", "skills", "agents", "mcps",
-                                          "worktree", "budget_ok", "orchestrator", "issue_source", "automation"})
+                                          "worktree", "machine", "clone_on_machine", "budget_ok", "orchestrator", "issue_source", "automation"})
         fields = {k: (v or None) if isinstance(v, str) and k in ("model", "effort", "initial_prompt", "profile", "endpoint") else v
                   for k, v in fields.items()}
         profile = catalog.profiles.get(self.profile or "") if catalog else None

@@ -287,13 +287,14 @@ def authority(db, supervisor, caller_id):
         raise LaunchRefused('Orchestrator selection is off')
     caller=db.get(Session,caller_id)
     team=db.get(Team,caller.team_id) if caller and caller.team_id else None
-    if not team or team.stopped or now()>=team.expires_at or caller.desired_state!='running':
+    if not team or team.stopped or (team.expires_at is not None and now()>=team.expires_at) or caller.desired_state!='running':
         raise LaunchRefused('team is stopped, expired, or caller is not running')
     return caller,team
 
 
-def snapshot_budget(db, owner, agents):
-    state=budgets.status(db,owner)
+def snapshot_budget(db, owner, agents, project_id=None, machine=None, account=None):
+    from ..security_settings import resolve
+    state=budgets.status(db,owner) if resolve(db, project_id=project_id, owner=owner, machine=machine, account=account)['switches']['budget_checks'] else {}
     windows={w['id']:w for w in budgets.windows(db)} if state else {}
     result={}
     for agent in agents:
@@ -301,7 +302,7 @@ def snapshot_budget(db, owner, agents):
                'resets_at':windows.get(key,{}).get('resets_at')} for key,entry in state.items()
               if key.startswith(agent+'.') and not entry['stale']]
         result[agent]={'remaining':min((r['remaining'] for r in rows),default=None), 'windows':rows,
-                       'paused':bool(budgets.paused(db,owner,agent)), 'unit':'usage_percent'}
+                       'paused':bool(budgets.paused(db,owner,agent,project_id=project_id,machine=machine,account=account)), 'unit':'usage_percent'}
     return result
 
 
@@ -403,7 +404,7 @@ async def select_action(supervisor,caller_id,payload):
             raise LaunchRefused('selection authority changed')
         if db.scalar(select(func.count()).select_from(Selection).where(Selection.team_id==team.id))>=2000:
             raise LaunchRefused('team selection ledger limit reached')
-        budget=snapshot_budget(db,owner,agents)
+        budget=snapshot_budget(db,owner,agents,caller.project_id)
         policy=preferences(db)
         allowed=deepcopy(limits['agents'])
         for choice in allowed:
@@ -513,7 +514,7 @@ def check_candidate(db,caller,team,row,candidate,ready,*,default_account=None,ca
         author=db.get(Session,row.need['author_session'])
         if author is None or author.team_id!=team.id:
             raise LaunchRefused('review author is no longer in the team')
-    budget=snapshot_budget(db,caller.owner,{candidate['agent']})
+    budget=snapshot_budget(db,caller.owner,{candidate['agent']},caller.project_id,candidate['machine'],caller.run_as)
     policy=preferences(db)
     quota=quota_usage.snapshot(db,caller.run_as,[candidate['machine']],{candidate['agent']},
                                default_account,policy,now().timestamp(),owner=caller.owner)

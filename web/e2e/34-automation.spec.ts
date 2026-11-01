@@ -1,6 +1,6 @@
 import { openAdvanced, wikiShotPath } from "./helpers";
 import { expect, test } from '@playwright/test';
-import { AUTH_FILE, csrfHeaders, gitProject } from './helpers';
+import { AUTH_FILE, csrfHeaders, gitProject, waitForSessionState } from './helpers';
 test.use({ storageState: AUTH_FILE });
 const owned: string[] = [];
 test.beforeEach(() => { owned.length = 0; });
@@ -15,7 +15,10 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   const sid = (await r.json()).id;
   expect(r.ok()).toBe(true);
   owned.push(sid);
+  const nextWrite = () => page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `/api/sessions/${sid}/automation`);
   await page.goto(`/sessions/${sid}`);
+  await waitForSessionState(page, sid, 'idle', 'claude_hook');
   await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);  // always off the terminal
   await page.goto(`/sessions/${sid}?tab=spec#automation`);
   await page.getByRole('button', { name: 'Goal and auto-resume', exact: true }).click();
@@ -23,7 +26,9 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   await settings.getByLabel('Resume when the limit resets').check();
   await settings.getByLabel('Goal text').fill('Finish the example.lan demo');
   await settings.screenshot({ path: wikiShotPath(testInfo, "sessions-automation-settings.png") });
+  const configured = nextWrite();
   await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await configured).ok()).toBe(true);
   await expect(settings).toHaveCount(0);
   await expect(page.getByText(/\d \/ 5 continuations/)).toBeVisible();
   await page.reload();
@@ -33,32 +38,54 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   // A slow save must not erase what the person typed meanwhile (break-it B5); a double-click saves once.
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
+  let writes = 0;
   await page.route(`**/api/sessions/${sid}/automation`, async route => {
-    await gate;
+    if (route.request().method() === 'PUT') { writes++; await gate; }
     await route.continue();
   });
-  await settings.getByLabel('Goal text').fill('First edit');
+  try {
+    await settings.getByLabel('Goal text').fill('First edit');
+    const started = page.waitForRequest(request => request.method() === 'PUT'
+      && new URL(request.url()).pathname === `/api/sessions/${sid}/automation`);
+    await settings.getByRole('button', { name: 'Save', exact: true }).dblclick();
+    await started;
+    await expect(settings.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await settings.getByLabel('Goal text').fill('Keep typing during a slow save');
+    const saved = nextWrite();
+    release();
+    expect((await saved).ok()).toBe(true);
+    await expect(settings.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+    await expect(settings.getByLabel('Goal text')).toHaveValue('Keep typing during a slow save');
+    expect(writes).toBe(1);
+  } finally {
+    release();
+    await page.unroute(`**/api/sessions/${sid}/automation`);
+  }
+  const saved = nextWrite();
   await settings.getByRole('button', { name: 'Save', exact: true }).dblclick();
-  await settings.getByLabel('Goal text').fill('Keep typing during a slow save');
-  release();
-  await expect(settings.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
-  await expect(settings.getByLabel('Goal text')).toHaveValue('Keep typing during a slow save');
-  await page.unroute(`**/api/sessions/${sid}/automation`);
-  await settings.getByRole('button', { name: 'Save', exact: true }).dblclick();
+  expect((await saved).ok()).toBe(true);
   await expect(settings).toHaveCount(0);
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${sid}`)).json()).automation.goal.text)
     .toBe('Keep typing during a slow save');
+  const stopped = nextWrite();
   await page.getByRole('button', { name: 'Stop goal', exact: true }).click();
+  expect((await stopped).ok()).toBe(true);
   await expect(page.getByText('Goal status: stopped')).toBeVisible();
   await page.locator('[aria-label="Session automation"]').screenshot({ path: wikiShotPath(testInfo, "sessions-automation.png") });
   await page.getByRole('region', { name: 'Session automation' }).getByRole('button', { name: 'Edit' }).click();
   await settings.getByLabel('Goal text').fill('Continue the demo');
+  const restarted = nextWrite();
   await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await restarted).ok()).toBe(true);
   await expect(page.getByText('Goal status: running')).toBeVisible();
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
   await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').press('x');
+  await expect.poll(async () => (await (await page.request.get(`/api/sessions/${sid}`)).json()).automation.goal.status, {
+    message: 'Waiting for the server to receive the terminal key before closing its socket',
+    timeout: testInfo.timeout,
+  }).toBe('person typed');
   await page.goto(`/sessions/${sid}?tab=spec#automation`);
   await expect(page.getByText('Goal status: person typed')).toBeVisible();
 });

@@ -36,8 +36,7 @@ def settled_stop(session: Session) -> bool:
     return (session.desired_state == "stopped" and session.observed_state == "stopped" and not session.container
             and not session.team_stop_pending and not session.multirun_stop_pending and session.idle_since is None
             and session.project.group_id is None and "explanation.json" not in (session.launch_spec.files or {})
-            and not ((session.multirun_id or session.sleep_paused_at)
-                     and (session.last_error or "").startswith("stop not confirmed:")))
+            and not (session.last_error or "").startswith("stop not confirmed:"))
 
 
 def kill_params(session: Session, settings) -> dict:
@@ -56,7 +55,7 @@ class ReconcileMixin:
             with self.db() as db:
                 # host_of() reads each session's placement and project: loaded with the sessions, not one by one.
                 sessions = list(db.scalars(select(Session).where((Session.desired_state != "archived") | Session.team_stop_pending
-                                                                  | Session.multirun_stop_pending,
+                                                                  | Session.multirun_stop_pending | Session.last_error.startswith('stop not confirmed:'),
                                                                   Session.management == "acc").options(
                     selectinload(Session.project), selectinload(Session.placement), selectinload(Session.launch_spec))))
                 ids = [session.id for session in sessions]
@@ -212,7 +211,7 @@ class ReconcileMixin:
         if "explanation.json" in session.launch_spec.files:
             await self._reconcile_explanation(db, session, pane)
             return
-        if (session.project.group_id and not group_board.authorized(db, session, self.settings.groups_remote_enabled)) or group_remote.personal_conflict(db, session):
+        if session.desired_state == 'running' and ((session.project.group_id and not group_board.authorized(db, session, self.settings.groups_remote_enabled)) or group_remote.personal_conflict(db, session)):
             session.desired_state = 'stopped'
             self._set_state(db, session, 'stopped', 'supervisor')
         run = self._open_run(session)
@@ -229,9 +228,8 @@ class ReconcileMixin:
                 session.team_stop_pending = False
             if session.multirun_stop_pending:
                 session.multirun_stop_pending = False
-            if session.multirun_id or session.sleep_paused_at:
-                if (session.last_error or "").startswith("stop not confirmed:"):
-                    session.last_error = None
+            if (session.last_error or "").startswith("stop not confirmed:"):
+                session.last_error = None
             return
 
         if run is not None and (run.verified_at is None or not pane or pane['dead']):
@@ -560,9 +558,8 @@ class ReconcileMixin:
                 home = (await self.layout(host, account))["home"]
             except Exception as error:  # unreachable (the launch below says so) or an older node
                 log.info("layout of %s on %s: %s", account, host, error)
-        # A PostgreSQL repeatable-read snapshot can retain a revoked grant even when
-        # its session write commits successfully. Drop it AND cached ORM authority.
-        # No broker await may occur between this refresh and the pre-launch commit.
+        # Gather broker facts before the final authority refresh. Never hold a
+        # SQLite write transaction across these read-only broker waits.
         from . import image_capabilities
         image_inputs = LaunchInputs.from_dict(session.launch_spec.inputs)
         from types import SimpleNamespace
@@ -570,8 +567,19 @@ class ReconcileMixin:
         # would otherwise reacquire this POST's write lock before its nested DB read.
         image_session = SimpleNamespace(host=session.host, run_as=session.run_as,
                                         container=image_capabilities.runtime_scope(session) == 'container')
+        remote_path = (session.workdir or session.project.workspace_path) if session.team_id == session.id else None
         db.commit()
+        has_remote = None
+        if remote_path is not None:
+            try:
+                facts = await self.broker.call('git_refs', account=account, host=host, path=remote_path)
+                has_remote = facts.get('has_remote') if type(facts.get('has_remote')) is bool else None
+            except Exception:
+                pass  # Unknown is never permission to publish.
         image_model = await image_capabilities.live_model(self, image_session, image_inputs)
+        # A PostgreSQL repeatable-read snapshot can retain a revoked grant even when
+        # its session write commits successfully. Drop it AND cached ORM authority.
+        # No broker await may occur between this refresh and the pre-launch commit.
         db.commit()  # Drop any lazily loaded placement snapshot before authority is re-read.
         db.expire_all()
         if session.desired_state != "running":
@@ -595,8 +603,10 @@ class ReconcileMixin:
         from . import agent_contract
         from .orchestrator.scope_notices import launch_scope
         scope_version, _ = launch_scope(db, session)
+        if remote_path != ((session.workdir or session.project.workspace_path) if session.team_id == session.id else None):
+            has_remote = None  # Facts from an earlier workspace do not describe this launch.
         files = agent_contract.apply(files, inputs, agent_contract.for_session(db, session, inputs, catalog,
-            publish_zones=self.settings.publish_zones or ((self.settings.wildcard_zone,) if self.settings.wildcard_zone else ())))
+            publish_zones=self.settings.publish_zones or ((self.settings.wildcard_zone,) if self.settings.wildcard_zone else ()), has_remote=has_remote))
         try:
             delivery = self.vault.deliver(db, session.project_id, session.owner, host_of(session) != "local",
                                           self.catalog, inputs.mcps)
@@ -668,6 +678,12 @@ class ReconcileMixin:
                                            materialized, container_limits)
                 except (OSError, ValueError) as error:
                     raise CompileError(f"Rynhult couldn't prepare the session's container ({error}).") from None
+            from .security_settings import Conflict, check_generation
+            try:
+                check_generation(db, session)
+            except Conflict as error:
+                raise CompileError(str(error)) from None
+            db.commit()
             result = await self.broker.call("launch", account=account, host=host_of(session),
                                             **{**launch, "files": materialized}, env={**environment, **delivery.env})
         except (BrokerError, CompileError, vault.VaultError) as error:

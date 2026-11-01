@@ -40,7 +40,8 @@ def _read(path):
     """(text, None); (None, None) when there is no such file; or (None, why it can't be checked). Never follows a link
     in the last component, never blocks on a FIFO, never reads more than LIMIT."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        fd = path.open_fd(flags) if hasattr(path, 'open_fd') else os.open(path, flags)
     except (FileNotFoundError, NotADirectoryError):
         return None, None  # Copilot can't read it either
     except OSError as error:
@@ -131,7 +132,7 @@ def _git_dirs(folder):
 def worktree_problem(folder):
     """A git config that moves this folder's working tree elsewhere, where Copilot would read repository settings this
     check never sees, or None. Fail closed: a git directory or config that can't be read is a problem too."""
-    where, git_dirs = _git_dirs(Path(folder))
+    where, git_dirs = _git_dirs(folder if isinstance(folder, Path) else Path(folder))
     if git_dirs is None:
         return f"{where} can't be checked (a link, or unreadable)"
     for git_dir in git_dirs:
@@ -149,7 +150,7 @@ def worktree_problem(folder):
 def repository_problem(folder):
     """The first repository settings file in `folder` or a folder above it that could turn Copilot's hooks off, or a
     git setting that would make Copilot read its repository settings from somewhere else."""
-    folder = Path(folder)
+    folder = folder if isinstance(folder, Path) else Path(folder)
     for part in (folder, *folder.parents):
         for name in REPOSITORY_FILES:
             problem = settings_problem(part / name)

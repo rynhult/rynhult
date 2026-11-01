@@ -140,3 +140,12 @@ If Homebrew needs updating, run:
 ```sh
 brew update
 ```
+
+
+### Existing repository access
+
+[Allowed folders](/User-Guide/Settings#allowed-folders) changes account-service
+policy separately from OS rights. This build offers no automatic access grant on
+macOS or WSL Windows drives. Use a folder already accessible to the selected
+account, or arrange local setup. It never disables macOS privacy, remounts a drive,
+changes WSL interop or relaxes machine isolation to import a repository.

@@ -72,8 +72,9 @@ def _open_dir(root, components):
     """Walk from a pinned descriptor, refusing symlinks in every component."""
     fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for component in components:
-            nxt = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        for index, component in enumerate(components):
+            access = getattr(os, 'O_PATH', os.O_RDONLY) if index < len(components) - 1 else os.O_RDONLY
+            nxt = os.open(component, access | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = nxt
         return fd
@@ -89,7 +90,13 @@ def workspace(config, path):
     if '..' in Path(path).parts:
         raise OpError('Use a workspace path without .. in it.')
     root = Path(os.path.abspath(path))
-    anchors = [Path(os.path.abspath(p)) for p in config.allowed_roots]
+    if config.folder_revision:
+        from acc.folder_policy import FolderError, broker_path
+        try:
+            broker_path(config, path)
+        except FolderError as error:
+            raise OpError(str(error)) from None
+    anchors = [Path(os.path.abspath(p)) for p in config.allowed_roots] if config.allowed_folders else [root]
     anchor = next((p for p in anchors if root == p or p in root.parents), None)
     if anchor is None:
         raise OpError('This folder is outside the agent account\'s workspace folders, so Rynhult won\'t open it.')

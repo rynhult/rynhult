@@ -16,6 +16,8 @@ import os
 import pwd
 import secrets
 import socket
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 from .. import peercred, tooling
@@ -42,11 +44,14 @@ def peer_uid(writer: asyncio.StreamWriter) -> int:
 class Broker:
     def __init__(self, config: BrokerConfig):
         self.config = config
+        self._folder_lock = threading.RLock()
+        self._folder_snapshot = None
         self._workspace_key = secrets.token_bytes(32)
         self.logins = logins.Logins(config)
         from ..node import group_proof
         self.methods = {
             "group_machine_verify": lambda p: {"verified": group_proof.verify(self.config.run_dir, p["node_id"], p["proof_account"], p["request_id"], p["code"])},
+            "folder_check": self.folder_check,
             "files": lambda p: ops.files(self.config, **p),
             "auth_health": lambda p: logins.auth_health(self.config),
             "brief_document_extract": lambda p: document_extract.run(self.config, **p),
@@ -77,7 +82,7 @@ class Broker:
             "team_reply": lambda p: ops.team_reply(self.config, p["acc_id"], p["request_id"], p["result"]),
             "team_prepare_merge": lambda p: ops.team_prepare_merge(self.config, p["path"], p["branch"], p["acc_id"]),
             "team_clear_bundles": lambda p: ops.team_clear_bundles(self.config, p["acc_id"], p.get("branch")),
-            "team_merge": lambda p: ops.team_merge(self.config, p["path"], p["branch"], p["expected_branch"], expected_head=p.get("expected_head"), expected_base=p.get("expected_base"), report_heads=p.get("report_heads")),
+            "team_merge": lambda p: ops.team_merge(self.config, p["path"], p["branch"], p["expected_branch"], expected_head=p.get("expected_head"), expected_base=p.get("expected_base"), report_heads=p.get("report_heads"), generated_exports=p.get("generated_exports")),
             "read_spool": lambda p: ops.read_spool(self.config, p["acc_id"], p["offset"]),
             "make_worktree": lambda p: ops.make_worktree(self.config, p["repo"], p["root"], p["name"], p["branch"], p.get("base_commit")),
             "remove_worktree": lambda p: ops.remove_worktree(self.config, p["repo"], p["path"]),
@@ -150,7 +155,9 @@ class Broker:
                 "run_dir": str(self.config.run_dir), "role": self.config.role, "hook_path": self.config.hook_path,
                 "statusline_path": self.config.statusline_path, "home": str(Path.home()),
                 # the first is where this account's new projects go (New project on another machine)
-                "roots": [str(root) for root in self.config.allowed_roots]}
+                "roots": [str(root) for root in self.config.allowed_roots],
+                "folder_revision": self.config.folder_revision, "allowed_folders": self.config.allowed_folders,
+                "folder_policy_required": self.config.folder_policy_required}
 
     def tool_change(self, params: dict) -> dict:
         if os.geteuid() == 0 or self.config.role != "agents":
@@ -159,6 +166,51 @@ class Broker:
             raise RequestError("bad tool fields")
         return tooling.execute(**params, home=Path.home(), system=False)
 
+    def folder_check(self, params):
+        from acc.folder_policy import FolderError, broker_path, open_directory
+        if set(params) != {'path'}:
+            raise FolderError('Choose one folder to check.')
+        broker_path(self.config, params['path'])
+        with open_directory(params['path']) as directory:
+            st = os.fstat(directory.fd)
+            return {'state': 'access_checked', 'path': params['path'], 'identity': directory.identity,
+                    'uid': st.st_uid, 'write': os.access(params['path'], os.W_OK | os.X_OK),
+                    'message': 'Account access checked; this does not add an allowed folder or trust the repository.'}
+
+    def apply_folder_policy(self, payload):
+        """Called only by handle's root-peer branch, never an ordinary RPC method."""
+        from acc.folder_policy import literal_path
+        if self.config.role != 'agents':
+            raise ValueError('Folder policy applies only to an assigned agent broker, never the services account.')
+        if (not isinstance(payload, dict) or set(payload) - {'revision', 'allowed_folders', 'roots', 'uid', 'homes', 'protected'}
+                or type(payload.get('revision')) is not int or payload['revision'] < 1
+                or type(payload.get('allowed_folders')) is not bool or payload.get('uid') != os.geteuid()
+                or not isinstance(payload.get('roots'), list) or not 1 <= len(payload['roots']) <= 128
+                or len(set(payload['roots'])) != len(payload['roots'])):
+            raise ValueError('Invalid root folder policy.')
+        for path in [*payload['roots'], *payload.get('homes', []), *payload.get('protected', [])]:
+            literal_path(path)
+        with self._folder_lock:
+            if payload['revision'] <= self.config.folder_revision:
+                if payload != self._folder_snapshot:
+                    raise ValueError('Folder policy revision changed. Review again.')
+            else:
+                # The first/default root is preserved, including when protection is Off.
+                if payload['roots'][0] != str(self.config.allowed_roots[0]):
+                    raise ValueError('Changing the default workspace root requires local setup.')
+                self.config = replace(self.config, folder_revision=payload['revision'],
+                    allowed_roots=tuple(Path(p) for p in payload['roots']),
+                    allowed_folders=payload['allowed_folders'], folder_policy_required=True,
+                    folder_homes=tuple(payload.get('homes', [])), folder_protected=tuple(payload.get('protected', [])))
+                self._folder_snapshot = payload
+        return {'revision': self.config.folder_revision, 'allowed_folders': self.config.allowed_folders}
+
+    def _folder_call(self, method, params, expected, enforce):
+        with self._folder_lock:
+            if enforce and (self.config.folder_revision < 1 or expected != self.config.folder_revision):
+                raise RequestError('Folder policy revision changed before execution. Review again.')
+            return method(params)
+
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             uid = peer_uid(writer)
@@ -166,7 +218,7 @@ class Broker:
             log.warning("rejected connection: cannot read the peer's uid (%s)", error)
             writer.close()
             return
-        if uid not in self.config.allowed_uids:
+        if uid != 0 and uid not in self.config.allowed_uids:
             log.warning("rejected connection from uid %s", uid)
             writer.close()
             return
@@ -178,10 +230,19 @@ class Broker:
                     response = {"id": None, "ok": False, "error": str(error)}
                 else:
                     response = None
-                if response is None and request["method"] == "attach" and self.config.role == "agents":
+                if response is None and (uid != 0 or uid in self.config.allowed_uids) and request["method"] == "attach" and self.config.role == "agents":
                     # the connection becomes a terminal stream for its remaining lifetime
                     await attach.attach(self.config, request["params"], reader, writer)
                     return
+                if response is None and uid == 0 and (request['method'] == 'folder_policy_apply' or uid not in self.config.allowed_uids):
+                    # Root is not granted the general account RPC surface here.
+                    try:
+                        if request['method'] != 'folder_policy_apply':
+                            raise ValueError('Root channel accepts only folder policy publication.')
+                        result = await asyncio.to_thread(self.apply_folder_policy, request['params'])
+                        response = {'id': request['id'], 'ok': True, 'result': result}
+                    except ValueError as error:
+                        response = {'id': request['id'], 'ok': False, 'error': str(error)}
                 response = response or await self._dispatch(request)
                 writer.write(json.dumps(response).encode() + b"\n")
                 await writer.drain()
@@ -200,13 +261,22 @@ class Broker:
     async def _dispatch(self, request: dict) -> dict:
         request_id = request["id"]
         try:
+            params = dict(request['params'])
+            expected = params.pop('folder_revision', None)
+            # Terminal observation and stop must remain available during a policy fence.
+            exempt = {'ping', 'list', 'kill', 'interrupt', 'send_text', 'clear_env', 'read_spool',
+                      'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}
+            if request['method'] not in exempt and (self.config.folder_policy_required or expected is not None):
+                if self.config.folder_revision < 1 or expected != self.config.folder_revision:
+                    raise RequestError('Folder policy is pending or its revision changed. Refresh and retry after application.')
             method = self.methods.get(request.get("method"))
             if method is None:
                 raise RequestError(f"unknown method {request.get('method')!r}")
             if request["method"] in ("model_catalog", "usage"):
-                result = await cancellable(method, request["params"])
+                result = await cancellable(method, params)
             else:
-                result = await asyncio.to_thread(method, request["params"])
+                result = await asyncio.to_thread(self._folder_call, method, params, expected,
+                    request['method'] not in exempt and (self.config.folder_policy_required or expected is not None))
             return {"id": request_id, "ok": True, "result": result}
         except (RequestError, ops.OpError, logins.LoginError, KeyError, ValueError) as error:
             return {"id": request_id, "ok": False, "error": f"{type(error).__name__}: {error}"}

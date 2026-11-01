@@ -68,7 +68,7 @@ async def test_budget_refusal_does_not_cancel_other_launches(api, project, env):
     ([{"provider": "claude"}, {"provider": "unknown"}], 422),
     ([{"provider": "claude"}, {"provider": "codex", "budget_ok": True}], 422),
     ([{"provider": "claude"}, {"provider": "codex", "profile": "missing"}], 422),
-    ([{"provider": "claude"}, {"provider": "claude", "options": {"permission_mode": "bypassPermissions"}}], 409),
+    ([{"provider": "claude"}, {"provider": "claude", "options": {"permission_mode": "bypassPermissions"}}], 422),
 ])
 async def test_invalid_or_unconfirmed_choices_start_nothing(api, project, env, runs, status):
     repo(env["workspaces"] / "demo")
@@ -79,8 +79,15 @@ async def test_invalid_or_unconfirmed_choices_start_nothing(api, project, env, r
 
 
 async def test_dangerous_choice_is_explicit_and_audited(api, project, env):
-    group = await start(api, project, env, [{"provider": "claude"}, {
-        "provider": "copilot", "options": {"permissions": "all"}, "confirm_dangerous": True}])
+    from acc.server import security_settings
+    with api.app.state.db() as db:
+        security_settings.save(db, {'kind': 'project', 'project_id': project['id']},
+                               {'provider_prompts': False}, actor='casey', expected_revision=0)
+        db.commit()
+    # Supported scoped bypass mappings, each explicitly confirmed by the person.
+    group = await start(api, project, env, [{'provider': 'claude', 'options': {'permission_mode': 'bypassPermissions'}, 'confirm_dangerous': True},
+                                          {'provider': 'codex', 'options': {'sandbox': 'danger-full-access', 'approval': 'never'},
+                                           'confirm_dangerous': True}])
     assert all(x["session"] for x in group["runs"])
     with api.app.state.db() as s:
         assert s.scalar(select(AuditLog).where(AuditLog.action == "session.dangerous_confirmed"))
@@ -318,3 +325,13 @@ async def test_archive_while_initial_launch_is_pending_never_starts_the_agent(ap
     group = await start(api, project, env)
     assert launches == []
     assert all(r["session"]["desired_state"] == "archived" for r in group["runs"])
+
+
+async def test_multirun_confirmation_cannot_override_prompts_on(api, project, env):
+    repo(env['workspaces'] / 'demo')
+    response = await api.post('/api/multiruns', json=task(project, [
+        {'provider': 'claude'}, {'provider': 'copilot', 'options': {'permissions': 'all'}, 'confirm_dangerous': True}]))
+    assert response.status_code == 422, response.text
+    assert 'Security requires provider prompts' in response.json()['detail']
+    assert (await api.get('/api/sessions')).json() == []
+    assert branches(env['workspaces'] / 'demo') == ['main']

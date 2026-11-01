@@ -147,3 +147,10 @@ def test_document_permissions_use_explicit_read_tools(tmp_path, monkeypatch, cap
     assert bool(output) is allowed
     if allowed:
         assert json.loads(output)['hookSpecificOutput']['decision']['behavior'] == 'allow'
+
+
+@pytest.mark.parametrize('command', ['gh pr merge 42', 'gh --repo demo/app pr merge --auto',
+                                    'git push origin HEAD:main', 'git push origin master'])
+def test_security_off_cannot_widen_team_integration_authority(command):
+    policy = {'rules': {'team': True, 'merge_pr': False, 'push_default': False}, 'workspace': '/srv/ws'}
+    assert rule(command, policy=policy) is not None

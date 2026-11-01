@@ -131,7 +131,11 @@ async def test_budget_skip_and_failure_inbox(api, project, person, monkeypatch):
 
     from acc.server import budgets
     made = (await api.post('/api/schedules', json=payload(project))).json()
-    monkeypatch.setattr(budgets, 'paused', lambda *args: ['weekly budget'])
+    # Security's scoped budget check supplies the execution project.
+    def paused(*args, **kwargs):
+        assert kwargs['project_id'] == project['id']
+        return ['weekly budget']
+    monkeypatch.setattr(budgets, 'paused', paused)
     await api.post(f"/api/schedules/{made['id']}/run")
     async def skipped():
         rows = (await api.get('/api/schedules')).json()
@@ -139,7 +143,7 @@ async def test_budget_skip_and_failure_inbox(api, project, person, monkeypatch):
     await wait_for(skipped)
     rows = (await api.get('/api/schedules')).json()
     assert 'weekly budget' in rows[0]['runs'][0]['reason']
-    monkeypatch.setattr(budgets, 'paused', lambda *args: [])
+    monkeypatch.setattr(budgets, 'paused', lambda *args, **kwargs: [])
     # A real refused launch: project is no longer trusted.
     from acc.server.models import Project
     with write_db(api.app.state.db) as s:

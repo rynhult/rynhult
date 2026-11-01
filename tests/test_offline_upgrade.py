@@ -192,15 +192,19 @@ def test_vm_rehearsal_embedded_python_compiles():
 
 def test_installed_backend_and_backup_encryption_are_used(tmp_path, monkeypatch):
     from acc import offline_upgrade
-    from acc.env import environment
+    from acc.env import Environment
+    # configure_environment dual-writes ACC_/RYNHULT_. Keep all mutations in an
+    # isolated mapping, so later Settings tests cannot inherit a preferred alias.
+    environment = Environment({'ACC_DATABASE_URL': 'ignored', 'ACC_BACKUP_PASSPHRASE_FILE': 'ignored'})
+    monkeypatch.setattr(offline_upgrade, 'environment', environment)
     settings, backup = tmp_path / 'accd', tmp_path / 'backup'
     settings.write_text('ACC_DATABASE_URL=sqlite:///stale\nRYNHULT_DATABASE_URL="postgresql://example.invalid/test"\n')
     backup.write_text('ACC_BACKUP_PASSPHRASE_FILE="/private/fixture-passphrase"\n')
-    monkeypatch.setenv('ACC_DATABASE_URL', 'ignored')
-    monkeypatch.setenv('ACC_BACKUP_PASSPHRASE_FILE', 'ignored')
     offline_upgrade.configure_environment(settings, backup, tmp_path / 'data')
     assert environment['ACC_DATABASE_URL'] == 'postgresql://example.invalid/test'
     assert environment['ACC_BACKUP_PASSPHRASE_FILE'] == '/private/fixture-passphrase'
+    assert environment['RYNHULT_DATABASE_URL'] == environment['ACC_DATABASE_URL']
+    assert environment['RYNHULT_BACKUP_PASSPHRASE_FILE'] == environment['ACC_BACKUP_PASSPHRASE_FILE']
 
 
 def test_custom_data_directory_is_refused_before_backup(tmp_path):

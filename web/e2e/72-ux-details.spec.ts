@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, gitProject, wikiShotPath } from "./helpers";
+import { AUTH_FILE, expectAxeClean, fileRow, gitProject, reviewSecurityChanges, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -71,28 +71,28 @@ for (const width of [1440, 390]) {
         }
       });
 
-      test(`guardrail drafts explain unsaved state and acknowledge an explicit save in ${theme}`, async ({ page }, testInfo) => {
+      test(`Security drafts stay unsaved through review and acknowledge explicit apply in ${theme}`, async ({ page }, testInfo) => {
         await page.emulateMedia({ colorScheme: theme });
-        await page.goto("/settings#guardrails");
-        const original = await (await page.request.get("/api/guardrails")).json();
-        const card = page.locator("#guardrails");
-        const rule = card.getByRole("checkbox").first();
+        const project = await gitProject(page, `security-draft-${width}-${theme}`);
+        await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+        const card = page.locator('#security');
+        const rule = card.getByRole('switch', { name: 'Block force pushes', exact: true });
+        await expect(rule).toBeChecked();
         const checked = await rule.isChecked();
-        try {
-          await rule.setChecked(!checked);
-          await expect(card.getByRole("status", { name: "Guardrail save status" })).toContainText("Unsaved changes");
-          expect((await (await page.request.get("/api/guardrails")).json()).rules).toEqual(original.rules);
-          await expectAxeClean(page);
-          if (theme === "dark") await card.screenshot({ animations: "disabled",
-            path: wikiShotPath(testInfo, width === 390 ? "guardrails-draft-phone.png" : "guardrails-draft.png") });
-          await card.getByRole("button", { name: "Save guardrails", exact: true }).click();
-          await expect(card.getByRole("status", { name: "Guardrail save status" })).toContainText("Guardrails saved");
-          expect((await (await page.request.get("/api/guardrails")).json()).rules[original.available[0].id]).toBe(!checked);
-        } finally {
-          const restored = await page.request.put("/api/guardrails", { headers: await csrfHeaders(page),
-            data: { rules: original.rules, custom: original.custom } });
-          expect(restored.ok()).toBe(true);
-        }
+        await rule.setChecked(!checked);
+        await expect(card.getByText('Unsaved Security changes', { exact: false })).toBeVisible();
+        expect((await (await page.request.get(`/api/security/effective?project_id=${project.id}`)).json()).switches.force_push).toBe(checked);
+        await expectAxeClean(page);
+        if (theme === 'dark') await card.screenshot({ animations: 'disabled',
+          path: wikiShotPath(testInfo, width === 390 ? 'security-draft-phone.png' : 'security-draft.png') });
+        const review = await reviewSecurityChanges(page);
+        // Review is still a draft: only explicit apply changes the server policy.
+        expect((await (await page.request.get(`/api/security/effective?project_id=${project.id}`)).json()).switches.force_push).toBe(checked);
+        await review.getByRole('button', { name: 'Apply Security changes', exact: true }).click();
+        await expect(review).toBeHidden();
+        await expect(card.getByRole('status')).toContainText('Server policy saved');
+        await expect(card.getByRole('region', { name: 'Effective Security status', exact: true })).toContainText('Custom');
+        expect((await (await page.request.get(`/api/security/effective?project_id=${project.id}`)).json()).switches.force_push).toBe(!checked);
       });
     }
   });

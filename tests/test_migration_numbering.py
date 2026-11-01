@@ -220,7 +220,7 @@ def test_graph_guard_accepts_an_explicitly_documented_gap(repository):
 def test_integrated_orchestrator_lanes_have_one_ordered_head():
     from acc.server.db import alembic_config
     script = ScriptDirectory.from_config(alembic_config('sqlite://'))
-    assert script.get_heads() == ['0079']
+    assert script.get_heads() == ['0081']
     assert [(script.get_revision(revision).revision, script.get_revision(revision).down_revision)
-            for revision in ('0074', '0075', '0076', '0077', '0078')] == [
-                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077')]
+            for revision in ('0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081')] == [
+                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077'), ('0079', '0078'), ('0080', '0079'), ('0081', '0080')]

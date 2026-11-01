@@ -1,8 +1,8 @@
 """Settings that apply across sessions: guardrails (owner-chosen, instance-wide)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, StrictBool
 
 from .. import budgets, guardrails, risk_labels
 from ..models import AuditLog, Setting
@@ -31,8 +31,9 @@ class ExtraIn(BaseModel):
 
 
 class GuardrailsIn(BaseModel):
-    rules: dict[str, bool] = {}
+    rules: dict[str, StrictBool] = {}
     custom: list[CustomRuleIn] = Field(default_factory=list, max_length=guardrails.MAX_CUSTOM)
+    revision: int | None = Field(default=None, ge=0, strict=True)
 
 
 class RiskLabelsIn(BaseModel):
@@ -44,7 +45,8 @@ class PhoneBannerIn(BaseModel):
 
 
 def router(ctx: Context) -> APIRouter:
-    api = APIRouter()
+    from .security_settings import audited_router
+    api = audited_router(ctx, audit_paths=('/api/guardrails',))
     db = ctx.db
 
     @api.get("/api/preferences/risk-labels")
@@ -84,14 +86,44 @@ def router(ctx: Context) -> APIRouter:
     @api.get("/api/guardrails")
     def get_guardrails(who=Depends(ctx.principal)):
         """Everyone can see the limits their agents run under; only owners change them."""
+        from .security_settings import human
+        human(who)
         with db() as s:
-            return described(guardrails.load(s))
+            value = guardrails.load(s)
+            from ..security_settings import revision
+            value['revision'] = revision(s)
+            if not who.is_owner:
+                value['custom'] = []
+            return described(value)
 
     @api.put("/api/guardrails")
-    def put_guardrails(body: GuardrailsIn, who=Depends(ctx.owner)):
+    def put_guardrails(body: GuardrailsIn, request: Request, who=Depends(ctx.owner)):
         with db() as s:
+            from .. import security_settings
+            from .security_settings import browser
+            browser(s, request, who)
+            if body.revision is None:
+                raise HTTPException(409, 'Review Security settings again before saving (a policy revision is required).')
             try:
-                value = guardrails.save(s, body.model_dump(), who.username)
+                # Compatibility route: instance-scoped, revision-checked partial update.
+                security_settings.lock_revision(s)
+                current = guardrails.load(s)
+                submitted = body.model_dump(exclude_unset=True, exclude={"revision"})
+                value = guardrails.validate({
+                    'rules': {**current['rules'], **submitted.get('rules', {})},
+                    'custom': submitted.get('custom', current['custom']),
+                })
+                scope = {'kind': 'instance'}
+                _, before, _ = security_settings.planned(s, scope, {}, 'custom')
+                overrides = {**before, **submitted.get('rules', {})}
+                legacy = s.get(Setting, 'guardrails')
+                if value['custom'] != ((legacy.value.get('custom') or []) if legacy else []) and security_settings.affected(s, {'kind': 'instance'}):
+                    raise security_settings.Conflict('Stop affected sessions before changing custom Security blocks.')
+                security_settings.save(s, scope, overrides, actor=who.username,
+                                       expected_revision=body.revision)
+                guardrails.save(s, value, who.username)
+            except security_settings.Conflict as error:
+                raise HTTPException(409, str(error)) from None
             except ValueError as error:
                 raise HTTPException(422, str(error)) from None
             s.add(AuditLog(actor=who.username, action="guardrails.update", target="guardrails", detail=value))

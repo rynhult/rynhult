@@ -55,6 +55,9 @@ from .api import (
     pulls,
     push,
     schedules,
+    security_access,
+    security_folders,
+    security_settings,
     sessions,
     settings_routes,
     telemetry,
@@ -151,6 +154,11 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     settings = RuntimeSettings(settings, features)
     broker = Brokers(settings.broker_socket, settings.broker_socket_dir, settings.default_account, settings.services_owner,
                      hub=NodeHub(), authority=authority)
+    def folder_revision(account, machine):
+        from .security_settings import folder_revision as expected
+        with db() as session:
+            return expected(session, machine, account)
+    broker.folder_policy = folder_revision
     supervisor = Supervisor(settings, db, broker)
     publisher = publisher or Publisher(settings, db)
     publisher.workspace_operations = supervisor.workspace_operations
@@ -279,7 +287,7 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
             WRITE_INTENT.reset(token)
 
     for module in (auth_routes, admin_features, passkeys, groups, group_exchange, group_board, group_machines, projects, sessions, schedules, inbox, operations, board, catalog, publishing, accounts, terminal, wiki, push, users, ports, preview,
-                   endpoints, dns, packages, settings_routes, devices, telemetry, nodes, organizations, mobile, certificate, containers, vault_routes, backups, host_backups, updates, tools, files, issue_sources, pulls):
+                   endpoints, dns, packages, settings_routes, security_settings, security_folders, security_access, devices, telemetry, nodes, organizations, mobile, certificate, containers, vault_routes, backups, host_backups, updates, tools, files, issue_sources, pulls):
         app.include_router(module.router(ctx))
     # Orchestrator v2: one router per slice (src/acc/server/orchestrator); empty until each slice is built.
     for module in (orchestrator_worklist, orchestrator_team_live, orchestrator_selection, orchestrator_gates,

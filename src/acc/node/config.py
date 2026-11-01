@@ -58,6 +58,8 @@ class NodeConfig:
     name: str = ""
     socket_dir: Path = DEFAULT_SOCKET_DIR
 
+    folder_policy_socket: Path | None = None  # trusted local config; absent means not qualified
+
     alternate_primaries: tuple[str, ...] = ()  # owner-provisioned; same verified TLS trust
 
     def __post_init__(self):
@@ -87,6 +89,7 @@ class NodeConfig:
                    ca_file=Path(env["ACC_NODE_CA_FILE"]) if env.get("ACC_NODE_CA_FILE") else None,
                    ca_fingerprint=env.get("ACC_NODE_CA_FINGERPRINT", ""), name=env.get("ACC_NODE_NAME", ""),
                    socket_dir=Path(env.get("ACC_NODE_SOCKET_DIR") or DEFAULT_SOCKET_DIR),
+                   folder_policy_socket=Path(env["ACC_FOLDER_POLICY_SOCKET"]) if env.get("ACC_FOLDER_POLICY_SOCKET") else None,
                    alternate_primaries=tuple(p.rstrip("/") for p in env.get("ACC_NODE_ALTERNATE_PRIMARIES", "").split()))
 
     def write(self, path: Path) -> None:
@@ -95,6 +98,8 @@ class NodeConfig:
         if self.trust == "ca":
             lines += [f"ACC_NODE_CA_FILE={self.ca_file}", f"ACC_NODE_CA_FINGERPRINT={self.ca_fingerprint}"]
         lines += [f"ACC_NODE_NAME={self.name}", f"ACC_NODE_SOCKET_DIR={self.socket_dir}"]
+        if self.folder_policy_socket is not None:
+            lines += [f"ACC_FOLDER_POLICY_SOCKET={self.folder_policy_socket}"]
         if self.alternate_primaries:
             lines += [f"ACC_NODE_ALTERNATE_PRIMARIES={' '.join(self.alternate_primaries)}"]
         write_atomic(path, ("\n".join(lines) + "\n").encode(), 0o644)

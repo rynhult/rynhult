@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { ago, size } from "../lib/format";
 import { diskMountWords } from "../lib/words";
@@ -289,7 +289,7 @@ function LocalHost({ picker, owner }: { picker: ReactNode; owner: boolean }) {
       {s && <>
           {!!s.accounts?.length && (
             <Card>
-              <CardHeader title={owner ? "Agent accounts" : "Your agent account"} icon={Users} subtitle={owner ? "What each account's sessions use, against its limits (acc-agent-add --cpu/--memory/--tasks)" : "What your sessions use, against its limits"} />
+              <CardHeader action={owner ? <Link className="inline-flex min-h-11 min-w-11 items-center" to="/settings/security/folders">Allowed folders in Security</Link> : undefined} title={owner ? "Agent accounts" : "Your agent account"} icon={Users} subtitle={owner ? "What each account's sessions use, against its limits (acc-agent-add --cpu/--memory/--tasks)" : "What your sessions use, against its limits"} />
               <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Containers (scrolls sideways)">
                 <table className="w-full text-[13px]">
                   <thead><tr className="text-left text-xs text-muted">
@@ -299,6 +299,7 @@ function LocalHost({ picker, owner }: { picker: ReactNode; owner: boolean }) {
                     {s.accounts.map((a) => (
                       <tr key={a.account}>
                         <td className="px-4 py-2"><span className="font-mono">{a.account}</span>
+                          {owner && a.role === 'agents' && <Link className="ml-2 inline-flex min-h-11 min-w-11 items-center" to={`/settings/security/folders?machine=local&account=${encodeURIComponent(a.account)}`}>Allowed folders</Link>}
                           {a.role === "services" && <Badge className="ml-2">Docker only</Badge>}
                           {a.active !== "active" && <Badge tone="bad" className="ml-2">{a.active}</Badge>}</td>
                         <td className="tnum px-4 py-2">{a.cpu_percent ?? "–"}%<span className="text-faint"> / {a.cpu_quota_percent ? `${a.cpu_quota_percent}%` : "no limit"}</span></td>

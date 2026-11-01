@@ -42,6 +42,8 @@ const statefulSpecs = [
   "**/67-break-it-3-chaos.spec.ts",
   "**/67-break-it-3-pairing-mismatch.spec.ts",
   "**/67-break-it-3-remote-conflict.spec.ts",
+  "**/75-verification.spec.ts",
+  "**/89-orch-ux.spec.ts",
   "**/90-logout.spec.ts",
 ];
 const mobileStatefulSpecs = [

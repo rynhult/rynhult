@@ -1,21 +1,15 @@
-import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
-import { AUTH_FILE, expandTeamPanels, csrfHeaders, gitProject, expectAxeClean, wikiShotPath, info as serverInfo } from './helpers';
+import { AUTH_FILE, expandTeamPanels, csrfHeaders, gitProject, expectAxeClean, wikiShotPath, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
 test.use({ storageState: AUTH_FILE, serviceWorkers: 'block' });
-let id: string;
+let id = '';
 async function team(action: string, args: object = {}) {
-  const requestId = randomUUID().replaceAll('-', '');
-  appendFileSync(`${serverInfo().run_dir}/${id}/events.jsonl`, JSON.stringify({ acc_session: id,
-    hook: { hook_event_name: 'AccTeam', request: { id: requestId, action, ...args } } }) + '\n');
-  const replyPath = `${serverInfo().run_dir}/${id}/team/${requestId}.json`;
-  await expect.poll(() => existsSync(replyPath)).toBe(true);
-  const reply = JSON.parse(readFileSync(replyPath, 'utf8'));
+  const reply = await teamRequest(id, action, args);
   expect(reply.ok, JSON.stringify(reply)).toBe(true);
   return reply.result;
 }
 
 test.beforeEach(async ({ page }) => {
+  id = '';
   const project = await gitProject(page, 'team-tabs');
   const reference = await page.request.post(`/api/project-brief-references/${project.id}`, { headers: project.headers, data: { caption: 'Archive layout notes', guidance: 'Keep the restore preview separate from writing files.', url: 'https://example.com/archive-notes' } });
   expect(reference.ok(), await reference.text()).toBeTruthy();
@@ -26,6 +20,7 @@ test.beforeEach(async ({ page }) => {
     orchestrator: { brief_version: 1, run_mode: 'prepare', agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 2, total: 4, depth: 1, hours: 2 },
   } });
   expect(made.status()).toBe(201); id = (await made.json()).id;
+  await waitForSessionState(page, id, 'idle', 'claude_hook');
   const current = await (await page.request.get(`/api/teams/${id}/plan`)).json();
   const plan = await page.request.patch(`/api/teams/${id}/plan`, { headers: project.headers, data: { version: current.version,
     idea: 'Keep workshop notes in one private archive.', scope: { in: ['Local archive', 'Restore preview'], out: ['Public sharing'], parked: [] },
@@ -39,7 +34,11 @@ test.beforeEach(async ({ page }) => {
   await team('brief_interpret', { brief_version: 1, text: 'Start with a private archive and a restore preview. Confirm recovery expectations before building.',
     references: { 'REF-1': { status: 'unreadable', note: 'Synthetic link; no remote content fetched in this test.' } } });
 });
-test.afterEach(async ({ page }) => { if (id) await page.request.post(`/api/sessions/${id}/team/stop`, { headers: await csrfHeaders(page) }); });
+test.afterEach(async ({ page }) => {
+  if (!id) return;
+  expect((await page.request.post(`/api/sessions/${id}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+  await waitForTeamStopped(page, id);
+});
 
 for (const kind of ['recommended', 'no-recommendation', 'change', 'identical-change'] as const) {
   test(`decision options answer in one tap: ${kind}`, async ({ page }, ti) => {

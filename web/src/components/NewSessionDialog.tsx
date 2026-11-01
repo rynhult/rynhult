@@ -1,3 +1,5 @@
+import {SecurityBadge} from './SecurityBadge';
+import {frozenSecurity} from '../lib/security';
 import { useFeatures } from "./Feature";
 import { PreviewBadge } from "./Containers";
 import { desktopBuild } from "../lib/desktop";
@@ -29,6 +31,7 @@ import { isLocalProject } from "../lib/format";
 import { readBriefDraft, type BriefDraft, type BriefView } from "../lib/projectBrief";
 import { BriefLaunchReview, type BriefLaunchChoice } from "./BriefLaunchReview";
 import { useBriefNavigationConsent } from "./UnsavedBriefGuard";
+import { machineDetail, useLaunchMachines } from "./MachineChoice";
 
 /** The session's name: the automatic one is shown, and Rename opens an editor. A name chosen earlier (a draft, an
  *  issue, a preset) shows the editor straight away; an empty name launches with the automatic one. */
@@ -73,6 +76,7 @@ const optionValues = (info: ProviderInfo | undefined, chosen: OptionValues): Opt
   Object.fromEntries((info?.options ?? []).map((o) => [o.key, chosen[o.key] ?? o.default ?? ""]));
 
 interface Preview { command: string[]; cwd: string; files: Record<string, string>; digest: string; trusted: boolean; import_mode: string;
+  machine?: string; checkout?: { requires_clone: boolean };
   inputs?: { initial_prompt?: string | null };
   not_delivered?: { kind: string; id: string; reason: string }[];
   keys?: { keys: { id: string; name: string; variable: string }[]; held_back: { id: string; name: string; variable: string }[] } }
@@ -124,6 +128,8 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const [picks, setPicks] = useState<{ skills: string[]; agents: string[]; mcps: string[] }>({ skills: (saved?.skills as string[]) ?? ["acc-workflow"], agents: (saved?.agents as string[]) ?? [], mcps: (saved?.mcps as string[]) ?? [] });
   const [form, setForm] = useState({ project_id: (saved?.project_id as number) ?? preset?.project_id ?? 0, provider: (saved?.provider as Provider) ?? "claude" as Provider, name: (saved?.name as string) ?? preset?.name ?? "", model: String(saved?.model ?? ""), effort: String(saved?.effort ?? ""),
     initial_prompt: (saved?.initial_prompt as string) ?? preset?.initial_prompt ?? "", endpoint: String(saved?.endpoint ?? ""), worktree: (saved?.worktree as boolean) ?? preset?.worktree ?? !!schedule });
+  const [machineChoice, setMachineChoice] = useState<string | undefined>(saved?.machine as string | undefined);
+  const [cloneOnMachine, setCloneOnMachine] = useState(!!saved?.clone_on_machine);
   // One Run choice (owner decision 0008, Q5): once, several agents, with helpers, or on a schedule.
   const [run, setRun] = useState<RunMode>(schedule ? "schedule" : saved?.orchestrator ? "helpers" : "once");
   const orchestrator = run === "helpers";
@@ -134,20 +140,32 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const [automation, setAutomation] = useState<Automation>((saved?.automation as Automation) ?? {});
   const [runChoices, setRunChoices] = useState<MultiRunChoice[]>([newRunChoice(), newRunChoice("codex")]);
   const projectId = mode === "project" ? form.project_id || undefined : undefined;
+  const project = usable.find((p) => p.id === form.project_id);
+  const machine = mode === "workspace" ? "local" : machineChoice ?? project?.host ?? "local";
+  const otherMachine = mode === "project" && !!project && machine !== (project.host || "local");
   const scopeReady = open && (mode === "workspace" || !!projectId);
-  const registry = useProviderRegistry(projectId, scopeReady);
-  const models = useQuery({ queryKey: ["models", projectId ?? "account"],
-    queryFn: () => api<ModelCatalog>(`/api/models${projectId ? `?project_id=${projectId}` : ""}`),
+  const machines = useLaunchMachines(projectId, scopeReady);
+  const selectedMachine = machines.data?.find(item => item.name === machine);
+  const registry = useProviderRegistry(projectId, scopeReady, machine);
+  const models = useQuery({ queryKey: ["models", projectId ?? "account", machine],
+    queryFn: () => api<ModelCatalog>(`/api/models?${new URLSearchParams({ machine, ...(projectId ? { project_id: String(projectId) } : {}) })}`),
     enabled: scopeReady, staleTime: 3600000 });
   const previousProject = useRef(projectId);
   useEffect(() => {
     if (previousProject.current === projectId) return;
     previousProject.current = projectId;
     setTeamGrant((grant) => ({ ...grant, brief_version: undefined }));
+    setMachineChoice(undefined); setCloneOnMachine(false);
     setForm((f) => ({ ...f, model: "", effort: "" }));
     setRunChoices((choices) => choices.map((c) => ({ ...c, model: "", confirm_dangerous: false })));
     setCustomModel(false);
   }, [projectId]);
+  const chooseMachine = (next: string) => {
+    setMachineChoice(next); setCloneOnMachine(false); setConfirmBypass(false);
+    setForm(f => ({ ...f, model: "", effort: "" }));
+    setRunChoices(choices => choices.map(choice => ({ ...choice, model: "", confirm_dangerous: false })));
+    setCustomModel(false);
+  };
   const endpoints = useEndpoints(open && feature("local_models"));
   const budgetState = useBudgets(open).data;
   const budgetPaused = Object.entries(budgetState?.status ?? {})
@@ -183,7 +201,8 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const scheduling = !!schedule || (run === "schedule" && !workspace);
   const task = form.initial_prompt.trim();
   const autoName = existing ? profile || "session" : workspace ? [...topic.trim()].slice(0, 40).join("") || "session" : suggestedName(task);
-  const body = useMemo(() => ({ ...form, endpoint: feature("local_models") ? form.endpoint : "", name: form.name.trim() || autoName,
+  const body = useMemo(() => ({ ...form, machine, clone_on_machine: cloneOnMachine, worktree: form.worktree || otherMachine,
+    endpoint: feature("local_models") ? form.endpoint : "", name: form.name.trim() || autoName,
     ...Object.fromEntries(Object.entries(options).filter(([k]) => LEGACY_OPTIONS.includes(k))),
     options: Object.fromEntries(Object.entries(options).filter(([k]) => !LEGACY_OPTIONS.includes(k))),
     ...(feature("teams") && orchestrator && !workspace ? { orchestrator: teamGrant, worktree: true } : {}),
@@ -191,7 +210,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     confirm_dangerous: confirmBypass, budget_ok: budgetOk, profile: profile || null, ...picks,
     issue_source: feature("issue_sources") && !workspace && issue.projectId === form.project_id ? issue.ref : undefined,
     ...(workspace ? { project_id: null, worktree: false, ...(existing ? { workspace: existing } : { topic: topic.trim() || "untitled" }) } : {}) }),
-  [featureState, form, options, automation, orchestrator, teamGrant, confirmBypass, budgetOk, profile, picks, workspace, topic, existing, issue, autoName]);  // eslint-disable-line react-hooks/exhaustive-deps
+  [featureState, form, machine, cloneOnMachine, otherMachine, options, automation, orchestrator, teamGrant, confirmBypass, budgetOk, profile, picks, workspace, topic, existing, issue, autoName]);  // eslint-disable-line react-hooks/exhaustive-deps
   const compatible = (kind: "skills" | "agents" | "mcps", ids: string[], provider: Provider) =>
     ids.filter((id) => catalog?.[kind].find((i) => i.id === id)?.providers.includes(provider));
   const chooseProfile = (id: string) => {
@@ -245,7 +264,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const multiChoices = runChoices.map((c) => ({ ...c, options: runOptions(c, registry.byId(c.provider), catalog) }));
   const multiPreviews = useQueries({ queries: (multi ? multiChoices : []).map((choice) => {
     const launch = { ...choice, name: body.name, project_id: form.project_id,
-      initial_prompt: form.initial_prompt, worktree: true };
+      machine, clone_on_machine: cloneOnMachine, initial_prompt: form.initial_prompt, worktree: true };
     return { queryKey: ["preview", launch], queryFn: () => post<Preview>("/api/sessions/preview", launch),
       enabled: open && !!form.project_id, retry: false };
   }) });
@@ -258,7 +277,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   });
   const launch = useMutation({
     mutationFn: async (choice: { grant?: TeamGrant; briefDecision?: boolean }): Promise<MultiRunGroup | SessionDetail> => multi ? post<MultiRunGroup>("/api/multiruns", {
-      project_id: form.project_id, name: body.name, initial_prompt: form.initial_prompt, runs: multiChoices,
+      project_id: form.project_id, machine, clone_on_machine: cloneOnMachine, name: body.name, initial_prompt: form.initial_prompt, runs: multiChoices,
     }) : scheduling
       ? api<SessionDetail>(`/api/schedules${schedule?.id ? `/${schedule.id}` : ""}`, {
         method: schedule?.id ? "PUT" : "POST", json: { ...scheduleConfig, launch: { ...body, budget_ok: false } } })
@@ -275,7 +294,8 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const teamDangerous = orchestrator && teamGrant.agents.some((a) => registry.byId(a.agent)?.options.some((o) =>
     o.dangerous.includes(a.options[o.key] ?? (catalog?.profiles.find((p) => p.id === a.profile)?.[a.agent] as OptionValues | undefined)?.[o.key] ?? o.default ?? '')));
   const dangerous = !multi && (teamDangerous || (info?.options ?? []).some((o) => o.dangerous.includes(options[o.key])));
-  const project = usable.find((p) => p.id === form.project_id);
+  const needsClone = otherMachine && (multi ? multiPreviews.some(p => p.data?.checkout?.requires_clone) : preview.data?.checkout?.requires_clone);
+  const machineBlocked = machines.isPending || !!machines.error || !selectedMachine?.available || !!needsClone && !cloneOnMachine;
   const overBudget = !scheduling && !multi && budgetPaused.length > 0 && !budgetOk;
   const unavailable = !multi && info?.installed === false;
   const multiBlocked = multi && (!form.initial_prompt.trim() || runChoices.some((c) =>
@@ -304,12 +324,15 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     if (await ensureTrusted()) launch.mutate({});
   };
   const briefPending = orchestrator && !workspace && instance.orchestrator && teamGrant.brief_version === undefined;
-  const blocked = briefPending || registry.isPending || !!registry.error || multiBlocked || unavailable || overBudget || (workspace
+  const blocked = machineBlocked || briefPending || registry.isPending || !!registry.error || multiBlocked || unavailable || overBudget || (workspace
     ? (!existing && !topic.trim()) || !profile || (dangerous && !confirmBypass)
     : !project || project.import_mode !== "managed" || (dangerous && !confirmBypass)
       || (!multi && !!endpoint && !form.model));
 
-  const reason = registry.isPending ? "Checking available agents…"
+  const reason = machines.isPending ? "Checking machines…" : machines.error ? "Could not load machines. Retry above."
+    : !selectedMachine?.available ? selectedMachine?.reason ?? "Choose an available machine."
+    : needsClone && !cloneOnMachine ? `Choose Clone on ${machine} before launching.`
+    : registry.isPending ? "Checking available agents…"
     : registry.error ? "Could not check available agents: fix the error shown above."
     : briefPending ? "Review the project brief version before launching."
     : multiBlocked ? (!task ? `Add a task to start ${runChoices.length} runs.`
@@ -317,7 +340,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
       : multiPreviews.some((p) => !!p.error) ? "A run can't start: fix the error shown above."
       : runChoices.some((c) => !registry.byId(c.provider) || registry.byId(c.provider)?.installed === false) ? "A run's agent isn't installed: choose another."
       : "Confirm each unrestricted run above.")
-    : unavailable ? "This agent is not installed for this project's account and machine."
+    : unavailable ? `This agent is not installed on ${machine} for this project's account. Choose another agent.`
     : overBudget ? "Your budget pauses this agent: confirm below to launch anyway." : workspace
     ? (!existing && !topic.trim() ? "Give the workspace a topic." : !profile ? "Choose a profile that can run without a project."
       : dangerous && !confirmBypass ? "Confirm the unrestricted mode above." : preview.error ? "Fix the error shown above." : "")
@@ -338,12 +361,12 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     : `${scheduleConfig.timing.kind} at ${scheduleConfig.timing.time ?? "09:00"}${scheduleConfig.enabled ? "" : ", paused"}`;
   const summary = advancedSummary({ run: scheduling ? "schedule" : multi ? "several" : run === "helpers" && !workspace ? "helpers" : "once",
     runs: runChoices.length, schedule: timing, workspace, model: chosenModel, effort: form.effort, options: optionWords,
-    worktree: form.worktree || !!project?.private_workspace, skills: picks.skills.length, agents: picks.agents.length, mcps: picks.mcps.length,
+    worktree: form.worktree || otherMachine || !!project?.private_workspace, skills: picks.skills.length, agents: picks.agents.length, mcps: picks.mcps.length,
     goal: !!automation.goal?.text.trim(), autoresume: !!automation.autoresume });
   // Own worktree (owner decision 0008, Q6): a warning only when another live session already works in this checkout.
-  const sharing = !workspace && project && !form.worktree && !orchestrator && !multi && !project.private_workspace
+  const sharing = !workspace && project && !otherMachine && !form.worktree && !orchestrator && !multi && !project.private_workspace
     ? (sessions.data ?? []).filter((x) => x.project_id === project.id && isLive(x) && !x.worktree) : [];
-  const runsOn = workspace ? instance.host : project?.host && project.host !== "local" ? project.host : instance.host;
+  const runsOn = machine === "local" ? instance.host : machine;
   const runsAs = workspace ? instance.agent_user : project?.account ?? instance.agent_user;
   const dirty = !!(task || form.name.trim() || topic.trim());
   const discard = async () => {
@@ -366,6 +389,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
             {teamGrant.brief_version ? `Project brief: saved version ${teamGrant.brief_version}.` : 'Project brief: none pinned.'}
           </span>}
         </span>
+        {multi?multiPreviews.map((p,i)=><SecurityBadge key={i} policy={frozenSecurity(p.data?.files)} label={`Run ${i+1} launch`}/>):<SecurityBadge policy={frozenSecurity(preview.data?.files)} label="This launch"/>}
         <ErrorNote error={trust.error} title="Couldn't trust the project." />
         <ErrorNote error={launch.error} />
         <ErrorNote error={reviewBrief.error} title="Couldn't check the next brief version. Try Launch again." />
@@ -435,6 +459,22 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
 
         <section aria-labelledby="ns-who" className="min-w-0 space-y-3">
           <h3 id="ns-who" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Who</h3>
+          <Field label="Machine" hint={workspace ? "Local workspaces stay on this Rynhult. Choose a project to use another machine." : selectedMachine ? machineDetail(selectedMachine) : "Choose where this session runs."}>
+            <Select value={machine} disabled={machines.isPending || workspace} onChange={e => chooseMachine(e.target.value)}>
+              {!machines.data?.some(item => item.name === machine) && <option value={machine}>{machine === "local" ? "This Rynhult (main)" : machine}</option>}
+              {machines.data?.map(item => <option key={item.name} value={item.name}
+                disabled={!item.available || !!project?.containers && item.name !== "local" || !!project?.private_workspace && item.name !== (project.host || "local")}>
+                {item.label}{!item.available ? ` — ${item.reason}` : ""}</option>)}
+            </Select>
+          </Field>
+          <ErrorNote error={machines.error} title="Couldn't load machines." />
+          {machines.isError && <Button size="sm" onClick={() => machines.refetch()}>Retry machines</Button>}
+          {needsClone && <div className="space-y-2 text-xs text-muted">
+            <p>This machine needs a copy of the project. Clone copies committed Git files through Rynhult, not uncommitted changes or login credentials. The transfer limit is 8 MiB.</p>
+            {cloneOnMachine ? <p role="status">The project will be cloned on {machine} when you launch.</p>
+              : <Button onClick={() => setCloneOnMachine(true)}>Clone on {machine}</Button>}
+          </div>}
+          {otherMachine && !needsClone && preview.data?.machine === machine && <p className="text-xs text-muted">Using an existing checkout on {machine}.</p>}
           {multi ? <MultiRunFields value={runChoices} onChange={setRunChoices} catalog={catalog} providers={registry.list}
             models={(p) => modelsFor(models.data, p)} /> : <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -450,7 +490,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                   {(registry.list.length ? registry.list : [{ id: "claude", label: "Claude Code" }, { id: "codex", label: "Codex" }] as ProviderInfo[])
                     .filter(p => !desktopBuild || ["claude", "codex"].includes(p.id)).map((p) => (
                       <option key={p.id} value={p.id} disabled={p.installed === false}>
-                        {p.label}{p.preview ? " (preview)" : ""}{p.installed === false ? " (not installed)" : ""}
+                        {p.label}{p.preview ? " (preview)" : ""}{p.installed === false ? ` (not installed on ${machine})` : ""}
                       </option>
                     ))}
                 </Select>
@@ -496,7 +536,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                         onChange={() => {
                           setRun(m.id);
                           setConfirmBypass(false);
-                          if (m.id === "helpers") setTeamGrant(defaultGrant(project?.host || "local", registry.data?.team_agents));
+                          if (m.id === "helpers") setTeamGrant(defaultGrant(machine, registry.data?.team_agents));
                           if (m.id === "schedule" && !form.worktree) set("worktree", true);  // scheduled runs default to their own worktree
                         }} />
                       <span><span className="font-medium">{m.label}</span><span className="block text-xs text-muted">{m.detail}</span></span>
@@ -508,10 +548,10 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                 onChange={(value) => { setTeamGrant(value); setConfirmBypass(false); }} onOpenBrief={onClose} catalog={catalog} providers={registry.list} />}
               {!workspace && project && !multi && (
                 <label className="flex items-start gap-2.5 text-[13px]">
-                  <input type="checkbox" className="mt-0.5 size-3.5 accent-[var(--accent)]" checked={orchestrator || !!project.private_workspace || form.worktree} disabled={orchestrator || project.private_workspace}
+                  <input type="checkbox" className="mt-0.5 size-3.5 accent-[var(--accent)]" checked={orchestrator || otherMachine || !!project.private_workspace || form.worktree} disabled={orchestrator || otherMachine || project.private_workspace}
                     onChange={(e) => set("worktree", e.target.checked)} />
                   <span><span className="font-medium">Own worktree</span>
-                    <span className="block text-xs text-muted">A separate copy on its own branch (acc/…), so parallel agents don't overwrite each other's files. Needs git.{project.private_workspace ? " Required for Development workspaces; git stays local-only." : ""}</span></span>
+                    <span className="block text-xs text-muted">A separate copy on its own branch (acc/…), so parallel agents don't overwrite each other's files. Needs git.{otherMachine ? " Required on another machine." : project.private_workspace ? " Required for Development workspaces; git stays local-only." : ""}</span></span>
                 </label>
               )}
               {!multi && <>
@@ -640,6 +680,7 @@ ${preview.data.command.map(shellQuote).join(" ")}`} label="Copy launch command" 
           <ErrorNote error={preview.error} title="This launch can't start as it is." />
           <DeliveryWarnings preview={preview.data} agent={info?.label ?? form.provider} />
         </>}
+        {dangerous && <p className="text-xs text-muted">This confirmation cannot override Security. Provider prompts must be Off in an owner-reviewed scope before bypass options can launch.</p>}
         {dangerous && (
           <label className="flex items-start gap-2 rounded-md border border-bad/30 bg-bad/10 p-3 text-xs text-bad">
             <input type="checkbox" checked={confirmBypass} onChange={(e) => setConfirmBypass(e.target.checked)} className="mt-0.5" />

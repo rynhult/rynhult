@@ -39,6 +39,14 @@ class BrokerConfig:
     containers_attach_root: Path = Path("/run/acc-ct-attach")
     container_policy: Path = Path("/etc/acc/containers/policy.json")
 
+    # Root publishes a target-local snapshot over a root-authenticated IPC frame.
+    # Provisioned installs refuse filesystem work after restart until that reload.
+    folder_policy_required: bool = False
+    folder_revision: int = 0
+    allowed_folders: bool = True
+    folder_homes: tuple[str, ...] = ()
+    folder_protected: tuple[str, ...] = ()
+
     @property
     def statusline_path(self) -> str:
         """Installed next to acc-hook everywhere (/srv/acc/bin, a node's prefix, the Mac's ACC folder)."""
@@ -53,6 +61,7 @@ class BrokerConfig:
         providers = _providers.executables(dict(item.split("=", 1) for item in env.get("ACC_PROVIDERS", "").split(",") if "=" in item))
         roots = tuple(Path(p) for p in env.get("ACC_ALLOWED_ROOTS", "/srv/acc/workspaces").split(":") if p)
         return cls(
+            folder_policy_required=env.get("ACC_FOLDER_POLICY_REQUIRED") == "1",
             socket_path=Path(env.get("ACC_BROKER_SOCKET", "/srv/acc/sock/broker.sock")),
             run_dir=Path(env.get("ACC_RUN_DIR", "/srv/acc/run")),
             tmux_socket=env.get("ACC_TMUX_SOCKET", "acc"),

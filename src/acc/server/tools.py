@@ -15,7 +15,7 @@ from .. import tooling
 from . import attention
 from .broker_client import BrokerError
 from .ha import fence
-from .models import API_PRINCIPAL, AuditLog, InstalledTool, Session, Setting, ToolRequest, User
+from .models import API_PRINCIPAL, AuditLog, InstalledTool, Session, ToolRequest, User
 from .node_tasks import NodeTasks
 
 log = logging.getLogger("acc.tools")
@@ -28,11 +28,9 @@ class ToolRefused(ValueError):
 
 
 def required(db, owner: str | None, project_id: int | None) -> bool:
-    for key in (f"tools.person.{owner}", f"tools.project.{project_id}"):
-        setting = db.get(Setting, key)
-        if setting and setting.value.get("required") is False:
-            return False
-    return True
+    from .security_settings import resolve
+    return resolve(db, owner=owner, project_id=project_id)['switches']['tool_install_check']
+
 
 
 def out(row) -> dict:

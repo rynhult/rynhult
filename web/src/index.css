@@ -163,3 +163,7 @@ body {
     .session-delivery-indicator button { height: 2.75rem; }
   }
 }
+
+/* A fixed presentation of the same terminal, with room for phone safe areas and no transition/refit animation. */
+.terminal-window-expanded { position: fixed; inset-inline: 0; z-index: 40; visibility: visible;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }

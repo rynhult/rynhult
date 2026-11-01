@@ -48,11 +48,16 @@ expired merely because a permission question has been waiting for an answer.
 - Each tile gives its session name room before secondary activity text, then shows its status (and, on a wide screen, its agent and what it's doing now). The arrow opens its page; **×** takes it off the grid (it keeps running).
 - The one-window-types-at-a-time rule still applies: a tile whose session is open with control somewhere else shows **Read-only** with **Take control**. A tile you can type into says nothing.
 - **On a phone** the grid shows one terminal at a time: the chosen sessions sit in a row of tabs above it, each with its status dot, so you can switch between them.
+- **Expand** fills the browser window with one tile, keeping its terminal connected. **Collapse** returns to Grid. On a phone the terminal key bar remains available.
 - A tile is smaller than the session page, and the agent's screen follows the size of the last window that typed into it, so text can wrap differently when you go back to the full page.
 
 ![Grid session names keep space ahead of lengthy activity descriptions](/.attachments/grid-labels.png)
 
 ![The phone Grid keeps its session name and one-terminal switcher](/.attachments/grid-labels-phone.png)
+
+![Expanded Grid terminal](/.attachments/terminal-expanded-grid-desktop.png)
+
+![Expanded Grid on a phone](/.attachments/terminal-expanded-grid-phone.png)
 
 ## Worktrees
 Several agents in one project's folder see and change the same files. Tick **Own worktree** in New session to give a session its own working copy instead:
@@ -64,6 +69,21 @@ Several agents in one project's folder see and change the same files. Tick **Own
   git worktree remove <folder>
   ```
 - The project needs to be a git repository with at least one commit.
+
+### Choosing a machine
+
+Every project launch has a **Machine** choice under **Who** in
+[New session](/User-Guide/New-Session#choose-another-machine), not just teams.
+It starts on the project's registered machine. Choose another enrolled machine
+to use an accessible existing checkout, or explicitly choose **Clone on …**
+before the first launch there. A session on another machine always gets its
+own worktree. The project's registration does not move.
+
+The available agents and models belong to the project's account on that
+machine. The launch summary names the machine and account; session rows,
+the session page and the Audit record retain the chosen machine. Resume stays
+there. The clone path copies committed Git state only and has an 8 MiB limit;
+it does not copy uncommitted changes or login credentials.
 
 ## The session page
 
@@ -274,7 +294,7 @@ The **Terminal** tab embeds the session's tmux session in the page. It is the re
 - **Phone.** Opening a terminal does not focus its text input or open the phone keyboard. Tap the grid to type. A key bar under the terminal adds the keys a touch keyboard lacks. The ones that finish or stop an answer come first and always fit the screen: **⏎** (Enter), **Esc**, **^C** (interrupt), **↑**, **↓** and **Tab**. **More keys** adds **Ctrl** (tap it, then a letter; it stays highlighted until used), **←**, **→**, PgUp/PgDn and **Paste**. To answer a permission prompt: tap **↑**/**↓** to pick an option, then **⏎**.
 - **Keyboard.** Inside the terminal, **Tab** and **Shift+Tab** go to the agent for completion and other CLI actions. Press **F6** to leave for **Screen reader output**, then use **Tab** normally to reach **Open as text** and **Copy recent output**. **Shift+F6** leaves backwards, including from a screen reader row. On keyboards with media keys, you may need **Fn+F6**. A visible hint sits in the top bar. The **Skip terminal** link appears when reached by keyboard, before the grid, and goes straight to the output controls.
 - **Reconnecting.** After waking the browser or losing its connection, use **Reconnect** if the terminal says **Disconnected**. Check the current prompt before continuing: reconnecting does not replay previously typed or pasted text, and input entered while disconnected is not queued. Accented characters and IME compositions are committed once, without reinserting earlier text.
-- **Screen readers.** **Screen reader output** is on by default and exposes the terminal's visible lines. Toggle it below the grid; the choice is saved for this browser and applies when you next open a session. Grid tiles do not expose these rows; open the session for accessible output. Rynhult announces state changes such as **Needs you** or a terminal turning read-only once, without reading the agent's output stream aloud.
+- **Screen readers.** **Screen reader output** is on by default and exposes the terminal's visible lines. Toggle it below the grid; the choice is saved for this browser and applies when you next open a session. Collapsed Grid tiles do not expose these rows; expand the tile or open the session for accessible output. Rynhult announces state changes such as **Needs you** or a terminal turning read-only once, without reading the agent's output stream aloud.
 - **Text and copying.** Choose **Open as text** for selectable, read-only text with ordinary keyboard navigation. It holds a snapshot while you read; **Refresh output** fetches a new one. **Copy recent output** copies the snapshot in that dialog, or fetches recent output when used below the grid. If clipboard access is denied, select and copy from the text view instead. These controls are available on phones too.
 - **Size.** The terminal follows the size of the window; tmux redraws the agent's screen to fit.
 - **Scrolling and links.** Scroll the output available in the grid with the mouse or trackpad. Use **Open as text** for retained terminal history beyond the grid. Links open in a new tab.
@@ -288,6 +308,50 @@ Chromium, Firefox and Linux WebKit. Physical macOS/Safari predictions,
 VoiceOver and sleep/wake have not had a full qualification pass. These checks do
 not prove every source of typing latency is fixed. If earlier text appears again,
 check it before submitting and report the browser, input method and steps.
+
+### Expand a terminal
+
+Choose **Expand** on the Terminal tab or a Grid tile to fill the browser window.
+The same terminal stays connected, with its scrollback and typing control; its
+rows and columns refit to the available space. The slim bar keeps the session
+name, status and **Collapse**. Press **F6** to focus that bar, then **C** to collapse.
+**Esc** still goes to the program. Optional **Full screen** uses the browser’s native
+full screen; exit that with the browser’s own key before collapsing if needed.
+
+Each device remembers the expanded session separately for the session page and
+Grid. Reloading restores it; collapsing clears that preference. Phone key buttons
+remain available, including when the on-screen keyboard changes the available height.
+
+![Expanded session terminal](/.attachments/terminal-expanded-session-desktop.png)
+
+![Expanded session terminal on a phone](/.attachments/terminal-expanded-session-phone.png)
+
+### Select and copy terminal text
+
+Drag to select text. When the program captures mouse input, use your platform's modifier:
+
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Select through application mouse mode | Hold **⌥ Option** while dragging | Hold **Shift** while dragging |
+| Copy the selection | **⌘C** | **Ctrl+Shift+C** |
+
+The first unmodified drag in mouse mode shows a brief hint with **Select text**
+and **Dismiss**. It disappears after ten seconds and appears at most once while
+that terminal view stays open. The terminal keeps working; the hint does not take
+keyboard focus. Selection and Copy tooltips show your platform's keys.
+
+Alternatively, choose **Select text** in the terminal controls: it freezes this browser’s parsed output as ordinary selectable text, without
+sending mouse input to the program. On a phone, choose **Select text**, long-press a
+word and extend the selection with the browser’s handles. Choose **Select text**
+again to return to the live terminal; the program keeps running throughout.
+
+A **Copy** button appears beside the selection. An expanded terminal also shows
+**Copy selected text** in its slim bar. **Ctrl+Shift+C** or **⌘C** copies the selection;
+**Ctrl+C** still interrupts the program in the live terminal. Copies contain plain
+text, omit trailing spaces on each line and join terminal soft-wrapped rows.
+If clipboard access is denied, **Open as text** opens with just your selected text
+already selected, ready for the browser’s Copy command. The Select view only
+contains output held in this browser; use **Open as text** for older retained output.
 
 ### Messages sent to the agent
 

@@ -76,7 +76,7 @@ def queue(db, assignment, attempt, session, *, version, fields, text):
     if message is None:
         team = db.get(Team, assignment.team_id)
         message = delivery.MessageDelivery(session_id=session.id, attempt_id=attempt.id, actor='supervisor',
-            expires_at=min(team.expires_at, utcnow() + timedelta(days=1)))
+            expires_at=min(team.expires_at or (utcnow() + timedelta(days=1)), utcnow() + timedelta(days=1)))
         db.add(message)
     else:
         text += ' Earlier queued notices are superseded; plan() keeps each version in change_notices.'

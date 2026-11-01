@@ -105,18 +105,15 @@ def router(ctx: Context) -> APIRouter:
         }
 
 
-    def launch_scope(project_id: int | None, who) -> tuple[str, str]:
-        if project_id is None:
-            return who.account, "local"
-        with db() as s:
-            project = ctx.project_for(s, who, project_id)
-            return project.account, project.host or "local"
+    def launch_scope(project_id: int | None, who, machine=None) -> tuple[str, str]:
+        from ..launch_machines import scope
+        return scope(ctx, who, project_id, machine)
 
     @api.get("/api/providers/registry")
-    async def provider_registry(project_id: int | None = None, who=Depends(ctx.principal)):
+    async def provider_registry(project_id: int | None = None, machine: str | None = None, who=Depends(ctx.principal)):
         """Every agent provider Rynhult knows: label, launch options, capabilities, and whether its CLI is installed for
         the signed-in person's agent account (None when that account's broker can't be asked)."""
-        account, host = launch_scope(project_id, who)
+        account, host = launch_scope(project_id, who, machine)
         try:
             installed = await ctx.broker.call("installed_providers", account=account, host=host)
         except BrokerError:
@@ -143,7 +140,7 @@ def router(ctx: Context) -> APIRouter:
             if project.containers:
                 raise HTTPException(409,'Choose a native execution project; native checks do not qualify per-session containers')
             account,machine=project.account,project.host or 'local'
-            if budgets.paused(s,who.username,body.provider):
+            if budgets.paused(s,who.username,body.provider,project_id=body.project_id):
                 raise HTTPException(409,'Your budget pauses this provider; adjust it before checking image access')
         lock=supervisor.__dict__.setdefault('_image_check_lock',asyncio.Lock())
         cooldown=key(account,machine,body.provider,'*')+'.cooldown'
@@ -212,9 +209,9 @@ def router(ctx: Context) -> APIRouter:
         return result
 
     @api.get("/api/models")
-    async def models(refresh: int = 0, project_id: int | None = None, who=Depends(ctx.principal)):
-        account, host = launch_scope(project_id, who)
-        if project_id is not None or account != ctx.broker.default_account:
+    async def models(refresh: int = 0, project_id: int | None = None, machine: str | None = None, who=Depends(ctx.principal)):
+        account, host = launch_scope(project_id, who, machine)
+        if project_id is not None or account != ctx.broker.default_account or host != "local":
             try:
                 catalog = await ctx.broker.call("model_catalog", account=account, host=host)
                 with db() as s:

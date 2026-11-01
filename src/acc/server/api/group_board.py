@@ -122,7 +122,7 @@ def router(ctx: Context):
             try:
                 from .. import budgets
                 with ctx.db() as s:
-                    if budgets.paused(s, who.username, body.provider) and not body.budget_ok:
+                    if budgets.paused(s, who.username, body.provider, project_id=project_id) and not body.budget_ok:
                         raise HTTPException(409, 'Your personal budget has paused launches. To launch anyway, confirm the override for your own budget.')
                 inputs = LaunchInputs(provider=body.provider, initial_prompt=body.prompt)
                 sid = await ctx.supervisor.create_session(project_id, inputs, body.name, who.username,

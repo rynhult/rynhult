@@ -68,15 +68,9 @@ test("tool requests show destination, approve pins version, reject does not inst
 
     await page.goto("/settings#tool-approvals");
     const policy = page.locator("section").filter({ has: page.getByRole("heading", { name: "Tool approvals", exact: true }) });
-    const personal = policy.getByLabel("Require tool approval for alex", { exact: true });
-    await expect(personal).toBeChecked();
-    await personal.click();
-    await page.getByRole("dialog").getByRole("button", { name: "Turn off approval", exact: true }).dblclick();
-    await expect(personal).not.toBeChecked();
-    await page.reload();
-    await expect(personal).not.toBeChecked();
-    await personal.click();
-    await expect(personal).toBeChecked();
+    // The legacy unreviewed writer is retired. Requests still require owner approval.
+    await expect(policy.getByRole('checkbox')).toHaveCount(0);
+    await expect(policy.getByRole('link', { name: 'Open reviewed Security settings' })).toHaveAttribute('href', '/settings#security');
     await policy.screenshot({ path: wikiShotPath(testInfo, "tools-policy.png") });
 
     request("ripgrep", "apt");

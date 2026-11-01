@@ -1,3 +1,4 @@
+import {CurrentSecurityBadge} from './SecurityBadge';
 import { UnsavedBriefGuard } from './UnsavedBriefGuard';
 import { desktopBuild } from "../lib/desktop";
 import { ago, teamOrder, withTeamAncestors, workspaceName } from "../lib/format";
@@ -90,6 +91,7 @@ function Sidebar({ username, onTheme, theme, onLogout, onNavigate }: {
           </div>
         </div>
       </div>
+      <div className="px-3"><CurrentSecurityBadge/></div>
       {owner && updates.data?.available && <Link to="/settings#updates" className="px-4 pb-3 text-xs text-wait underline underline-offset-2" onClick={onNavigate}>Update available</Link>}
       {/* Pinned live sessions scroll on their own, so Operate and Configure stay in view however many are live (UX review
           NAV-2); the whole column scrolls only when the window is too short for both. */}
@@ -308,6 +310,7 @@ export function Layout({ username, children }: { username: string; children: Rea
               </span>
             ))}
           </nav>
+          <div className="max-w-[45%] md:hidden"><CurrentSecurityBadge/></div>
           <LiveIndicator />
           {/* The key caps sit beside the button's text, not in it, so its name is exactly what it shows (UX review NAV-7). */}
           <div className="relative hidden w-64 lg:block">

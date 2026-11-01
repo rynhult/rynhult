@@ -2,7 +2,7 @@
   "name": "rynhult-web",
   "private": true,
   "license": "MIT",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

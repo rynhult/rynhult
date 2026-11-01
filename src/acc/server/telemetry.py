@@ -21,7 +21,7 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
@@ -460,7 +460,7 @@ class Telemetry:
                     s.scalar(
                         select(func.count())
                         .select_from(Team)
-                        .where(Team.stopped.is_(False), Team.expires_at > datetime.now(timezone.utc))
+                        .where(Team.stopped.is_(False), or_(Team.expires_at.is_(None), Team.expires_at > datetime.now(timezone.utc)))
                     )
                 ),
             ),

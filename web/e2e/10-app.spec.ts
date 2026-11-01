@@ -973,7 +973,9 @@ test("new session: OpenCode with its own options, a private server and Rynhult's
   await expect(dialog.getByPlaceholder("provider/model")).toBeVisible();
   await dialog.getByPlaceholder("provider/model").fill("opencode/big-pickle");
   await dialog.getByRole("combobox", { name: "Permissions", exact: true }).selectOption("auto");
-  await expect(dialog.getByText("--standalone --session ses_<session-id> --auto")).toBeVisible();
+  // A generic dangerous-mode checkbox cannot widen the owner's prompts-On policy.
+  await expect(dialog.getByText(/Security requires provider prompts/).first()).toBeVisible();
+  await expect(dialog.getByText("--standalone --session ses_<session-id> --auto")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeDisabled();  // needs the explicit checkbox
   await dialog.getByRole("combobox", { name: "Permissions", exact: true }).selectOption("commands");
   await dialog.getByRole("combobox", { name: "Primary agent" }).selectOption("plan");

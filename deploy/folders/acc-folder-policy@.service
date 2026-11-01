@@ -1,0 +1,25 @@
+[Unit]
+Description=Rynhult fixed folder worker
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/python3 -I /usr/local/lib/acc-folders/worker.py
+StandardInput=socket
+StandardOutput=socket
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+# No per-connection mount namespace: preview/apply must observe the same host
+# mount identities. The fixed worker confines mutations by pinned descriptors,
+# trusted mapping and reviewed inode manifests, not an editable shell command.
+PrivateTmp=no
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=8
+RuntimeMaxSec=90
+LimitCORE=0
+
+[Install]
+Alias=rynhult-folder-policy@.service

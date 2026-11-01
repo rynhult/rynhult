@@ -103,11 +103,15 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   await now.getByLabel('Now summary').fill('Planning: formats decided.');
   await now.getByRole('button', { name: 'Save' }).click();
   await expect(now).toContainText('Planning: formats decided.');
-  // "For a Needs you card, do the steps, then select Mark done": it leaves the Inbox; the other stays.
+  // Record an explicit outcome for a Needs you card: it leaves the Inbox; the other stays.
   await page.goto('/inbox');
   await expect(page.getByText('Create the test address book account', { exact: false }).first()).toBeVisible();
   await teamTab(page, lead);
-  await yours.getByRole('listitem', { name: 'Create the test address book account' }).getByRole('button', { name: 'Mark done' }).click();
+  const need = yours.getByRole('listitem', { name: 'Create the test address book account' });
+  await expect(need.getByRole('button', { name: 'Mark done', exact: true })).toHaveCount(0);
+  await need.getByRole('textbox', { name: 'Answer "Create the test address book account"', exact: true }).fill('Created the test account.');
+  await need.getByRole('button', { name: 'Answer', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Answered', exact: true })).toContainText('Created the test account.');
   await expect(yours.getByRole('listitem', { name: 'Create the test address book account' })).toHaveCount(0);
   await page.goto('/inbox');
   await expect(page.getByText('Approve the staging port', { exact: false }).first()).toBeVisible();

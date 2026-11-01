@@ -98,6 +98,19 @@ whole-inventory proofs. File-local serial mode does not protect other specs.
 Selecting either ordinary project also selects these prerequisites.
 Whole-page containment proofs also require these phases: concurrent attention
 producers can replace the real Inbox content while its dimensions are measured.
+The wrap-up writers in `75-verification.spec.ts` and `89-orch-ux.spec.ts` also
+belong to `desktop-stateful`: their setting is installation-wide, not per project.
+
+For focused flake checks, `playwright.flaky.config.ts` depends only on setup and
+defaults to one worker; the main release gate retains four workers.
+Run one filename at a time with `--project=flaky --workers=1 --repeat-each=3`;
+do not select its whole project on a busy shared machine. Use unique project,
+vault-key and allowed-server identities, scope controls to those fixtures, and
+stop owned teams in cleanup. Wait for the provider's `claude_hook` idle state
+before issuing tools. `teamRequest` drives the real disposable tool spool with
+an action-specific wait bounded by the existing test deadline. Await mutation
+responses, persisted drafts or socket-input acknowledgement before asserting or
+navigating away; a sleep or the next polling interval is not a readiness signal.
 
 A failing assertion in a prerequisite project marks that project failed, so Playwright skips its dependent
 projects. This is dependency gating, not a `maxFailures: 1` setting. A serial describe also skips the rest
@@ -165,7 +178,13 @@ For fake Claude events and statusline fixtures, likewise wait for idle from
 After requesting permission, wait for that session's `waiting_input` observation
 before checking the rendered Team row. A terminal textarea can exist before its
 socket connects; wait for **Read-write** before typing input that must reach the
-server. A late terminal mount must not steal focus already placed on a tab or
+server. Screen-selection fixtures also wait for the fake provider's first
+rendered screen before injecting output: the write lease precedes tmux's initial
+attach repaint. After expansion, wait for both xterm's larger grid and tmux's
+matching scroll-region height before injecting the mouse-mode screen and dragging.
+Tmux resets mouse tracking during its resize repaint, which can clear a selection
+started too early. These are protocol/DOM conditions, not extra sleeps or longer
+timeouts. A late terminal mount must not steal focus already placed on a tab or
 another control. The tab-keyboard regression gates its JavaScript chunk until
 the tab has focus, then verifies focus survives the real terminal mounting.
 Schedule **Run now** first queues work: wait for the browser's schedule

@@ -1,12 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
-import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { expandTeamPanels, AUTH_FILE, gitProject, info, waitForSessionState } from './helpers';
+import { expandTeamPanels, AUTH_FILE, csrfHeaders, gitProject, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
 
 // Break-it pass on the Orchestrator v2 with the switch on (docs/reviews/2026-10-26-orchestrator-v2-breakit.md).
 // Needs the working list and plan on the server: playwright.v2.config.ts starts it with ACC_ORCHESTRATOR_V2=1. The lead
 // is driven through its spool, as an agent would, with the e2e harness's fake provider.
 test.use({ storageState: AUTH_FILE });
+const owned: string[] = [];
+test.beforeEach(() => { owned.length = 0; });
+test.afterEach(async ({ page }) => {
+  for (const lead of owned) {
+    expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+    await waitForTeamStopped(page, lead);
+  }
+});
 
 async function teamLead(page: Page) {
   const { id, headers } = await gitProject(page, 'breakit');
@@ -14,6 +20,7 @@ async function teamLead(page: Page) {
     worktree: true, orchestrator: { agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 2, total: 4, depth: 1, hours: 2 } } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const lead = (await created.json()).id as string;
+  owned.push(lead);
   test.skip((await page.request.get(`/api/teams/${lead}/worklist`)).status() === 404,
     'needs ACC_ORCHESTRATOR_V2=1 on the server (playwright.v2.config.ts)');
   // A real lead cannot call a tool before launch and its first hook have settled.
@@ -22,16 +29,7 @@ async function teamLead(page: Page) {
 }
 
 async function team(lead: string, action: string, args: object = {}) {
-  const id = randomUUID().replaceAll('-', '');
-  appendFileSync(`${info().run_dir}/${lead}/events.jsonl`, JSON.stringify({ acc_session: lead,
-    hook: { hook_event_name: 'AccTeam', request: { id, action, ...args } } }) + '\n');
-  const file = `${info().run_dir}/${lead}/team/${id}.json`;
-  await expect.poll(() => existsSync(file), {
-    message: `Waiting for ${action} reply from lead ${lead}`,
-    timeout: test.info().timeout,
-    intervals: [100, 250, 500],
-  }).toBeTruthy();
-  const reply = JSON.parse(readFileSync(file, 'utf8'));
+  const reply = await teamRequest(lead, action, args);
   expect(reply.ok, JSON.stringify(reply)).toBeTruthy();
   return reply.result;
 }
@@ -52,7 +50,10 @@ test('a plan editor open in one tab never reverts a newer save from another', as
   const formB = other.getByRole('form', { name: 'Edit the plan' });
   await formB.getByLabel('Idea').fill('Import customer lists from CSV and TSV.');
   await formB.getByLabel('In scope (one per line)').fill('CSV and TSV imports');
+  const savedB = other.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/plan`);
   await formB.getByRole('button', { name: 'Save as a new version' }).click();
+  expect((await savedB).ok()).toBe(true);
   await expect(other.getByRole('region', { name: 'Idea' })).toContainText('CSV and TSV');
 
   // The editor now presents newer scope before saving, then applies only the person's changed fields.
@@ -63,11 +64,14 @@ test('a plan editor open in one tab never reverts a newer save from another', as
   await formA.getByLabel('Out of scope (one per line)').fill('Excel files');
   await expect(formA.getByLabel('Idea')).toHaveValue('Import customer lists.');
   const saveRequest = page.waitForRequest(r => new URL(r.url()).pathname === `/api/teams/${lead}/plan` && r.method() === 'PATCH');
+  const savedA = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/plan`);
   await formA.getByRole('button', { name: 'Save as a new version' }).click();
   const body = (await saveRequest).postDataJSON();
   expect(body.version).toBe(latest.version);
   expect(body.scope).toEqual({ in: ['CSV and TSV imports'], out: ['Excel files'], parked: [] });
   expect(body).not.toHaveProperty('idea');
+  expect((await savedA).ok()).toBe(true);
   await expect(formA).toHaveCount(0);
   const plan = await (await page.request.get(`/api/teams/${lead}/plan`)).json();
   expect(plan.idea).toBe('Import customer lists from CSV and TSV.');
@@ -79,7 +83,7 @@ test('a plan editor open in one tab never reverts a newer save from another', as
 test('a refresh or Back keeps an unsaved plan edit, NOW draft and typed answer', async ({ page }) => {
   const lead = await teamLead(page);
   await team(lead, 'plan_update', PLAN);
-  await team(lead, 'worklist_add', { kind: 'question', title: 'Who uses the import page?' });
+  const question = await team(lead, 'worklist_add', { kind: 'question', title: 'Who uses the import page?' });
   await page.goto(`/sessions/${lead}?tab=team#overview`);
   await page.getByRole('button', { name: 'Edit plan' }).click();
   await page.getByRole('form', { name: 'Edit the plan' }).getByLabel('Idea').fill('Import customer lists, half typed');
@@ -88,6 +92,8 @@ test('a refresh or Back keeps an unsaved plan edit, NOW draft and typed answer',
   await now.getByRole('button', { name: 'Edit' }).click();
   await now.getByLabel('Now summary').fill('Waiting on my review');
   await page.getByLabel('Answer "Who uses the import page?"').fill('Office staff');
+  await expect.poll(() => page.evaluate(id => sessionStorage.getItem(`acc-draft:answer:${id}`), question.id),
+    { message: 'Waiting for the typed answer to be kept for this tab', timeout: test.info().timeout }).toBe(JSON.stringify('Office staff'));
   await page.reload();
   await expect(page.getByRole('region', { name: 'Now' }).getByLabel('Now summary')).toHaveValue('Waiting on my review');
   await expect(page.getByLabel('Answer "Who uses the import page?"')).toHaveValue('Office staff');
@@ -117,7 +123,10 @@ test('a decision has no Mark done or Dismiss until it is answered', async ({ pag
   await expect(decision.getByRole('button', { name: 'Mark done' })).toHaveCount(0);
   await expect(decision.getByRole('button', { name: 'Dismiss' })).toHaveCount(0);
   await expect(yours.getByRole('listitem', { name: 'Who uses it?' }).getByRole('button', { name: 'Dismiss' })).toBeVisible();
+  const saved = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname.startsWith(`/api/teams/${lead}/worklist/items/`));
   await decision.getByRole('button', { name: 'Comma Recommended', exact: true }).click();
+  expect((await saved).ok()).toBe(true);
   const answered = page.getByRole('region', { name: 'Answered', exact: true }).getByRole('listitem', { name: 'Which delimiter?' });
   await expect(answered.getByRole('button', { name: 'Mark done' })).toBeVisible();
 });
@@ -131,13 +140,22 @@ test('saving NOW never silently replaces a newer NOW from the lead', async ({ pa
   await now.getByRole('button', { name: 'Edit' }).click();
   await now.getByLabel('Now summary').fill('Paused: wait for my answer on delimiters.');
   await team(lead, 'worklist');
+  const refreshed = page.waitForResponse(async response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/worklist`
+    && (await response.json()).now === 'Schema done; starting the importer.');
   await team(lead, 'now', { text: 'Schema done; starting the importer.' });
-  await page.waitForTimeout(4_000);  // the list refreshes (every 3 s) under the open editor
+  await refreshed;
+  const refused = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/worklist/now`);
   await now.getByRole('button', { name: 'Save' }).click();
+  expect((await refused).status()).toBe(409);
   await expect(page.getByText('Someone changed the list while you were editing.')).toBeVisible();
   const list = await (await page.request.get(`/api/teams/${lead}/worklist`)).json();
   expect(list.now).toBe('Schema done; starting the importer.');
+  const saved = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/worklist/now`);
   await now.getByRole('button', { name: 'Save' }).click();  // after seeing it, saving again is a deliberate choice
+  expect((await saved).ok()).toBe(true);
   await expect(now).toContainText('Paused: wait for my answer on delimiters.');
 });
 
@@ -157,14 +175,22 @@ test('an answer chosen before the lead rewrote the options is refused, not recor
     }
     await route.continue();
   });
+  const refused = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/worklist/items/${card.id}`);
   await row.getByRole('button', { name: 'Tab', exact: true }).click();
+  const response = await refused;
+  expect(response.request().postDataJSON()).toEqual({ answer: 'tab', revision: card.revision });
+  expect(response.status()).toBe(409);
   await expect(row.getByRole('alert')).toContainText('This card changed');
   await expect(row).toContainText('Your previous choice: Tab.');
   const list = await (await page.request.get(`/api/teams/${lead}/worklist`)).json();
   const item = list.items.find((x: { id: number }) => x.id === card.id);
   expect(item.answer).toBeNull();
   expect(item.state).toBe('open');
+  const resent = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === `/api/teams/${lead}/worklist/items/${card.id}`);
   await row.getByRole('button', { name: 'Resend decision' }).click();  // having seen the new labels, answering is deliberate
+  expect((await resent).ok()).toBe(true);
   await expect(row).toHaveCount(0);  // answered: it leaves "What the lead needs from you"
   const after = (await (await page.request.get(`/api/teams/${lead}/worklist`)).json()).items.find((x: { id: number }) => x.id === card.id);
   expect(after.answer).toBe('tab');

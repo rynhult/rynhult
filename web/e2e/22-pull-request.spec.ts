@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { AUTH_FILE, info } from "./helpers";
+import { AUTH_FILE, info, verifyAgain } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -105,21 +105,31 @@ test("pull request tab: create from the handoff, preview and send failed checks,
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // Agents' own merges: a guardrail rule, on by default, switchable like the others
-  await page.goto("/settings#guardrails");
-  const guardrails = page.locator("section").filter({ has: page.getByRole("heading", { name: "Guardrails" }) });
-  const rule = guardrails.getByRole("checkbox", { name: /No merging pull requests/ });
+  // Agent merge policy now uses the scoped, owner-reviewed Security flow.
+  await verifyAgain(page);
+  await page.goto(`/settings?security_scope=project&project_id=${pid}#security`);
+  const security = page.locator('#security');
+  const rule = security.getByRole('switch', { name: 'Block agent pull-request merges', exact: true });
   await expect(rule).toBeChecked();
-  await expect(guardrails).toContainText("gh pr merge in any form");
-  await guardrails.scrollIntoViewIfNeeded();
-  await guardrails.screenshot({ path: wikiShotPath(testInfo, "settings-guardrails.png") });
+  await security.screenshot({ path: wikiShotPath(testInfo, 'settings-guardrails.png') });
+  const apply = async () => {
+    await security.getByRole('button', { name: 'Review changes', exact: true }).click();
+    const review = page.getByRole('dialog', { name: 'Review Security changes', exact: true });
+    await expect(review).toBeVisible();
+    await review.getByRole('button', { name: 'Apply Security changes', exact: true }).click();
+    await expect(review).toBeHidden();
+  };
   await rule.uncheck();
-  await guardrails.getByRole("button", { name: "Save guardrails" }).dblclick();
-  await expect.poll(async () => (await (await page.request.get("/api/guardrails")).json()).rules.merge_pr).toBe(false);
+  await apply();
+  await expect.poll(async () => (await (await page.request.get(`/api/security/effective?project_id=${pid}`)).json()).switches.merge_pr).toBe(false);
   await page.reload();
-  await guardrails.getByRole("checkbox", { name: /No merging pull requests/ }).check();
-  await guardrails.getByRole("button", { name: "Save guardrails" }).dblclick();
-  await expect.poll(async () => (await (await page.request.get("/api/guardrails")).json()).rules.merge_pr).toBe(true);
+  await expect(rule).not.toBeChecked();
+  // Tightening needs confirmed stops of this scope's affected frozen sessions.
+  expect((await page.request.post(`/api/sessions/${sid}/stop`, { headers })).ok()).toBe(true);
+  await expect.poll(async () => (await (await page.request.get(`/api/sessions/${sid}`)).json()).observed_state).toBe('stopped');
+  await rule.check();
+  await apply();
+  await expect.poll(async () => (await (await page.request.get(`/api/security/effective?project_id=${pid}`)).json()).switches.merge_pr).toBe(true);
 });
 
 test("pull request tab: a server failure reads as words with Retry, the raw text under Details", async ({ page }) => {

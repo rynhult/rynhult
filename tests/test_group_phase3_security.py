@@ -237,3 +237,41 @@ async def test_archived_group_project_refuses_key_attach(grouped):
     assert response.status_code == 409, response.text
     with w['owner'].app.state.db() as s:
         assert not s.query(AuditLog).filter_by(action='group.key_attach').count()
+
+
+async def test_remote_fact_lookup_rechecks_revoked_group_membership(working, monkeypatch):
+    from sqlalchemy import delete
+
+    from acc.server.models import GroupMembership
+
+    api = working['owner']
+    await pause_supervisor(api)
+    sup = api.app.state.supervisor
+    sid = working['session']['id']
+    with write_db(sup.db) as db:
+        db.get(Session, sid).team_id = sid  # exercise a group lead's remote-fact lookup
+        db.commit()
+    original = sup.broker.call
+    lookups, launches = [], []
+
+    async def call(method, **params):
+        if method == 'git_refs':
+            with write_db(sup.db) as fresh:
+                fresh.execute(delete(GroupMembership).where(
+                    GroupMembership.group_id == working['group']['id'], GroupMembership.user_id == 2))
+                fresh.commit()
+            lookups.append(method)
+            return {'git': True, 'has_remote': False}
+        if method == 'launch':
+            launches.append(params)
+            return {'pid': 123, 'command': ['fixture-only; not executed']}
+        return await original(method, **params)
+
+    monkeypatch.setattr(sup.broker, 'call', call)
+    with sup.db() as db:
+        await sup._start(db, db.get(Session, sid), reason='launch')
+        db.commit()
+    assert lookups == ['git_refs']
+    assert not launches
+    with sup.db() as db:
+        assert db.get(Session, sid).desired_state == 'stopped'

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { AUTH_FILE, expectAxeClean, gitProject, info, wikiShotPath, createProjectFromDialog } from './helpers';
-import { appendFileSync, readFileSync, existsSync } from 'node:fs';
+import { AUTH_FILE, expectAxeClean, gitProject, wikiShotPath, createProjectFromDialog, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
+import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 test.use({ storageState: AUTH_FILE });
@@ -86,6 +86,7 @@ for (const origin of ['project', 'grant'] as const) for (const choice of ['save'
     try {
       expect(launches).toBe(1);
       const pinned = await (await page.request.get(`/api/teams/${session}/brief`)).json();
+      await expect.poll(async () => Boolean((await (await page.request.get(`/api/sessions/${session}`)).json()).launch_spec?.inputs), { timeout: 15000 }).toBe(true);
       const launched = await (await page.request.get(`/api/sessions/${session}`)).json();
       const firstMessage = launched.launch_spec.inputs.initial_prompt;
       if (choice === 'save') {
@@ -521,23 +522,28 @@ test('document upload retains per-file errors and a cited proposal accepts only 
     worktree: true, orchestrator: { agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 1, total: 2, depth: 1, hours: 1 } } });
   expect(launched.ok(), await launched.text()).toBeTruthy();
   const lead = (await launched.json()).id;
-  const requestId = randomUUID().replaceAll('-', '');
-  appendFileSync(`${info().run_dir}/${lead}/events.jsonl`, JSON.stringify({ acc_session: lead,
-    hook: { hook_event_name: 'AccTeam', request: { id: requestId, action: 'brief_propose_documents', base_version: 0,
+  try {
+    await waitForSessionState(page, lead, 'idle', 'claude_hook');
+    const reply = await teamRequest(lead, 'brief_propose_documents', { base_version: 0,
       fields: { product: 'Room booking board', design: 'Calm layout' },
       citations: { product: [{ reference: documents[0].reference_id, location: 'section 1' }],
-        design: [{ reference: documents[0].reference_id, location: 'section 1' }] } } } }) + '\n');
-  const replyFile = `${info().run_dir}/${lead}/team/${requestId}.json`;
-  await expect.poll(() => existsSync(replyFile)).toBeTruthy();
-  expect(JSON.parse(readFileSync(replyFile, 'utf8')).ok).toBeTruthy();
-  expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers })).ok()).toBeTruthy();
+        design: [{ reference: documents[0].reference_id, location: 'section 1' }] } });
+    expect(reply.ok, JSON.stringify(reply)).toBeTruthy();
+  } finally {
+    expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers })).ok()).toBeTruthy();
+    await waitForTeamStopped(page, lead);
+  }
   await page.reload();
   await page.getByText('Version history', { exact: true }).click();
   await expect(page.getByText(/Product or feature: rooms.md.*section 1/)).toBeVisible();
   await expectAxeClean(page);
   await page.locator('details').filter({ has: page.getByText('Version history', { exact: true }) }).screenshot({ path: wikiShotPath(ti, `project-brief-document-proposal-${ti.project.name.includes('1440') ? 'desktop' : 'phone'}.png`) });
   await page.getByRole('checkbox', { name: 'Product or feature', exact: true }).check();
+  const accepted = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${id}/brief/versions/1/accept`);
   await page.getByRole('button', { name: /Accept 1 field from version/ }).click();
+  expect((await accepted).ok()).toBe(true);
+  await expect(page.getByText('Saved as version 2', { exact: true })).toBeVisible();
   const current = (await (await page.request.get(`/api/projects/${id}/brief`)).json()).current;
   expect(current.submitted.product).toBe('Room booking board');
   expect(current.submitted.design).toBeUndefined();

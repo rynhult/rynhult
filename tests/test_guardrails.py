@@ -209,12 +209,20 @@ def test_changed_hook_settings_block_everything(tmp_path):
 
 
 async def test_settings_defaults_and_validation(api):
-    state = (await api.get("/api/guardrails")).json()
+    from test_admin_features import owner_browser
+
+    from acc.server import auth
+    from acc.server.models import AuthSession
+    headers = await owner_browser(api)
+    with api.app.state.db() as db:
+        db.get(AuthSession, auth.digest(api.cookies.get('acc_session'))).reauthenticated_at = auth.now()
+        db.commit()
+    state = (await api.get("/api/guardrails", headers=headers)).json()
     assert all(state["rules"].values()) and state["custom"] == [] and len(state["available"]) == 5
     assert "merge_pr" in {r["id"] for r in state["available"]}
-    bad = await api.put("/api/guardrails", json={"rules": {}, "custom": [{"pattern": "(unclosed"}]})
+    bad = await api.put("/api/guardrails", headers=headers, json={"revision": 0, "rules": {}, "custom": [{"pattern": "(unclosed"}]})
     assert bad.status_code == 422
-    saved = (await api.put("/api/guardrails", json={"rules": {"secrets": False},
+    saved = (await api.put("/api/guardrails", headers=headers, json={"revision": 0, "rules": {"secrets": False},
                                                     "custom": [{"pattern": "terraform destroy", "reason": "no"}]})).json()
     assert saved["rules"]["secrets"] is False and saved["rules"]["force_push"] is True and saved["custom"][0]["reason"] == "no"
 

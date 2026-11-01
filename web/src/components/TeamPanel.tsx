@@ -1,3 +1,4 @@
+import { TeamLifetime } from './TeamLifetime';
 import { ProjectGatesCard } from './Gates';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TeamSection, teamPanelSections } from './TeamSection';
@@ -21,8 +22,8 @@ import { useConfirm } from './confirm';
 
 interface Snapshot {
   reservations?: { id: number; kind: string; label: string; state: string; branch: string | null; expires_at: string }[];
-  limits: { at_once: number; total: number; depth: number; hours: number; machines: string[]; agents: { agent: string; profile: string | null; inputs: object }[] };
-  used: { started: number; running: number }; expires_at: string; stopped: boolean;
+  limits: { at_once: number; total: number; depth: number; hours: number | null; machines: string[]; agents: { agent: string; profile: string | null; inputs: object }[] };
+  used: { started: number; running: number }; expires_at: string | null; stopped: boolean; stop_reason?: string | null; resume_available?: boolean;
   wrapup_until?: string | null; members: (SessionSummary & { stop_state?: string | null; verification?: { gate?: { state: string; stale?: string | false | null } | null; review?: { status: string } } })[]; decisions: { action: string; ts: string; detail: Record<string, unknown> }[];
 }
 export function TeamPanel({ id, projectId }: { id: string; projectId: number }) {
@@ -47,6 +48,7 @@ export function TeamPanel({ id, projectId }: { id: string; projectId: number }) 
   const gateSummary = gates.error ? 'Gate refresh failed; expand for details.' : gates.data ? gates.data.budget.enabled ? `${gates.data.running} host slots used · ${gates.data.jobs.filter(j => j.state === 'queued').length} queued shown` : 'Gate queue is off' : 'Loading gate status…';
   const SettingsPanel = orchestrator ? TabPanel : 'div';
   return <QueryState query={query}>{(team) => <div className="space-y-4">
+    <TeamLifetime id={id} expiresAt={team.expires_at} stopped={team.stopped} reason={team.stop_reason} available={team.resume_available} />
     {orchestrator && <Tabs id={`team-sections-${id}`} label="Team sections" tabs={tabs} value={section}
       onChange={value => navigate({ pathname: location.pathname, search: location.search, hash: `#${value}` }, { state: { teamTabNavigation: true } })} />}
     {orchestrator && section === 'overview' && <TabPanel id={`team-sections-${id}`} value={section} className="space-y-4">
@@ -80,9 +82,9 @@ export function TeamPanel({ id, projectId }: { id: string; projectId: number }) 
         <div><dt className="text-xs text-muted">Helpers running</dt><dd>{team.used.running} / {team.limits.at_once}</dd></div>
         <div><dt className="text-xs text-muted">Helpers started</dt><dd>{team.used.started} / {team.limits.total}</dd></div>
         <div><dt className="text-xs text-muted">Depth</dt><dd>{team.limits.depth}</dd></div>
-        <div><dt className="text-xs text-muted">Time left</dt><dd>{team.stopped ? 'Stopped' : until(new Date(team.expires_at).getTime() / 1000)}</dd></div>
+        <div><dt className="text-xs text-muted">Time left</dt><dd>{team.stopped ? 'Stopped' : team.expires_at ? until(new Date(team.expires_at).getTime() / 1000) : 'No time limit'}</dd></div>
       </dl>
-      <p className="text-xs text-muted">Machines: {team.limits.machines.map(m => m === 'local' ? `${host} · main` : m).join(', ')} · Time limit: {team.limits.hours} {team.limits.hours === 1 ? 'hour' : 'hours'} · Counts from Rynhult</p>
+      <p className="text-xs text-muted">Machines: {team.limits.machines.map(m => m === 'local' ? `${host} · main` : m).join(', ')} · Time limit: {team.limits.hours == null ? 'None' : `${team.limits.hours} ${team.limits.hours === 1 ? 'hour' : 'hours'}`} · Counts from Rynhult</p>
       <ul className="space-y-1 text-xs text-muted">{team.limits.agents.map((choice, i) => {
         const inputs = choice.inputs as Record<string, unknown>;
         const mode = permissionSummary(choice.agent, inputs);
@@ -106,7 +108,7 @@ export function TeamPanel({ id, projectId }: { id: string; projectId: number }) 
     <TeamSection teamId={id} panel="decision-log" title="Decision log" summary={`Recorded events: ${team.decisions.length}`}>
     <Card className="p-4"><h2 className="mb-3 font-medium">Decision log</h2>
       <ol className="space-y-3">{team.decisions.map((entry, i) => <li key={i} className="text-xs">
-        <span className="text-muted">{stamp(entry.ts)} · </span>{({ 'team.grant': 'Role granted', 'team.start': 'Helper started', 'team.merge': 'Branch merge', 'team.stop': 'Stopped', 'team.finish': 'Helper finished', 'team.message': 'Message sent', 'team.expired': 'Time limit reached' } as Record<string, string>)[entry.action] ?? entry.action}
+        <span className="text-muted">{stamp(entry.ts)} · </span>{({ 'team.grant': 'Role granted', 'team.start': 'Helper started', 'team.merge': 'Branch merge', 'team.stop': 'Stopped', 'team.finish': 'Helper finished', 'team.message': 'Message sent', 'team.expired': 'Time limit reached', 'team.extend': 'Time limit extended', 'team.remove_limit': 'Time limit removed', 'team.resume': 'Team resumed' } as Record<string, string>)[entry.action] ?? entry.action}
         {entry.detail.name ? <span> · {String(entry.detail.name)}</span> : null}
         {entry.detail.helper ? <span> · {String(entry.detail.helper)}</span> : null}
         {entry.detail.task ? <p className="mt-1 whitespace-pre-wrap break-words text-muted">{String(entry.detail.task)}</p> : null}

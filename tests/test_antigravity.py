@@ -23,7 +23,12 @@ async def test_preview_and_dangerous_flag(api, project):
                if name.endswith("/rules/AGENTS.md"))
     skip = {**base, "options": {"skip_permissions": True}}
     assert (await api.post("/api/sessions", json=skip)).status_code == 409  # needs confirming
-    assert "--dangerously-skip-permissions" in (await api.post("/api/sessions/preview", json=skip)).json()["command"]
+    refused = await api.post('/api/sessions/preview', json=skip)
+    assert refused.status_code == 422, refused.text
+    assert 'Security requires provider prompts' in refused.json()['detail']
+    # Generic confirmation cannot grant an owner-reviewed Security exception.
+    confirmed = await api.post('/api/sessions', json={**skip, 'confirm_dangerous': True})
+    assert confirmed.status_code == 409, confirmed.text
 
 
 async def test_session_learns_its_id_tracks_turns_and_resumes(api, project, env):

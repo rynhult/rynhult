@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -18,13 +19,18 @@ class HostAccessError(PermissionError):
 
 
 class HostGuard:
-    def __init__(self, *, read_roots=(), write_roots=(), home='/root'):
+    def __init__(self, *, read_roots=(), write_roots=(), home='/root', disposable_root_vm=False):
         self.read_roots = tuple(os.path.abspath(p) for p in read_roots)
         self.write_roots = tuple(os.path.abspath(p) for p in write_roots)
         self.home = os.path.abspath(home)
         self.violations = []
         self.enabled = True
         self.local = threading.local()
+        self.disposable_root_vm = disposable_root_vm is True
+        # Creation argv authorized in this worker only. Cleanup/membership cannot
+        # target pre-existing fixture-looking names from another invocation.
+        self._fixture_users = set()
+        self._fixture_groups = set()
 
     def refuse(self, description):
         message = f'test attempted host access: {description}'
@@ -72,7 +78,49 @@ class HostGuard:
         finally:
             self.local.resolving = False
 
+    def disposable_folder_command(self, executable, argv):
+        """Exact test-identity lifecycle, not general root command permission.
+
+        Only the captured pytest opt-in counts; a runtime environment flag does
+        not. Names/IDs match the disposable folder fixture, never real accounts.
+        This classifier does not execute a command or inspect host identities.
+        """
+        if not self.disposable_root_vm or getattr(os, 'geteuid', lambda: None)() != 0:
+            return False
+        if (not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv)
+                or argv[0] != executable):
+            return False
+        tool = Path(executable).name
+        if executable not in ({'/usr/sbin/' + name for name in
+                ('useradd', 'userdel', 'groupadd', 'groupdel', 'gpasswd', 'usermod')} | {'/usr/bin/gpasswd'}):
+            return False
+        if tool == 'useradd' and len(argv) == 11:
+            if (argv[1:4] == ['--no-create-home', '--no-user-group', '--uid']
+                    and re.fullmatch('61[0-9]{3}', argv[4])
+                    and argv[5:10] == ['--gid', '65534', '--shell', '/usr/sbin/nologin', '--']
+                    and re.fullmatch('accq[ha][0-9a-f]{8}', argv[10])):
+                self._fixture_users.add(argv[10])
+                return True
+        elif tool == 'groupadd' and len(argv) == 5:
+            if (argv[1] == '--gid' and re.fullmatch('6[0-4][0-9]{3}', argv[2]) and argv[3] == '--'
+                    and re.fullmatch('ryn-repo-[0-9a-f]{16}', argv[4])):
+                self._fixture_groups.add(argv[4])
+                return True
+        elif tool == 'userdel':
+            return len(argv) == 3 and argv[1] == '--' and argv[2] in self._fixture_users
+        elif tool == 'groupdel':
+            return len(argv) == 3 and argv[1] == '--' and argv[2] in self._fixture_groups
+        elif tool == 'usermod':
+            return (len(argv) == 6 and argv[1:3] == ['--append', '--groups'] and argv[4] == '--'
+                    and argv[3] in self._fixture_groups and argv[5] in self._fixture_users)
+        elif tool == 'gpasswd':
+            return (len(argv) == 4 and argv[1] == '--delete'
+                    and argv[2] in self._fixture_users and argv[3] in self._fixture_groups)
+        return False
+
     def command(self, executable, argv, env):
+        if self.disposable_folder_command(os.fsdecode(executable), argv):
+            return
         if isinstance(argv, str):
             argv = shlex.split(argv)
         argv = [os.fsdecode(a) for a in argv]
@@ -134,7 +182,7 @@ class HostGuard:
         if 'runuser' in names and argv[1:4] == ['-u', 'nobody', '--']:
             return  # Existing permission regressions deliberately drop privilege; never create an account.
         if names.intersection(('sudo', 'su', 'runuser', 'systemd', 'systemd-run', 'loginctl', 'useradd', 'usermod',
-                    'userdel', 'groupadd', 'groupdel', 'pkill', 'killall', 'docker', 'claude', 'codex',
+                    'userdel', 'groupadd', 'groupdel', 'gpasswd', 'pkill', 'killall', 'docker', 'claude', 'codex',
                     'copilot', 'cursor', 'opencode', 'antigravity')) and not os.path.abspath(executable).startswith('/tmp/'):
             self.refuse('real host control or provider command; use a fake executable')
 
@@ -184,15 +232,51 @@ _GUARD = None
 _ORIGINALS = {}
 
 
+def pytest_addoption(parser):
+    parser.addoption('--disposable-root-vm', action='store_true', default=False,
+        help='Explicitly opt into root qualification ONLY inside a disposable VM; host isolation stays enabled.')
+
+
+def disposable_root_skip_reason(config):
+    missing = []
+    euid = getattr(os, 'geteuid', lambda: None)()
+    if euid != 0:
+        missing.append(f'requires EUID 0 (current EUID: {euid})')
+    if config.getoption('disposable_root_vm') is not True:
+        missing.append('requires explicit opt-in: --disposable-root-vm or ACC_FOLDER_QUALIFICATION_DISPOSABLE=1 at pytest startup')
+    return '; '.join(missing) + '. Never use the live/shared host.' if missing else None
+
+
+@pytest.fixture
+def disposable_root_vm(request):
+    reason = disposable_root_skip_reason(request.config)
+    if reason:
+        pytest.skip(reason)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node):
+    # xdist workers start after the controller has scrubbed its environment.
+    # Send one boolean in pytest's private control record, never host credentials.
+    node.workerinput['acc_disposable_root_vm'] = node.config.getoption('disposable_root_vm') is True
+
+
 def pytest_configure(config):
     global _GUARD
+    # Capture before configure_test_environment strips ALL ACC_/RYNHULT_ values.
+    # Per-test HOME rebuilding and child processes must not inherit the opt-in.
+    config.option.disposable_root_vm = (
+        config.getoption('disposable_root_vm') is True
+        or os.environ.get('ACC_FOLDER_QUALIFICATION_DISPOSABLE') == '1'
+        or getattr(config, 'workerinput', {}).get('acc_disposable_root_vm') is True)
     configure_test_environment(config)
     sys.dont_write_bytecode = True
     os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
     import pwd
     repo = Path(__file__).resolve().parents[1]
     _GUARD = HostGuard(read_roots=(repo, sys.prefix, '/srv/acc/tools/ms-playwright'),
-                       write_roots=(repo,), home=pwd.getpwuid(os.getuid()).pw_dir)
+                       write_roots=(repo,), home=pwd.getpwuid(os.getuid()).pw_dir,
+                       disposable_root_vm=config.getoption('disposable_root_vm'))
     # The shared venv's editable install adds the live checkout to sys.path. Never probe it
     # as a fallback while resolving optional imports in this test checkout.
     safe_imports = []

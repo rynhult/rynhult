@@ -162,29 +162,32 @@ test('unverified certificate warnings retain their explanation and navigation', 
   await expect(page.locator('#certificate')).toContainText('Not publicly trusted, and no root is configured');
 });
 
-test('switching sections retains a pending save, its failure and another form draft', async ({ page }) => {
+for (const status of [422, 503]) test(`switching sections retains a pending Security review, its ${status} failure and another form draft`, async ({ page }) => {
+  const detail = status === 422 ? 'Security review needs attention' : 'Security preview needs review';
   let finish!: () => void;
   let saving = false;
   const delayed = new Promise<void>(resolve => { finish = resolve; });
-  await page.route('**/api/guardrails', async route => {
-    if (route.request().method() !== 'PUT') return route.continue();
+  await page.route('**/api/security/changes/preview', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
     saving = true;
     await delayed;
-    await route.fulfill({ status: 403, json: { detail: 'Guardrail save needs review' } });
+    await route.fulfill({ status, json: { detail } });
   });
   try {
-    await page.goto('/settings#guardrails');
-    const guardrails = page.locator('#guardrails');
-    const checkbox = guardrails.getByRole('checkbox').first();
-    await checkbox.setChecked(!await checkbox.isChecked());
-    await guardrails.getByRole('button', { name: 'Save guardrails', exact: true }).click();
+    await page.goto('/settings#security');
+    const security = page.locator('#security');
+    const protection = security.getByRole('switch', { name: 'Block force pushes', exact: true });
+    const before = await protection.isChecked();
+    await protection.setChecked(!before);
+    await security.getByRole('button', { name: 'Review changes', exact: true }).click();
     await expect.poll(() => saving).toBe(true);
     await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('password');
     const draft = page.getByLabel('New password', { exact: true });
     await draft.fill('My retained draft');
     finish();
-    await expect(guardrails.getByRole('alert')).toContainText('Guardrail save needs review');
-    await expect(guardrails).toBeVisible();
+    await expect(security.getByRole('alert')).toContainText(detail);
+    await expect(security).toBeVisible();
+    await expect(protection).toBeChecked({ checked: !before });
     await expect(draft).toHaveValue('My retained draft');
   } finally { finish(); }
 });

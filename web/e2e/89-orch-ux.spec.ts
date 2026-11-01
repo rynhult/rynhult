@@ -3,7 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { environmentValue } from '../../src/acc/env.mjs';
-import { expandTeamPanels, AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info } from './helpers';
+import { expandTeamPanels, AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 const uploadLabel = 'Or upload PNG, JPG, WebP or PDF (10 MiB maximum)';
@@ -125,6 +125,7 @@ for (const mode of ['prepare', 'build'] as const) test(`person grants a ${mode} 
   const created = await responseReady; expect(created.ok(), await created.text()).toBeTruthy();
   const lead = (await created.json()).id;
   try {
+    await waitForSessionState(page, lead, 'idle', 'claude_hook');
     await page.goto(`/sessions/${lead}?tab=team#settings`);
     const plan = await (await page.request.get(`/api/teams/${lead}/plan`)).json();
     expect((await page.request.patch(`/api/teams/${lead}/plan`, { headers, data: { version: plan.version,
@@ -155,8 +156,9 @@ for (const mode of ['prepare', 'build'] as const) test(`person grants a ${mode} 
     await expect(page.getByRole('button', { name: 'Stop team', exact: true })).toBeFocused();
     await page.getByRole('button', { name: 'Stop team', exact: true }).click();
     await page.getByRole('dialog', { name: 'Stop team?', exact: true }).getByRole('button', { name: 'Stop team', exact: true }).click();
-    await expect(tree.getByRole('treeitem')).toContainText('stop confirmed');
-    await expect(page.getByRole('heading', { name: 'Stop confirmed', exact: true })).toBeVisible();
+    await waitForTeamStopped(page, lead);
+    await expect(tree.getByRole('treeitem')).toContainText('stop confirmed', { timeout: ti.timeout });
+    await expect(page.getByRole('heading', { name: 'Stop confirmed', exact: true })).toBeVisible({ timeout: ti.timeout });
     if (mode === 'prepare') {
       // Offline stop transport is Python-qualified. Here verify the pending projection
       // cannot be presented as a confirmed stop, even with an old stopped observation.
@@ -171,28 +173,37 @@ for (const mode of ['prepare', 'build'] as const) test(`person grants a ${mode} 
       await tree.screenshot({ path: ti.outputPath('stop-pending-projection.png') });
       await page.unroute(`**/api/teams/${lead}/tree`);
     }
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  } finally {
+    expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers })).ok()).toBe(true);
+    await waitForTeamStopped(page, lead);
+  }
 });
 
 test('owner saves flake and wrap-up settings and sees expiry in the tree', async ({ page }, ti) => {
   const { id, headers } = await gitProject(page, 'ux-expiry');
-  await page.goto(`/projects/${id}#project-gates`);
-  const flakes = page.getByRole('form', { name: 'Known flakes', exact: true });
-  await flakes.getByLabel('Known flaky test IDs', { exact: true }).fill('tests/test_demo.py::test_booking');
-  await flakes.getByRole('button', { name: 'Save known flakes', exact: true }).click();
-  await expect.poll(async () => (await (await page.request.get(`/api/gates/projects/${id}/flakes`)).json()).tests).toEqual(['tests/test_demo.py::test_booking']);
-  const wrap = page.getByRole('form', { name: 'Expiry wrap-up', exact: true });
-  await wrap.getByLabel('Lead wrap-up (minutes)', { exact: true }).fill('5');
-  await wrap.getByRole('button', { name: 'Save wrap-up', exact: true }).click();
-  await expect.poll(async () => (await (await page.request.get('/api/gates/wrapup')).json()).minutes).toBe(5);
-  await wrap.getByLabel('Lead wrap-up (minutes)', { exact: true }).fill('121');
-  await expect(wrap.getByRole('button', { name: 'Save wrap-up', exact: true })).toBeDisabled();
-  await expectAxeClean(page); await noOverflow(page);
-  const launch = await page.request.post('/api/sessions', { headers, data: { project_id: id, provider: 'claude', worktree: true, name: 'Booking expiry lead',
-    orchestrator: { agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 1, total: 2, depth: 1, hours: 1 } } });
-  expect(launch.ok(), await launch.text()).toBeTruthy();
-  const lead = (await launch.json()).id;
+  const previous = (await (await page.request.get('/api/gates/wrapup')).json()).minutes;
+  let lead: string | undefined;
   try {
+    await page.goto(`/projects/${id}#project-gates`);
+    const flakes = page.getByRole('form', { name: 'Known flakes', exact: true });
+    await flakes.getByLabel('Known flaky test IDs', { exact: true }).fill('tests/test_demo.py::test_booking');
+    await flakes.getByRole('button', { name: 'Save known flakes', exact: true }).click();
+    await expect.poll(async () => (await (await page.request.get(`/api/gates/projects/${id}/flakes`)).json()).tests).toEqual(['tests/test_demo.py::test_booking']);
+    const wrap = page.getByRole('form', { name: 'Expiry wrap-up', exact: true });
+    await wrap.getByLabel('Lead wrap-up (minutes)', { exact: true }).fill('5');
+    const saved = page.waitForResponse(response => response.request().method() === 'PUT'
+      && new URL(response.url()).pathname === '/api/gates/wrapup');
+    await wrap.getByRole('button', { name: 'Save wrap-up', exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    expect((await (await page.request.get('/api/gates/wrapup')).json()).minutes).toBe(5);
+    await wrap.getByLabel('Lead wrap-up (minutes)', { exact: true }).fill('121');
+    await expect(wrap.getByRole('button', { name: 'Save wrap-up', exact: true })).toBeDisabled();
+    await expectAxeClean(page); await noOverflow(page);
+    const launch = await page.request.post('/api/sessions', { headers, data: { project_id: id, provider: 'claude', worktree: true, name: 'Booking expiry lead',
+      orchestrator: { agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 1, total: 2, depth: 1, hours: 1 } } });
+    expect(launch.ok(), await launch.text()).toBeTruthy();
+    lead = (await launch.json()).id as string;
+    await waitForSessionState(page, lead, 'idle', 'claude_hook');
     fixtureSql("UPDATE team SET expires_at = datetime('now', '-1 second') WHERE id = ?", [lead]);
     await page.goto(`/sessions/${lead}?tab=team#settings`);
     await expect(page.getByRole('heading', { name: 'Team expiry wrap-up', exact: true })).toBeVisible({ timeout: 20000 });
@@ -202,8 +213,14 @@ test('owner saves flake and wrap-up settings and sees expiry in the tree', async
     await expect(page.getByRole('tree', { name: 'Live agent tree', exact: true })).toContainText('stop confirmed', { timeout: 20000 });
     await expectAxeClean(page); await noOverflow(page);
   } finally {
-    await page.request.post(`/api/sessions/${lead}/team/stop`, { headers });
-    await page.request.put('/api/gates/wrapup', { headers, data: { minutes: 30 } });
+    try {
+      if (lead) {
+        expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers })).ok()).toBe(true);
+        await waitForTeamStopped(page, lead);
+      }
+    } finally {
+      expect((await page.request.put('/api/gates/wrapup', { headers, data: { minutes: previous } })).ok()).toBe(true);
+    }
   }
 });
 

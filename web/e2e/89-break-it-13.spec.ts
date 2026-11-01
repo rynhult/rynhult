@@ -19,6 +19,7 @@ async function team(session: string, action: string, args: object = {}) {
 
 for (const colorScheme of ['dark', 'light'] as const) test(`50 assignments and 491 attempts remain usable on a phone in ${colorScheme}`, async ({ page }, ti) => {
   test.setTimeout(120000);
+  await page.setViewportSize({ width: 390, height: 900 });
   await page.emulateMedia({ colorScheme });
   const { id, headers } = await gitProject(page, 'break-it-13');
   const created = await page.request.post('/api/sessions', { headers, data: { project_id: id, provider: 'claude',

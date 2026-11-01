@@ -114,7 +114,7 @@ def router(ctx: Context) -> APIRouter:
             session, team = s.get(Session, lead), s.get(Team, lead)
             if item.kind != 'decision' or item.state != 'open':
                 raise HTTPException(409, 'Discuss an open decision card.')
-            if not delivery.enabled() or team.stopped or team.expires_at <= utcnow() or session.desired_state != 'running':
+            if not delivery.enabled() or team.stopped or (team.expires_at is not None and team.expires_at <= utcnow()) or session.desired_state != 'running':
                 raise HTTPException(409, 'Resume an active team before sending a discussion.')
             if len(item.links or []) >= 20:
                 raise HTTPException(422, 'This card already has 20 links.')

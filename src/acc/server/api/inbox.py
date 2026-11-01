@@ -69,9 +69,12 @@ def router(ctx: Context) -> APIRouter:
             items = list(s.scalars(query))
             # Only the listed items' sessions, not every session this person can see (rc performance check).
             wanted = {i.session_id for i in items if i.session_id}
-            names = {sid: (name + (f" · team {team}" if team else ""), slug) for sid, name, team, slug in s.execute(
-                ctx.scope(select(Session.id, Session.name, Session.team_id, Project.slug).join(Project, Session.project),
-                          Session, who).where(Session.id.in_(wanted)))} if wanted else {}
+            session_rows = list(s.execute(
+                ctx.scope(select(Session.id, Session.name, Session.team_id, Project.slug, Session.project_id).join(Project, Session.project),
+                          Session, who).where(Session.id.in_(wanted)))) if wanted else []
+            names = {sid: (name + (f" · team {team}" if team else ""), slug)
+                     for sid, name, team, slug, project_id in session_rows}
+            risk_projects = {sid: project_id for sid, name, team, slug, project_id in session_rows}
             ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "publish_request"]
             # The same facts Publishing shows under the request (UX review IN-1): an approver on a phone sees them too.
             requests = list(s.scalars(select(PublishRequest).where(PublishRequest.id.in_(ids)))) if ids else []
@@ -83,9 +86,12 @@ def router(ctx: Context) -> APIRouter:
                          for r in requests}
             tool_ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "tool_request"]
             tools = {r.id: out(r) for r in s.scalars(select(ToolRequest).where(ToolRequest.id.in_(tool_ids)))}
-            show_risk = risk_labels.enabled(s, who.username)
+            # Reuse the authorized session metadata and evaluate each scope once,
+            # not a second session read or one identical policy read per item.
+            risk_enabled = {project_id: risk_labels.enabled(s, who.username, project_id=project_id)
+                            for project_id in {risk_projects.get(i.session_id) for i in items}}
             from ..image_capabilities import check_action
-            return [attention_out(i, names, publishes, tools, show_risk,
+            return [attention_out(i, names, publishes, tools, risk_enabled[risk_projects.get(i.session_id)],
                                   check_action(s, i) if who.is_owner else None) for i in items]
 
     @api.post("/api/attention/dismiss")

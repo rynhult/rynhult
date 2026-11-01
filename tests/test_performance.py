@@ -77,3 +77,28 @@ async def test_an_unchanged_session_list_is_an_empty_304(seeded):
     changed = await seeded.get("/api/sessions", headers={"If-None-Match": etag})
     assert changed.status_code == 200 and changed.headers["etag"] != etag
     assert any(x["name"] == "renamed" for x in changed.json())
+
+
+async def test_inbox_batching_keeps_project_risk_policies_distinct(seeded):
+    from acc.server import security_settings
+    from acc.server.models import utcnow
+    with seeded.app.state.db() as db:
+        sessions = {}
+        for row in db.scalars(select(Session)):
+            sessions.setdefault(row.project_id, row.id)
+        (hidden_project, hidden_session), (_, shown_session) = list(sessions.items())[:2]
+        db.execute(update(AttentionItem).values(resolved_at=utcnow()))
+        for title, sid in [('Hidden scope', hidden_session), ('Visible scope', shown_session)]:
+            db.add(AttentionItem(dedupe_key=title, title=title, session_id=sid, kind='needs_input', source='test',
+                                 risk={'label': 'Review', 'reason': 'Synthetic prompt'}))
+        security_settings.save(db, {'kind': 'project', 'project_id': hidden_project}, {'risk_labels': False},
+                               actor='@api', expected_revision=0)
+        db.commit()
+    seeded.statements.clear()
+    response = await seeded.get('/api/attention?scope=pending')
+    assert response.status_code == 200, response.text
+    items = {item['title']: item for item in response.json()}
+    assert items['Hidden scope']['risk'] is None
+    assert items['Visible scope']['risk'] == {'label': 'Review', 'reason': 'Synthetic prompt'}
+    reads = [sql for sql in seeded.statements if 'FROM session' in sql and 'attention_item' not in sql]
+    assert len(reads) == 1 and ' IN ' in reads[0].upper()

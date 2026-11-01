@@ -34,6 +34,8 @@ class RunChoice(BaseModel):
 class MultiRunIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project_id: int
+    machine: str | None = None
+    clone_on_machine: bool = False
     name: str = Field(min_length=1, max_length=40)
     initial_prompt: str = Field(min_length=1, max_length=20000)
     runs: list[RunChoice] = Field(min_length=2, max_length=5)
@@ -49,6 +51,7 @@ class MultiRunIn(BaseModel):
         return [SessionIn.model_validate({
             **choice.model_dump(exclude_unset=True), "name": self.name.strip(),
             "project_id": self.project_id, "initial_prompt": self.initial_prompt, "worktree": True,
+            "machine": self.machine, "clone_on_machine": self.clone_on_machine,
         }) for choice in self.runs]
 
 

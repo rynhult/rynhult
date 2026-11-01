@@ -218,6 +218,7 @@ class NodeLink:
         self.packages: dict | None = None  # its agent software, as its last "packages-state" said (cleaned)
         self.package_requests: dict[str, dict] = {}  # request id -> {package, action, at}: sent from here
         self.tool_waiters: dict[str, asyncio.Future] = {}
+        self.folder_waiters: dict[str, asyncio.Future] = {}
         self.git_backup_waiters: dict[str, asyncio.Future] = {}
         # Host details (node_host.py): the last periodic summary and full snapshot, each with when it arrived
         self.host_light: dict | None = None
@@ -311,6 +312,30 @@ class NodeLink:
             waiter.set_exception(RuntimeError("The machine sent a project backup result Rynhult can't use."))
         else:
             waiter.set_result(result)
+
+    async def folder_policy(self, payload):
+        if self.closed or len(self.folder_waiters) >= 1 or payload.get('machine_id') != self.node_id:
+            raise ConnectionError('The folder service is unavailable or busy.')
+        rid = secrets.token_hex(16)
+        waiter = self.folder_waiters[rid] = asyncio.get_running_loop().create_future()
+        frame = json.dumps({'t': 'folder-policy', 'id': rid, 'payload': payload})
+        if len(frame.encode()) > 65536:
+            self.folder_waiters.pop(rid, None)
+            raise ValueError('The folder control frame is too large.')
+        self.queue(frame)
+        try:
+            return await asyncio.wait_for(waiter, 40)
+        finally:
+            self.folder_waiters.pop(rid, None)
+
+    def folder_policy_result(self, message):
+        waiter = self.folder_waiters.get(message.get('id')) if isinstance(message.get('id'), str) else None
+        if waiter is None or waiter.done():
+            return
+        if message.get('ok') is not True or not isinstance(message.get('result'), dict):
+            waiter.set_exception(ValueError('The target refused the folder operation.'))
+        else:
+            waiter.set_result(message['result'])
 
     async def tool(self, payload: dict, timeout: float = 900) -> dict:
         from ..tooling import helper_request
@@ -475,7 +500,7 @@ class NodeLink:
         self.closed = True
         self.preview.close()
         self.preview_sender.close()
-        for waiter in [*self.tool_waiters.values(), *self.git_backup_waiters.values()]:
+        for waiter in [*self.tool_waiters.values(), *self.git_backup_waiters.values(), *self.folder_waiters.values()]:
             if not waiter.done():
                 waiter.set_exception(ConnectionError(f"Machine {self.name} disconnected during a tool change."))
         if self._host_request is not None and not self._host_request[1].done():

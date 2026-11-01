@@ -161,6 +161,12 @@ def _endpoint_file(inputs: LaunchInputs, provider, endpoint: dict | None) -> dic
 def compile_files(inputs: LaunchInputs, hook_path: str, statusline_path: str, catalog: Catalog | None = None,
                   agent_home: str = "/home/agent", codex_plugins: dict | None = None,
                   endpoint: dict | None = None, guardrails: dict | None = None) -> Compiled:
+    if guardrails and guardrails.get('security'):
+        from .security_settings import launch_inputs
+        try:
+            inputs = launch_inputs(inputs, guardrails['security'])
+        except ValueError as error:
+            raise CompileError(str(error)) from None
     provider = providers.get(inputs.provider)
     _check_catalog(inputs, catalog)
     provider.validate(inputs)
@@ -213,6 +219,13 @@ def materialize(files: dict[str, str], catalog: Catalog | None, provider: str = 
 def build_args(inputs: LaunchInputs, *, run_dir: str, tmux_name: str, native_id: str | None, resume: bool,
                files: dict[str, str] | None = None, extra_overrides: list[str] | None = None) -> list[str]:
     """Provider argv (without the executable) for a first launch or a resume, from the compiled files."""
+    frozen_policy = json.loads((files or {}).get('guardrails.json', '{}')).get('security')
+    if frozen_policy:
+        from .security_settings import launch_inputs
+        try:
+            inputs = launch_inputs(inputs, frozen_policy)
+        except ValueError as error:
+            raise CompileError(str(error)) from None
     args = providers.get(inputs.provider).args(inputs, run_dir=run_dir, tmux_name=tmux_name, native_id=native_id,
                                                resume=resume, files=files or {}, extra=list(extra_overrides or []))
     args += list(inputs.extra_args)

@@ -1,33 +1,33 @@
 {
   "phase": "release",
   "follow": "https://github.com/rynhult/rynhult",
-  "version": "0.15.0-rc.1",
+  "version": "0.15.0-rc.2",
   "channel": "public release candidate",
-  "planned": "v0.15.0-rc.1",
+  "planned": "v0.15.0-rc.2",
   "assets": [
     {
-      "name": "acc-0.15.0-rc.1.tar.gz",
-      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/acc-0.15.0-rc.1.tar.gz",
+      "name": "acc-0.15.0-rc.2.tar.gz",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.2/acc-0.15.0-rc.2.tar.gz",
       "description": "Source bundle for the Linux server install",
-      "sha256": "ab94f08bddd9284847295d7208d0a407684232b5a93b044ecf23acbbed7cc37e"
+      "sha256": "fd063eaaf8d17183b2b816a5c20ba7157c12a0cd6fa2a1712a8ae234dce4b809"
     },
     {
       "name": "BUILD",
-      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/BUILD",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.2/BUILD",
       "description": "Content build identity",
-      "sha256": "a702d036567387b849444f41c17a144646f83f26c4dcbceb2790f5dd3c50cace"
+      "sha256": "7323499559e82c8f178877bd58bc1089845b2195f39ab40f4309d157da4cb48c"
     },
     {
       "name": "SHA256SUMS",
-      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/SHA256SUMS",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.2/SHA256SUMS",
       "description": "Checksums for the files above",
-      "sha256": "655cf09b03c9bbff2cac49fbd95deb88e7c2ff2190e9d32d837aba70a8c77fd2"
+      "sha256": "888deda40b214ee88309467a6a8db88f357d6b99e5bc01b646e684fc3b7e666f"
     },
     {
       "name": "SHA256SUMS.asc",
-      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.1/SHA256SUMS.asc",
+      "url": "https://github.com/rynhult/rynhult/releases/download/v0.15.0-rc.2/SHA256SUMS.asc",
       "description": "OpenPGP signature of SHA256SUMS (Rynhult Releases key)",
-      "sha256": "e99f124c4183dfa751a83b6587e936aa08c5f5ce6f6c642156edafdba61aff85"
+      "sha256": "6118e94d154d464836983f63b7fb2ef7b41894fcf0287b2d976252b9ea0b130a"
     }
   ]
 }

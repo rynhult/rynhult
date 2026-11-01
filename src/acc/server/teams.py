@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, text
@@ -53,9 +54,11 @@ def validate_grant(value, catalog, host, hook_path, confirmed=False):
         raise LaunchRefused('The Orchestrator limits aren\'t valid. Check the team settings and try again.')
     if 'brief_version' in value and (type(value['brief_version']) is not int or value['brief_version'] < 0):
         raise LaunchRefused('invalid project brief version')
-    limits = {'at_once': 3, 'total': 10, 'depth': 2, 'hours': 8, 'machines': [host], **value}
+    limits = {'at_once': 3, 'total': 10, 'depth': 2, 'hours': None, 'machines': [host], **value}
     for key, maximum in [('at_once', 100), ('total', 1000), ('depth', 10), ('hours', 168)]:
         n = limits[key]
+        if key == 'hours' and n is None:
+            continue
         if isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 < n <= maximum or key != 'hours' and int(n) != n:
             raise LaunchRefused(f"Set the team's {key.replace('_', ' ')} limit to a {'' if key == 'hours' else 'whole '}number above 0, at most {maximum}.")
     if limits.get('run_mode', 'build') not in ('prepare', 'build'):
@@ -170,7 +173,8 @@ def team_files(files, provider, hook_path, lead=False, *, container=False, input
             })
             files['settings.json'] = json.dumps(settings, indent=2) + '\n'
     policy = json.loads(files['guardrails.json'])
-    policy['rules'].update(team=True, push_default=True)
+    policy['rules']['team'] = True
+    # The owner-resolved main-push check is configurable; team API authority is not.
     files['guardrails.json'] = json.dumps(policy, sort_keys=True) + '\n'
     if container:
         files = providers.get(provider).add_context(files,
@@ -399,7 +403,7 @@ class TeamMixin:
                 if allowed is None:
                     raise LaunchRefused('agent/profile is not allowed')
                 orchestrator.planning.require_start(db, team.id, payload, allowed)
-                if not selected and budgets.paused(db, owner, allowed['agent']):
+                if not selected and budgets.paused(db, owner, allowed['agent'], project_id=caller.project_id, machine=machine, account=caller.run_as):
                     raise LaunchRefused('the person\'s budget pauses helper launches')
                 if problem := self._helper_launch_problem(db, caller, allowed, machine):
                     reason, message = problem
@@ -680,9 +684,14 @@ class TeamMixin:
                         report_heads[attempt.id] = latest_report.head
                     if attempt.head or latest_report and latest_report.head:
                         actual_heads[attempt.id] = attempt.head or latest_report.head
+            from .orchestrator.project_briefs import ProjectBrief
+            with self.db() as db:
+                caller = db.get(Session, caller_id)
+                exported = db.get(ProjectBrief, caller.project_id)
+                generated_exports = {exported.export_path: exported.export_digest} if exported and exported.export_digest else {}
             check = assignments.verification_result(verification)
             result = await self.broker.call('team_merge', account=account, host=host, path=cwd, branch=branch,
-                                           expected_branch=expected_branch, **binding, **({'report_heads':sorted(set(report_heads.values()) | set(actual_heads.values()))} if actual_heads else {}))
+                                           expected_branch=expected_branch, generated_exports=generated_exports, **binding, **({'report_heads':sorted(set(report_heads.values()) | set(actual_heads.values()))} if actual_heads else {}))
             with self.db() as db:
                 audit(db, db.get(Session, caller_id), action, {'helper': helper_id, **result})
                 db.commit()
@@ -718,14 +727,22 @@ class TeamMixin:
             db.commit()
         return {'helper': helper_id}
 
-    async def stop_team(self, lead_id, actor, expired=False):
+    async def stop_team(self, lead_id, actor, expired=False, *, wrapup_ended=False):
         lock = self.__dict__.setdefault('_team_lock', asyncio.Lock())
         async with lock:
             with self.db() as db:
                 team = db.get(Team, lead_id)
                 if team is None:
                     raise LaunchRefused('That team wasn\'t found.')
+                if expired and (team.expires_at is None or team.expires_at > now()):
+                    return {'stopped': [], 'pending': []}
+                if wrapup_ended and (team.wrapup_until is None or team.wrapup_until > now()):
+                    return {'stopped': [], 'pending': []}
+                from . import team_lifetime
                 from .orchestrator import gates, reservations, verification
+                if not team.stopped:
+                    team_lifetime.capture(db, team, list(db.scalars(select(Session).where(Session.team_id == lead_id))))
+                    team.stop_reason = 'expired' if expired else 'person'
                 if expired and team.wrapup_until is None:
                     team.wrapup_until = verification.deadline(db, team)
                 elif not expired:
@@ -745,11 +762,12 @@ class TeamMixin:
                         x.team_stop_pending = True
                 db.add(AuditLog(actor=actor, action='team.expired' if expired else 'team.stop', target=lead_id,
                                 detail={'sessions': ids}))
+                from . import attention
+                attention.resolve(db, f'team_expiring:{lead_id}')
                 if expired:
-                    from . import attention
-                    attention.raise_item(db, f'team_expired:{lead_id}', kind='needs_input', source='supervisor', session_id=lead_id,
+                    attention.raise_item(db, f'team_expired:{lead_id}', kind='team_expired', source='supervisor', session_id=lead_id,
                                          title='Team time limit reached',
-                                         detail='Rynhult is stopping every helper session. Helpers on offline machines stop when those machines reconnect.')
+                                         detail='The chosen team time limit ended. Rynhult is stopping the lead and helpers; offline machines stop on reconnect. Open Team to review Resume with a new time limit or no limit, keeping saved permissions and assignments.')
                 db.commit()
             gates.gates(self).wake()
             errors = []
@@ -775,10 +793,19 @@ class TeamMixin:
             return {'stopped': ids, 'pending': errors}
 
     async def expire_teams(self):
+        from .db import write_in_thread
+        def warnings():
+            with self.db() as db:
+                from . import attention
+                for team in db.scalars(select(Team).where(Team.stopped == False, Team.expires_at > now(), Team.expires_at <= now() + timedelta(minutes=30))):
+                    attention.raise_item(db, f'team_expiring:{team.id}', kind='team_lifetime', source='supervisor', session_id=team.id,
+                        title='Team time limit ends soon', detail=f'This team stops at {team.expires_at.isoformat()}. Open Team to Extend 4 h or Remove limit. Other limits and permissions stay unchanged.')
+                db.commit()
+        await write_in_thread(warnings)
         with self.db() as db:
             ids = list(db.scalars(select(Team.id).where(Team.stopped == False, Team.expires_at <= now())))
             due = list(db.scalars(select(Team.id).where(Team.wrapup_until.is_not(None), Team.wrapup_until <= now())))
         for lead_id in ids:
             await self.stop_team(lead_id, 'supervisor', expired=True)
         for lead_id in due:
-            await self.stop_team(lead_id, 'supervisor')
+            await self.stop_team(lead_id, 'supervisor', wrapup_ended=True)

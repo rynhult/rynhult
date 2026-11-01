@@ -750,3 +750,26 @@ def test_replacement_preparation_accepts_historical_default_quote_spelling(sourc
     stage = source.capture()
     plan = prepare(stage, source.kit(), stage.name, tmp_path / 'prepared')
     assert plan['backup_id'] == stage.name
+
+
+@pytest.mark.parametrize('provider,unsafe', [
+    ('claude', {'permission_mode': 'bypassPermissions'}),
+    ('copilot', {'options': {'permissions': 'all'}}),
+    ('cursor', {'options': {'force': True}}),
+    ('antigravity', {'options': {'skip_permissions': True}}),
+])
+def test_legacy_generation_uses_recorded_provider_without_rewriting_inputs(api, project, provider, unsafe):
+    import json
+    from types import SimpleNamespace
+
+    from acc.server import security_settings as security
+    with api.app.state.db() as db:
+        saved = {}
+        session = SimpleNamespace(provider=provider, project_id=project['id'], owner=project['owner'],
+            host='local', run_as=project['account'], launch_spec=SimpleNamespace(inputs=saved,
+                files={'guardrails.json': json.dumps({'security': security.resolve(db, project_id=project['id']), 'custom': []})}))
+        security.check_generation(db, session)
+        assert saved == {}  # compatibility validation must not rewrite a frozen generation
+        session.launch_spec.inputs = unsafe
+        with pytest.raises(security.Conflict, match='Security'):
+            security.check_generation(db, session)

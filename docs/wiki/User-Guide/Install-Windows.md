@@ -366,3 +366,12 @@ Setup writes to `C:\Program Files\ACC\logs\install-acc.log` (and `uninstall.log`
 Setup keeps logs and restart answers in administrator-protected folders under `C:\Program Files\ACC`. Resume only accepts scripts in protected locations. If setup reports an unsafe path, use the standard installer location; do not weaken its permissions. Old profile resume files are ignored; rerun Setup to recover an interrupted older installation. Opening logs outside the installer may require elevation.
 
 Setup uses Windows system executables directly. It does not elevate per-user Ubuntu Store launchers. If an older distribution still needs its first launch after a restart, open Ubuntu from Start as your usual Windows user, finish that initialization, and rerun Setup.
+
+
+### Existing repository access
+
+[Allowed folders](/User-Guide/Settings#allowed-folders) changes account-service
+policy separately from OS rights. This build offers no automatic access grant on
+macOS or WSL Windows drives. Use a folder already accessible to the selected
+account, or arrange local setup. It never disables macOS privacy, remounts a drive,
+changes WSL interop or relaxes machine isolation to import a repository.

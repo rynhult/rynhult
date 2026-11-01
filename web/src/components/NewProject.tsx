@@ -2,6 +2,7 @@ import { FirstCommit, type FirstCommitState } from "./FirstCommit";
 import { BriefDocuments, uploadDocuments } from "./BriefDocuments";
 import { desktopBuild } from "../lib/desktop";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderPlus } from "lucide-react";
 import { useSingleMutation as useMutation } from "../lib/mutations";
@@ -21,6 +22,7 @@ export const projectSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-
  *  machines choose where: the folder is then made there, through that machine's broker, under its account's root. */
 export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (project: Project) => void }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [emptyImported, setEmptyImported] = useState<Project | null>(null);
   const instance = useInstance();
   const { owner } = useRole();
@@ -117,6 +119,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
         <Segmented label="Start from" value={source} onChange={pick} options={[
           { id: "empty", label: "Empty folder" }, { id: "clone", label: "Clone repository" },
           ...(github && !remote ? [{ id: "github" as const, label: "New GitHub repo" }] : [])]} />
+        <Button variant="ghost" disabled={create.isPending} onClick={() => { onClose(); navigate('/projects?import=existing'); }}>Use existing folder</Button>
         {source === "clone" && (
           <Field label="Repository" hint={`An HTTPS or SSH URL, or owner/name on GitHub. It's cloned as ${runsAs}${remote ? ` on ${host}` : ""}, with that account's own SSH key or GitHub sign-in (Providers${remote ? `, with ${host} picked` : ""}).`}>
             <Input value={url} onChange={(e) => pasted(e.target.value)} placeholder="https://git.example.com/team/app.git" autoFocus spellCheck={false} />

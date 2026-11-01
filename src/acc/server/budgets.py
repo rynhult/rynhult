@@ -137,8 +137,11 @@ def status(db: DbSession, username: str) -> dict:
     return out
 
 
-def paused(db: DbSession, username: str, provider: str) -> list[str]:
+def paused(db: DbSession, username: str, provider: str, *, project_id=None, machine=None, account=None) -> list[str]:
     """The windows of this agent where this person's budget asks to pause new launches (empty: go ahead)."""
+    from .security_settings import resolve
+    if not resolve(db, owner=username, project_id=project_id, machine=machine, account=account)['switches']['budget_checks']:
+        return []
     labels = {w["id"]: w["label"] for w in windows(db)}
     return [labels.get(window_id, window_id) for window_id, s in status(db, username).items()
             if s["over"] and s["action"] == "pause" and window_id.split(".")[0] == provider]
@@ -149,7 +152,8 @@ def evaluate(db: DbSession) -> None:
     found = {w["id"]: w for w in windows(db)}
     for row in db.query(Setting).filter(Setting.key.like(PREFIX + "%")).all():
         username = row.key[len(PREFIX):]
-        allowed_here = eligible(db, username)
+        from .security_settings import resolve
+        allowed_here = eligible(db, username) and resolve(db, owner=username)['switches']['budget_checks']
         for window_id, rule in (row.value.get("rules") or {}).items():
             key = f"budget:{username}:{window_id}"
             w = found.get(window_id)

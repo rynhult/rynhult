@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from ... import container_host_record, providers
 from ...broker import ops
-from .. import budgets, explanations, export, gitbackup, guardrails, history, local_workspace, vault
+from .. import budgets, explanations, export, gitbackup, guardrails, history, launch_machines, local_workspace, vault
 from ..broker_client import BrokerError, BrokerUnavailable
 from ..compiler import CompileError, build_args, compile_files, not_delivered
 from ..issue_sources import IssueSourceError, issue_prompt, source_key
@@ -173,10 +173,15 @@ def router(ctx: Context) -> APIRouter:
         if isinstance(body.orchestrator, dict) and 'agents' not in body.orchestrator and body.project_id:
             with db() as s:
                 project = ctx.project_for(s, who, body.project_id)
-                account, host = project.account, project.host or 'local'
+                account, host = project.account, body.machine or project.host or 'local'
             agents = await default_team_agents(broker, account, host)
             body = body.model_copy(update={'orchestrator': {**body.orchestrator, 'agents': agents}})
         return body
+
+    def machine_scope(body, who):
+        if (body.topic or body.workspace) and body.machine not in (None, "local"):
+            raise HTTPException(422, "Local workspaces run on this Rynhult. Choose a project to use another machine.")
+        return launch_machines.scope(ctx, who, body.project_id, body.machine)
 
     @api.post("/api/sessions/preview")
     async def preview_session(body: SessionIn, who=Depends(ctx.principal)):
@@ -192,8 +197,14 @@ def router(ctx: Context) -> APIRouter:
             require(ctx.settings, 'local_models')
         body = development_target(body, who)
         no_worktree_for_workspace(body)
+        selected_account, selected_host = machine_scope(body, who)
+        target_repo = launch_machines.repository(ctx, who, body.project_id, selected_host) if body.project_id and body.machine else None
         body = await default_team_grant(body, who)
         prepared = await issue_inputs(body, who)
+        try:
+            selected_layout = await supervisor.layout(selected_host, selected_account) if body.machine else None
+        except (LaunchRefused, BrokerError) as error:
+            raise refused(error) from None
         with db() as s:
             local_only = False
             keys_project, remote, host = None, False, "local"  # local workspaces: their own project, made at the first launch
@@ -215,6 +226,12 @@ def router(ctx: Context) -> APIRouter:
                 if body.worktree or local_only:  # made at launch: <root>/.worktrees/<slug>-<id>, on branch acc/<name>-<id>
                     cwd = str(settings.account_root(project.account) / ".worktrees" / f"{project.slug}-<id>")
                 account, host = project.account, project.host or "local"
+                if body.machine:
+                    account, host = selected_account, selected_host
+                if host != (project.host or "local"):
+                    if project.containers or project.private_workspace:
+                        raise HTTPException(422, "This project needs its own machine. Choose the project's machine.")
+                    cwd = f"{target_repo or '<clone>'}/.worktrees/{project.slug}-<id>"
                 keys_project, remote = project.id, host != "local"
             if body.workspace or body.topic:
                 found = local_workspace.find_project(s, who.account)
@@ -242,12 +259,20 @@ def router(ctx: Context) -> APIRouter:
                     except LaunchRefused as error:
                         raise CompileError(str(error)) from None
                 keys = vault.plan(s, keys_project, who.username, remote, supervisor.catalog, inputs.mcps)
-                where = supervisor.known_layout(host, account) or supervisor.known_layout("local", account)
+                where = selected_layout or (
+                    supervisor.known_layout(host, account) or supervisor.known_layout("local", account))
+                from .. import security_settings
+                try:
+                    security_settings.lock_revision(s)
+                    inputs = security_settings.launch_inputs(inputs, security_settings.resolve(s, project_id=keys_project,
+                                                              owner=who.username, machine=host, account=account))
+                except ValueError as error:
+                    raise CompileError(str(error)) from None
                 compiled = compile_files(inputs, where["hook_path"], where["statusline_path"],
                                          catalog=supervisor.catalog, agent_home=where["home"],
                                          codex_plugins=supervisor.codex_plugins(account),
                                          endpoint=supervisor.endpoint_info(s, inputs.endpoint),
-                                         guardrails=guardrails.policy(s, cwd, who.username, keys_project, local_only))
+                                         guardrails=guardrails.policy(s, cwd, who.username, keys_project, local_only, machine=host, account=account))
                 preview_limits = None
                 if body.orchestrator is not None:
                     if not body.worktree or body.topic or body.workspace:
@@ -271,6 +296,8 @@ def router(ctx: Context) -> APIRouter:
             except (CompileError, vault.VaultError) as error:
                 raise HTTPException(422, str(error))
             return {"command": [providers.get(inputs.provider).executable, *args], "cwd": cwd, "files": files,
+                    "machine": host, "checkout": {"requires_clone": bool(body.project_id and
+                        host != (project.host or "local") and target_repo is None)},
                     "keys": keys.public(),
                     "digest": compiled.digest, "trusted": trusted, "import_mode": import_mode,
                     "inputs": inputs.as_dict(), "standalone": bool(body.topic or body.workspace),
@@ -310,6 +337,14 @@ def router(ctx: Context) -> APIRouter:
             require(ctx.settings, 'local_models')
         body = development_target(body, who)
         no_worktree_for_workspace(body)
+        selected_account, selected_host = machine_scope(body, who)
+        if body.machine:
+            try:
+                installed = await broker.call("installed_providers", account=selected_account, host=selected_host)
+            except BrokerError as error:
+                raise refused(error) from None
+            if not installed.get(body.provider):
+                raise HTTPException(422, f"{providers.get(body.provider).label} is not installed on {selected_host} for this project's account.")
         try:
             # Scheduled launches retain the resolved choices saved by the person.
             inputs = await issue_inputs(body, who, frozen=bool(schedule_run_id))
@@ -324,7 +359,7 @@ def router(ctx: Context) -> APIRouter:
                                detail=body.model_dump(exclude={"initial_prompt", "task"})))
                 s.commit()
         with db() as s:
-            paused = budgets.paused(s, who.username, inputs.provider)
+            paused = budgets.paused(s, who.username, inputs.provider, project_id=body.project_id)
         if paused and not body.budget_ok:
             raise HTTPException(409, f"Your budget pauses new {providers.get(inputs.provider).label} launches ({', '.join(paused)}). "
                                      "Confirm to launch anyway.")
@@ -339,7 +374,7 @@ def router(ctx: Context) -> APIRouter:
             with db() as s:
                 project = ctx.project_for(s, who, body.project_id)
                 try:
-                    limits = validate_grant(body.orchestrator, supervisor.catalog, project.host or "local",
+                    limits = validate_grant(body.orchestrator, supervisor.catalog, body.machine or project.host or "local",
                                             settings.hook_path, body.confirm_dangerous)
                     known = {"local"} | set(s.scalars(select(Node.name).where(Node.status == "active")))
                     if set(limits["machines"]) - known:
@@ -374,6 +409,11 @@ def router(ctx: Context) -> APIRouter:
                         own_worktree, workdir = True, project.workspace_path
                     slug, repo, account, host = project.slug, project.workspace_path, project.account, project.host or "local"
                     container = project.containers
+                    other_machine = selected_host != host
+                    if other_machine and (project.private_workspace or container):
+                        raise HTTPException(422, "This project needs its own machine. Choose the project's machine.")
+                    if other_machine and not project.trusted:
+                        raise HTTPException(409, "Trust this project before cloning it to another machine.")
                 if container:
                     # An owner switched this project to containers: every session gets a private checkout and runs
                     # in a container through the root launcher, or doesn't start (never a native fallback).
@@ -401,7 +441,14 @@ def router(ctx: Context) -> APIRouter:
             # Identity is initialized by create_session after launch approval.
             # Worktree creation needs no author; avoid a pre-approval repository probe.
             worktree = None
-            if own_worktree and container:
+            checkout_repo = None
+            if project_id and not body.topic and not body.workspace and other_machine:
+                suffix = uuid.uuid4().hex[:8]
+                worktree, checkout_repo = await launch_machines.checkout(
+                    ctx, who, project, selected_host, f"{slug}-{suffix}",
+                    f"acc/session-{suffix}" + ("/work" if limits is not None else ""), clone=body.clone_on_machine)
+                host, repo = selected_host, checkout_repo
+            elif own_worktree and container:
                 suffix = uuid.uuid4().hex[:8]
                 name = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]", "-", body.name.lower())).strip("-")[:40] or "session"
                 if multirun_entry:
@@ -423,7 +470,8 @@ def router(ctx: Context) -> APIRouter:
                 acc_id = await supervisor.create_session(project_id, inputs, body.name, who.username, workdir=workdir,
                                                          owner=who.username, worktree=worktree, orchestrator=limits,
                                                          schedule_run_id=schedule_run_id, multirun_entry=multirun_entry,
-                                                         container=container, automation_policy=body.automation)
+                                                         container=container, automation_policy=body.automation,
+                                                         machine=selected_host if body.machine else None, checkout_repo=checkout_repo)
             except Exception:
                 if worktree:  # nothing will use it: don't leave an empty worktree behind
                     await broker.call("remove_worktree", account=account, host=host, repo=repo, path=worktree["path"])
@@ -469,7 +517,11 @@ def router(ctx: Context) -> APIRouter:
     @api.get("/api/sessions/{acc_id}")
     def get_session(acc_id: str, who=Depends(ctx.principal)):
         with db() as s:
-            return session_out(ctx.session_for(s, who, acc_id), detail=True, ssh_host=settings.editor_host)
+            from ..security_settings import on_older_settings
+            session = ctx.session_for(s, who, acc_id)
+            result = session_out(session, detail=True, ssh_host=settings.editor_host)
+            result['security_older_settings'] = on_older_settings(s, session)
+            return result
 
     @api.get("/api/sessions/{acc_id}/team")
     async def get_team(acc_id: str, who=Depends(ctx.principal)):
@@ -483,7 +535,7 @@ def router(ctx: Context) -> APIRouter:
             members = list(s.scalars(select(Session).where(Session.team_id == acc_id).order_by(Session.created_at)))
             decisions = list(s.scalars(select(AuditLog).where(AuditLog.target == acc_id, AuditLog.action.like("team.%"))
                                       .order_by(AuditLog.id)))
-            return {"limits": team.limits, "expires_at": team.expires_at, "stopped": team.stopped, "wrapup_until": team.wrapup_until,
+            return {"limits": team.limits, "expires_at": team.expires_at, "stopped": team.stopped, "stop_reason": team.stop_reason or ("expired" if team.stopped and s.scalar(select(AuditLog.id).where(AuditLog.target == acc_id, AuditLog.action == "team.expired").limit(1)) else None), "resume_available": bool(team.resume_members), "wrapup_until": team.wrapup_until,
                     "used": {"started": team.started, "running": sum(x.parent_session_id is not None and (x.desired_state == "running" or x.team_stop_pending) for x in members)},
                     "reservations": [reservation_view(row) for row in s.scalars(select(Reservation).where(
                         Reservation.team_id == acc_id).order_by(Reservation.id))],
@@ -496,6 +548,46 @@ def router(ctx: Context) -> APIRouter:
             ctx.session_for(s, who, acc_id)
         try:
             return await supervisor.stop_team(acc_id, who.username)
+        except LaunchRefused as error:
+            raise refused(error)
+
+    @api.post('/api/sessions/{acc_id}/team/lifetime')
+    async def team_lifetime(acc_id: str, body: dict, who=Depends(ctx.principal)):
+        from .. import team_lifetime
+        async with supervisor.__dict__.setdefault('_team_lock', asyncio.Lock()):
+            with db() as s:
+                ctx.session_for(s, who, acc_id)
+                team = s.get(Team, acc_id)
+                if team is None:
+                    raise HTTPException(404, 'no such team')
+                if set(body) != {'hours'}:
+                    raise HTTPException(422, 'Choose hours or no time limit.')
+                try:
+                    team_lifetime.set_limit(s, team, who.username, body['hours'])
+                except LaunchRefused as error:
+                    raise refused(error)
+                s.commit()
+                return {'expires_at': team.expires_at}
+
+    @api.get('/api/sessions/{acc_id}/team/resume')
+    def team_resume_preview(acc_id: str, who=Depends(ctx.principal)):
+        from .. import team_lifetime
+        with db() as s:
+            ctx.session_for(s, who, acc_id)
+            team = s.get(Team, acc_id)
+            if team is None:
+                raise HTTPException(404, 'no such team')
+            return team_lifetime.preview(s, team)
+
+    @api.post('/api/sessions/{acc_id}/team/resume')
+    async def team_resume(acc_id: str, body: dict, who=Depends(ctx.principal)):
+        from .. import team_lifetime
+        with db() as s:
+            ctx.session_for(s, who, acc_id)
+        if set(body) != {'revision', 'hours'}:
+            raise HTTPException(422, 'Review the resume list and explicitly choose hours or no time limit.')
+        try:
+            return await team_lifetime.resume(supervisor, acc_id, who.username, body['revision'], body['hours'])
         except LaunchRefused as error:
             raise refused(error)
 
@@ -575,7 +667,7 @@ def router(ctx: Context) -> APIRouter:
                 if cached and (cached.value["status"] == "running"
                                or cached.value["status"] == "ready" and not body.regenerate):
                     return supervisor.vault.redactor(s, ctx.session_for(s, who, acc_id).vault_keys).deep(cached.value)
-                paused = budgets.paused(s, who.username, body.provider)
+                paused = budgets.paused(s, who.username, body.provider, project_id=ctx.session_for(s, who, acc_id).project_id)
                 if paused:
                     raise HTTPException(409, f"Your budget pauses new {providers.get(body.provider).label} launches ({', '.join(paused)}). Choose another agent.")
             agents = await explanation_agents(acc_id, who)

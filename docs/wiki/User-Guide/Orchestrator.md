@@ -25,16 +25,31 @@ strong security boundary from each other.
 
 <!-- lane D -->
 <!-- lane E -->
-1. Open **New session**, choose your project and the lead's agent.
+1. Open **New session**, choose your project, the lead's **Machine** and agent.
+   The machine defaults to the project's registered machine. Choosing a different
+   one uses an existing accessible checkout, or asks you to choose **Clone on …**
+   before launching; see [New session](/User-Guide/New-Session#choose-another-machine).
 2. Under **Advanced → Run**, choose **With helpers**. It starts as **Once**.
    The lead gets its own [worktree](/User-Guide/Glossary#worktree).
 3. Set **At once**, **In total**, **Depth**, **Hours**, **Machines**, and the allowed
    helper agents, [profiles](/User-Guide/Glossary#profile) and permission modes.
-   Defaults are 3 running helpers, 10 started, depth 2 and 8 hours. Depth 1 lets
+   Defaults are 3 running helpers, 10 started, depth 2 and no time limit. Leave **Hours** empty for no deadline. Depth 1 lets
    only the lead start helpers. All managed descendants share the limits.
+   **Machines** is a checkbox list of enrolled machines, including
+   **This Rynhult (main)**. Each row shows online/offline state, OS and agents
+   installed for the project's account. Select the machines helpers may use;
+   this is separate from the lead's **Machine** choice.
 4. Choose the [run mode](#planning-session-and-roadmap), optionally supply a
    [project brief](#project-brief), confirm any permission-skipping mode explicitly,
    review the generated launch files, then select **Launch**.
+
+![Helper machines are selected from enrolled machines with account-scoped agent availability](/.attachments/orchestrator-machines.png)
+
+![The same labelled machine checkboxes remain keyboard and touch accessible on a phone](/.attachments/orchestrator-machines-phone.png)
+
+Project gates still run on the project's registered machine. Keep the lead
+there when it needs to queue gates for its own branch; selecting another
+machine does not move the project's gate checkout or synchronize changes back.
 
 New grants offer **Full-stack**, **Frontend**, **Backend**, **Code reviewer** and
 **QA** for signed-in Claude, plus **Full-stack** and **Backend** for signed-in
@@ -206,6 +221,8 @@ committed branches remain; the working list stays readable but its questions
 leave your Inbox.
 
 <!-- lane B -->
+If you set Hours, the Team page shows its deadline with **Extend 4 h** and **Remove limit**, and the Inbox warns about 30 minutes ahead. After expiry, **Resume team** previews the saved lead and eligible helpers and lets you choose a new duration or no limit; budgets, assignments and run-mode checks remain in force. [Team lifetime and resume](/User-Guide/Orchestrate-a-Project#7-stop-the-team-or-let-its-time-expire) explains the confirmation.
+
 At the team's time limit, helpers stop and the lead gets a **30-minute wrap-up**
 by default, configurable from **0 to 120 minutes**. It may only report, update
 the plan/working list and finish stopped helpers: `report`, `plan_update`,
@@ -949,3 +966,11 @@ A queued message has not reached the agent yet. The session's compact delivery i
 An open writable terminal reserves control even when nobody is typing. Switch the session to **Activity** and close other terminal windows to release it. Queued messages retry automatically as soon as the agent is idle and terminal control is available; **Retry** on the indicator (or **Retry delivery** in Activity) checks again immediately without creating another message. A lead can retry that same queued entry with `message(helper=..., delivery=...)`, instead of sending the text again. Permission questions still need your answer in the terminal.
 
 Before typing, Rynhult clears the input line. If visible text remains, it stops and reports the conflict instead of appending. A submitted message needs confirmation from the agent's prompt hook or a submitted-text screen check. An unconfirmed submission is never automatically pasted again: check the terminal first, then use **Send again after checking** with the full message if necessary. Review comments stay on the Changes tab until their delivery is confirmed.
+
+### Brief exports, delivery and unreadable references
+
+The lead receives the project's current reserved ports at launch and resume. If none are reserved, ask the owner to reserve a port under **Ports**; do not guess one. A configured Git remote does not grant permission to publish. With no remote, the lead offers a local merge proposal or handoff, without adding a remote or asking to push. Only the person integrates into main.
+
+An unchanged app-exported project brief can remain in the working tree during an unrelated helper merge. Independently edited or staged files still require review before merging. If an export overlaps the helper's changes, review and commit the approved export on the writing task branch before retrying; Rynhult never stashes or discards it to force a merge. Include approved public brief and roadmap snapshots in the final handoff.
+
+A need card requires an answer before it can be completed or dismissed. Describe what happened, or choose **Skip this input** to record an explicit outcome for the lead. Image-related needs also link to **Check image access** (owners only) and **Upload a reference** in the project brief. Uploading or checking does not answer the card automatically; report the result. Skipping an input does not authorize changing requirements or constraints. Replies made with an installation API token show **Owner via API**; audit records retain the token identity.

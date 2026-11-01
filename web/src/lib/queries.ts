@@ -62,9 +62,10 @@ export const useRole = () => {
 };
 
 /** Every agent provider Rynhult knows (label, colour, launch options, capabilities, installed for your agent account). */
-export const useProviderRegistry = (projectId?: number, enabled = true) => {
-  const query = useQuery({ queryKey: ["provider-registry", projectId ?? "account"], queryFn: () =>
-    api<{ providers: ProviderInfo[]; team_agents: { agent: string; profile: string | null; options: Record<string, string | boolean> }[] }>(`/api/providers/registry${projectId ? `?project_id=${projectId}` : ""}`),
+export const useProviderRegistry = (projectId?: number, enabled = true, machine?: string) => {
+  const scope = new URLSearchParams({ ...(projectId ? { project_id: String(projectId) } : {}), ...(machine ? { machine } : {}) }).toString();
+  const query = useQuery({ queryKey: ["provider-registry", projectId ?? "account", machine ?? "project"], queryFn: () =>
+    api<{ providers: ProviderInfo[]; team_agents: { agent: string; profile: string | null; options: Record<string, string | boolean> }[] }>(`/api/providers/registry${scope ? `?${scope}` : ""}`),
     enabled, staleTime: 300000 });
   const list = query.data?.providers ?? [];
   return { ...query, list, byId: (id: string) => list.find((p) => p.id === id) };

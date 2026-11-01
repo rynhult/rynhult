@@ -10,7 +10,7 @@ import stat
 import uuid
 from urllib.parse import urlsplit
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, func, or_, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..models import AuditLog, Base, Session, Team, UTCDateTime, utcnow
@@ -397,7 +397,7 @@ def notify_accept(db, supervisor, project_id, number):
         return
     for lead in db.scalars(select(Session).join(Team, Team.id == Session.id).where(
             Session.project_id == project_id, Session.management == 'acc', Session.desired_state == 'running',
-            Team.stopped.is_(False), Team.expires_at > utcnow())):
+            Team.stopped.is_(False), or_(Team.expires_at.is_(None), Team.expires_at > utcnow()))):
         delivery.enqueue_in_transaction(db, supervisor, lead, 'supervisor',
             f'Your person accepted project brief version {number}. Read the current brief and plan before continuing. '
             f'Review: /projects/{project_id}#project-brief. This notice does not change your pinned scope or run mode.')
@@ -578,7 +578,7 @@ async def _tool(supervisor, caller_id, payload):
         with supervisor.db() as db:
             caller = db.get(Session, caller_id)
             team = db.get(Team, caller.team_id) if caller and caller.team_id else None
-            if team is None or team.stopped or utcnow() >= team.expires_at:
+            if team is None or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at):
                 raise Refused('no active team')
             team_id, action = caller.team_id, payload['action']
             pin = db.get(TeamBrief, team_id)
@@ -631,7 +631,7 @@ async def _tool(supervisor, caller_id, payload):
                 if reference.url:
                     return {'url': reference.url, 'untrusted_evidence': True}
                 data = reference_bytes(supervisor.settings, reference)
-                place = {'account': caller.run_as, 'host': caller.team_host or caller.project.host or 'local'}
+                place = {'account': caller.run_as, 'host': caller.host}
                 session_id, extension = caller.id, MIMES[reference.media_type][0]
                 # No database lock while talking to a remote broker.
                 db.rollback()

@@ -266,6 +266,13 @@ async def test_supervisor_restart_adopts_live_session(api, project, env):
 
 
 async def test_dangerous_launch_needs_explicit_confirmation(api, project):
+    # This test isolates the generic confirmation after an owner's scoped
+    # Security exception; confirmation itself must never create that exception.
+    from acc.server import security_settings
+    with api.app.state.db() as db:
+        security_settings.save(db, {'kind': 'project', 'project_id': project['id']},
+                               {'provider_prompts': False}, actor='casey', expected_revision=0)
+        db.commit()
     body = {"project_id": project["id"], "provider": "claude", "name": "yolo", "permission_mode": "bypassPermissions"}
     refused = await api.post("/api/sessions", json=body)
     assert refused.status_code == 409
@@ -339,6 +346,13 @@ async def test_launch_values_that_would_become_cli_options_are_refused(api, proj
 async def test_sandbox_sent_inside_options_counts(api, project):
     """sandbox/approval/permission_mode are fields of their own: inside `options` they are moved there, so the
     command line uses them and the dangerous-launch confirmation still applies."""
+    # This test isolates the generic confirmation after an owner's scoped
+    # Security exception; confirmation itself must never create that exception.
+    from acc.server import security_settings
+    with api.app.state.db() as db:
+        security_settings.save(db, {'kind': 'project', 'project_id': project['id']},
+                               {'provider_prompts': False}, actor='casey', expected_revision=0)
+        db.commit()
     body = {"project_id": project["id"], "provider": "codex", "name": "opts",
             "options": {"sandbox": "danger-full-access", "approval": "never"}}
     assert (await api.post("/api/sessions", json=body)).status_code == 409  # needs the confirmation

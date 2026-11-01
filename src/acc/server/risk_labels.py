@@ -34,9 +34,12 @@ def _guard(path: Path):
     return module
 
 
-def enabled(db, username: str) -> bool:
+def enabled(db, username: str, *, project_id=None) -> bool:
     from .admin_features import current
     if not current('risk_labels'):
+        return False
+    from .security_settings import resolve
+    if not resolve(db, owner=username, project_id=project_id)['switches']['risk_labels']:
         return False
     row = db.get(Setting, f"risk_labels.{username}")
     return row.value.get("enabled", True) if row else True

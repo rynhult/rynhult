@@ -1,12 +1,13 @@
 import clsx from "clsx";
 import { ExternalLink, LayoutGrid, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { SessionSummary } from "../lib/types";
 import { useSessions } from "../lib/queries";
-import { Button, Dialog, Dot, Empty, ErrorNote, IconButton, LoadingRows, Page, PageHeader, StaleNote, TabPanel, Tabs, useDocumentTitle, useMedia } from "../components/ui";
+import { Button, Dialog, Dot, Empty, ErrorNote, IconButton, LoadingRows, Page, PageHeader, StaleNote, Tabs, useDocumentTitle, useMedia } from "../components/ui";
 import { groupLive, isLive, NowDoing, ProviderBadge, sessionState, StateBadge } from "../components/session-bits";
 import { Terminal } from "../components/Terminal";
+import { expandedGridSession } from "../components/terminalExpansion";
 
 const MAX = 4;
 const STORE = "acc-grid";
@@ -34,7 +35,11 @@ export function Grid() {
     try { localStorage.setItem(STORE, JSON.stringify(next)); } catch { /* private mode: not remembered */ }
   };
   const phone = useMedia("(max-width: 767px)");
-  const [focused, setFocused] = useState<string>("");
+  const [focused, setFocused] = useState<string>(expandedGridSession);
+  const expansionChanged = useCallback((id: string, expanded: boolean) => {
+    // Keep the expanded tile selected when crossing the phone breakpoint.
+    if (expanded) setFocused(id);
+  }, []);
   // The phone's one terminal: the one picked, else the first (the grid's order puts the one that needs you first).
   const shown = ids.includes(focused) ? focused : ids[0];
   useEffect(() => {  // keep the URL in step once sessions have loaded (shareable, survives reload)
@@ -56,19 +61,18 @@ export function Grid() {
         <Page><Empty icon={LayoutGrid} action={live.length ? <Button size="sm" onClick={() => setPicking(true)}><Plus size={14} /> Choose sessions</Button> : undefined}>
           {live.length ? "Pick up to four live sessions to watch together." : "No live sessions. Start one, then come back here."}
         </Empty></Page>
-      ) : phone ? (
-        // A phone shows one terminal with a switcher, not a stack of terminals each with its own key bar (UX review GR-1).
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <Tabs id="grid-tabs" label="Sessions in the grid" value={shown} onChange={setFocused}
-            tabs={ids.map((id) => ({ id, label: <span className="inline-flex items-center gap-1.5"><Dot tone={sessionState(byId.get(id)!).tone} />{byId.get(id)!.name}</span> }))} />
-          <TabPanel id="grid-tabs" value={shown} className="flex min-h-0 flex-1 flex-col">
-            <Tile key={shown} session={byId.get(shown)!} onRemove={() => choose(ids.filter((x) => x !== shown))} />
-          </TabPanel>
-        </div>
       ) : (
-        <div className={clsx("grid min-h-0 flex-1 gap-3", ids.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2",
-          ids.length > 2 ? "lg:grid-rows-2" : "lg:grid-rows-1")}>
-          {ids.map((id) => <Tile key={id} session={byId.get(id)!} onRemove={() => choose(ids.filter((x) => x !== id))} />)}
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          {phone && <Tabs id="grid-tabs" label="Sessions in the grid" value={shown} onChange={setFocused}
+            tabs={ids.map((id) => ({ id, label: <span className="inline-flex items-center gap-1.5"><Dot tone={sessionState(byId.get(id)!).tone} />{byId.get(id)!.name}</span> }))} />}
+          {/* The same parent and tile keys on both layouts: no terminal remount on resize/collapse.
+              Phones still mount only their selected terminal, as before. */}
+          <div role={phone ? "tabpanel" : undefined} id={phone ? "grid-tabs-panel" : undefined}
+            aria-labelledby={phone ? `grid-tabs-tab-${shown.replace(/[^A-Za-z0-9_-]+/g, "-")}` : undefined}
+            className={clsx("grid min-h-0 flex-1 gap-3", phone || ids.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2",
+              !phone && ids.length > 2 ? "lg:grid-rows-2" : "lg:grid-rows-1")}>
+            {(phone ? [shown] : ids).map((id) => <Tile onExpansionChange={expansionChanged} key={id} session={byId.get(id)!} onRemove={() => choose(ids.filter((x) => x !== id))} />)}
+          </div>
         </div>
       )}
       <Picker open={picking} onClose={() => setPicking(false)} live={live} chosen={ids} onChoose={(next) => { choose(next); setPicking(false); }} />
@@ -76,9 +80,10 @@ export function Grid() {
   );
 }
 
-function Tile({ session: s, onRemove }: { session: SessionSummary; onRemove: () => void }) {
+function Tile({ session: s, onRemove, onExpansionChange }: { session: SessionSummary; onRemove: () => void; onExpansionChange: (id: string, expanded: boolean) => void }) {
+  const expansionChanged = useCallback((expanded: boolean) => onExpansionChange(s.id, expanded), [s.id, onExpansionChange]);
   return (
-    <section aria-label={s.name} className="flex min-h-[18rem] min-w-0 flex-col gap-1.5">
+    <section data-grid-session={s.id} aria-label={s.name} className="flex min-h-[18rem] min-w-0 flex-col gap-1.5">
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
         <span className="min-w-0 flex-1 truncate font-medium" title={s.name}>{s.name}</span>
         <StateBadge session={s} />
@@ -90,7 +95,7 @@ function Tile({ session: s, onRemove }: { session: SessionSummary; onRemove: () 
           <IconButton icon={X} label={`Remove ${s.name} from the grid`} onClick={onRemove} />
         </span>
       </div>
-      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : <Terminal sessionId={s.id} live compact />}</div>
+      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : <Terminal onExpansionChange={expansionChanged} sessionId={s.id} live compact name={s.name} tone={sessionState(s).tone} stateLabel={sessionState(s).label} />}</div>
     </section>
   );
 }

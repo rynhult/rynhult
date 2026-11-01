@@ -1,6 +1,6 @@
 import { environmentValue } from "../../src/acc/env.mjs";
 import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import type AxeBuilder from "@axe-core/playwright";
 
@@ -181,6 +181,20 @@ export async function waitForTeamStopped(page: Page, id: string) {
   }, { message: `Waiting for team ${id} stop confirmation`, timeout: test.info().timeout }).toBe(true);
 }
 
+/** Drive the disposable provider's real tool spool and wait within the test's existing budget. */
+export async function teamRequest(session: string, action: string, args: object = {}) {
+  const id = randomUUID().replaceAll("-", "");
+  appendFileSync(`${info().run_dir}/${session}/events.jsonl`, JSON.stringify({ acc_session: session,
+    hook: { hook_event_name: "AccTeam", request: { id, action, ...args } } }) + "\n");
+  const file = `${info().run_dir}/${session}/team/${id}.json`;
+  await expect.poll(() => existsSync(file), {
+    message: `Waiting for ${action} reply from lead ${session}`,
+    timeout: test.info().timeout,
+    intervals: [100, 250, 500],
+  }).toBe(true);
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
 export async function resetPairingThrottle(page: Page) {
   const response = await page.request.post("/e2e-test/reset-pairing-throttle", { headers: await csrfHeaders(page) });
   if (!response.ok()) throw new Error(`pairing fixture reset failed (${response.status()}): ${await response.text()}`);
@@ -198,6 +212,23 @@ export async function verifyAgain(page: Page) {
   const verified = await page.request.post("/api/auth/passkeys/reauth", { headers: await csrfHeaders(page),
     data: { password: PASSWORD, code: totp(loadSecret()) } });
   if (!verified.ok()) throw new Error(`verification failed: ${await verified.text()}`);
+}
+
+/** Review Security through the real owner verification flow; never use a retired writer. */
+export async function reviewSecurityChanges(page: Page) {
+  await page.locator('#security').getByRole('button', { name: 'Review changes', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Review Security changes', exact: true });
+  const verify = page.getByRole('dialog', { name: 'Verify your sign-in', exact: true });
+  await expect(review.or(verify)).toBeVisible();
+  if (await verify.isVisible()) {
+    test.slow(); // A real authenticator step may need the next 30-second counter.
+    await freshStep(page);
+    await verify.getByLabel('Verification password').fill(PASSWORD);
+    await verify.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+    await verify.getByRole('button', { name: 'Verify with password and authenticator', exact: true }).click();
+  }
+  await expect(review).toBeVisible();
+  return review;
 }
 
 /** Sessions shaped like the demo's (scripts/demo_instance.py), oldest activity on the one that needs you, as in the
@@ -310,4 +341,10 @@ export async function expandTeamPanels(page: Page) {
   for (const button of await content.locator('[data-team-panel] > section > button').all()) {
     if (await button.getAttribute('aria-expanded') === 'false') await button.click();
   }
+}
+
+/** Process owned fixture bytes through the normal readers and team request lock. */
+export async function settleSession(page: import('@playwright/test').Page, id: string) {
+  const response = await page.request.post(`/e2e-test/sessions/${id}/settle`);
+  expect(response.ok(), await response.text()).toBeTruthy();
 }

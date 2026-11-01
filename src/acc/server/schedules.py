@@ -192,7 +192,7 @@ class Scheduler:
                 reason = 'The schedule owner or agent account has changed'
             elif project is None or project.archived or project.account != schedule.account or (user.role != 'owner' and project.owner != user.username):
                 reason = 'Project access or agent account has changed'
-            elif not connected(self.ctx.broker, project.host or 'local'):
+            elif not connected(self.ctx.broker, run.launch.get('machine') or project.host or 'local'):
                 reason = 'Machine offline; occurrence skipped. Nodes check in when they return.'
             else:
                 # A failed run may still own an active ordinary session; failure is not permission to overlap it.

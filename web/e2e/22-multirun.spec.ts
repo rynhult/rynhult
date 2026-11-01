@@ -1,37 +1,38 @@
 import { openAdvanced, wikiShotPath } from "./helpers";
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test as base } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState } from './helpers';
+import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState, settleSession, gitProject, verifyAgain } from './helpers';
 
+// Register/trust is setup here; the UI registration journey has its own specs.
+const test = base.extend<{ projectFixture: Awaited<ReturnType<typeof gitProject>> }>({
+  projectFixture: [async ({ page }, use) => {
+    await use(await gitProject(page, 'multirun-demo'));
+  }, { timeout: 45000 }],
+});
 test.use({ storageState: AUTH_FILE });
-test('person starts alternatives, compares files, and keeps one without deleting branches', async ({ page }, testInfo) => {
+test('person starts alternatives, compares files, and keeps one without deleting branches', async ({ page, projectFixture }, testInfo) => {
   const suffix = randomUUID().slice(0, 8);
-  const projectName = `Multi-run demo ${suffix}`;
   const sessionName = `Improve greeting ${suffix}`;
   const owned: string[] = [];
   try {
-  const folder = `${info().workspace}/multirun-demo-${suffix}`;
-  mkdirSync(folder, { recursive: true });
-  const git = (...args: string[]) => execFileSync('git', ['-C', folder, '-c', 'user.name=Taylor', '-c', 'user.email=taylor@example.com', ...args]);
-  git('init', '-q', '-b', 'main');
-  writeFileSync(`${folder}/app.py`, 'print("hello")\n');
-  git('add', '.');
-  git('commit', '-qm', 'Start');
-  await page.goto('/projects');
-  await page.getByRole('button', { name: 'Register folder' }).click();
-  await page.getByLabel('Name', { exact: true }).fill(projectName);
-  await page.getByLabel('Workspace path').fill(folder);
-  await page.getByRole('button', { name: 'Register', exact: true }).dblclick();
-  await page.getByPlaceholder('Filter projects').fill(projectName);
-  await page.getByRole('button', { name: 'Trust', exact: true }).click();
-  await page.getByRole('button', { name: 'Trust this workspace', exact: true }).dblclick();
-  await expect(page.getByText('not trusted', { exact: true })).toHaveCount(0);
-  const projects = await (await page.request.get('/api/projects')).json();
-  const project = projects.find((x: { name: string }) => x.name === projectName);
-
+  const { folder, id } = projectFixture;
+  const project = { id };
+  // The unsafe-provider confirmation cannot override the owner's Security policy.
+  // Review that exception for this disposable project before exercising bypass.
+  await verifyAgain(page);
+  const headers = await csrfHeaders(page);
+  const registry = await (await page.request.get('/api/security/scopes')).json();
+  const previewResponse = await page.request.post('/api/security/changes/preview', { headers, data: {
+    scope: { kind: 'project', project_id: id }, overrides: { provider_prompts: false }, preset: 'custom', revision: registry.revision,
+  } });
+  expect(previewResponse.ok(), await previewResponse.text()).toBeTruthy();
+  const preview = await previewResponse.json();
+  const applied = await page.request.post(`/api/security/changes/${preview.id}/apply`, { headers, data: { digest: preview.digest } });
+  expect(applied.ok(), await applied.text()).toBeTruthy();
+  const git = (...args: string[]) => execFileSync('git', ['-C', folder, ...args]);
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
@@ -53,6 +54,11 @@ test('person starts alternatives, compares files, and keeps one without deleting
   await dialog.getByRole('checkbox', { name: /Run 2: The agent will run commands without asking/ }).check();
   await dialog.getByRole('button', { name: 'Add run' }).click();
   await dialog.getByRole('combobox', { name: 'Run 3: Agent', exact: true }).selectOption('copilot');
+  // Copilot has no reviewed bypass mapping: the scoped exception must not
+  // silently launch it. Use Codex for the third run after checking that refusal.
+  await expect(dialog.getByRole('alert').filter({ hasText: 'This provider does not support the Security bypass mapping.' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeDisabled();
+  await dialog.getByRole('combobox', { name: 'Run 3: Agent', exact: true }).selectOption('codex');
   await expect(dialog.getByText('Exactly what will run')).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeEnabled();
   await dialog.getByLabel('Name', { exact: true }).scrollIntoViewIfNeeded();
@@ -82,6 +88,8 @@ test('person starts alternatives, compares files, and keeps one without deleting
   writeFileSync(`${info().run_dir}/${left.id}/statusline.json`, JSON.stringify({
     cost: { total_cost_usd: 0.12 }, context_window: { total_input_tokens: 12, total_output_tokens: 7 },
   }));
+  await settleSession(page, left.id);
+  await settleSession(page, right.id);
   expect((await usageReady).ok()).toBe(true);
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${left.id}`)).json()).changes?.files).toBe(1);
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${right.id}`)).json()).changes?.files).toBe(1);
@@ -133,4 +141,20 @@ test('person starts alternatives, compares files, and keeps one without deleting
       expect((await page.request.post(`/api/sessions/${id}/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
     }
   }
+});
+
+
+test('multi-run confirmation cannot widen prompts-On Security policy', async ({ page, projectFixture }) => {
+  await page.goto('/sessions');
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(projectFixture.id));
+  await openAdvanced(dialog);
+  await dialog.getByRole('radio', { name: /Several agents/ }).check();
+  await dialog.getByLabel('Task', { exact: true }).fill('Compare protected alternatives.');
+  await dialog.getByRole('combobox', { name: 'Run 2: Agent', exact: true }).selectOption('claude');
+  await dialog.getByRole('combobox', { name: 'Run 2: Permissions', exact: true }).selectOption('bypassPermissions');
+  await dialog.getByRole('checkbox', { name: /Run 2: The agent will run commands without asking/ }).check();
+  await expect(dialog.getByText(/Security requires provider prompts/).first()).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeDisabled();
 });

@@ -4,6 +4,16 @@ from test_remote_spool import sup  # noqa: F401
 from acc.server import automation
 
 
+def paused_for(project, values):
+    """A budget fake at the scoped service boundary, not an unscoped replacement."""
+    def paused(db, owner, provider, *, project_id=None, machine=None, account=None):
+        assert project_id == project['id']
+        assert machine in (None, project.get('host') or 'local')
+        assert account in (None, project['account'])
+        return values()
+    return paused
+
+
 @pytest.mark.parametrize('provider,text', [
     ('claude', "You've hit your limit · resets 2099-01-01T12:00:00Z"),
     ('codex', 'You have hit your usage limit. Try again at 2099-01-01T12:00:00Z'),
@@ -94,7 +104,7 @@ async def test_durable_reset_and_goal_bounds(api, project, monkeypatch):
     from acc.server.db import WRITE_INTENT
     from acc.server.models import Session
     monkeypatch.setattr(automation.budgets, 'windows', lambda db: [{'provider': 'claude', 'used': 100, 'resets_at': 200}])
-    monkeypatch.setattr(automation.budgets, 'paused', lambda *a: [])
+    monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: []))
     r = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'bounded'})
     sid = r.json()['id']
     token = WRITE_INTENT.set(True)
@@ -134,7 +144,7 @@ async def test_goal_stops(api, project, monkeypatch, case):
             automation.configure(db, s, {'goal': {'text': 'demo', 'max_continuations': 2, 'max_hours': 1}}, '@api')
             s.observed_state = 'waiting_input' if case == 'permission' else 'idle'
             at = s.automation['goal']['started'] + (3601 if case == 'time' else 1)
-            monkeypatch.setattr(automation.budgets, 'paused', lambda *a: ['weekly'] if case == 'budget' else [])
+            monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: ['weekly'] if case == 'budget' else []))
             if case == 'person':
                 automation.cancel(db, s)
             assert automation.decide(db, s, assistant=f'GOAL: {case}', turn='1', now=at) is None
@@ -150,7 +160,7 @@ async def test_cancel_does_not_rearm_same_reset(api, project, monkeypatch):
     from acc.server.db import WRITE_INTENT
     from acc.server.models import Session
     monkeypatch.setattr(automation.budgets, 'windows', lambda db: [])
-    monkeypatch.setattr(automation.budgets, 'paused', lambda *a: [])
+    monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: []))
     r = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'cancel'})
     token = WRITE_INTENT.set(True)
     try:
@@ -230,7 +240,7 @@ def test_submit_separates_input_bursts(tmp_path, monkeypatch):
 
 
 async def test_usage_cap_and_missing_readings(api, project, monkeypatch):
-    monkeypatch.setattr(automation.budgets, 'paused', lambda *a: [])
+    monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: []))
     from acc.server.db import WRITE_INTENT
     from acc.server.models import Session
     r = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'usage'})
@@ -263,7 +273,7 @@ async def test_cap_edits_preserve_progress_and_reset_counts(api, project, monkey
             started = s.automation['goal']['started']
             s.observed_state = 'idle'
             monkeypatch.setattr(automation.budgets, 'windows', lambda db: [])
-            monkeypatch.setattr(automation.budgets, 'paused', lambda *a: [])
+            monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: []))
             assert automation.decide(db, s, {'reset': 200}, now=200)
             assert s.automation['goal']['used'] == 1
             automation.configure(db, s, {'goal': {**goal, 'max_hours': 2}}, '@api')
@@ -286,7 +296,7 @@ async def test_new_goal_ignores_old_completion_marker(api, project, monkeypatch)
             history.replace(db, s.id, [{'role': 'assistant', 'text': 'GOAL: done'}])
             automation.configure(db, s, {'goal': {'text': 'new work', 'max_continuations': 2, 'max_hours': 1}}, '@api')
             s.observed_state = 'idle'
-            monkeypatch.setattr(automation.budgets, 'paused', lambda *a: [])
+            monkeypatch.setattr(automation.budgets, 'paused', paused_for(project, lambda: []))
             assert automation.decide(db, s, assistant='GOAL: done', turn='0')
             assert s.automation['goal']['status'] == 'running'
     finally:

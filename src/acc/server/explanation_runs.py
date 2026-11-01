@@ -74,12 +74,25 @@ class ExplanationRuns:
     def _finish_explanation(self, db, session, value: dict) -> None:
         data = json.loads(session.launch_spec.files["explanation.json"])
         db.merge(Observation(key=data["cache_key"], value=value, source="explanation", observed_at=time.time()))
-        session.desired_state = "stopped"
-        session.last_error = value.get("error")
+        archived = session.desired_state == 'archived'
+        session.desired_state = 'archived' if archived else 'stopped'
+        if not (session.last_error or '').startswith('stop not confirmed:'):
+            session.last_error = value.get('error')
         self._close_run(session, end_reason="explanation")
-        self._set_state(db, session, "exited" if value["status"] == "ready" else "stopped", "supervisor")
+        self._set_state(db, session, 'archived' if archived else 'exited' if value['status'] == 'ready' else 'stopped', 'supervisor')
 
     async def _reconcile_explanation(self, db, session, pane) -> None:
+        if session.desired_state != 'running':
+            if pane and not pane['dead']:
+                await self.broker.call('kill', account=session.run_as, host='local', tmux_name=session.tmux_name)
+            from .security_settings import clear_stop_marker
+            clear_stop_marker(db, session, actor='supervisor', reason='explanation_stop_confirmed')
+            stopped_data = json.loads(session.launch_spec.files['explanation.json'])
+            cached = db.get(Observation, stopped_data['cache_key']) if stopped_data.get('cache_key') else None
+            if cached is not None and cached.value.get('helper_id') == session.id and cached.value.get('status') == 'running':
+                self._finish_explanation(db, session, {**cached.value, 'status': 'error',
+                    'error': 'helper stopped without a walkthrough; regenerate to retry', 'steps': []})
+            return
         data = json.loads(session.launch_spec.files["explanation.json"])
         cached = db.get(Observation, data["cache_key"])
         if cached is None or cached.value.get("helper_id") != session.id:
@@ -103,6 +116,9 @@ class ExplanationRuns:
             value = {**value, **document, "status": "ready", "created_at": now().isoformat()}
         except (BrokerError, ValueError, KeyError, TypeError) as error:
             value = {**value, "status": "error", "error": str(error)[:300], "steps": []}
+        db.refresh(session)
         self._finish_explanation(db, session, value)
         db.commit()
         await self.broker.call("kill", account=session.run_as, host="local", tmux_name=session.tmux_name)
+        from .security_settings import clear_stop_marker
+        clear_stop_marker(db, session, actor='supervisor', reason='explanation_stop_confirmed')

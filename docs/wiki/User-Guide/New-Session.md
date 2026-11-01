@@ -6,7 +6,7 @@ Select **New session** (top bar, or press <kbd>C</kbd>). Most launches need only
 
 ### What
 1. **Where it runs.** **Project** (a registered project or Development workspace) or **Local workspace** (see [Workspaces](/User-Guide/Workspaces)). With no project yet, select **New project** right there (see [Projects](/User-Guide/Projects#adding-a-project)); what you entered stays.
-2. **Project.** The line under it is the project's folder, prefixed by the remote machine when applicable. The account and machine are named under **Who**, including the main machine's real name. The project fixes where this session runs; choose a project on another machine to change it, rather than a separate Host selector. A project that isn't trusted yet says so, and **Launch** becomes **Trust and launch**: it asks once, names the folder, then launches.
+2. **Project.** The line under it is the project's registered folder, prefixed by its machine when applicable. **Machine** under **Who** defaults to that machine; you can choose another enrolled machine for this session without changing the project's registration. A project that isn't trusted yet says so, and **Launch** becomes **Trust and launch**: it asks once, names the folder, then launches.
    - **Start from.** For registered projects, choose **Your own task (type it below)**, or a connected GitLab issue, GitLab merge request, Gitea / Forgejo issue or pull request, or Linear issue.
      Filter the list and select **Use issue**. The preview includes its title, description and link as untrusted
      reference data fetched by Rynhult; source tokens never reach the agent. Configure connections on
@@ -16,12 +16,39 @@ Select **New session** (top bar, or press <kbd>C</kbd>). Most launches need only
 4. If another live session already works in the project's own checkout, a note says so: **Use its own [worktree](/User-Guide/Glossary#worktree)** gives this session its own copy (see **Own worktree** below).
 
 ### Who
-5. **Agent.** Claude Code, Codex, GitHub Copilot CLI, Antigravity, Cursor or OpenCode: whichever are installed for the selected project's [agent account](/User-Guide/Glossary#agent-account) on its machine (see [Host and providers](/User-Guide/Host-and-Providers)). Changing projects reloads availability and models for that execution account; an agent installed only on another machine is selectable there. Local workspaces use your agent account on the named main machine, not the device running your browser.
-6. **[Profile](/User-Guide/Glossary#profile).** A role, such as Full-stack, Frontend or Researcher. It sets instructions, the skills and tools the session gets, and permission defaults. The line under it says what the profile is for.
-7. **Keys this session gets** (when the project has keys). The environment variables the session gets from the [key vault](/User-Guide/Keys), by name, never their values: the keys given to the project that you may use (yours and shared ones). Common variables also show the short descriptions used by the Keys dropdown. On another machine, keys whose owner hasn't allowed **Other machines** are listed as not sent. If two keys use the same variable, the preview says which and **Launch** stays disabled until one is removed from the project.
-8. **Name.** Rynhult names the session for you and shows the name it will use: from the task's first words for a project (`Fix the login form` → `fix-the-login-form`), from the topic for a new local workspace, and from the profile in an existing one. Select **Rename** to type your own; **Use automatic name** goes back. A name that's already set (from an issue, a link or your draft) shows in the field straight away.
+5. **Machine.** Choose an enrolled machine, or **This Rynhult (main)**. The description shows online/offline state, operating system and agents installed for the project's account. An offline machine or one without that account cannot be selected. This choice is available for ordinary project sessions as well as several agents, teams and schedules.
+6. **Agent.** Claude Code, Codex, GitHub Copilot CLI, Antigravity, Cursor or OpenCode: whichever are installed for the selected project's [agent account](/User-Guide/Glossary#agent-account) on the chosen machine (see [Host and providers](/User-Guide/Host-and-Providers)). Changing projects or machines reloads availability and models; unavailable agents are disabled with the reason. Local workspaces use your agent account on the named main machine, not the device running your browser.
+7. **[Profile](/User-Guide/Glossary#profile).** A role, such as Full-stack, Frontend or Researcher. It sets instructions, the skills and tools the session gets, and permission defaults. The line under it says what the profile is for.
+8. **Keys this session gets** (when the project has keys). The environment variables the session gets from the [key vault](/User-Guide/Keys), by name, never their values: the keys given to the project that you may use (yours and shared ones). Common variables also show the short descriptions used by the Keys dropdown. On another machine, keys whose owner hasn't allowed **Other machines** are listed as not sent. If two keys use the same variable, the preview says which and **Launch** stays disabled until one is removed from the project.
+9. **Name.** Rynhult names the session for you and shows the name it will use: from the task's first words for a project (`Fix the login form` → `fix-the-login-form`), from the topic for a new local workspace, and from the profile in an existing one. Select **Rename** to type your own; **Use automatic name** goes back. A name that's already set (from an issue, a link or your draft) shows in the field straight away.
 
 The line under Who says which agent account runs it, and on which machine.
+
+### Choose another machine
+
+Select **Machine** under **Who**. If Rynhult already knows an accessible checkout
+of this project's repository there, the form says **Using an existing checkout**.
+The session gets its own worktree of that checkout.
+
+Otherwise choose **Clone on lab-box** (with your machine's name), then **Launch**.
+The button records your choice; the copy is made only when you launch. Rynhult
+uses the same unprivileged Git-bundle path as team helpers, without a network
+clone or a new administrator action. It copies committed Git history, not
+uncommitted edits, repository configuration or account credentials. Transfers
+are limited to **8 MiB**. For a larger repository, register a trusted checkout
+of the same remote URL on that machine first.
+
+![An ordinary session selects another machine and confirms copying the project before Launch](/.attachments/new-session-machine.png)
+
+![The machine choice and clone confirmation fit the New session dialog on a phone](/.attachments/new-session-machine-phone.png)
+
+The project keeps its original machine. Changing machines does not move an
+existing session; its later resumes use its recorded machine. Private copied
+repositories do not inherit an `origin` remote: configure one explicitly if you
+want an ordinary agent to push from there. Local workspaces and Development
+workspaces keep their existing local-only rules; container sessions still
+require the qualified main machine. Ask an owner to enroll a missing machine
+or add the project's agent account there.
 
 ### Advanced
 Closed, **Advanced** shows one line with every choice it holds, for example *Once · default model · accept edits (asks before commands) · shared checkout · 1 skill*. Select it to change any of them:

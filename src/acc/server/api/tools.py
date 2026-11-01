@@ -1,9 +1,9 @@
 """Tool approvals, installed pins and owner-controlled person/project exemptions."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from ..models import AuditLog, InstalledTool, Project, Setting, ToolRequest, User
+from ..models import InstalledTool, Project, Setting, ToolRequest, User
 from ..tools import ToolRefused, out
 from .context import Context
 
@@ -26,7 +26,8 @@ class PolicyIn(BaseModel):
 
 
 def router(ctx: Context):
-    api = APIRouter(prefix="/api/tools")
+    from .security_settings import audited_router
+    api = audited_router(ctx, audit_paths=('/api/tools/policy',), prefix='/api/tools')
     service = ctx.supervisor.tools
 
     def refused(error):
@@ -75,6 +76,8 @@ def router(ctx: Context):
 
     @api.get("/policy")
     def policies(who=Depends(ctx.owner)):
+        from .security_settings import human
+        human(who)
         with ctx.db() as db:
             return {"people": [{"target": p.username, "label": p.username,
                                 "required": (db.get(Setting, f"tools.person.{p.username}").value.get("required", True)
@@ -86,18 +89,10 @@ def router(ctx: Context):
                                  for p in db.scalars(select(Project).where(Project.archived.is_(False)))]}
 
     @api.put("/policy")
-    def policy(body: PolicyIn, who=Depends(ctx.owner)):
+    def policy(body: PolicyIn, request: Request, who=Depends(ctx.owner)):
+        from .security_settings import SecurityRefusal, browser
         with ctx.db() as db:
-            if body.scope == "person":
-                exists = db.scalar(select(User.id).where(User.username == body.target))
-            else:
-                exists = db.get(Project, int(body.target)) if body.target.isdigit() else None
-            if not exists:
-                raise HTTPException(404, "That person or project wasn't found. Reload the page.")
-            key = f"tools.{body.scope}.{body.target}"
-            db.merge(Setting(key=key, value={"required": body.required}, updated_by=who.username))
-            db.add(AuditLog(actor=who.username, action="tool.policy", target=key, detail={"required": body.required}))
-            db.commit()
-        return {"required": body.required}
+            browser(db, request, who)
+        raise SecurityRefusal(410, 'Tool policy changes moved to Settings → Security. Review a scoped Security change there.', 'retired_writer')
 
     return api

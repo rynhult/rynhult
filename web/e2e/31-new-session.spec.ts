@@ -27,6 +27,7 @@ test("the task is in the first screen, a closed Advanced says what it holds, and
   await expect(dialog.getByLabel("Permissions")).toHaveCount(0);  // engine choices wait under Advanced
   await expectAxeClean(page, "[role=dialog]");
   await task.fill("Tidy the greeting in app.py and add a test.");
+  await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeEnabled();
   await dialog.screenshot({ path: wikiShotPath(testInfo, "new-session-dialog.png") });
   await task.fill("");
 

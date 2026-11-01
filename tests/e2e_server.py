@@ -250,9 +250,14 @@ async def main(base: Path, port: int, socket_name: str) -> None:
         demo_port = listener.getsockname()[1]
         # Transfer a duplicate to asyncio; the server owns it until shutdown.
         demo_app = await asyncio.start_server(demo_preview, sock=listener.dup())
+    # No browser fixture may reach a machine's installed privileged folder worker.
+    from e2e_folder_service import install as isolate_folder_service
+    isolate_folder_service()
     # Separate test-only route is inserted before the SPA catch-all.
+    from e2e_team_deadlines import install as install_team_deadlines
     from starlette.responses import JSONResponse
     from starlette.routing import Route
+    install_team_deadlines(app)
     app.router.routes.insert(0, Route('/preview-test-port', lambda request: JSONResponse({'port': demo_port})))
 
     def reset_pairing_throttle(request):
@@ -274,7 +279,7 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     from acc.server.issue_sources import IssueSources
     real_resolve = source_api.resolve_addresses
     async def demo_resolve(base):
-        if base == "https://forge.example.lan":
+        if base == "https://forge.example.lan" or base.startswith("https://forge.example.lan/"):
             return ["10.0.0.8"]
         return await real_resolve(base)
     source_api.resolve_addresses = demo_resolve

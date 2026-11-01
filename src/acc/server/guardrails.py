@@ -32,6 +32,9 @@ def load(db: DbSession) -> dict:
     value = row.value if row else {}
     rules = {key: bool((value.get("rules") or {}).get(key, True)) for key in RULES}
     custom = [c for c in value.get("custom") or [] if isinstance(c, dict) and c.get("pattern")]
+    from .security_settings import BUILTINS, resolve
+    effective = resolve(db)
+    rules.update({key: effective['switches'][key] for key in BUILTINS})
     return {"rules": rules, "custom": custom}
 
 
@@ -64,7 +67,13 @@ def save(db: DbSession, data: dict, actor: str) -> dict:
 
 
 def policy(db: DbSession, workspace: str, owner: str | None = None, project_id: int | None = None,
-           local_only: bool = False) -> dict:
+           local_only: bool = False, *, machine: str | None = None, account: str | None = None) -> dict:
     """What a new session's guardrails.json holds."""
-    from .tools import required
-    return {**load(db), "workspace": workspace, "tool_approval": required(db, owner, project_id), "local_only": local_only}
+    from .security_settings import BUILTINS, lock_revision, resolve
+    lock_revision(db)
+    effective = resolve(db, project_id=project_id, owner=owner, machine=machine, account=account)
+    value = load(db)
+    return {"rules": {key: effective['switches'][key] for key in BUILTINS},
+            "custom": value['custom'] if effective['switches']['custom_rules'] else [],
+            "workspace": workspace, "tool_approval": effective['switches']['tool_install_check'],
+            "local_only": local_only, "security": effective}

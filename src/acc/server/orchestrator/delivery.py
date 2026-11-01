@@ -232,7 +232,7 @@ async def safety(supervisor, session_id, writer_token=None, actor=None):
             return False
         if session.team_id:
             team = db.get(Team, session.team_id)
-            if not team or team.stopped or now() >= team.expires_at:
+            if not team or team.stopped or (team.expires_at is not None and now() >= team.expires_at):
                 return False
         account, host, name, provider = session.run_as, session.host, session.tmux_name, session.provider
     writers = getattr(supervisor, '_delivery_writers', None)
@@ -536,7 +536,7 @@ async def process_once(supervisor):
                     mode_resume = ((MessageDelivery.actor == 'supervisor')
                         & MessageDelivery.preview.startswith(RUN_MODE_ORIGIN)
                         & (Session.desired_state == 'stopped') & (Session.id == Session.team_id)
-                        & Team.stopped.is_(False) & (Team.expires_at > now()))
+                        & Team.stopped.is_(False) & (or_(Team.expires_at.is_(None), Team.expires_at > now())))
                     stale = list(db.scalars(select(MessageDelivery).join(Session).outerjoin(Team, Team.id == Session.team_id).where(
                         MessageDelivery.state == 'queued', or_(MessageDelivery.expires_at <= now(),
                         (Session.desired_state != 'running') & ~func.coalesce(mode_resume, False))).limit(100)))
@@ -674,7 +674,7 @@ def nudge_lead(db, team_id, what):
     if not enabled():
         return None
     lead, team = db.get(Session, team_id), db.get(Team, team_id)
-    if (lead is None or team is None or team.stopped or now() >= team.expires_at
+    if (lead is None or team is None or team.stopped or (team.expires_at is not None and now() >= team.expires_at)
             or lead.management != 'acc' or lead.desired_state != 'running'):
         return None
     origin = NUDGE_ORIGIN + ('No difference found between current and proposed. ' if what == 'proposal' else 'your person ')
@@ -688,7 +688,7 @@ def nudge_lead(db, team_id, what):
         said = ' and '.join([', '.join(changed[:-1]), changed[-1]] if len(changed) > 1 else changed)
         text = NUDGE_ORIGIN + f'your person {said}. Read the working list and the plan (worklist, plan) before you go on.'
     if pending is None:
-        pending = MessageDelivery(session_id=team_id, actor='supervisor', expires_at=team.expires_at)
+        pending = MessageDelivery(session_id=team_id, actor='supervisor', expires_at=team.expires_at or (now() + TTL))
         db.add(pending)
     pending.body, pending.preview, pending.bytes = text, text[:200], len(text.encode())
     pending.text_sha256, pending.updated_at = hashlib.sha256(text.encode()).hexdigest(), now()
@@ -710,7 +710,7 @@ def nudge_parent(db, *, team_id, parent_id, name, status, assignment=None, attem
         return None
     parent, team = db.get(Session, parent_id), db.get(Team, team_id)
     if (parent is None or team is None or parent.team_id != team_id or team.stopped
-            or now() >= team.expires_at or parent.management != 'acc' or parent.desired_state != 'running'):
+            or (team.expires_at is not None and now() >= team.expires_at) or parent.management != 'acc' or parent.desired_state != 'running'):
         return None
     name = re.sub(r'[^\w .-]', '', name or '')[:64].strip() or 'unnamed'
     line = f'helper {name} {status} for assignment {assignment or "unassigned"} (attempt {attempt or "none"}, version {version or 0})'
@@ -726,7 +726,7 @@ def nudge_parent(db, *, team_id, parent_id, name, status, assignment=None, attem
             lines.append('more helper updates available')
     text = HELPER_NOTICE + '; '.join(lines) + suffix
     if pending is None:
-        pending = MessageDelivery(session_id=parent_id, actor='supervisor', expires_at=team.expires_at,
+        pending = MessageDelivery(session_id=parent_id, actor='supervisor', expires_at=team.expires_at or (now() + TTL),
                                   deliver_after=now() + timedelta(seconds=2))
         db.add(pending)
     pending.body, pending.preview, pending.bytes = text, text[:200], len(text.encode())

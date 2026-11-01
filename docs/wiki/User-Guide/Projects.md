@@ -68,7 +68,7 @@ Select **New project** (on Projects, in the Overview's **Get started** list, or 
 
 **If it fails:** the dialog says why and nothing is registered. *already exists* means a project or folder with that name is there: choose another name. *clone failed* quotes git: check the URL, and that your agent account can reach it (an SSH key, or GitHub signed in on **Providers**; on another machine, with that machine picked). *… didn't answer* means the machine went offline or its agent account's broker isn't running: check it on **Host → Machines**.
 
-**Register folder** is the other way in: it registers a folder that already exists, without creating or moving it. Use it for a checkout you made yourself, or once a machine is added (see [Nodes](/User-Guide/Nodes)) for a folder on that **Machine**; the project's sessions run there. They run as your agent account on that machine; if the machine has other accounts and not yours, an owner picks one under **Agent account**.
+**New project → Use existing folder** opens **Register folder**, which is also available directly on Projects. It is the other way in: it registers a folder that already exists, without creating or moving it. Use it for a checkout you made yourself, or once a machine is added (see [Nodes](/User-Guide/Nodes)) for a folder on that **Machine**; the project's sessions run there. They run as your agent account on that machine; if the machine has other accounts and not yours, an owner picks one under **Agent account**.
 
 Slugs are unique, and `local` and anything starting with `local-` are reserved for Rynhult's **Local workspaces** groups (see [Workspaces](/User-Guide/Workspaces)).
 
@@ -338,3 +338,19 @@ The owning account service must support authenticated worktree deletion; if Rynh
 The GitHub repository is never touched. Sessions are archived, detached from the deleted project and kept in searchable history; they cannot be resumed. Audit entries, Inbox approvals and alerts stay. Existing backups follow their retention policy.
 
 Rynhult refuses deletion while sessions or a team are live: choose **Stop all first**, wait for stopping to finish, then **Check again**. Queued or running gates must finish or be cancelled. Published sites must be unpublished through **Publishing**; unfinished publishing requests must be resolved first. Running compose containers must be stopped through their owning Docker account. Rynhult refuses if it cannot verify their status. It also refuses deletion when the project's remote machine or account service is offline; reconnect that machine and retry. A failed file removal can leave the project archived for a safe retry.
+
+
+### Existing folders and account access
+
+The importer says **Use where it is**: it does not move, clone, initialize Git,
+commit, stage files or change the repository identity. Choose **Review only** or
+**Let agents work here** separately from filesystem access and later project trust.
+Cancelling retains the import draft in this browser tab, including when you return
+from Security. Unregistering does not delete the original checkout.
+
+Owners can follow **Allowed folders in Security** to review the selected machine's
+account policy. Members ask an owner if the account cannot use the folder. A broker
+root and OS permission are separate: allowing `/home/alex/src/demo-api` does not
+make that directory readable or writable. See [Allowed folders](/User-Guide/Settings#allowed-folders)
+for checks, target availability, stop requirements and the separately qualified Linux grant/Undo flow. Keep secrets out of a granted repository: its OS reader can
+read keys and untracked files too, despite prompt-based secret-read guardrails.

@@ -173,14 +173,15 @@ def git_guard(cwd: Path) -> list[str]:
     """Extra git options for running git in `cwd` from the broker: none for an ordinary folder or worktree (as today);
     for a container session's private checkout, hooks and fsmonitor off, and ContainerError unless its config holds
     only SAFE_CONFIG settings."""
-    if not is_container_checkout(Path(cwd)):
+    cwd = cwd if isinstance(cwd, Path) else Path(cwd)
+    if not is_container_checkout(cwd):
         return []
-    if not is_private_checkout(Path(cwd)):
+    if not is_private_checkout(cwd):
         raise ContainerError("the checkout's git administration changed; Rynhult won't run git there")
-    config = Path(cwd) / ".git" / "config"
+    config = cwd / ".git" / "config"
     if config.is_symlink():
         raise ContainerError("the checkout's git settings are a link; Rynhult won't run git there")
-    listed = subprocess.run(["git", "config", "--file", str(config), "--null", "--name-only", "--list"],
+    listed = subprocess.run(["git", "config", "--file", os.fspath(config), "--null", "--name-only", "--list"],
                             capture_output=True, text=True, timeout=30,
                             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
                                  "HOME": "/nonexistent"})
@@ -192,7 +193,7 @@ def git_guard(cwd: Path) -> list[str]:
                              "outside the container; Rynhult won't run git there until they're removed")
     # A check cannot secure a later Git open. Every host invocation uses a bounded,
     # no-follow metadata snapshot, validated again after copying, outside the container mounts.
-    return module_command("acc.broker.container_git", str(cwd))
+    return module_command("acc.broker.container_git", os.fspath(cwd))
 
 
 def return_branch(source: Path, checkout: Path, branch: str) -> str | None:

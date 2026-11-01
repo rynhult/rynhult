@@ -137,8 +137,8 @@ function downloads() {
   if (!release.version) {
     return `<div class="notice"><p><strong>Nothing to download yet.</strong> ${escape(release.planned)} is the first public release candidate. Its source archive and SHA-256 checksums will be listed here when it is published.</p></div>`;
   }
-  const rows = release.assets.map((a) => `<tr><td><a href="${escape(a.url)}">${escape(a.name)}</a></td><td>${escape(a.description)}</td><td><code>${escape(a.sha256)}</code></td></tr>`).join("");
-  return `<div class="table-scroll" tabindex="0" role="region" aria-label="Release files"><table><thead><tr><th scope="col">File</th><th scope="col">What it is</th><th scope="col">SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rows = release.assets.map((a) => `<tr><td><a href="${escape(a.url)}">${escape(a.name)}</a></td><td>${escape(a.description)}</td><td><div class="download-checksum" tabindex="0" role="region" aria-label="SHA-256 for ${escape(a.name)}"><code>${escape(a.sha256)}</code></div></td></tr>`).join("");
+  return `<p id="download-table-help">On smaller screens, scroll the table to see all columns.</p><div class="table-scroll" tabindex="0" role="region" aria-label="Release files" aria-describedby="download-table-help"><table class="release-downloads"><colgroup><col class="download-file"><col class="download-description"><col class="download-hash"></colgroup><thead><tr><th scope="col">File</th><th scope="col">What it is</th><th scope="col">SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 const sitemap = [];

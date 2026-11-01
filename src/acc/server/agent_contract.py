@@ -60,7 +60,7 @@ def read_only(inputs):
 
 
 def render(inputs, session, *, limits=None, tools=(), queue=False, commands=False,
-           run_mode='build', v2=False, catalog=None, model=None, active=True, ports=(), publish_zones=()):
+           run_mode='build', v2=False, catalog=None, model=None, active=True, ports=(), publish_zones=(), has_remote=None):
     """Render from authority facts; never infer a role from a profile name or task text.
 
     `model` is qualified metadata for the exact selected model, not a provider-wide
@@ -76,7 +76,7 @@ def render(inputs, session, *, limits=None, tools=(), queue=False, commands=Fals
     if root:
         role = 'Root lead'
         git = ('Integrate the team on your assigned branch; merge only stopped descendants through acc-team merge. '
-               'Open one consolidated PR for the person to review. The gate owns the full suite when available.')
+               'Open one consolidated PR only with a configured remote and permission to publish; otherwise deliver a local merge/handoff for the person to review. The gate owns the full suite when available.')
         if not active:
             git = ('Team authority has ended. Only the explicitly permitted bounded wrap-up tools remain. '
                    'Do not implement, integrate, push or open a PR.')
@@ -102,9 +102,10 @@ def render(inputs, session, *, limits=None, tools=(), queue=False, commands=Fals
              'Nobody merges main; final merge to main and owner approvals belong to the person. '
              'These role rules take precedence over optional profile/skill Git and test conventions.']
     if root:
+        parts.append('Git remote: ' + ('configured (not permission to push).' if has_remote is True else 'none. Offer a local merge/handoff; never ask to push or invent/add a remote.' if has_remote is False else 'unknown. Inspect git remote locally before proposing a push or PR; never invent/add a remote.'))
         parts.append('Project reserved ports: ' + (json.dumps(list(ports)) if ports else
-                     'No ports are reserved. Raise a need card asking the owner to reserve a port under Ports before requesting publication.') +
-                     '\nPublishing zones (server configuration, not an approval): ' +
+                     'No ports are reserved. Do not guess a port or start a listening service. Raise a need card asking the owner to reserve a port under Ports first.') +
+                     '\nUse only project-reserved ports; ask for another reservation instead of guessing.\nPublishing zones (server configuration, not an approval): ' +
                      (json.dumps(list(publish_zones)) if publish_zones else
                       'No zone restriction is configured; an available DNS zone and owner approval are still required.'))
     if readonly:
@@ -192,12 +193,12 @@ def _team_flags(files, provider):
     return json.loads(files.get(path, '{}')).get('mcpServers', {}).get('acc-team', {}).get('args', [])
 
 
-def for_session(db, session, inputs, catalog=None, *, publish_zones=()):
+def for_session(db, session, inputs, catalog=None, *, publish_zones=(), has_remote=None):
     """Current saved authority for an actual launch/resume."""
     from .models import Team, utcnow
     from .orchestrator import gates, planning, team_actions, verification
     team = db.get(Team, session.team_id) if session.team_id else None
-    active = bool(team and not team.stopped and utcnow() < team.expires_at and session.desired_state == 'running')
+    active = bool(team and not team.stopped and (team.expires_at is None or utcnow() < team.expires_at) and session.desired_state == 'running')
     wrapping = verification.wrapup(team, session)
     flags = _team_flags(session.launch_spec.files, inputs.provider) if active or wrapping else []
     tools = team_actions() if '--orchestrator' in flags else {}
@@ -215,7 +216,7 @@ def for_session(db, session, inputs, catalog=None, *, publish_zones=()):
     from .models import PortReservation
     ports = list(db.scalars(select(PortReservation.port).where(PortReservation.project_id == session.project_id)
                             .order_by(PortReservation.port)))
-    return render(inputs, session, ports=ports, publish_zones=publish_zones, limits=team.limits if team else {}, tools=tools,
+    return render(inputs, session, ports=ports, publish_zones=publish_zones, has_remote=has_remote, limits=team.limits if team else {}, tools=tools,
                   active=active, queue=gates.budget(db)['enabled'], commands=bool(gates.commands(db, session.project_id)),
                   run_mode=mode, v2=planning.enabled() and 'plan' in tools, catalog=catalog) + ('\n\n' + scope if scope else '')
 

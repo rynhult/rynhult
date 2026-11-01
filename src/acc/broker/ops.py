@@ -102,8 +102,22 @@ def _read_sessions(config: BrokerConfig) -> list[dict]:
 
 
 def _under_roots(config: BrokerConfig, path: str) -> Path:
+    if config.folder_revision:
+        from acc.folder_policy import FolderError
+
+        from .pinned_path import PinnedPath, pin
+        try:
+            if isinstance(path, PinnedPath):
+                os.fspath(path)
+                return path
+            candidate = Path(path)
+            if config.allowed_folders and not any(candidate == root or root in candidate.parents for root in config.allowed_roots):
+                raise OpError("Choose a folder inside this account's workspace folders.")
+            return pin(config, path)
+        except FolderError as error:
+            raise OpError(str(error)) from None
     resolved = Path(path).resolve()
-    if not any(resolved == root or root in resolved.parents for root in config.allowed_roots):
+    if config.allowed_folders and not any(resolved == root or root in resolved.parents for root in config.allowed_roots):
         raise OpError(f"{resolved} is outside this account's workspace folders. Choose a folder inside them.")
     if not resolved.is_dir():
         raise OpError(f"{resolved} isn't a folder.")
@@ -120,7 +134,7 @@ def _git_argv(cwd: Path) -> list[str]:
     """git in `cwd`; in a container session's private checkout, only with its settings checked (containers.git_guard)."""
     try:
         guarded = containers.git_guard(cwd)
-        return guarded or ["git", "-C", str(cwd)]
+        return guarded or ["git", "-C", os.fspath(cwd)]
     except containers.ContainerError as error:
         raise OpError(str(error)) from None
 
@@ -170,7 +184,7 @@ def _hardened_env(cwd: Path) -> dict[str, str] | None:
     config = list(HARDENED_GIT)
 
     def read(*args: str, scope: dict[str, str]) -> str:  # reading settings runs nothing
-        result = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=30, env=scope)
+        result = subprocess.run(["git", "-C", os.fspath(cwd), *args], capture_output=True, text=True, timeout=30, env=scope)
         return result.stdout if result.returncode == 0 else ""
     top = read("rev-parse", "--show-toplevel", scope=base).strip()
     if top:  # project folders belong to their owner: trust this one (the agent's global config is left out)
@@ -254,7 +268,8 @@ def workspace_changes(config: BrokerConfig, path: str, base: str | None, detail:
         raise OpError("The changes view asked for a commit that isn't valid. Reload the page and try again.")
     root = Path(_git_ok(cwd, "rev-parse", "--show-toplevel").strip()).resolve()
     ref, comparison_ref = _changes_baseline(cwd)
-    if root != cwd and not _git_ok(cwd, "ls-files", "--cached", "-z", "--", ".") \
+    same_root = root == cwd or (hasattr(cwd, "handles") and os.path.samestat(root.stat(), cwd.stat()))
+    if not same_root and not _git_ok(cwd, "ls-files", "--cached", "-z", "--", ".") \
             and (ref == EMPTY_TREE or not _git_ok(cwd, "ls-tree", "--name-only", ref, "--", ".")):
         return {"git": False}  # an untracked scratch folder must not inherit a parent's checkout
     files = []  # -z: names as they are (git C-quotes names with tabs, quotes or newlines otherwise)
@@ -342,6 +357,37 @@ def _open_beneath(root: Path, parts: tuple[str, ...]) -> int:
         os.close(fd)
 
 
+def _create_reviewed_worktree_dir(config: BrokerConfig, target: Path) -> Path:
+    """Exclusively create a leaf, then retain that directory, not its name."""
+    from acc.folder_policy import FolderError, inode
+
+    from .pinned_path import Handles, PinnedPath
+
+    parent_fd = target.parent.directory_fd()
+    fd = None
+    try:
+        # mkdirat has exclusive-create semantics: EEXIST is never adopted.
+        os.mkdir(target.name, dir_fd=parent_fd)
+        fd = os.open(target.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        if os.fstat(fd).st_uid != os.geteuid() or inode(fd)[2] != inode(parent_fd)[2]:
+            raise FolderError('The new directory identity or mount changed.')
+        with os.scandir(fd) as entries:
+            if next(entries, None) is not None:
+                raise FolderError('The new directory is no longer empty.')
+        held = PinnedPath(str(target))
+        held.handles = Handles(config, str(target), fd)
+        fd = None  # transferred to request-lifetime authority
+        held.handles.checked(held.handles.fd)
+        return held
+    except (OSError, FolderError):
+        # Never delete a name another local writer may now control.
+        raise OpError("The worktree destination changed or could not be created safely. Review it or choose another name.") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+        os.close(parent_fd)
+
+
 def make_worktree(config: BrokerConfig, repo: str, root: str, name: str, branch: str, base_commit: str | None = None) -> dict:
     """<root>/.worktrees/<name>: a new working copy of `repo` on a new branch from its current commit."""
     source = _under_roots(config, repo)
@@ -358,15 +404,27 @@ def make_worktree(config: BrokerConfig, repo: str, root: str, name: str, branch:
         raise OpError(f"{target} already exists, so Rynhult won't reuse it for a new session. Remove that folder, "
                       "or start the session again.")
     target.parent.mkdir(exist_ok=True)
-    result = _hardened_git(source, "worktree", "add", "-q", "-b", branch, str(target), base_commit or "HEAD", timeout=120)
+    retained = " The created directory is retained; review it before retrying." if config.folder_revision else ""
+    if config.folder_revision:
+        target = _create_reviewed_worktree_dir(config, target)
+    try:
+        result = _hardened_git(source, "worktree", "add", "-q", "-b", branch, os.fspath(target), base_commit or "HEAD", timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        if not config.folder_revision:
+            raise
+        raise OpError("Git couldn't finish creating the session's worktree." + retained) from None
     if result.returncode:
-        raise OpError(f"Git couldn't make the session's worktree: {result.stderr.strip()[:300]}")
-    return {"path": str(target), "branch": branch, **({"base_commit":git_head(target)} if base_commit else {})}
+        raise OpError(f"Git couldn't make the session's worktree: {result.stderr.strip()[:300]}" + retained)
+    return {"path": target.logical() if hasattr(target, "logical") else str(target), "branch": branch, **({"base_commit":git_head(target)} if base_commit else {})}
 
 
 def make_private_checkout(config: BrokerConfig, repo: str, root: str, name: str, branch: str, base_commit: str | None = None) -> dict:
     """<root>/.worktrees/<name> for a container session: a repository of its own seeded from the project's committed
     HEAD on a new branch (a worktree's .git would point at the project's shared administration)."""
+    if config.folder_revision:
+        # Its creator converts the destination back to a pathname and its
+        # rollback deletes by that name. No reviewed-policy fallback is safe.
+        raise OpError("Private container checkouts cannot be created safely with reviewed folder policy yet. No private checkout was created.")
     source = _under_roots(config, repo)
     base = _under_roots(config, root)
     if not WORKTREE_NAME.match(name) or not BRANCH.match(branch):
@@ -384,7 +442,7 @@ def make_private_checkout(config: BrokerConfig, repo: str, root: str, name: str,
         containers.make_checkout(source, target, branch, **({'commit':base_commit} if base_commit else {}))
     except containers.ContainerError as error:
         raise OpError(str(error)) from None
-    return {"path": str(target), "branch": branch, "private": True, **({"base_commit":git_head(target)} if base_commit else {})}
+    return {"path": target.logical() if hasattr(target, "logical") else str(target), "branch": branch, "private": True, **({"base_commit":git_head(target)} if base_commit else {})}
 
 
 def remove_worktree(config: BrokerConfig, repo: str, path: str) -> dict:
@@ -392,6 +450,10 @@ def remove_worktree(config: BrokerConfig, repo: str, path: str) -> dict:
     container session's private checkout first brings its branch back into the project."""
     source = _under_roots(config, repo)
     target = _under_roots(config, path)
+    if config.folder_revision:
+        # Git removes a worktree by canonical pathname, not an inherited fd.
+        # Until that removal protocol can retain inode authority, fail closed.
+        raise OpError("Reviewed folder policy requires administrator worktree removal; no files were deleted.")
     if target.parent.name != ".worktrees":
         raise OpError("That folder isn't a worktree Rynhult made, so Rynhult won't remove it.")
     status = _hardened_git(target, "status", "--porcelain", "--ignored", "-z")  # ignored files too: `worktree remove` deletes them
@@ -411,7 +473,7 @@ def remove_worktree(config: BrokerConfig, repo: str, path: str) -> dict:
             return {"removed": False, "reason": f"bringing {branch} back into the project failed: {failed}"}
         shutil.rmtree(target)
         return {"removed": True, "branch": branch}
-    result = _hardened_git(source, "worktree", "remove", str(target), timeout=120)
+    result = _hardened_git(source, "worktree", "remove", os.fspath(target), timeout=120)
     if result.returncode:
         return {"removed": False, "reason": result.stderr.strip()[:300]}
     return {"removed": True}
@@ -424,7 +486,7 @@ def exclude_artifacts(cwd: Path) -> None:
     try:
         if containers.is_container_checkout(cwd):
             # rev-parse --git-path names the temporary snapshot, not this checkout's administration.
-            admin = _walk_dirs(list((cwd / ".git").absolute().parts[1:]))
+            admin = _open_dir(cwd, [".git"])
             try:
                 try:
                     os.mkdir("info", 0o755, dir_fd=admin)
@@ -578,7 +640,7 @@ def _codex_team_git_args(config: BrokerConfig, cwd: Path, args: list[str], files
     if logging.returncode not in (0, 1):
         raise OpError("Git couldn't read this repository's reflog setting.")
     reflogs = logging.returncode == 1 or logging.stdout.strip().lower() not in ('', 'false', 'no', 'off', '0')
-    folder = _walk_dirs(list(common.absolute().parts[1:]))
+    folder = _open_dir(common, [])
     def prepare(parts, create):
         fd = os.dup(folder)
         try:
@@ -694,7 +756,7 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
                 container_integrations.stop(config, acc_id, generation=container["generation"])
             raise OpError(f"container launch refused: {error}") from None
         command = shlex.join(containers.attach_command(config.containers_attach_root, acc_id, container["generation"]))
-    new = ["new-session", "-d", "-s", tmux_name, "-x", "200", "-y", "50", "-c", str(cwd)]
+    new = ["new-session", "-d", "-s", tmux_name, "-x", "200", "-y", "50", "-c", os.fspath(cwd)]
     for key, value in session_env.items():
         new += ["-e", f"{key}={value}"]
     # tmux serializes the entire request into one bounded message. Never shorten or reinterpret
@@ -921,7 +983,8 @@ def transcript_exists(provider: str, native_id: str) -> dict:
 
 def trust_workspace(config: BrokerConfig, path: str) -> dict:
     """Record folder trust for every CLI this account has (qualification F1). Only after a person confirms in Rynhult."""
-    workspace = str(_under_roots(config, path))
+    checked = _under_roots(config, path)
+    workspace = checked.logical() if hasattr(checked, "logical") else str(checked)
     installed = installed_providers(config)
     for provider in providers.PROVIDERS.values():
         provider.trust(Path.home(), workspace, installed.get(provider.id))
@@ -1137,10 +1200,19 @@ def _open_dir(workspace: Path, parts: list[str]) -> int:
     """A descriptor of workspace/parts, opened one component at a time from the workspace without following a
     symlink at any level: the agent owns the tree and can swap a folder for a link between a check and a use, so
     every later open goes through this descriptor instead of a path."""
-    fd = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    fd = workspace.directory_fd() if hasattr(workspace, "directory_fd") else os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts:
             nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            if hasattr(workspace, 'handles'):
+                from acc.folder_policy import inode
+                try:
+                    if inode(fd)[2] != inode(nxt)[2]:
+                        raise OpError('Mount crossings require administrator provisioning.')
+                    workspace.handles.checked(nxt)
+                except BaseException:
+                    os.close(nxt)
+                    raise
             os.close(fd)
             fd = nxt
     except BaseException:
@@ -1455,7 +1527,7 @@ def project_first_commit(config: BrokerConfig, path: str, title: str = "", creat
     with ExitStack() as stack:
         def directory(value, *, parent=None):
             try:
-                fd = os.open(value, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                fd = value.directory_fd() if hasattr(value, "directory_fd") else os.open(value, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
             except OSError:
                 raise OpError("The project or its Git metadata changed or is not a regular directory. Reload and try again.") from None
             stack.callback(os.close, fd)
@@ -1466,7 +1538,10 @@ def project_first_commit(config: BrokerConfig, path: str, title: str = "", creat
         root_path = f"{fd_base}/{root}"
         # Validate the identity actually opened, including ancestor replacement
         # between resolve and open. The descriptor stays live through all writes.
-        _under_roots(config, root_path)
+        if config.folder_revision:
+            os.fspath(target)
+        else:
+            _under_roots(config, root_path)
         inherited = [root]
         base_env = {k: v for k, v in environment.items() if not k.startswith("GIT_")}
         safe_env = {**base_env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -1712,7 +1787,7 @@ def make_workspace(config: BrokerConfig, parent: str, name: str, title: str, pro
     project folder instead (a README and docs/handoffs only), with the README committed for immediate worktrees."""
     if not FOLDER.fullmatch(name or ""):
         raise OpError("Use a folder name of lowercase letters, digits and hyphens (up to 80), starting with a letter or digit.")
-    base = Path(parent).resolve()
+    base = _under_roots(config, parent) if config.folder_revision else Path(parent).resolve()
     if not any(base == root or root in base.parents for root in config.allowed_roots):
         raise OpError(f"{base} is outside this account's workspace folders. Choose a folder inside them.")
     base.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -1725,7 +1800,7 @@ def make_workspace(config: BrokerConfig, parent: str, name: str, title: str, pro
     (target / "README.md").write_text(f"# {title}\n\nStarted from Rynhult. Session notes: docs/handoffs/.\n" if project else
                                       f"# {title}\n\nLocal workspace started from Rynhult (local git only). Findings: "
                                       f"docs/research/; council reports: docs/council/; session notes: docs/handoffs/.\n")
-    result = subprocess.run(["git", "init", "-q", "-b", "main", str(target)], capture_output=True, text=True, timeout=30)
+    result = _git(target, "init", "-q", "-b", "main")
     if result.returncode:
         raise OpError(f"git init failed: {result.stderr.strip()[-200:]}")
     if project:
@@ -1812,7 +1887,7 @@ def push_workspace(config: BrokerConfig, path: str, repo: str) -> dict:
     target = _under_roots(config, path)
     def git(*args: str, check: bool = True, hardened: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         env = _hardened_env(target) if hardened else env
-        result = subprocess.run(["git", "-C", str(target), *args], capture_output=True, text=True, timeout=300, env=env)
+        result = subprocess.run(["git", "-C", os.fspath(target), *args], capture_output=True, text=True, timeout=300, env=env)
         if check and result.returncode:
             raise OpError(f"git {args[0]} failed: {(result.stderr or result.stdout).strip()[-300:]}")
         return result
@@ -1832,7 +1907,7 @@ def push_workspace(config: BrokerConfig, path: str, repo: str) -> dict:
     git("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.alternateRefsCommand=true", "push",
         "-q", "--no-verify", "-u", "origin", "main", hardened=False,
         env={**os.environ, "GIT_ALLOW_PROTOCOL": transport})
-    return {"path": str(target), "repo": repo, "head": git("rev-parse", "--short", "HEAD").stdout.strip()}
+    return {"path": target.logical() if hasattr(target, "logical") else str(target), "repo": repo, "head": git("rev-parse", "--short", "HEAD").stdout.strip()}
 
 
 def clone_repo(config: BrokerConfig, repo: str, dest: str) -> dict:
@@ -1989,7 +2064,8 @@ def git_refs(config: BrokerConfig, path: str) -> dict:
         return {"git": False}
     refs = _backup_refs(cwd)
     return {"git": True, "digest": _refs_digest(refs), "branches": sum(r.startswith("refs/heads/") for r in refs),
-            "tags": sum(r.startswith("refs/tags/") for r in refs)}
+            "tags": sum(r.startswith("refs/tags/") for r in refs),
+            "has_remote": bool(_hardened_git(cwd, "remote").stdout.strip())}
 
 
 def backup_env(token: str, ca_file: str | None = None, repo: str | None = None, url: str | None = None) -> dict[str, str]:
@@ -2189,7 +2265,7 @@ def team_clear_bundles(config: BrokerConfig, acc_id: str, branch: str | None = N
     return {'removed': removed}
 
 
-def team_merge(config: BrokerConfig, path: str, branch: str, expected_branch: str, expected_head: str | None = None, expected_base: dict | None = None, report_heads: list[str] | None = None) -> dict:
+def team_merge(config: BrokerConfig, path: str, branch: str, expected_branch: str, expected_head: str | None = None, expected_base: dict | None = None, report_heads: list[str] | None = None, generated_exports: dict | None = None) -> dict:
     """Merge only a committed helper into the caller's original topic branch; abort any conflict."""
     cwd = _under_roots(config, path)
     if report_heads is not None and (not isinstance(report_heads, list) or len(report_heads) > 4000 or
@@ -2207,8 +2283,23 @@ def team_merge(config: BrokerConfig, path: str, branch: str, expected_branch: st
     actual = git_ok('branch', '--show-current').strip()
     if actual != expected_branch:
         raise OpError('caller branch changed; return to the original team branch')
-    if git_ok('status', '--porcelain').strip():
-        raise OpError('commit or discard caller changes before merging')
+    before_status = git_ok('status', '--porcelain', '--untracked-files=all', '-z')
+    if before_status:
+        # Only server-attested, unstaged public exports may remain dirty. Git still refuses overlaps;
+        # never stash, stage, commit, discard or overwrite a person's work to make a merge succeed.
+        from .files import parts, protected
+        exports = generated_exports if isinstance(generated_exports, dict) and len(generated_exports) <= 4 else {}
+        for entry in filter(None, before_status.split('\0')):
+            rel = entry[3:]
+            digest = exports.get(rel)
+            if entry[:2] not in (' M', '??') or not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+                raise OpError('commit or discard caller changes before merging; include approved brief exports on your task branch')
+            components = parts(rel)
+            if protected(config, cwd, rel) or not rel.endswith('.md'):
+                raise OpError('invalid generated export')
+            data = _read_beneath(cwd, components, 1024 * 1024, 'export unavailable', 'export too large')
+            if hashlib.sha256(data).hexdigest() != digest:
+                raise OpError('brief export changed independently; review and commit it before merging')
     for state in ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'):
         found = git_ok('rev-parse', '--git-path', state).strip()
         if (cwd / found).exists():
@@ -2232,7 +2323,7 @@ def team_merge(config: BrokerConfig, path: str, branch: str, expected_branch: st
                     **({'note': LFS_NOTE} if _uses_lfs(cwd, 'HEAD') else {})}
         conflicts = git('diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U').stdout.splitlines()
         git('merge', '--abort')
-        if git_head(cwd) != before or git_ok('status', '--porcelain').strip():
+        if git_head(cwd) != before or git_ok('status', '--porcelain', '--untracked-files=all', '-z') != before_status:
             raise OpError('merge abort did not restore the caller; manual recovery required')
         return {'merged': False, 'conflicts': conflicts, 'error': result.stderr.strip()[:1000]}
     except subprocess.TimeoutExpired:

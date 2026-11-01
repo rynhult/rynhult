@@ -17,7 +17,11 @@ test('owner controls known flakes and the bounded wrap-up, and sees exact stale 
     await wrapup.getByLabel('Lead wrap-up (minutes)').fill('');
     await expect(wrapup.getByRole('button', { name: 'Save wrap-up' })).toBeDisabled();
     await wrapup.getByLabel('Lead wrap-up (minutes)').fill('20');
+    const saved = page.waitForResponse(response => response.request().method() === 'PUT'
+      && new URL(response.url()).pathname === '/api/gates/wrapup');
     await wrapup.getByRole('button', { name: 'Save wrap-up' }).click();
+    expect((await saved).ok()).toBe(true);
+    expect((await (await page.request.get('/api/gates/wrapup')).json()).minutes).toBe(20);
     await expect(wrapup.getByLabel('Lead wrap-up (minutes)')).toHaveValue('20');
     await flakes.screenshot({ path: '../.acc/artifacts/orch-b-flakes-phone.png' });
     await wrapup.screenshot({ path: '../.acc/artifacts/orch-b-wrapup-phone.png' });
@@ -34,7 +38,7 @@ test('owner controls known flakes and the bounded wrap-up, and sees exact stale 
     await page.screenshot({ path: '../.acc/artifacts/orch-b-verification-phone.png', fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally {
-    await page.request.put('/api/gates/wrapup', { headers: await csrfHeaders(page), data: { minutes: 30 } });
+    expect((await page.request.put('/api/gates/wrapup', { headers: await csrfHeaders(page), data: { minutes: 30 } })).ok()).toBe(true);
   }
 });
 

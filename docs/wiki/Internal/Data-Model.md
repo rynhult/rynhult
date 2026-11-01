@@ -132,7 +132,10 @@ personal under their previous permissions.
 `placement` stores project, person, machine, account, private path, trust, sync and
 approver. Existing projects and sessions get routing snapshots, including helper
 machine and worktree overrides. New personal launches also snapshot routing;
-`session.placement_id` selects the immutable binding. Group approvals reserve
+`session.placement_id` selects the immutable binding, including an explicit
+New session machine choice. `session.team_repo` also retains an ordinary
+cross-machine session's backing repository for worktree cleanup and later reuse;
+the original project host/path are unchanged. Group approvals reserve
 same-host paths without creating or trusting a directory. Reservation paths include a digest of the never-reused username so shared owner
 accounts and recycled numeric user IDs cannot reuse another person’s clone path.
 Phase 2 provisioning validates private ownership/modes/ACLs through the account

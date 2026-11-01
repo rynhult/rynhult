@@ -139,8 +139,13 @@ async def test_owner_system_flow_and_failure_is_visible(api, project, monkeypatc
 
 
 async def test_owner_scoped_exemption_policy_and_preview(api, project):
+    # Historical explicit exemptions remain effective after retiring the writer.
+    from acc.server.models import Setting
+    with api.app.state.db() as db:
+        db.merge(Setting(key=f"tools.project.{project['id']}", value={'required': False}))
+        db.commit()
     value = await api.put("/api/tools/policy", json={"scope": "project", "target": str(project["id"]), "required": False})
-    assert value.status_code == 200, value.text
+    assert value.status_code == 403, value.text
     response = await api.post("/api/sessions/preview", json={"project_id": project["id"], "provider": "claude", "name": "Preview"})
     assert response.status_code == 200, response.text
     preview = response.json()

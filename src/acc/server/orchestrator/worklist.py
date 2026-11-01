@@ -200,7 +200,7 @@ def item_out(item: WorkItem) -> dict:
     return {"id": item.id, "position": item.position, "kind": item.kind, "title": item.title, "steps": item.steps,
             "options": item.options, "recommendation": item.recommendation, "default": item.default_answer,
             "in_effect": in_effect(item), "state": item.state, "blocks": item.blocks or [],
-            "answer": item.answer, "answered_by": item.answered_by, "answered_at": item.answered_at,
+            "answer": item.answer, "answered_by": "Owner via API" if item.answered_by == "@api" else item.answered_by, "answered_at": item.answered_at,
             "ingested_at": item.ingested_at, "done_at": item.done_at, "note": item.note, "source": item.source,
             "owner_edited": item.owner_edited, "links": item.links or [], "revision": item.revision,
             "created_at": item.created_at, "updated_at": item.updated_at}
@@ -209,7 +209,8 @@ def item_out(item: WorkItem) -> dict:
 def snapshot(db, team_id: str) -> dict:
     run = run_for(db, team_id)
     items = list(db.scalars(select(WorkItem).where(WorkItem.team_id == team_id).order_by(WorkItem.position, WorkItem.id)))
-    return {"now": run.now, "now_updated_at": run.now_updated_at, "now_updated_by": run.now_updated_by,
+    lead = db.get(Session, team_id)
+    return {"project_id": lead.project_id if lead else None, "now": run.now, "now_updated_at": run.now_updated_at, "now_updated_by": run.now_updated_by,
             "now_revision": run.now_revision or 0, "revision": run.revision, "idle_minutes": IDLE_MINUTES,
             "items": [item_out(i) for i in items]}
 
@@ -381,6 +382,8 @@ def person_update(db, team_id: str, item_id: int, who: str, body: dict) -> WorkI
         # default without an answer, and the lead couldn't tell "drop it" from "go ahead".
         if body["state"] != "open" and item.kind == "decision" and item.answer is None and "answer" not in body:
             raise Refused("answer this decision first: a decision is closed by answering it")
+        if body['state'] in ('done', 'dismissed') and item.kind == 'need' and item.answer is None:
+            raise Refused('answer this need first: describe the outcome or explicitly skip it')
         item.state = body["state"]
         item.done_at = utcnow() if item.state == "done" else None
     if edited:
@@ -622,7 +625,7 @@ def sweep(db, team_id: str | None = None, now: datetime | None = None) -> int:
     raised = 0
     for helper in db.scalars(query):
         team = db.get(Team, helper.team_id)
-        live = team is not None and not team.stopped and now < team.expires_at
+        live = team is not None and not team.stopped and (team.expires_at is None or now < team.expires_at)
         idle = (helper.observed_state == "idle" and helper.desired_state == "running" and helper.idle_since is not None
                 and helper.idle_since <= now - timedelta(minutes=IDLE_MINUTES))
         open_item = db.scalar(select(WorkItem).where(WorkItem.about == helper.id, WorkItem.source == "system",

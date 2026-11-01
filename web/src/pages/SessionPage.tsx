@@ -1,3 +1,5 @@
+import {SecurityBadge} from '../components/SecurityBadge';
+import {frozenSecurity} from '../lib/security';
 import { DeliveryHistory, SessionDeliveries } from '../components/SessionDeliveries';
 import { Feature, useFeatures } from "../components/Feature";
 import { PreviewBadge } from "../components/Containers";
@@ -444,7 +446,7 @@ export function SessionPage() {
       <div className="session-heading grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:grid-cols-[minmax(0,1fr)] md:gap-x-0">
       <div className="col-span-full row-start-1 max-md:hidden">
         <PageHeader
-          title={<span className="flex flex-wrap items-center gap-2.5">{session.name}<RenameButton session={session} /><ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} />{waiting && tab === "Terminal" ? <HeaderRisk session={session} />
+          title={<span className="flex flex-wrap items-center gap-2.5">{session.name}<RenameButton session={session} /><ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} /><SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session"/>{waiting && tab === "Terminal" ? <HeaderRisk session={session} />
             : <NowDoing session={session} className="max-w-[28rem] truncate text-[13px] font-normal text-muted" />}</span>}
           meta={<>{projectLink}{meta()}</>}
           actions={<>{exportLink}{session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} /></>} />
@@ -457,7 +459,7 @@ export function SessionPage() {
             <span className="truncate">{session.name}</span><StateBadge session={session} />
           </h1>
           <div className="phone-session-meta col-start-1 row-start-2 flex min-w-0 items-center gap-2 text-xs text-muted">{projectLink}
-            <NowDoing session={session} className="truncate" /></div>
+            <NowDoing session={session} className="truncate" /><SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session"/></div>
           {session.observed_state === "waiting_input" && <div className="col-start-1 row-start-3"><NeedsYouLine session={session} /></div>}
         </div>
         <div className="col-start-2 row-start-1 row-span-3 flex items-center gap-2">
@@ -508,7 +510,7 @@ export function SessionPage() {
         )}
         {tab === "Terminal" && session.management !== "external" && (session.machine_offline
           ? <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card> : isLive(session) || session.observed_state === "exited"
-          ? <Terminal key={session.id} sessionId={session.id} live={isLive(session)} />
+          ? <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
           : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)}
         {tab === "Team" && session.project_id !== null && !session.machine_offline && session.team_id === session.id && <Feature name="teams"><TeamPanel id={session.id} projectId={session.project_id} /></Feature>}
         {feature("live_preview") && tab === "Preview" && session.project_id !== null && !session.machine_offline && <div className="grid min-w-0 gap-4 xl:grid-cols-2">

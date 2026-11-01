@@ -103,11 +103,23 @@ def copy_database(source, target):
     if target.dialect.name == 'postgresql':
         names = ', '.join(target.dialect.identifier_preparer.quote(name) for name in dst.tables)
         target.exec_driver_sql(f'LOCK TABLE {names} IN ACCESS EXCLUSIVE MODE')
+    seeded_revision = None
     for name, table in dst.tables.items():
+        if name == 'security_revision':
+            rows = [dict(row) for row in target.execute(select(table)).mappings()]
+            # Fresh migrate() creates exactly this CAS counter, not user policy.
+            # Any edited/extra counter row is existing state and must be refused.
+            if rows == [{'id': 1, 'revision': 0}]:
+                seeded_revision = table
+                continue
         if name != 'alembic_version' and target.scalar(select(func.count()).select_from(table)):
             raise ValueError('target must be empty; no rows were copied')
     if source.scalar(text('SELECT version_num FROM alembic_version')) != target.scalar(text('SELECT version_num FROM alembic_version')):
         raise ValueError('source and target schema versions differ')
+    # Only after every preflight check. The caller's transaction restores this
+    # pristine seed too if copying or complete count/checksum verification fails.
+    if seeded_revision is not None:
+        target.execute(seeded_revision.delete())
     for table in src.sorted_tables:
         if table.name == 'alembic_version':
             continue

@@ -12,7 +12,21 @@
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Select a choice in segmented filters (Show, Order, Where it runs). Each group is one Tab stop; arrows wrap |
 | <kbd>Space</kbd> / <kbd>Enter</kbd> | Toggle a focused catalog chip; Tab moves between independent chips |
 | <kbd>F6</kbd> / <kbd>Shift F6</kbd> | Leave a session's terminal forwards to its output controls, or backwards to Skip terminal. Use Fn if your keyboard assigns media keys. Inside the terminal, Tab and Shift+Tab go to the agent |
+| <kbd>F6</kbd>, then <kbd>C</kbd> | In an expanded terminal, focus the slim bar then collapse. Esc stays with the program; native browser full screen uses its own exit key |
+| <kbd>⌘C</kbd> (Mac) / <kbd>Ctrl Shift C</kbd> (Windows/Linux) | Copy the terminal selection. Ctrl+C still goes to the program. See the platform comparison below |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | In **Changes**, with a file's diff focused: pick a line, then comment on it |
+
+Terminal selection works on both platforms:
+
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Select when the program captures the mouse | **⌥ Option + drag** | **Shift + drag** |
+| Copy selected text | **⌘C** | **Ctrl+Shift+C** |
+| Select without a modifier | **Select text** button | **Select text** button |
+
+An unmodified drag in mouse mode shows a dismissible hint once per terminal view.
+It is announced politely without moving focus. The hint's **Select text** action
+opens the same selectable output view as the terminal controls.
 
 ![Jump to shows navigation destinations and commands, with a separate Search conversation content link](/.attachments/command-palette.png)
 
@@ -72,3 +86,5 @@ these manual checks are still open:
 
 If something is hard to use with assistive technology, report it as described in
 [Usage and bug reports](/User-Guide/Usage-and-Bug-Reports).
+
+![F6 focuses the expanded terminal bar; C collapses](/.attachments/terminal-expanded-session-desktop.png)

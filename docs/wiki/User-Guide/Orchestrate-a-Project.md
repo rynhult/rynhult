@@ -89,12 +89,14 @@ specific missing evidence rather than claiming to have inspected them.
    and success with you and suggest adding a brief. Your own task replaces this
    default. It is sent once at launch, never again when resuming the lead;
    helpers keep their assigned task messages.
-3. Set **At once**, **In total**, **Depth**, **Hours**, **Machines**, and allowed
+3. Set **At once**, **In total**, **Depth**, optional **Hours**, **Machines**, and allowed
    agents/profiles/permissions. These fix the managed helper grant; agents cannot
-   raise the limits or add a stronger profile. New grants show Claude's
+   raise the limits or add a stronger profile. **Hours** starts empty: no time limit. Enter a positive number, up to 168, only when you want the team to stop at a deadline. New grants show Claude's
    Full-stack, Frontend, Backend, Code reviewer and QA roles, and Codex's
    Full-stack and Backend roles, for installed, signed-in providers on the
-   project's machine/account. Code reviewer keeps read-only permissions. Remove
+   lead's selected machine and the project's account. **Machines** lists enrolled
+   machines as checkboxes with their status, system and installed agents.
+   Code reviewer keeps read-only permissions. Remove
    choices you do not want: assignments select a matching role from what remains.
 4. Review **Project brief version**: the latest saved version is selected by
    default and named visibly. Choose another saved version or **None** if needed.
@@ -201,8 +203,10 @@ Under **What the lead needs from you**:
   can reply in **Lead’s note** on the card; you still choose the answer. If delivery
   is not confirmed, open the conversation to review its status and retry.
 - Type an answer to a **Question** and select **Answer**.
-- Follow a **Needs you** card's steps, then **Mark done**, or describe what
-  happened and **Answer** if the outcome differs.
+- Follow a **Needs you** card's steps, describe what happened, then select
+  **Answer**. An explicit outcome is required before marking it done. If you
+  cannot provide the input, **Skip this input** records that choice without
+  changing requirements or constraints.
 
 ![Decision actions and a linked discussion](/.attachments/orchestrator-team-decisions.png)
 
@@ -391,7 +395,33 @@ Expiry is different: helpers stop, then the lead has a **30-minute wrap-up**
 (owner-configurable 0–120 minutes) for report, plan/working-list updates and
 finishing stopped helpers only. No new work, helper or gate may start. The lead
 stops at the end; manual Stop team does not grant that wrap-up.
-Use a new lead/grant for more implementation.
+Teams have **no time limit by default**. For a timed team, its Team page shows the
+stop time with **Extend 4 h** and **Remove limit**. The Inbox warns about 30 minutes
+before the deadline and links to these controls. Extending adds four hours to a
+future deadline (or starts four hours from now if it has passed). Removing the
+limit does not change concurrency, total helpers, depth, machines or permissions.
+
+When the deadline ends, the Inbox and Team page explain why it stopped and offer
+**Resume team**. Review the listed lead and unfinished helpers, including their
+saved provider-specific permission choices, before **Confirm resume**. A warning
+identifies saved permissions that allow actions without asking; resuming keeps
+those choices. **Hours after resume** starts empty
+for no time limit; enter a duration to set a new deadline. This reactivates the
+same grant and resumes saved conversations and assignments. It does not create a
+new team or consume new-helper slots. Finished, failed, archived or independently
+stopped helpers are not restarted. Stop confirmations from offline machines must
+arrive before resuming them. Existing budgets and Prepare/Build rules still apply.
+
+A lead's ordinary Resume alone does not reactivate an expired grant; use **Resume
+team** to unblock its helpers too. If old history cannot prove a helper was running
+when the team stopped, it is left out of the automatic list. After reactivating the
+team, review that helper separately before deliberately resuming it. If any member
+cannot resume, its error stays visible and **Resume team** can retry remaining
+eligible sessions. Changing the time limit and resuming are audited.
+
+![Review saved sessions and permissions before resuming a team](/.attachments/team-lifetime-1440.png)
+
+![The same resume confirmation on a phone](/.attachments/team-lifetime-390.png)
 
 ## Troubleshooting
 

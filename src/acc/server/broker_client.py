@@ -43,6 +43,7 @@ class BrokerClient:
     def __init__(self, socket_path: Path, trusted_uids: frozenset[int] | None = None, opener=None,
                  timeout: float = 60.0, authority=None):
         self.authority = authority
+        self.folder_policy = None
         self.socket_path = socket_path
         self.timeout = timeout  # seconds to wait for one answer
         self.trusted_uids = trusted_uids  # who may own the listening end (None: anyone, for tests)
@@ -73,6 +74,11 @@ class BrokerClient:
             raise BrokerUnavailable(f"broker socket {self.socket_path} is held by uid {uid}, not the broker; refusing it")
 
     async def call(self, method: str, **params):
+        if self.folder_policy and method not in {'ping', 'list', 'kill', 'interrupt', 'send_text', 'clear_env',
+                'read_spool', 'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}:
+            expected = self.folder_policy()
+            if expected is not None:
+                params['folder_revision'] = expected
         with self.authority.activity() if self.authority else nullcontext():
             return await self._call(method, **params)
 
@@ -147,6 +153,7 @@ class Brokers:
         self.default_account, self.services_account = default_account, services_account
         self.authority = authority
         self.hub = hub  # connected nodes (multi-host); None: this machine only
+        self.folder_policy = None
         self._clients: dict[Path, BrokerClient] = {}
         self._remote: dict[tuple[str, str], tuple[object, BrokerClient]] = {}
 
@@ -162,13 +169,16 @@ class Brokers:
         self._check_host(host)
         account = account or self.default_account
         if host and host != "local":
-            return self._remote_client(account, host)
+            client = self._remote_client(account, host)
+            client.folder_policy = lambda: self.folder_policy(account, host) if self.folder_policy else None
+            return client
         path = self.socket_for(account)
         if path not in self._clients:
             trusted = None
             if self.socket_dir is not None:  # a systemd-made socket (root), or one its own broker bound
                 trusted = frozenset(u for u in (0, uid_of(account)) if u is not None)
             self._clients[path] = BrokerClient(path, trusted, authority=self.authority)
+        self._clients[path].folder_policy = lambda: self.folder_policy(account, host or 'local') if self.folder_policy else None
         return self._clients[path]
 
     def _remote_client(self, account: str, host: str) -> BrokerClient:
@@ -197,9 +207,14 @@ class Brokers:
                 link = self.hub.get(host)
             except ConnectionError:
                 raise MachineOffline(f"Machine offline: {host}. It checks in when it returns.") from None
-            return BrokerClient(Path(f"{host}:{account}"), None, opener=lambda: link.open(account), timeout=timeout, authority=self.authority)
+            client = BrokerClient(Path(f"{host}:{account}"), None, opener=lambda: link.open(account), timeout=timeout, authority=self.authority)
+            client.folder_policy = lambda: self.folder_policy(account, host) if self.folder_policy else None
+            return client
         shared = self.get(account)
-        return BrokerClient(shared.socket_path, shared.trusted_uids, timeout=timeout, authority=self.authority)
+        client = BrokerClient(shared.socket_path, shared.trusted_uids, timeout=timeout, authority=self.authority)
+
+        client.folder_policy = lambda: self.folder_policy(account, host or 'local') if self.folder_policy else None
+        return client
 
     def _check_host(self, host):
         if self.authority:

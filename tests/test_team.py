@@ -487,6 +487,12 @@ async def test_read_returns_committed_handoff_after_helper_finishes(api, project
 
 
 async def test_confirmed_helper_mode_is_frozen_and_agent_cannot_override(api, project, env):
+    # A helper grant cannot replace the owner's scoped provider exception.
+    from acc.server import security_settings
+    with api.app.state.db() as db:
+        security_settings.save(db, {'kind': 'project', 'project_id': project['id']},
+            {'provider_prompts': False}, actor='casey', expected_revision=0)
+        db.commit()
     repo(env['workspaces']/'demo')
     response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Lead',
         'worktree': True, 'confirm_dangerous': True,

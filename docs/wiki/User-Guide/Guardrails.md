@@ -2,7 +2,7 @@
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
-Guardrails stop an agent's tools from doing a few risky things: force pushes, pushes to main or master, merging pull requests, recursive deletes outside the workspace and reading secrets. Tool installation and changes also need approval by default. They apply in every permission mode, including "skip permissions", "yolo" and autopilot.
+When enabled, guardrails stop an agent's tools from doing a few risky things: force pushes, pushes to main or master, merging pull requests, recursive deletes outside the workspace and reading secrets. Tool installation and changes also need approval by default. They apply in every permission mode, including "skip permissions", "yolo" and autopilot.
 
 They are a safety net against mistakes and casual prompt injection. They are not a sandbox. An agent runs in its own Linux account, and a determined agent can still do anything that account may do, for example by writing a script and running it. The real protection is elsewhere: branch protection on GitHub (or your git server), separate Linux accounts for agents, and backups. Turn on branch protection for `main` in every repository agents push to.
 
@@ -31,13 +31,35 @@ When a guardrail blocks a step, the agent is refused with the reason (for exampl
 This rule is mandatory for Development sessions even if the owner disables all optional rules in Settings. Agents also receive local-only instructions. Rynhult's internal git backup runs through the broker, adds no remote and is allowed. To add a repository, use the separate **Promote to project** action; existing sessions retain their local-only rule, while new project sessions use ordinary project rules. An owner converting a Research / Council workspace must stop its sessions first and start new ones after conversion.
 
 ## The rules
-Owners choose them under **Settings → Guardrails**; everyone else can see them there. All five are on by default: they only stop things Rynhult's own workflow never needs (agents push a branch and open a pull request; a person merges it).
+Owners choose them under **Settings → Security**. The old Guardrails section links
+to that single editor. Instance defaults flow through machine/agent accounts to
+project overrides; Allowed folders is account-only. Members can read their own
+project protections, not change policy or view other accounts' configuration.
 
-Edits are a draft until you select **Save guardrails**. **Unsaved changes** stays visible beside the button; **Guardrails saved** confirms a successful save. These safety settings never autosave. A failed save shows an error and keeps your draft.
+Edits remain a draft through **Review changes** and recent sign-in verification.
+Only **Apply Security changes** saves the reviewed policy. A failed review keeps
+your draft, including when you switch to another Settings section. Each row states the consequence of Off; review lists
+retained child overrides and current sessions. **Default** inherits rather than
+resetting a parent. **Restore previous settings** reviews the pre-Unrestricted
+snapshot for just that scope. See [Security](/User-Guide/Settings#security).
 
-![Guardrails clearly identify an unsaved draft beside the explicit save action](/.attachments/guardrails-draft.png)
+A persistent **Unrestricted** or **Custom security** badge shows relaxed controls;
+session badges describe the frozen launch revision, not today's future-launch
+policy. Folder changes remain pending until acknowledged. Tightening saves immediately;
+running weaker generations stay marked as on older settings. Neither direction
+rewrites a running agent. Authentication,
+owner approvals, vault authority, machine isolation, read-only roles and audit
+remain enforced even when every configurable switch is Off. Team agents still cannot
+merge pull requests or push to main or master: those team integration limits
+remain in force independently of the optional guardrail switches.
 
-![Guardrail draft and save feedback on a phone](/.attachments/guardrails-draft-phone.png)
+### Ask an owner
+
+Tell an owner which project, execution machine/account and check blocked your
+work, and what change you need. The request link does not change policy or
+approve an agent action. An owner reviews the consequences in Security; a
+member, task or agent cannot select Unrestricted. Keep your own risk-label
+opt-out in Settings; it cannot override an owner-disabled display policy.
 
 | Rule | Blocks |
 |---|---|
@@ -49,7 +71,9 @@ Edits are a draft until you select **Save guardrails**. **Unsaved changes** stay
 
 **Blocked commands** adds your own rules: a regular expression and the reason the agent is given. It is matched against the command as written and against each command's words as the shell reads them, with quotes removed, so `ter""raform destroy` counts as `terraform destroy`. For example `\bterraform\s+destroy\b` with *"no destroying infrastructure from an agent"*.
 
-Changes apply to sessions **started afterwards**. Each session keeps the rules it started with (they're in its **Setup** as `guardrails.json`), so a running session isn't changed underneath you.
+Owner changes require a signed-in browser, recent sign-in verification and the current settings revision. If another tab changed the settings, refresh and review before saving. Members can see effective rules, but not an owner's private custom command patterns.
+
+Changes that reduce protection apply to **new sessions**. Each existing session keeps its original rules and permission mode; resuming it does not silently give it wider access. Increasing protection saves immediately without stopping running work. The review lists running sessions with older, looser settings; the Security page and badges keep that gap visible until those sessions have confirmed stops. Use **Stop**, then **Start a new session** and review the launch choices under current policy; automatic replay of conversations or team grants is not supported. Allowed-folder switch and root-list changes are acknowledged without stopping sessions or gates; later account-service calls use the new policy and can be refused outside its roots. Native agents keep their OS access. Filesystem grant/undo keeps its separate quiescence requirement. If a stopped session has a weaker setup or different custom blocks, start a new session with the reviewed settings instead of resuming the old setup. No work is deleted by this refusal.
 
 An agent can't change its own rules through its tools: the guard refuses to change the session's rules or any agent's hook settings. If the rules file is changed or removed anyway, every step the agent tries is blocked with *"this session's guardrails … are missing or were changed after launch"*. Restart the session from Rynhult to put them back.
 
@@ -88,7 +112,7 @@ Approval trusts the package's code, including its install hooks. Account package
 
 ![A tool request with its destination and approval actions](/.attachments/tools-inbox.png)
 
-Owners can change **Settings → Tool approvals** per person or project. Turning approval off for either a person or a project lets direct installs run in new sessions; other guardrails are unchanged. Existing sessions keep their launch policy. This does not grant a member root privileges. Direct installs made with approval off are not added to Rynhult's Tools inventory.
+Owners change **Ask before account-wide tool changes** through **Settings → Security**, with a verified scope review. The old **Tool approvals** section links there; its direct save API is retired. Previously saved person/project exemptions remain inherited until explicitly overridden. Shared accounts can show **Varies by person**; inspect a project to see its execution owner's policy. Turning the effective check Off lets direct installs run in new sessions; other guardrails are unchanged. Existing sessions keep their launch policy. This does not grant a member root privileges. Direct installs made with approval off are not added to Rynhult's Tools inventory.
 
 ![Owner-controlled tool approval settings per person and project](/.attachments/tools-policy.png)
 

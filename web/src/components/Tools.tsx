@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PackageCheck, ShieldCheck } from "lucide-react";
@@ -83,38 +84,12 @@ export function ToolsCard({ machine, account }: { machine?: string; account?: st
   </section>;
 }
 
-type ScopedPolicy = { target: string; label: string; required: boolean };
 export function ToolPolicies() {
-  const cache = useQueryClient();
-  const confirm = useConfirm();
-  const query = useQuery({ queryKey: ["tool-policy"], queryFn: () =>
-    api<{ people: ScopedPolicy[]; projects: ScopedPolicy[] }>("/api/tools/policy") });
-  const change = useMutation({
-    mutationFn: (value: { scope: string; target: string; required: boolean }) =>
-      api("/api/tools/policy", { method: "PUT", json: value }),
-    onSuccess: () => cache.invalidateQueries({ queryKey: ["tool-policy"] }),
-  });
   return <Card>
-    <CardHeader title="Tool approvals" icon={ShieldCheck}
-      subtitle="On by default. A person or project exemption lets tool installs run directly in new sessions; other guardrails stay on." />
-    <div className="space-y-3 p-4">
-      <QueryState query={query}>
-        {(data) => (["people", "projects"] as const).map((kind) => <fieldset key={kind}>
-          <legend className="mb-2 text-xs font-medium">{kind === "people" ? "People" : "Projects"}</legend>
-          <div className="space-y-2">{data[kind].map((p) => <label key={p.target} className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={p.required} disabled={change.isPending} name={`${kind}-${p.target}`}
-              onChange={async (e) => {
-                const required = e.target.checked;
-                if (required || await confirm({ title: `Turn off tool approval for ${p.label}?`,
-                  body: "New sessions can install and change tools directly. Existing sessions keep their launch policy. This does not grant system privileges.",
-                  confirm: "Turn off approval", danger: true }))
-                  change.mutate({ scope: kind === "people" ? "person" : "project", target: p.target, required });
-              }} />
-            Require tool approval for {p.label}
-          </label>)}</div>
-        </fieldset>)}
-      </QueryState>
-      <div aria-live="polite"><ErrorNote error={change.error} /></div>
+    <CardHeader title="Tool approvals" icon={ShieldCheck} subtitle="Owner-reviewed Security controls account-wide tool checks." />
+    <div className="space-y-3 p-4 text-sm">
+      <p>Previously saved person and project exemptions are kept as inherited settings. Change the effective check through a scoped Security review.</p>
+      <Link className="inline-flex min-h-11 items-center text-accent underline" to="/settings#security">Open reviewed Security settings</Link>
     </div>
   </Card>;
 }

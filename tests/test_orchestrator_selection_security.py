@@ -30,7 +30,10 @@ async def test_start_rechecks_current_authority_and_records_refusal(api,env,proj
         with api.app.state.db() as db:
             db.get(Session,caller['id']).run_as='other-account';db.commit()
     if change=='live_pause':
-        monkeypatch.setattr(sel.budgets,'paused',lambda *args:True)
+        def paused(db, owner, provider, *, project_id=None, machine=None, account=None):
+            assert project_id == project['id']
+            return True
+        monkeypatch.setattr(sel.budgets, 'paused', paused)
     result=await request(api,env,caller,'start',assignment=row['assignment_id'],selection=row['id'],name='No')
     assert not result['ok']
     with api.app.state.db() as db:

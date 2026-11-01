@@ -344,7 +344,7 @@ class Gates:
             if job is None or job.state != 'queued' or project is None:
                 return
             team = db.get(Team, job.team_id) if job.team_id else None
-            if job.team_id and (team is None or team.stopped or utcnow() >= team.expires_at):
+            if job.team_id and (team is None or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at)):
                 # A team's gate runs its branch's code as the project account: without a live team it has no authority.
                 _finish(db, job, 'cancelled', 'cancelled: team stopped')
                 db.commit()
@@ -410,7 +410,7 @@ class Gates:
             project = db.get(Project, job.project_id)
             team = db.get(Team, job.team_id) if job.team_id else None
             # Preparation and status polling await the broker; Stop team or expiry can win either wait.
-            if job.team_id and (team is None or team.stopped or utcnow() >= team.expires_at):
+            if job.team_id and (team is None or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at)):
                 _finish(db, job, 'cancelled', 'cancelled: team stopped')
                 db.commit()
                 blocked = True
@@ -465,7 +465,7 @@ class Gates:
         with sup.db() as db:
             job = db.get(GateJob, job_id)
             team = db.get(Team, job.team_id) if job.team_id else None
-            stopped = job.waiting == 'cancel' or job.state == 'cancelled' or (job.team_id and (not team or team.stopped or utcnow() >= team.expires_at))
+            stopped = job.waiting == 'cancel' or job.state == 'cancelled' or (job.team_id and (not team or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at)))
             job.state, job.slot, job.attempt, job.waiting = 'running', slot, attempt, 'cancel' if stopped else None
             job.finished_at = None
             if stopped:
@@ -482,7 +482,7 @@ class Gates:
         with sup.db() as db:
             row = db.get(GateJob, job['id'])
             team = db.get(Team, row.team_id) if row.team_id else None
-            if row.team_id and (not team or team.stopped or utcnow() >= team.expires_at):
+            if row.team_id and (not team or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at)):
                 cancel(db, row, 'supervisor', 'cancelled: team stopped')
                 db.commit()
             job['waiting'] = row.waiting
@@ -564,7 +564,7 @@ def _caller(db, supervisor, caller_id):
     from .. import teams
     caller = supervisor._get(db, caller_id)
     team = db.get(Team, caller.team_id) if caller.team_id else None
-    if not team or team.stopped or utcnow() >= team.expires_at or caller.desired_state != 'running':
+    if not team or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at) or caller.desired_state != 'running':
         raise LaunchRefused('team is stopped, expired, or caller is not running')
     return caller, teams.descendants(db, caller)
 

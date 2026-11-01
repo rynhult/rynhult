@@ -5,6 +5,44 @@ Rynhult follows [semantic versioning](https://semver.org). Stable tags use `vX.Y
 
 ## [Unreleased]
 
+## [0.15.0-rc.3] - 2026-10-31
+
+Security settings and terminal improvements since rc.2 (#395 and the rc.3 batch).
+This is a release candidate. See the [rc.3 release notes](docs/release-notes/0.15.0-rc.3.md).
+
+### Security
+- Folder recovery now fences late delivery replies so they cannot overwrite its
+  acknowledged revision. Expired, unstarted requests remain retryable, and owners
+  can review unchanged acknowledged settings to clear a recovered fence.
+- Interrupted folder-policy deliveries can be explicitly recovered by a verified
+  owner: close the old delivery, reload the acknowledged policy above the
+  abandoned revision, and return to fresh review. Mapping changes and removed
+  folders no longer trap a started delivery. Recovery state survives page reload.
+- Folder-policy recovery: undeliverable Off previews are refused; restoring an
+  unpublished change to its acknowledged/default setting clears its fence with
+  audit. Any recently verified owner can recover a published operation from
+  target status and review again. Folder reloads explicitly warn about changes
+  to running sessions’ later service access; apply reports target acknowledgement.
+- **Settings → Security**: one scoped editor (instance, machine/agent account,
+  project) for command guards, custom blocks, Allowed folders, the tool-install
+  check, provider prompts, budget checks and risk labels, with reviewed apply,
+  recent sign-in checks, an **Unrestricted** preset and **Restore previous settings**.
+- Policy is frozen per session launch. Tightening saves immediately for new work;
+  running weaker sessions are listed and marked **on older settings**, with confirmed
+  Stop and reviewed new-session actions. Weaker generations cannot resume. Apply
+  audits record their ids/count across all accounts/machines. Allowed-folder switch
+  and root-list reloads need no session stop; target acknowledgement remains
+  required. Filesystem grant/undo retains its separate quiescence requirement.
+- Allowed folders per account with target acknowledgement; separate reviewed Linux
+  Grant/Undo flow for qualified targets (root worker not enabled in this build).
+- Guardrails and Tool approvals now link to Security; existing settings are kept.
+
+### Sessions and teams
+- Full-window terminals; copy with Option/Shift drag, a first-drag hint and Select text.
+- Choose an enrolled machine for ordinary and team sessions.
+- Optional team time limits with expiry warnings and reviewed resume.
+- Orchestrator brief-export, remote/port fact and owner-answer fixes.
+
 ## [0.15.0-rc.2] - 2026-10-30
 
 Prepared from the merged work since rc.1 (#386–#391 and batch14). This is a

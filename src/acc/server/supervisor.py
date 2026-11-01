@@ -168,7 +168,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                              worktree: dict | None = None, orchestrator: dict | None = None,
                              team_member: dict | None = None, schedule_run_id: str | None = None,
                              multirun_entry: tuple[str, int] | None = None, container: bool = False,
-                             group_checkout: str | None = None, group_task: str | None = None, automation_policy: dict | None = None) -> str:
+                             group_checkout: str | None = None, group_task: str | None = None, automation_policy: dict | None = None,
+                             machine: str | None = None, checkout_repo: str | None = None) -> str:
         from .admin_features import launch_refusal
         if problem := launch_refusal(self.settings, automation=automation_policy, orchestrator=orchestrator or team_member,
                                      schedule=bool(schedule_run_id), multirun=bool(multirun_entry)):
@@ -185,7 +186,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             project = db.get(Project, project_id)
             if project is not None:
                 containers.require_creation(db, self.settings, project, container,
-                                            (team_member or {}).get("team_host") or project.host or "local", actor, inputs.provider)
+                                            machine or (team_member or {}).get("team_host") or project.host or "local", actor, inputs.provider)
             if project is not None and project.group_id is not None:
                 if not group_checkout or not group_task or orchestrator or team_member or schedule_run_id or multirun_entry or container:
                     raise LaunchRefused("A group session needs a reviewed checkout of its own and a task before it can start.")
@@ -196,7 +197,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                         raise LaunchRefused('Your machine for this group is offline, or its agent account changed. Reconnect it, then try again.')
                 where = (placement.host, placement.account)
             else:
-                where = ((team_member or {}).get("team_host") or project.host or "local", project.account) if project is not None else ("local", "")
+                where = (machine or (team_member or {}).get("team_host") or project.host or "local", project.account) if project is not None else ("local", "")
         if project is not None and project.group_id is None and where[0] != 'local':
             from .group_remote import reserved_for_other
             with self.db() as db:
@@ -210,7 +211,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         if identity_project is not None and identity_project.trusted:
             from .git_identity import ensure
             identity_warning = await ensure(self, identity_project, actor,
-                         checkout=worktree.get("path") if team_member and worktree and not container else None, host=where[0])
+                         checkout=worktree.get("path") if (team_member or machine) and worktree and not container else None, host=where[0])
         try:
             layout = await self.layout(*where) if project is not None else None
         except MachineOffline as error:
@@ -222,7 +223,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             group = None
             if project is not None:
                 containers.require_creation(db, self.settings, project, container,
-                                            (team_member or {}).get("team_host") or project.host or "local", actor, inputs.provider)
+                                            machine or (team_member or {}).get("team_host") or project.host or "local", actor, inputs.provider)
             if project is not None and project.group_id is not None:
                 group, checkout, placement = group_board.launch_binding(db, project, group_checkout, owner, where[1], remote_enabled=self.settings.groups_remote_enabled)
                 if placement.host != 'local':
@@ -246,8 +247,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             if team_member:
                 from .models import Team
                 team = db.get(Team, team_member['team_id'])
-                if not team or team.stopped or now() >= team.expires_at:
-                    raise LaunchRefused("This team was stopped or its time ran out. Start a new Orchestrator session to continue.")
+                if not team or team.stopped or (team.expires_at is not None and now() >= team.expires_at):
+                    raise LaunchRefused("This team is stopped or its time limit ended. Open Team and choose Resume team to reactivate this grant.")
                 current_plan = db.get(planning.OrchestrationPlan, team.id)
                 if current_plan is not None:
                     if planning_assignment:
@@ -273,13 +274,21 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                     inputs = initial_inputs(db, project.id, inputs, orchestrator)
                 except project_briefs.Refused as error:
                     raise LaunchRefused(str(error)) from None
+            from . import security_settings
+            security_settings.lock_revision(db)
+            effective_security = security_settings.resolve(db, project_id=project.id, owner=owner or project.owner,
+                                                           machine=where[0], account=account)
+            try:
+                inputs = security_settings.launch_inputs(inputs, effective_security)
+            except ValueError as error:
+                raise LaunchRefused(str(error)) from None
             compiled = compile_files(inputs, layout["hook_path"], layout["statusline_path"],
                                      catalog=self.catalog, agent_home=layout["home"],
                                      codex_plugins=self.codex_plugins(account),
                                      endpoint=self.endpoint_info(db, inputs.endpoint),
                                      guardrails=guardrails.policy(db, (worktree or {}).get("path") or workdir
                                                                   or project.workspace_path,
-                                                                  owner or project.owner, project.id, project.private_workspace))
+                                                                  owner or project.owner, project.id, project.private_workspace, machine=where[0], account=account))
             if orchestrator or team_member:
                 from dataclasses import replace
                 compiled = replace(compiled, files=team_files(compiled.files, inputs.provider, layout["hook_path"],
@@ -324,6 +333,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 worktree=(worktree or {}).get("path"), worktree_branch=(worktree or {}).get("branch"),
                 run_dir=f"{layout['run_dir'].rstrip('/')}/{acc_id}", owner=owner or project.owner,
                 container=container,
+                team_repo=checkout_repo,
             )
             if team_member:
                 for key, value in team_member.items():
@@ -341,7 +351,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 from .models import Team
                 session.team_id = acc_id
                 from .orchestrator.switch import preview
-                db.add(Team(id=acc_id, protocol_version=2 if preview() else 1, limits=orchestrator, expires_at=now() + timedelta(hours=orchestrator["hours"])))
+                db.add(Team(id=acc_id, protocol_version=2 if preview() else 1, limits=orchestrator, expires_at=now() + timedelta(hours=orchestrator["hours"]) if orchestrator["hours"] is not None else None))
                 db.flush()
                 try:
                     project_briefs.pin_team(db, acc_id, project.id, orchestrator.get('brief_version'), actor=actor,
@@ -391,6 +401,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                              payload={"message": identity_warning}))
             db.add(AuditLog(actor=actor, action="session.create", target=acc_id,
                             detail={"project": project.slug, "provider": inputs.provider, "digest": compiled.digest,
+                                    "machine": where[0], "account": account,
                                     **({"workdir": workdir} if workdir else {}),
                                     **({"worktree": worktree["path"], "branch": worktree["branch"]} if worktree else {})}))
             db.commit()
@@ -444,7 +455,26 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             with self.db() as db:
                 session = self._get(db, acc_id)
                 if session.project is None:
-                    return  # detached history has no process or checkout to stop
+                    if (session.last_error or '').startswith('stop not confirmed:'):
+                        if session.management != 'acc':
+                            raise LaunchRefused('Stop this externally managed session where it was started.')
+                        # Older installs may have detached a checked/deleted project
+                        # before clearing its marker. Retry only its frozen kill;
+                        # never invent a project path or un-archive the history.
+                        account, host, kill = session.run_as, session.host, kill_params(session, self.settings)
+                        db.rollback()
+                        try:
+                            await self.broker.call('kill', account=account, host=host, **kill)
+                        except BrokerError:
+                            raise LaunchRefused('The machine has not confirmed this detached session stopped. Retry when connected.') from None
+                        from .security_settings import clear_stop_marker
+                        with self.db() as confirmed:
+                            current = self._get(confirmed, acc_id)
+                            clear_stop_marker(confirmed, current, actor=actor, reason='detached_stop_confirmed')
+                            confirmed.add(AuditLog(actor=actor, action='session.stop', target=acc_id))
+                            confirmed.commit()
+                    return
+                keep_archived = archive or session.desired_state == 'archived'
                 if for_sleep and not await self._sleep_ready(db, session):
                     return
                 if session.management == "external":
@@ -468,12 +498,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 host = session.host
                 # The intent first: if anything below fails or accd stops, the session is already stopped/archived
                 # (reconcile kills a pane that should not run) and never "running" in a folder that is gone.
-                session.desired_state = "archived" if archive else "stopped"
+                session.desired_state = "archived" if keep_archived else "stopped"
                 session.sleep_paused_at = now() if for_sleep else None
-                if for_sleep:
-                    session.last_error = 'stop not confirmed: awaiting machine confirmation'
+                session.last_error = 'stop not confirmed: awaiting machine confirmation'
                 self._close_run(session, end_reason="machine_sleep" if for_sleep else "user_archive" if archive else "user_stop")
-                self._set_state(db, session, "archived" if archive else "stopped", "supervisor" if for_sleep else "api")
+                self._set_state(db, session, "archived" if keep_archived else "stopped", "supervisor" if for_sleep else "api")
                 db.add(AuditLog(actor=actor, action="session.archive" if archive else "session.stop", target=acc_id))
                 if for_sleep:
                     node = db.scalar(select(Node).where(Node.name == host))
@@ -484,20 +513,18 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             try:
                 await self.broker.call("kill", account=account, host=host, **kill)
                 confirmed = True
-                if member or multirun or for_sleep:
-                    with self.db() as db:
-                        session = self._get(db, acc_id)
-                        session.team_stop_pending = False
-                        session.multirun_stop_pending = False
-                        if for_sleep:
-                            session.last_error = None
-                        db.commit()
+                with self.db() as db:
+                    session = self._get(db, acc_id)
+                    session.team_stop_pending = False
+                    session.multirun_stop_pending = False
+                    if (session.last_error or '').startswith('stop not confirmed:'):
+                        session.last_error = None
+                    db.commit()
             except BrokerError as error:  # reconcile kills it later: desired_state already says so
                 log.warning("stop %s: kill failed: %s", acc_id, error)
-                if multirun or for_sleep:
-                    with self.db() as db:
-                        self._get(db, acc_id).last_error = f"stop not confirmed: {error}"
-                        db.commit()
+                with self.db() as db:
+                    self._get(db, acc_id).last_error = f"stop not confirmed: {error}"
+                    db.commit()
             if container:  # whatever is left of its container, the root helper's reconcile stops
                 containers.revoke_grant(self.settings, acc_id)
             await self._clear_envs(only=acc_id)  # its keys leave the machine now (queued above by _set_state)
@@ -563,6 +590,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 raise LaunchRefused(f"Rynhult didn't start this session, so it can't resume it. Start it where it was started ({session.external_unit}).")
             if session.project.private_workspace and not json.loads(session.launch_spec.files.get("guardrails.json", "{}" )).get("local_only"):
                 raise LaunchRefused("This workspace is now a Development workspace, so this session can't resume. Start a new session in it.")
+            from .security_settings import Conflict, check_generation
+            try:
+                check_generation(db, session)
+            except Conflict as error:
+                raise LaunchRefused(str(error)) from None
             exception = None
             if session.desired_state == "archived":
                 from ..backup_activation import resume_permitted
@@ -576,8 +608,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             if session.parent_session_id:
                 from .models import Team
                 team = db.get(Team, session.team_id)
-                if team.stopped or now() >= team.expires_at:
-                    raise LaunchRefused("This team was stopped or its time ran out. Start a new Orchestrator session to continue.")
+                if team.stopped or (team.expires_at is not None and now() >= team.expires_at):
+                    raise LaunchRefused("This team is stopped or its time limit ended. Open Team and choose Resume team to reactivate this grant.")
                 running = len(list(db.scalars(select(Session.id).where(Session.team_id == team.id,
                                    Session.parent_session_id.is_not(None), (Session.desired_state == "running") | Session.team_stop_pending, Session.id != session.id))))
                 if running >= team.limits["at_once"]:
@@ -585,7 +617,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 from .orchestrator import assignments
                 assignments.require_resume(db, session)
             if session.project.group_id:
-                if budgets.paused(db, session.owner, session.provider):
+                if budgets.paused(db, session.owner, session.provider, project_id=session.project_id, machine=session.host, account=session.run_as):
                     raise LaunchRefused("Your budget pauses this agent, so the group session can't resume. Check your budget first.")
                 if not group_board.authorized(db, session, self.settings.groups_remote_enabled):
                     raise LaunchRefused("You no longer have access to this group session.")

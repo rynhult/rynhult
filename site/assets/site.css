@@ -157,3 +157,13 @@ dl.facts dd { margin: 0; }
 @media (max-width: 30rem) { dl.facts { grid-template-columns: minmax(0, 1fr); gap: .25rem; } dl.facts dd { margin-bottom: 1rem; } }
 /* The landing reset removes markers from classed lists; product install instructions stay numbered. */
 .prose ol.steps { list-style: decimal; }
+
+/* Release hashes wrap without sizing the table; each region can scroll as a fallback. */
+.release-downloads { table-layout: fixed; width: 100%; min-width: 40rem; }
+.release-downloads .download-file { width: 28%; }
+.release-downloads .download-description { width: 42%; }
+.release-downloads .download-hash { width: 30%; }
+.release-downloads td { vertical-align: top; }
+.release-downloads td a { overflow-wrap: anywhere; }
+.download-checksum { max-width: 100%; overflow-x: auto; padding: .25rem; background: var(--sunk); }
+.download-checksum code { white-space: normal; overflow-wrap: anywhere; }

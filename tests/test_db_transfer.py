@@ -1,5 +1,6 @@
 """Import refuses existing data and verifies every table without changing SQLite."""
 import hashlib
+import json
 
 import pytest
 from sqlalchemy import text
@@ -61,6 +62,7 @@ def test_copy_rolls_back_on_verification_failure(tmp_path):
             copy_database(src, dst)
         with target.connect() as db:
             assert db.scalar(text('SELECT count(*) FROM setting')) == 0
+            assert db.scalar(text('SELECT revision FROM security_revision WHERE id=1')) == 0
     finally:
         event.remove(target, 'after_cursor_execute', corrupt)
         target.dispose()
@@ -122,3 +124,43 @@ def test_transfer_cli_refuses_non_root_before_opening_databases(monkeypatch, cap
     assert failure.value.code == 2
     assert 'root' in capsys.readouterr().err
     assert not (tmp_path / 'missing.db').exists()
+
+
+@pytest.mark.parametrize('target_state', ['fresh', 'changed_revision', 'policy', 'extra_revision', 'other_data'])
+def test_transfer_preserves_security_and_only_replaces_pristine_seed(tmp_path, target_state):
+    from acc.db_transfer import copy_database, open_source
+    source = tmp_path / 'security-source.db'
+    target = tmp_path / 'security-target.db'
+    migrate(f'sqlite:///{source}')
+    migrate(f'sqlite:///{target}')
+    src_engine = make_engine(f'sqlite:///{source}')
+    with src_engine.begin() as db:
+        db.exec_driver_sql('UPDATE security_revision SET revision=7')
+        db.exec_driver_sql("INSERT INTO security_policy (key,scope,overrides,registry_version) VALUES ('instance', '{}', '{\"secrets\":false}', 1)")
+    src_engine.dispose()
+    engine = make_engine(f'sqlite:///{target}')
+    try:
+        with engine.begin() as db:
+            if target_state == 'changed_revision':
+                db.exec_driver_sql('UPDATE security_revision SET revision=1')
+            elif target_state == 'extra_revision':
+                db.exec_driver_sql('INSERT INTO security_revision VALUES (2,0)')
+            elif target_state == 'other_data':
+                db.exec_driver_sql("INSERT INTO setting(key,value,updated_at) VALUES ('existing','{}',CURRENT_TIMESTAMP)")
+            elif target_state == 'policy':
+                db.exec_driver_sql("INSERT INTO security_policy (key,scope,overrides,registry_version) VALUES ('instance', '{}', '{}', 1)")
+        with open_source(source) as src, engine.begin() as dst:
+            if target_state == 'fresh':
+                report = copy_database(src, dst)
+                assert report['security_policy']['rows'] == report['security_revision']['rows'] == 1
+                assert dst.scalar(text('SELECT revision FROM security_revision WHERE id=1')) == 7
+                assert json.loads(dst.scalar(text('SELECT overrides FROM security_policy'))) == {'secrets': False}
+            else:
+                with pytest.raises(ValueError, match='empty'):
+                    copy_database(src, dst)
+                # Refusal never clears the seed or existing target choices.
+                assert dst.scalar(text('SELECT revision FROM security_revision WHERE id=1')) == (1 if target_state == 'changed_revision' else 0)
+                assert dst.scalar(text('SELECT count(*) FROM security_policy')) == (1 if target_state == 'policy' else 0)
+                assert dst.scalar(text('SELECT count(*) FROM setting')) == (1 if target_state == 'other_data' else 0)
+    finally:
+        engine.dispose()

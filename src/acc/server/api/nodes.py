@@ -525,7 +525,12 @@ def router(ctx: Context) -> APIRouter:
         return out
 
     @api.get("/api/nodes")
-    def list_nodes(who=Depends(ctx.owner)):
+    async def list_nodes(launch: bool = False, project_id: int | None = None, who=Depends(ctx.principal)):
+        if launch:
+            from ..launch_machines import inventory
+            return await inventory(ctx, who, project_id)
+        if not who.is_owner:
+            raise HTTPException(403, "Only an owner can do this. Ask an owner.")
         authority = ctx.edge.authority()  # refresh/audit before the listing's read transaction
         with db() as s:
             result = [out(n, authority) for n in s.scalars(select(Node).where(Node.status != "revoked").order_by(Node.name))]
@@ -1041,6 +1046,8 @@ def router(ctx: Context) -> APIRouter:
                                 WRITE_INTENT.reset(token)
                     elif isinstance(text, dict) and text.get("t") == "git-backup-result":
                         link.git_backup_result(text)
+                    elif isinstance(text, dict) and text.get('t') == 'folder-policy-result':
+                        link.folder_policy_result(text)
                     elif isinstance(text, dict) and text.get("t") == "tool-result":
                         link.tool_result(text)
                     elif (isinstance(text, dict) and text.get("t") == "machine-csr" and isinstance(text.get("csr"), str)

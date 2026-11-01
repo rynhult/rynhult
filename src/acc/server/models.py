@@ -525,9 +525,12 @@ class Team(Base):
     protocol_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     id: Mapped[str] = mapped_column(String(32), primary_key=True)  # lead session id
     limits: Mapped[dict] = mapped_column(JSON)
-    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     stopped: Mapped[bool] = mapped_column(default=False)
     wrapup_until: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    resume_members: Mapped[list] = mapped_column(JSON, default=list, server_default='[]')
+    lifetime_revision: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    stop_reason: Mapped[str | None] = mapped_column(String(20))
     started: Mapped[int] = mapped_column(default=0)
 
 
@@ -927,3 +930,44 @@ class GroupMachineAccount(Base):
 # Orchestrator v2 slices keep their tables in their own modules (src/acc/server/orchestrator), on this Base: importing
 # the package here registers them with every metadata user (create_all, migrations' checks) without editing this file.
 from . import orchestrator as _orchestrator  # noqa: E402,F401
+
+
+class SecurityPolicy(Base):
+    __tablename__ = 'security_policy'
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    scope: Mapped[dict] = mapped_column(JSON)
+    overrides: Mapped[dict] = mapped_column(JSON, default=dict)
+    registry_version: Mapped[int] = mapped_column(Integer, default=1)
+    previous: Mapped[dict | None] = mapped_column(JSON)
+
+
+class SecurityRevision(Base):
+    __tablename__ = 'security_revision'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SecurityChange(Base):
+    __tablename__ = 'security_change'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(64))
+    session_hash: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    applied: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SecurityFolderPolicy(Base):
+    """Desired/applied folder state; only the folder lane may validate/apply OS grants."""
+    __tablename__ = 'security_folder_policy'
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    machine_id: Mapped[str] = mapped_column(String(32))
+    account: Mapped[str] = mapped_column(String(32))
+    roots: Mapped[list] = mapped_column(JSON, default=list)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    applied_revision: Mapped[int] = mapped_column(Integer, default=0)
+    state: Mapped[str] = mapped_column(String(20), default='pending')
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_by: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)

@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { AUTH_FILE, expectAxeClean, verifyAgain, wikiShotPath } from "./helpers";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { environmentValue } from "../../src/acc/env.mjs";
+import { AUTH_FILE, info, expectAxeClean, verifyAgain, wikiShotPath } from "./helpers";
 
 // Organizations phase 1. The e2e server runs with organizations mode on; company sign-in itself stays off unless a
 // test turns it on. No identity provider is reachable here, so "Test connection" is answered by a route.
@@ -24,6 +27,18 @@ test.describe("owner settings", () => {
     const enrollment = card.getByRole("checkbox", { name: /Let members add a passkey after a multi-factor company sign-in/ });
     await expect(enrollment).toBeChecked();
     await card.getByRole("textbox", { name: "acr values that prove multi-factor", exact: true }).fill("c2 urn:example:loa:mfa");
+    // A preceding Security test can verify this shared login. Reproduce that state, then age
+    // only this harness session beyond the five-minute window: the refusal must be real.
+    await verifyAgain(page);
+    const cookie = (await page.context().cookies()).find(c => c.name === "acc_session" || c.name === "__Host-acc_session");
+    expect(cookie).toBeDefined();
+    const sessionHash = createHash("sha256").update(cookie!.value).digest("hex");
+    execFileSync(environmentValue("ACC_E2E_PYTHON") ?? "python3", ["-c", `
+import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as db:
+    changed = db.execute("UPDATE auth_session SET reauthenticated_at=datetime('now','-6 minutes') WHERE token_hash=?", (sys.argv[2],))
+    assert changed.rowcount == 1, "Expected exactly this harness login"
+`, `${info().state}/data/acc.db`, sessionHash]);
     // Counting more acr values as MFA relaxes sign-in: it needs a fresh verification, as relaxing passkeys does.
     await card.getByRole("button", { name: "Save" }).click();
     await expect(card.getByRole("alert")).toContainText("Verify your sign-in again");

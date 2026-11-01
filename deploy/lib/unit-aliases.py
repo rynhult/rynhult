@@ -18,6 +18,7 @@ UNITS = (
     'acc-packages.service', 'acc-packages.path', 'acc-packages-daily.service', 'acc-packages-daily.timer',
     'acc-update.service', 'acc-update.path', 'acc-hoststate.service', 'acc-hoststate.timer',
     'acc-root-session.service', 'acc-telemetry.service',
+    'acc-folder-policy@.service', 'acc-folder-policy.socket',
 )
 
 

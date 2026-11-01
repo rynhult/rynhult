@@ -291,9 +291,12 @@ async def test_another_team_cannot_consume_a_selection(api,env,project):
 async def test_agents_see_only_their_teams_rounded_remaining_budget(api,env,project,monkeypatch):
     """Review 2026-10-25 (OV-8, threat review S3-7): no windows, account, owner or policy for agents; the person's
     selection API keeps the full snapshot."""
-    monkeypatch.setattr(sel,'snapshot_budget',lambda db,owner,agents:{agent:{
-        'remaining':41.7,'windows':[{'id':agent+'.five_hour','remaining':41.7,'resets_at':None}],'paused':False,
-        'unit':'usage_percent'} for agent in agents})
+    def snapshot(db, owner, agents, project_id=None, machine=None, account=None):
+        assert project_id == project['id']
+        return {agent: {'remaining': 41.7,
+            'windows': [{'id': agent + '.five_hour', 'remaining': 41.7, 'resets_at': None}],
+            'paused': False, 'unit': 'usage_percent'} for agent in agents}
+    monkeypatch.setattr(sel, 'snapshot_budget', snapshot)
     caller,row=await proposal(api,env,project)
     assert row['budget']=={'providers':{'claude':{'remaining':42,'paused':False}},'unit':'usage_percent',
                            'expected_spend':row['budget']['expected_spend']}
