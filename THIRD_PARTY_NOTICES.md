@@ -17,7 +17,7 @@ Web builds apply a local composition-boundary fix to @xterm/xterm 6.0.0 (MIT); s
 | argon2-cffi | 25.1.0 | MIT |
 | argon2-cffi-bindings | 26.1.0 | MIT |
 | cbor2 | 6.1.5 | MIT |
-| certifi | 2026.7.22 | Mozilla Public License 2.0 (MPL 2.0) |
+| certifi | 2026.10.23 | Mozilla Public License 2.0 (MPL 2.0) |
 | cffi | 2.1.1 | MIT-0 |
 | click | 8.5.0 | BSD-3-Clause |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
@@ -32,7 +32,7 @@ Web builds apply a local composition-boundary fix to @xterm/xterm 6.0.0 (MIT); s
 | markupsafe | 3.0.4 | BSD-3-Clause |
 | opentelemetry-api | 1.45.1 | Apache-2.0 |
 | psutil | 7.2.2 | BSD-3-Clause |
-| pyasn1 | 0.6.4 | BSD-2-Clause |
+| pyasn1 | 0.6.5 | BSD-2-Clause |
 | pyasn1-modules | 0.4.2 | BSD License |
 | pycparser | 3.11 | BSD-3-Clause |
 | pydantic | 2.14.1 | MIT |
@@ -9853,7 +9853,7 @@ These separately installed npm servers and their dependencies are locked in `dep
 | atomically | 1.7.0 | MIT |
 | balanced-match | 4.0.4 | MIT |
 | baseline-browser-mapping | 2.11.30 | Apache-2.0 |
-| body-parser | 2.3.0 | MIT |
+| body-parser | 2.4.0 | MIT |
 | content-type | 2.1.0 | MIT |
 | brace-expansion | 5.0.12 | MIT |
 | braces | 3.0.3 | MIT |

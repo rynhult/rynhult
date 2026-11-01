@@ -931,7 +931,7 @@ Its final `FROM scratch` stage has **no RUN step**, only COPY, ENV, USER, WORKDI
   at. It also refuses device nodes and other special files, set-id bits, and world-writable entries (except the
   `slim_rootfs.STICKY` folders, `/tmp` and `/var/tmp`, at mode 1777), and layers over 4 GiB uncompressed in total. It reads the mount targets and `STICKY` from `slim_rootfs.py` by
   parsing literals, never by running it, because root runs the verifier.
-It includes Claude Code 2.1.120, Codex 0.164.0, Copilot 1.0.102, git, ACC helpers
+It includes Claude Code 2.1.308, Codex 0.164.0, Copilot 1.0.102, git, ACC helpers
 and Chromium. A rootless local build and two-generation user-manager run were performed; no registry push occurred.
 
 Real CLI tool calls are driven through an offline loopback model fixture. All

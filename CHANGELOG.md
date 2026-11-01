@@ -37,6 +37,9 @@ This is a release candidate. See the [rc.3 release notes](docs/release-notes/0.1
   Grant/Undo flow for qualified targets (root worker not enabled in this build).
 - Guardrails and Tool approvals now link to Security; existing settings are kept.
 
+### Dependencies
+- Security updates: certifi 2026.10.23, pyasn1 0.6.5, container-image Claude Code 2.1.308, MCP body-parser 2.4.0.
+
 ### Sessions and teams
 - Full-window terminals; copy with Option/Shift drag, a first-drag hint and Select text.
 - Choose an enrolled machine for ordinary and team sessions.
