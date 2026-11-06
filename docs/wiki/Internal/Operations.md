@@ -45,6 +45,12 @@ sudo deploy/setup.sh            # what --main runs; asks in plain prompts; --yes
 
 Nothing is specific to one machine: disks, GPU and network are detected at run time. The firewall is left alone (allow 80/443; keep 8000–8199 to the LAN).
 
+Main installer dry runs validate the installed folder mapping when settings are readable.
+On a fresh machine they report `folder mapping: nothing installed yet, skipped`;
+when configuration is unreadable they report `skipped: needs root to read <file>`.
+Readable but invalid mappings still fail the dry run. With `--alias-root DIR`, both
+alias and folder validation inspect that offline root without publishing changes.
+
 ## Nodes (other machines)
 A node runs brokers and `acc-node`, never accd or Caddy (design: `docs/MULTIHOST.md`; user steps: [Install](/User-Guide/Install#additional-machines) and [Nodes](/User-Guide/Nodes)). Every installer is idempotent and has a dry run.
 

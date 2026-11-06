@@ -10,11 +10,13 @@ from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, text
+from sqlalchemy.orm import object_session
 
 from .. import providers
 from . import budgets
 from .broker_client import BrokerError
 from .compiler import CompileError, compile_files
+from .db import release_read
 from .machine_presence import connected, connected_hosts
 from .models import AuditLog, Project, Session, Team, TeamRequest
 from .nodes import node_lines, node_text
@@ -22,7 +24,7 @@ from .supervisor_common import LaunchRefused, now
 
 # Also the exact tool-name source for OpenCode's normalized MCP permission actions.
 LEGACY_TEAM_FIELDS = {
-    'start': {'name', 'agent', 'profile', 'task', 'kind', 'machine'}, 'list': set(),
+    'start': {'name', 'agent', 'profile', 'task', 'kind', 'machine', 'claude_auth'}, 'list': set(),
     'status': {'helper'}, 'read': {'helper', 'last'}, 'message': {'helper', 'text'},
     'stop': {'helper'}, 'finish': {'helper'}, 'merge': {'helper'},
 }
@@ -193,7 +195,12 @@ def descendants(db, caller):
 
 
 def audit(db, caller, action, detail=None):
-    db.add(AuditLog(actor=f'session:{caller.id}', action=f'team.{action}', target=caller.team_id, detail=detail or {}))
+    detail = dict(detail or {})
+    if action in ('start', 'merge', 'stop', 'finish', 'message'):
+        detail['decision'] = {'source': 'L', 'reason': 'existing_frozen_team_grant', 'lead_id': caller.team_id,
+                              'acting_session_id': caller.id,
+                              'acting_role': 'lead' if caller.id == caller.team_id and caller.parent_session_id is None else 'helper'}
+    db.add(AuditLog(actor=f'session:{caller.id}', action=f'team.{action}', target=caller.team_id, detail=detail))
 
 
 class TeamMixin:
@@ -300,14 +307,16 @@ class TeamMixin:
         result = session_out(session)
         repo = session.cwd if session.container and session.desired_state != 'archived' else (
             session.team_repo or session.project.workspace_path)
+        from .orchestrator.verification import evidence, stop_state
+        result['stop_state'] = stop_state(session)
+        # Broker IO below can take seconds: a caller's read snapshot must not stay open across it.
+        release_read(object_session(session))
         try:
             result['git'] = await self.broker.call('team_inspect', account=session.run_as, host=session.host,
                                                    path=repo,
                                                    branch=session.worktree_branch, base=session.base_commit)
         except Exception as error:
             result['git'] = {'error': str(error)[:200]}
-        from .orchestrator.verification import evidence, stop_state
-        result['stop_state'] = stop_state(session)
         result['verification'] = await evidence(self, session)
         with self.db() as db:
             return self.vault.redactor(db, session.vault_keys).deep(result)
@@ -587,7 +596,7 @@ class TeamMixin:
                                                                     'team_host': machine, 'team_repo': helper_repo,
                                                                     'planning_assignment': payload.get('assignment'),
                                                                     **({'attempt_id': attempt_id} if attempt_id else {})},
-                                                       container=container)
+                                                       container=container, claude_auth=payload.get("claude_auth", "subscription"))
                 except Exception:
                     with self.db() as db:
                         # Once session creation commits, that session owns its checkout,
@@ -597,6 +606,10 @@ class TeamMixin:
                         await self.broker.call('remove_worktree', account=account, host=machine, repo=helper_repo, path=made['path'])
                     raise
                 with self.db() as db:
+                    from . import claude_auth
+                    created = db.get(Session, acc_id)
+                    if claude_auth.MESSAGE in (created.last_error or ''):
+                        raise claude_auth.AutomationRefused()
                     if attempt_id:
                         attempt = db.get(assignments.Attempt, attempt_id)
                         attempt.session_id, attempt.state = acc_id, 'running'

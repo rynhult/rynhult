@@ -1,0 +1,52 @@
+.working-area { position: relative; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.working-tab-row { display: flex; flex: none; min-width: 0; min-height: 40px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.working-toolbar { display: flex; flex: none; align-items: center; gap: 2px; padding-inline: 8px; }
+.working-toolbar label { display: inline-flex; gap: 4px; align-items: center; }
+.working-toolbar select { width: auto; height: 28px; min-height: 28px; padding-block: 0; font-size: var(--shell-meta-size); }
+.working-message { padding: 8px; color: var(--wait); font-size: var(--shell-meta-size); }
+.working-columns { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.working-column-pair { display: flex; min-width: 0; }
+.working-column { display: flex; flex-direction: column; min-width: 0; flex: 1; container-type: inline-size; }
+.working-tabs { display: flex; flex: 1; min-width: 0; overflow: auto; }
+.working-tabs button { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 12px; font-size: var(--shell-meta-size); border-bottom: 2px solid transparent; }
+.working-tabs button[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); background: var(--panel); }
+.working-divider { width: 8px; flex: none; cursor: col-resize; touch-action: none; background: var(--panel-2); border-inline: 1px solid var(--border); }
+.working-slot { flex: 1; min-height: 0; min-width: 0; }
+.working-view { position: absolute; overflow: auto; overscroll-behavior: contain; container-type: inline-size; background: var(--bg); min-width: 0; }
+.working-view > .mx-auto { padding: 12px; }
+.working-view h1 { overflow-wrap: anywhere; }
+.working-page { min-height: 0; overflow: auto; flex: 1; }
+.working-empty { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; }
+.working-empty a { text-decoration: underline; color: var(--accent); }
+@container (max-width: 700px) {
+  /* Column controls must not consume the entire tab strip in a narrow pane. */
+  .working-tab-row { flex-wrap: wrap; }
+  .working-tabs { flex-basis: 100%; }
+  .working-toolbar { flex-wrap: wrap; min-width: 0; max-width: 100%; padding-block: 4px; }
+  .working-notice { max-width: calc(100% - 12px); }
+  .working-view .working-files-grid, .working-view .working-markdown-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* In columns a page is a pane: one title line, no page chrome. */
+[data-working-panes] .shell-project-page > header { padding: 8px 12px; }
+[data-working-panes] .shell-project-page > header h1 { font-size: var(--shell-meta-size); font-weight: 500; }
+[data-working-panes] .shell-project-page .shell-workbar-meta, [data-working-panes] .shell-project-page .shell-workbar-actions, [data-working-panes] .shell-project-page [aria-label="Project views"], [data-working-panes] .shell-project-hero { display: none; }
+.shell [data-working-panes] .shell-project-page > :not(header) { margin-inline: 12px; }
+
+/* Session views reuse their compact primary line as the column pane header. */
+[data-working-panes] .shell-session-page { padding: 8px 12px 12px; gap: 8px; }
+[data-working-panes] .shell-session-page .session-primary-line > h1 { font-size: var(--shell-meta-size); font-weight: 500; }
+
+/* Keep secondary session views in the existing More menu at desktop widths too.
+   The selected tab stays visible to label its panel and preserve roving focus. */
+.session-views-compact [data-tab=Setup]:not([aria-selected=true]),
+.session-views-compact [data-tab=Activity]:not([aria-selected=true]),
+.session-views-compact [data-tab=Handoffs]:not([aria-selected=true]) { display: none; }
+.session-views-compact > :last-child:not([role=tablist]) { display: block; }
+
+/* A retained terminal fills its working pane; small viewports keep a scrollable minimum. */
+.shell-terminal-panel { display: flex; flex-direction: column; min-height: 0; --registered-terminal-height: auto; }
+.shell-terminal-panel > [data-session-chat-frame], .shell-terminal-panel [data-registered-terminal] { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.shell-terminal-panel .registered-terminal-slot { flex: 1; min-height: 320px; }
+
+.working-notice { align-self: center; max-width: 16rem; margin-inline: 6px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 12px; color: var(--wait); font-size: var(--shell-meta-size); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

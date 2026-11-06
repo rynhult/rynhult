@@ -1,7 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "./fixtures";
+import { test } from './shell-state';
 import { AUTH_FILE, gitProject, openAdvanced } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 // Orchestrator v2 is on by default; explicit Off hides its entries.
 // with it off, /api/auth/state says so and every v2 entry is absent: the Settings nav entry, its section and the

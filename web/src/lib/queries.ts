@@ -5,21 +5,32 @@ import { api } from "./api";
 import type { AttentionItem, AuthState, Project, ProviderInfo, SessionSummary } from "./types";
 
 /* Shared queries, so every page polls the same keys at the same rates. */
-export const useSessions = () =>
-  useQuery({ queryKey: ["sessions"], queryFn: () => api<SessionSummary[]>("/api/sessions"), refetchInterval: 3000 });
+/** Authority is part of list identity: a demoted owner must not render the
+ * wider cached result while their new member request is pending or fails.
+ * Keep the resource prefix so existing mutation invalidations still match. */
+export const useSessions = () => {
+  const { username, role, account, known } = useRole();
+  return useQuery({ queryKey: ["sessions", "authority", username, role, account],
+    queryFn: () => api<SessionSummary[]>("/api/sessions"), enabled: known && !!role,
+    refetchOnMount: "always", refetchInterval: 3000, refetchIntervalInBackground: false });
+};
 
-export const useProjects = () =>
-  useQuery({ queryKey: ["projects"], queryFn: () => api<Project[]>("/api/projects"), staleTime: 10000 });
+export function useProjects<T = Project[]>(select?: (projects: Project[]) => T, enabled = true) {
+  const { username, role, account, known } = useRole();
+  return useQuery<Project[], Error, T>({ queryKey: ["projects", "authority", username, role, account],
+    queryFn: () => api<Project[]>("/api/projects"), enabled: enabled && known && !!role,
+    staleTime: 10000, refetchOnMount: "always", select });
+}
 
 export const useAttention = () =>
-  useQuery({ queryKey: ["attention"], queryFn: () => api<AttentionItem[]>("/api/attention"), refetchInterval: 3000 });
+  useQuery({ queryKey: ["attention"], queryFn: () => api<AttentionItem[]>("/api/attention"), refetchInterval: 3000, refetchIntervalInBackground: false });
 
 // App waits for the initial health result to identify a standby. Descendant subscribers must retain an
 // initial error instead of starting another loading cycle just because a new subscriber mounts.
 // Periodic polling and window focus still recover the connection.
 export const useHealth = () =>
   useQuery({ queryKey: ["health"], queryFn: () => api<{ ok: boolean; broker?: boolean; ha?: HAHealth }>("/api/health"),
-    retryOnMount: false, refetchInterval: 5000 });
+    retryOnMount: false, refetchInterval: 5000, refetchIntervalInBackground: false });
 
 /** The service that runs agent sessions (the broker) can't be reached. Shown only once it has stayed so for
  *  BROKER_GRACE_MS: right after start-up, or a restart, the first health readings can say so for a moment
@@ -50,7 +61,7 @@ export const useOffline = () => {
 
 /** How this installation names itself (host label, agent user, wildcard zone), from the signed-in auth state. */
 export const useInstance = () => {
-  const auth = useQuery({ queryKey: ["auth"], queryFn: () => api<AuthState>("/api/auth/state", { cache: "no-store" }), staleTime: 5000, refetchInterval: 5000 });
+  const auth = useQuery({ queryKey: ["auth"], queryFn: () => api<AuthState>("/api/auth/state", { cache: "no-store" }), staleTime: 5000, refetchInterval: 5000, refetchIntervalInBackground: false });
   return auth.data?.instance ?? { host: "this host", agent_user: "the agent user", wildcard_zone: "", version: undefined };
 };
 
@@ -59,6 +70,20 @@ export const useRole = () => {
   const auth = useQuery({ queryKey: ["auth"], queryFn: () => api<AuthState>("/api/auth/state"), staleTime: 60000 });
   return { owner: auth.data?.role === "owner", role: auth.data?.role, account: auth.data?.account, known: !!auth.data,
     username: auth.data?.username ?? undefined };
+};
+
+export interface MachineReadings {
+  label: string;
+  connected: boolean;
+  stale?: boolean; // Like the current local board row, live readings omit this flag.
+  light: { cpu_percent: number | null; memory_percent: number | null; collected_at: number };
+}
+
+/** Owner-only local readings; members retain their existing non-board sources. */
+export const useMachineReadings = () => {
+  const { owner, username } = useRole();
+  return useQuery({ queryKey: ["machine-readings", username, owner], queryFn: () => api<MachineReadings>("/api/readings/machine"),
+    enabled: owner, refetchInterval: 10000, refetchIntervalInBackground: false });
 };
 
 /** Every agent provider Rynhult knows (label, colour, launch options, capabilities, installed for your agent account). */

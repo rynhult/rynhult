@@ -1151,11 +1151,13 @@ def test_web_build_runs_npm_only_through_the_build_account(tmp_path):
     (repo / 'web').mkdir(parents=True)
     (repo / 'web/package.json').write_text('{}')
     (repo / 'src/acc/server/static').mkdir(parents=True)
+    (repo / 'src/acc/theme_tokens.json').write_text('{}')
     stub(tools, 'id', 'exit 0')
     stub(tools, 'chown', 'exit 0')
     stub(tools, 'runuser', f'test "$1 $2 $3" = "-u acc-build --" || exit 90; touch "{marker}"; shift 3; exec "$@"')
     stub(tools, 'npm', f'test -f "{marker}" || exit 91\n'
-         'if [ "$1 $2" = "run build" ]; then mkdir -p ../src/acc/server/static; echo built > ../src/acc/server/static/index.html; fi')
+         'if [ "$1 $2" = "run build" ]; then test -f ../src/acc/theme_tokens.json || exit 92; '
+         'mkdir -p ../src/acc/server/static; echo built > ../src/acc/server/static/index.html; fi')
     script = (REPO / 'deploy/lib/build-assets.sh').read_text()
     script = script.replace('PATH=/usr/bin:/bin', f'PATH={tools}:/usr/bin:/bin')
     (repo / 'deploy/lib').mkdir(parents=True)

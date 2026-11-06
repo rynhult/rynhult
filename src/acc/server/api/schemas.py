@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import json
 import re
+from typing import Literal
 
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -46,6 +47,7 @@ class IssueRef(BaseModel):
 
 
 class SessionIn(BaseModel):
+    claude_auth: Literal["subscription", "api_key"] = "subscription"
     project_id: int | None = None  # None with a topic: a local workspace (Researcher, Council)
     topic: str | None = Field(None, max_length=80)
     workspace: str | None = Field(None, pattern=r"^[a-z0-9][a-z0-9-]{0,79}$")  # an existing local workspace folder
@@ -120,7 +122,7 @@ class SessionIn(BaseModel):
 
     def inputs(self, catalog=None) -> LaunchInputs:
         fields = self.model_dump(exclude={"project_id", "topic", "workspace", "name", "confirm_dangerous", "skills", "agents", "mcps",
-                                          "worktree", "machine", "clone_on_machine", "budget_ok", "orchestrator", "issue_source", "automation"})
+                                          "worktree", "machine", "clone_on_machine", "budget_ok", "orchestrator", "issue_source", "automation", "claude_auth"})
         fields = {k: (v or None) if isinstance(v, str) and k in ("model", "effort", "initial_prompt", "profile", "endpoint") else v
                   for k, v in fields.items()}
         profile = catalog.profiles.get(self.profile or "") if catalog else None
@@ -215,7 +217,7 @@ class LoginCodeIn(BaseModel):
 class LoginIn(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=1024)
-    code: str = Field(max_length=16)
+    code: str = Field(max_length=100)
 
 
 class SetupBeginIn(BaseModel):
@@ -341,11 +343,20 @@ class BackupIn(BaseModel):
     enabled: bool
 
 
-def session_out(session: Session, detail: bool = False, ssh_host: str = "", offline_hosts: set[str] | None = None) -> dict:
+def session_out(session: Session, detail: bool = False, ssh_host: str = "", offline_hosts: set[str] | None = None,
+                auth_modes: dict[str, str] | None = None) -> dict:
     evidence_at = max((t for t in (session.status_at, session.activity_at) if t is not None), default=session.created_at)
     stale_hook = (session.observed_state == "active" and (session.status_source or "").endswith("_hook")
                   and (utcnow() - evidence_at).total_seconds() >= 600)
+    from sqlalchemy.orm import object_session
+
+    from .. import claude_auth
+    auth_db = object_session(session)
+    auth = claude_auth.public(auth_db, session, auth_modes) if auth_db or auth_modes is not None else {'mode': 'unknown', 'automation_refusal':
+        claude_auth.detail(session.project_id) if session.provider == 'claude' else None}
     out = {
+        'auth': auth,
+        'claude_auth': session.claude_auth,
         "machine_offline": machine_offline(session, session.host, offline_hosts),
         "automation": session.automation or {},
         "automation_capability": capability(session.provider),
@@ -356,7 +367,7 @@ def session_out(session: Session, detail: bool = False, ssh_host: str = "", offl
         "status_at": session.status_at, "last_output_at": session.last_output_at,
         "status_stale_since": evidence_at if stale_hook else None,
         "sleep_paused_at": session.sleep_paused_at,
-        "activity": session.activity, "activity_at": session.activity_at, "changes": session.changes,
+        "activity": None if session.desired_state in {"stopped", "archived"} or session.observed_state in {"stopped", "archived"} else session.activity, "activity_at": session.activity_at, "changes": session.changes,
         "changes_at": session.changes_at,
         "remote_url": session.remote_url, "recovery_attempts": session.recovery_attempts,
         "next_attempt_at": session.next_attempt_at, "last_error": session.last_error,

@@ -1,0 +1,1 @@
+@media (min-width: 64rem) { .files-tree-grid { grid-template-columns: minmax(16rem,20rem) minmax(0,1fr); } }

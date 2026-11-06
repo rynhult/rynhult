@@ -1,7 +1,7 @@
 // Phone pass (rc): every main flow at 390 px, touch, both themes. Nothing may stick out sideways, tap targets are at
 // least 44 px (inline text links excepted, as WCAG allows; a checkbox counts with its label), fixed or sticky bars
 // never cover an input, and with the keyboard open the send button stays reachable.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { AUTH_FILE, control, csrfHeaders, info, sessionWithChanges } from "./helpers";

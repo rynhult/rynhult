@@ -1,0 +1,56 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "digests",
+ "cases": [
+  {
+   "name": "turn with operation id excluded",
+   "method": "turn.submit",
+   "params": {
+    "sessionId": "sess-1",
+    "expectedRunId": "run-1",
+    "operationId": "op-1",
+    "text": "Keep the original notes.",
+    "expectedConfigurationRevision": 2,
+    "ifBusy": "reject"
+   },
+   "digest": "sha256:48e1bd38388a6cb00233dc423b21a2489ef8f2ee97671721c8afce5c24dddab9"
+  },
+  {
+   "name": "keys sort regardless of order",
+   "method": "turn.interrupt",
+   "params": {
+    "turnId": "turn-1",
+    "operationId": "op-1",
+    "expectedRunId": "run-1",
+    "sessionId": "sess-1"
+   },
+   "digest": "sha256:e3f4dbbba8ad75807a2b4bd1afb2695a2095613046d0bd5d1e5b787376e1dfc4"
+  },
+  {
+   "name": "non-ascii text stays literal",
+   "method": "turn.submit",
+   "params": {
+    "sessionId": "sess-1",
+    "expectedRunId": "run-1",
+    "operationId": "op-1",
+    "text": "Behåll anteckningarna 🙂",
+    "expectedConfigurationRevision": 2,
+    "ifBusy": "reject"
+   },
+   "digest": "sha256:5099889ea9d8ed50ab1bbd064d25e309cc9f565e20ea9c2af25866ae4e320435"
+  },
+  {
+   "name": "escapes match JSON.stringify",
+   "method": "turn.submit",
+   "params": {
+    "sessionId": "sess-1",
+    "expectedRunId": "run-1",
+    "operationId": "op-1",
+    "text": "tab\t cr\r lf\n quote\" slash\\ nel ls  ps ",
+    "expectedConfigurationRevision": 2,
+    "ifBusy": "reject"
+   },
+   "digest": "sha256:a9a921c18941720061e20c8b519a5f7d6191fc160a286ccbef40e968e61dc58f"
+  }
+ ]
+}

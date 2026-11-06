@@ -46,7 +46,6 @@ def test_headroom_affects_ties_but_cannot_override_owner_fallback_order():
     ('claude_cache', {'fetched_at': 990, 'five_hour': {'utilization': 40, 'resets_at': '1970-01-01T00:33:20Z'}}, 40),
     ('codex', {'primary': {'used_percent': 30, 'resets_at': 2000},
                'secondary': {'used_percent': 91, 'resets_at': 3000}}, 91),
-    ('copilot', {'credits': {'percent_remaining': 15}, 'resets_at': '1970-01-01T00:33:20Z'}, 85),
 ])
 def test_normalize_real_shapes(kind, value, used):
     from acc.server.orchestrator.quota import reading
@@ -284,3 +283,10 @@ async def test_poll_records_trusted_account_scope_even_if_provider_payload_claim
         assert obs.value['_scope']=={'account':'owner-agent','machine':'local'}
     assert calls==[('installed_providers',{'account':'owner-agent'}),('usage',{'account':'owner-agent','provider':'codex'})]
     engine.dispose()
+
+
+def test_old_copilot_quota_is_unknown():
+    from acc.server.orchestrator.quota import reading
+
+    assert reading('copilot', {'credits': {'percent_remaining': 0}, 'resets_at': 2000},
+                   995, now=1000, max_age_seconds=600) == {'status': 'unknown'}

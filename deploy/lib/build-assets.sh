@@ -10,6 +10,8 @@ trap 'rm -rf "$work"' EXIT
 if [ "$mode" = web ]; then
   mkdir -p "$work/web" "$work/src/acc/server"
   tar -C "$repo/web" --exclude=./node_modules -cf - . | tar -C "$work/web" -xf -
+  # Shared theme token baseline imported by the web build (web/src/lib/community-theme.ts).
+  install -m 0644 "$repo/src/acc/theme_tokens.json" "$work/src/acc/theme_tokens.json"
 elif [ "$mode" = mcp ]; then
   mkdir "$work/mcp"
   cp "$repo/deploy/mcp/package.json" "$repo/deploy/mcp/package-lock.json" "$work/mcp/"

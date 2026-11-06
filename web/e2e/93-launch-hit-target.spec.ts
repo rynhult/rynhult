@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, gitProject } from './helpers';
 
 test.use({ storageState: AUTH_FILE, viewport: { width: 390, height: 470 }, isMobile: true, hasTouch: true });

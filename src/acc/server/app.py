@@ -41,6 +41,7 @@ from .api import (
     host_backups,
     inbox,
     issue_sources,
+    layouts,
     mobile,
     nodes,
     operations,
@@ -60,12 +61,16 @@ from .api import (
     security_settings,
     sessions,
     settings_routes,
+    source_views,
     telemetry,
     terminal,
     tools,
     updates,
     users,
     wiki,
+)
+from .api import (
+    approvals as approval_routes,
 )
 from .api import auth as auth_routes
 from .api import gates as orchestrator_gates
@@ -216,6 +221,8 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     app = FastAPI(title="Rynhult", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
+        if request.url.path == "/api/providers/github-token":
+            return JSONResponse(status_code=422, content={"detail": "Enter a valid GitHub token."})
         if request.url.path.startswith('/api/host/backups/'):
             return JSONResponse(status_code=422, content={'detail': 'Some backup settings aren\'t valid. Check the form and try again.'})
         if request.url.path.startswith("/api/dns/"):
@@ -286,8 +293,10 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
         finally:
             WRITE_INTENT.reset(token)
 
-    for module in (auth_routes, admin_features, passkeys, groups, group_exchange, group_board, group_machines, projects, sessions, schedules, inbox, operations, board, catalog, publishing, accounts, terminal, wiki, push, users, ports, preview,
-                   endpoints, dns, packages, settings_routes, security_settings, security_folders, security_access, devices, telemetry, nodes, organizations, mobile, certificate, containers, vault_routes, backups, host_backups, updates, tools, files, issue_sources, pulls):
+    from .api import chat
+    app.include_router(chat.router(ctx))
+    for module in (auth_routes, admin_features, passkeys, groups, group_exchange, group_board, group_machines, source_views, projects, sessions, schedules, inbox, operations, board, catalog, publishing, accounts, terminal, wiki, push, users, ports, preview,
+                   endpoints, dns, packages, settings_routes, layouts, security_settings, security_folders, security_access, devices, telemetry, nodes, organizations, mobile, certificate, containers, vault_routes, backups, host_backups, updates, tools, files, issue_sources, pulls, approval_routes):
         app.include_router(module.router(ctx))
     # Orchestrator v2: one router per slice (src/acc/server/orchestrator); empty until each slice is built.
     for module in (orchestrator_worklist, orchestrator_team_live, orchestrator_selection, orchestrator_gates,
@@ -373,6 +382,7 @@ class BodyLimit:
 
 # URLs whose path or query carries a bearer secret: company sign-in callbacks (state, code), sign-in links (invite)
 # and local invite links (/invite/<token>). uvicorn logs paths with their query in access lines and WebSocket lines.
+SEARCH_URL = re.compile(r'(/api/(?:projects/[^/\s?]+/files|sessions/[^/\s?]+/files|files/[^/\s?]+/[^/\s?]+)/search)\?[^\s"\']*')
 SECRET_URL = re.compile(r"(/api/auth/oidc/[A-Za-z]+)\?\S*|(/invite/)[^\s\"?]+(?:\?\S*)?")
 
 
@@ -381,7 +391,7 @@ class RedactSecretURLs(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         def clean(value):
-            return SECRET_URL.sub(lambda m: m.group(1) or m.group(2) + "…", value) if isinstance(value, str) else value
+            return SEARCH_URL.sub(r"\1", SECRET_URL.sub(lambda m: m.group(1) or m.group(2) + "…", value)) if isinstance(value, str) else value
         if isinstance(record.args, tuple):
             record.args = tuple(clean(arg) for arg in record.args)
         elif isinstance(record.args, dict):

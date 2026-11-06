@@ -45,6 +45,14 @@ try {
   for (const [name, page] of Object.entries(pages)) {
     const seen = new Set(), files = { js: new Set(), css: new Set() };
     function visit(key) {
+      // Shared mounted modules may have hash-based manifest keys. Resolve only
+      // an explicit stable name, never include all unopened dynamic imports.
+      if (key.startsWith('@chunk:')) {
+        const name = key.slice('@chunk:'.length);
+        const matches = Object.keys(manifest).filter(candidate => manifest[candidate].name === name);
+        if (matches.length !== 1) throw new Error(`ambiguous or missing mounted chunk: ${name}`);
+        key = matches[0];
+      }
       if (seen.has(key)) return;
       seen.add(key);
       const chunk = manifest[key];

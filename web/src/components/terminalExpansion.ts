@@ -83,7 +83,8 @@ export function useTerminalExpansion(sessionId: string, grid: boolean, enabled: 
       }
       if (document.fullscreenElement === element) void document.exitFullscreen().catch(() => {});
       requestAnimationFrame(() => {
-        if (element.isConnected) element.querySelector<HTMLButtonElement>('[data-expand-terminal]')?.focus({ preventScroll: true });
+        // A Grid tile keeps Expand in its header, outside the terminal's own root.
+        if (element.isConnected) (element.closest('[data-grid-session]') ?? element).querySelector<HTMLButtonElement>('[data-expand-terminal]')?.focus({ preventScroll: true });
       });
     };
   }, [expanded, onExpansionChange]);

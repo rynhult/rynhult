@@ -1,9 +1,26 @@
-# Folder-policy worker — uninstalled, qualification pending
+# Folder-policy worker
 
-This branch installs or starts nothing. The worker, socket and service templates
-are review material, **not a production enablement procedure**. Do not set
-`qualified: true`, `shared_group_qualified: true` or `policy_qualified: true` on a real machine. Existing installer roots continue unchanged
-until a separately provisioned target worker acknowledges a reviewed change.
+The owner-invoked `deploy/install.sh` provisions the fixed root-owned modules,
+private mapping/state, and enables `acc-folder-policy.socket` on fresh Linux main
+installs and upgrades (including setup-driven signed updates). It never runs a
+folder request during installation. Security's verified owner preview/apply and
+audit records remain required for each policy change. The installer associates
+only its selected agent with the configured human owner; existing administrator
+mappings and qualification choices are preserved on upgrades. Additional accounts
+need an explicit administrator association in the private mapping. Upgrades merge
+newly discovered protected service/backup paths into every existing account,
+without removing old protections or changing roots and qualification choices.
+Deleted users' leftover broker configurations are skipped with a warning.
+Owner and agent homes must be absolute, below a top-level directory, and must
+not overlap system or protected paths. Empty/relative service-path list entries
+are ignored.
+
+Policy publication is enabled for the installed Linux main helper. Automatic ACL
+and shared-group grants remain disabled until separately qualified. An existing
+OS-accessible exact repository under the associated human or agent home can be
+allowed without a broker restart. Missing OS access still needs separately
+qualified Grant access or host-administrator provisioning. Nodes retain their
+explicit target-local provisioning requirements.
 
 The service runs fixed root-owned Python sources with `/usr/bin/python3 -I`, not
 an editable application venv. The bootstrap pins its package directory and checks
@@ -16,7 +33,7 @@ no automatic grant support. No mount, interop or privacy configuration is change
 
 ## Provisioned inputs (not caller-controlled)
 
-The proposed fixed locations are `/etc/acc/folders/worker.json` (root, 0600),
+The fixed locations are `/etc/acc/folders/worker.json` (root, 0600),
 `/var/lib/acc-folder-policy` (root, 0700), the service-only socket
 `/run/acc-folder-policy/helper.sock`, and immutable modules under
 `/usr/local/lib/acc-folders/acc`. The account broker socket comes only from the root-owned account mapping
@@ -27,15 +44,15 @@ The fixed units are `acc-broker@<account>.service` and `.socket`; other service
 layouts remain unsupported until separately qualified.
 
 The root mapping contains `machine_id`, numeric `service_uid`, literal booleans
-`qualified`, `shared_group_qualified` and `policy_qualified` (all false), and `accounts`. Each account maps its actual numeric UID,
+`qualified`, `shared_group_qualified` and `policy_qualified` (policy publication true on a fresh main install; OS-grant switches false), and `accounts`. Each account maps its actual numeric UID,
 associated human `owner_uid`, `broker_socket`, `broker_unit`,
 `broker_socket_unit`, the exact human/agent `homes`, the complete discovered
 installation/service `protected` directories, and existing ordered `roots`. The
 first root is preserved as the default workspace. Never provision root/services
-as an agent. The worker rechecks the account's passwd UID at execution. A production
-provisioner still needs to derive and validate the associated human/group mapping
-and all configured app/state/run/backup/config/service-home locations; guessed
-`/srv/acc` paths are insufficient.
+as an agent. The worker rechecks the account's passwd UID at execution. The main installer derives the selected human/agent identities from passwd and
+protects standard installation paths plus configured service and backup paths.
+Additional accounts require an explicit administrator association; do not guess
+a human identity from an agent account name.
 
 Root policy and ACL ledgers are exclusive 0600 staging files, fsynced and renamed
 within the private directory, with parent fsync and an operation flock. Root
@@ -120,14 +137,19 @@ after fresh sign-in; unapproved old-browser previews remain unusable.
 
 The service template intentionally creates **no per-connection mount namespace**:
 PrivateTmp/ProtectSystem/ProtectKernel* bind/remount isolation would invalidate
-stored mount identities across preview/apply processes. The root boundary instead
-uses fixed immutable code, peer authentication, trusted mapping, mandatory path
+stored mount identities across preview/apply processes. The unit bounds
+capabilities to descriptor traversal, ACL/ownership restoration,
+UID/GID verification and signalling its verification child. It filters syscalls
+with `@system-service`, denies namespace creation and realtime scheduling,
+and protects the clock and hostname. These restrictions do not create a new mount
+namespace. The root boundary also uses fixed immutable code, peer authentication,
+trusted mapping, mandatory path
 bounds and retained descriptors. Qualify this tradeoff independently. Do not add
 mount-namespace hardening without also designing stable cross-request identities.
 
 ## Qualification blockers / enablement boundary
 
-This repository still supplies no automatic installer/enabler. Do not enable any
+The main Linux installer enables policy publication only. Do not enable any OS-grant
 qualification flag on a real machine based only on unprivileged unit/browser
 results. The coordinator must review installation ownership/mapping discovery,
 installer coexistence, startup policy reload, HA authority, systemd/socket behavior

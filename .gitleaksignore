@@ -16,7 +16,7 @@ src/acc/dns_credentials.py:private-key:53
 # AWS documentation/test credentials used with stubbed storage/DNS clients.
 tests/test_backup_s3.py:aws-access-token:565
 tests/test_dns_providers_p2.py:aws-access-token:76
-tests/upgrade_rehearsal.py:aws-access-token:250
+tests/upgrade_rehearsal.py:aws-access-token:260
 # Synthetic service-account PEM/JSON fixtures; no production signing identity.
 tests/test_dns_wave2.py:private-key:11
 tests/test_security_review_dns_w2.py:generic-api-key:11

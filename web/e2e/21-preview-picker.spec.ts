@@ -1,4 +1,4 @@
-import {expect, test} from '@playwright/test';
+import {expect, test} from './fixtures';
 import {readPickerMessage} from '../src/lib/previewPicker';
 
 const origin = 'https://preview-1-8001.example.com';

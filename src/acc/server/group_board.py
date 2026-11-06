@@ -128,12 +128,17 @@ def launch_binding(db, project, checkout_id, person, account=None, remote_enable
     return group, checkout, placement
 
 
-def reserve(db, group):
-    """Caller holds the group/database writer through session insertion. Unknown dispatch retains its slot."""
+def reserve(db, group, *, consume=True):
+    """Reserve capacity under the writer lock; unknown dispatch retains its slot.
+
+    consume=False only checks capacity: no fence, quota pause, audit or commit.
+    The real reservation still fences and rechecks before insertion.
+    """
     from .api.group_board import usage
     from .models import AuditLog, GroupOperation
     from .supervisor_common import LaunchRefused
-    fence(db, group)
+    if consume:
+        fence(db, group)
     now = utcnow()
     current = usage(db, group)
     if group.override_until and group.override_until > now:
@@ -143,12 +148,13 @@ def reserve(db, group):
         raise LaunchRefused('This group has reached the most launches an instance owner allows. Only an instance owner can raise that limit.')
     exhausted = current['concurrent'] >= group.concurrent or current['daily_launches'] >= group.daily_launches
     if group.paused or exhausted:
-        group.paused = True
-        key = f'quota:{group.id}:{now.date()}'
-        if db.get(GroupOperation, key) is None:
-            db.add(GroupOperation(id=key, group_id=group.id, kind='quota', summary='Launch quota reached. Running sessions continue; a maintainer or instance owner can override the pause.'))
-            db.add(AuditLog(actor='supervisor', action='group.quota_pause', target=group.id))
-        db.commit()
+        if consume:
+            group.paused = True
+            key = f'quota:{group.id}:{now.date()}'
+            if db.get(GroupOperation, key) is None:
+                db.add(GroupOperation(id=key, group_id=group.id, kind='quota', summary='Launch quota reached. Running sessions continue; a maintainer or instance owner can override the pause.'))
+                db.add(AuditLog(actor='supervisor', action='group.quota_pause', target=group.id))
+            db.commit()
         raise LaunchRefused('Group launches are paused. Ask a group maintainer or an instance owner to review it and choose Override pause on the Groups page.')
 
 

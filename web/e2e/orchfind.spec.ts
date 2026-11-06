@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject } from './helpers';
+import { expect, test } from './fixtures';
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, waitForTeamStopped } from './helpers';
+import { gotoLoadedPage } from './loaded-page';
 test.use({storageState:AUTH_FILE});
 for (const width of [1440,390]) test(`image need offers a real outcome at ${width}`, async ({page}) => {
   await page.setViewportSize({width,height:900});
@@ -14,7 +15,8 @@ for (const width of [1440,390]) test(`image need offers a real outcome at ${widt
     expect(made.ok(),await made.text()).toBeTruthy();
     const item = await made.json();
     expect((await page.request.patch(`${base}/items/${item.id}`,{headers,data:{revision:item.revision,state:'done'}})).status()).toBe(422);
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
+    await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'],
+      [`/api/sessions/${lead}/team`, base]);
     const card = page.getByRole('listitem',{name:item.title,exact:true});
     await expect(card.getByRole('link',{name:'Check image access',exact:true})).toHaveAttribute('href','/settings#image-access');
     await expect(card.getByRole('link',{name:'Upload a reference',exact:true})).toHaveAttribute('href',`/projects/${id}#project-brief`);
@@ -26,5 +28,8 @@ for (const width of [1440,390]) test(`image need offers a real outcome at ${widt
     expect(answered.answered_by).not.toBe('@api');
     await expectAxeClean(page);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`,{headers:await csrfHeaders(page)}); }
+  } finally {
+    expect((await page.request.post(`/api/sessions/${lead}/team/stop`,{headers:await csrfHeaders(page)})).ok()).toBeTruthy();
+    await waitForTeamStopped(page, lead);
+  }
 });

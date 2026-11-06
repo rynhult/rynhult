@@ -1,6 +1,7 @@
-import {expect,test} from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import {AUTH_FILE,gitProject,routeDemoSessions,sessionWithChanges,wikiShotPath,expectAxeClean} from './helpers';
-test.use({storageState:AUTH_FILE});
+test.use({storageState: AUTH_FILE, shellLayout: 'standard'});
 test('refresh changed Guide screens with artificial projects and certificate data',async({page},testInfo)=>{
  test.setTimeout(90000);await gitProject(page,'guide-review');await routeDemoSessions(page);
  await page.route('**/api/attention',r=>r.fulfill({json:[{id:9001,kind:'needs_input',severity:'warn',source:'claude_hook',verified:true,title:'api-refactor needs you: permission to run tests',detail:null,session_id:'aaaaaaaaaaa6',session_name:'api-refactor',project:'demo-api',created_at:new Date(Date.now()-1800000).toISOString(),updated_at:new Date(Date.now()-1800000).toISOString(),acked_at:null,resolved_at:null,publish_id:null}]}));

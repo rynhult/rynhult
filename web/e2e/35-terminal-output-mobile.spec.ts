@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./shell-state";
 import { randomUUID } from "node:crypto";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, resetTerminalThrottle, sessionWithChanges, wikiShotPath } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: "standard" });
 test.beforeEach(async ({ page }) => {
   await resetTerminalThrottle(page);
 });

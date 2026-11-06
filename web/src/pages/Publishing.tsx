@@ -1,3 +1,5 @@
+import { draftField } from '../lib/unsaved';
+import { useUnsavedDraft } from '../lib/useUnsaved';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
 import { useEffect, useState } from "react";
@@ -11,7 +13,9 @@ import { ago } from "../lib/format";
 import type { PublishingAddress } from "../components/PublishingAddresses";
 import type { PortEntry } from "../components/Ports";
 import type { AuthState, PublishRequest } from "../lib/types";
-import { Badge, Button, Card, CardHeader, Empty, ErrorNote, Field, Input, Page, PageHeader, QueryState, Select, Tabs, TabPanel } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Empty, ErrorNote, Field, Input, QueryState, Select } from "../components/ui";
+import { Tabs, TabPanel } from "../components/Tabs";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { useInstance, useProjects } from "../lib/queries";
 
 const TONE: Record<PublishRequest["status"], "neutral" | "accent" | "ok" | "wait" | "bad"> = {
@@ -26,13 +30,19 @@ function PublishForm({ live }: { live: PublishRequest[] }) {
   const addresses = useQuery({ queryKey: ["publish-addresses"], queryFn: () => api<PublishingAddress[]>("/api/publish/addresses"), enabled: auth.data?.role === "owner" });
   const projects = useProjects();
   const ports = useQuery({ queryKey: ["ports"], queryFn: () => api<PortEntry[]>("/api/ports") });
-  const [project, setProject] = useState("");
-  const [target, setTarget] = useState("");
-  const [picked, setPicked] = useState("");
-  const [name, setName] = useState("");
-  const [zone, setZone] = useState("");
-  const [port, setPort] = useState("");
-  const [access, setAccess] = useState<"internal" | "public">("internal");
+  const [project, setProject] = useState(() => draftField("publishing", "project", ""));
+  const [target, setTarget] = useState(() => draftField("publishing", "target", ""));
+  const [picked, setPicked] = useState(() => draftField("publishing", "picked", ""));
+  const [name, setName] = useState(() => draftField("publishing", "name", ""));
+  const [zone, setZone] = useState(() => draftField("publishing", "zone", ""));
+  const [port, setPort] = useState(() => draftField("publishing", "port", ""));
+  const [access, setAccess] = useState<"internal" | "public">(() => draftField("publishing", "access", "internal"));
+  const [initialZone, setInitialZone] = useState<string | undefined>(() => draftField("publishing", "initialZone", undefined));
+  useEffect(() => { if (zone && initialZone === undefined) setInitialZone(zone); }, [zone, initialZone]);
+  useUnsavedDraft('publishing', 'publishing', 'Publishing request',
+    !!project || !!target || !!picked || !!name || !!port || access !== 'internal' || initialZone !== undefined && zone !== initialZone,
+    { project, target, picked, name, zone, port, access, initialZone },
+    () => { setProject(''); setTarget(''); setPicked(''); setName(''); setZone(initialZone ?? ''); setPort(''); setAccess('internal'); });
   const reservations = (ports.data ?? []).filter(p => String(p.project_id) === project);
   const validPort = Number(port) >= 1 && Number(port) <= 65535
     && (!project || (!ports.isError && reservations.some(p => p.port === Number(port))));
@@ -50,7 +60,7 @@ function PublishForm({ live }: { live: PublishRequest[] }) {
   const current = (lookup.data ?? live).find(r => r.host === host && r.status === "applied" && r.action === "publish");
   const submit = useMutation({
     mutationFn: (replace: boolean) => post<PublishRequest>("/api/publish", { host, port: Number(port), access, replace, target_ip: targetIp }),
-    onSuccess: () => { setName(""); setPort(""); queryClient.invalidateQueries({ queryKey: ["publish"] }); },
+    onSuccess: () => { setName(""); setPort(""); setProject(""); setTarget(""); setPicked(""); setAccess("internal"); setInitialZone(zone); queryClient.invalidateQueries({ queryKey: ["publish"] }); },
   });
   const confirm = useConfirm();
   const go = async () => {

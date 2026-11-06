@@ -185,15 +185,15 @@ export function ProjectIssueSources({ project, canLaunch }: { project: Project; 
   </>;
 }
 
-export function NewSessionIssuePicker({ projectId, selected, onSelect }: {
-  projectId: number; selected?: IssueRef; onSelect: (ref?: IssueRef, name?: string) => void;
+export function NewSessionIssuePicker({ projectId, selected, onSelect, ownTaskLabel = "Your own task (type it below)" }: {
+  ownTaskLabel?: string; projectId: number; selected?: IssueRef; onSelect: (ref?: IssueRef, name?: string) => void;
 }) {
   const connections = useIssueConnections(projectId);
   const [chosen, setChosen] = useState(selected ? `${selected.source}:${selected.kind}` : "");
   const [source, kind] = chosen.split(":") as [IssueRef["source"], IssueRef["kind"]];
   return <div className="space-y-2">
     <Field label="Start from"><Select value={chosen} onChange={(e) => { setChosen(e.target.value); onSelect(); }}>
-      <option value="">Your own task (type it below)</option><SourceOptions config={connections.data} />
+      <option value="">{ownTaskLabel}</option><SourceOptions config={connections.data} />
     </Select></Field>
     <ErrorNote error={connections.error} />
     {selected && <div className="flex items-center gap-2 text-xs text-muted">

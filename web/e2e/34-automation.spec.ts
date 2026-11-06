@@ -1,12 +1,16 @@
 import { openAdvanced, wikiShotPath } from "./helpers";
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, csrfHeaders, gitProject, waitForSessionState } from './helpers';
 test.use({ storageState: AUTH_FILE });
 const owned: string[] = [];
-test.beforeEach(() => { owned.length = 0; });
+const ownedKeys: string[] = [];
+test.beforeEach(() => { owned.length = 0; ownedKeys.length = 0; });
 test.afterEach(async ({ page }) => {
   for (const id of owned) {
     expect((await page.request.post(`/api/sessions/${id}/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+  }
+  for (const id of ownedKeys) {
+    expect((await page.request.post(`/api/vault/keys/${id}/remove`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
   }
 });
 test('edit auto-resume and goal while running, then stop', async ({ page }, testInfo) => {
@@ -91,7 +95,15 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
 });
 
 test('launch controls default off and persist a bounded goal', async ({ page }, testInfo) => {
-  const { id: projectId } = await gitProject(page, 'goal-launch');
+  const { id: projectId, headers } = await gitProject(page, 'goal-launch');
+  // Subscription sign-in refuses automation; give this project its own artificial API key.
+  const made = await page.request.post('/api/vault/keys', { headers, data: {
+    variable: 'ANTHROPIC_API_KEY', name: 'Example goal billing', value: 'example-goal-placeholder',
+  } });
+  expect(made.ok()).toBe(true);
+  const key = await made.json();
+  ownedKeys.push(key.id);
+  expect((await page.request.post(`/api/vault/keys/${key.id}/give`, { headers, data: { project_id: projectId } })).ok()).toBe(true);
   await page.reload(); // Fetch the trust state changed through the test API before opening the dialog.
   await page.getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -102,6 +114,12 @@ test('launch controls default off and persist a bounded goal', async ({ page }, 
   await expect(dialog.getByLabel('Resume when the limit resets')).toBeDisabled();
   await expect(dialog.getByText('This provider has no reliable plan-limit signal in Rynhult.')).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('claude');
+  const signin = dialog.getByRole('combobox', { name: 'Claude sign-in', exact: true });
+  await expect(signin).toHaveValue('subscription');
+  await expect(dialog.getByLabel('Resume when the limit resets')).toBeDisabled();
+  await expect(dialog.getByLabel('Goal text')).toBeDisabled();
+  await signin.selectOption('api_key');
+  await expect(dialog.getByLabel('Resume when the limit resets')).not.toBeChecked();
   await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('Launch goal demo');
   await dialog.getByLabel('Resume when the limit resets').check();

@@ -1,12 +1,30 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from './fixtures';
+import { test as base } from './shell-state';
 import { writeFileSync } from 'node:fs';
-import { AUTH_FILE, control, gitProject, info, wikiShotPath } from './helpers';
+import { AUTH_FILE, control, csrfHeaders, gitProject, info, waitForSessionState, waitForTeamStopped, wikiShotPath } from './helpers';
+
+import { gotoLoadedPage } from './loaded-page';
+
+// Startup owns a separate bounded fixture budget; body assertions keep their
+// existing deadlines. Always stop this case's team, including on failure.
+const test = base.extend<{ lead: string }>({
+  lead: [async ({ page }, use) => {
+    const lead = await teamLead(page);
+    try {
+      await waitForSessionState(page, lead, 'idle', 'claude_hook');
+      await use(lead);
+    } finally {
+      expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+      await waitForTeamStopped(page, lead);
+    }
+  }, { timeout: 45_000 }],
+});
 
 // The Guide's "Orchestrate a project" walkthrough (docs/wiki/User-Guide/Orchestrate-a-Project.md), one test per step,
 // each saving its screenshot. The browser suite's server runs with the Orchestrator v2 on (tests/e2e_server.py)
 // and fake providers; the team's plan, working list, tree and selections are answered in the page (route), with
 // artificial names only, because the wiki is public.
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 async function teamLead(page: Page) {
   const { id, headers } = await gitProject(page, 'orchestrate');
@@ -83,11 +101,10 @@ async function planning(page: Page, lead: string) {
   });
 }
 
-test('step 2: the Team tab during the planning session', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('step 2: the Team tab during the planning session', async ({ page, lead }, testInfo) => {
   await planning(page, lead);
   await page.setViewportSize({ width: 1440, height: 2300 });
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   await expect(page.getByText('Planning session: no helpers start until the lead finishes the plan.')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Dependency diagram' }).getByRole('img', { name: /Roadmap diagram/ }).locator('svg')).toBeVisible({ timeout: 15_000 });
   await page.getByRole('tab', { name: 'Working list', exact: true }).click();
@@ -96,10 +113,9 @@ test('step 2: the Team tab during the planning session', async ({ page }, testIn
   await page.screenshot({ path: testInfo.outputPath('orchestrate-planning.png') });
 });
 
-test('step 3: answering one card while the others keep their defaults', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('step 3: answering one card while the others keep their defaults', async ({ page, lead }, testInfo) => {
   await planning(page, lead);
-  await page.goto(`/sessions/${lead}?tab=team#worklist`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   const card = page.getByRole('region', { name: 'What the lead needs from you' })
     .getByRole('listitem', { name: 'Which file formats in the first version?' });
   await card.screenshot({ path: testInfo.outputPath('orchestrate-answer.png') });
@@ -107,9 +123,8 @@ test('step 3: answering one card while the others keep their defaults', async ({
   await expect(page.getByText('Answer from alex', { exact: false }).first()).toBeVisible();
 });
 
-test("step 4: talking to the lead in its own terminal", async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
-  await page.goto(`/sessions/${lead}`);
+test("step 4: talking to the lead in its own terminal", async ({ page, lead }, testInfo) => {
+  await gotoLoadedPage(page, `/sessions/${lead}`, ['SessionPage', 'Terminal']);
   await expect(page.locator('.xterm')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Team' })).toBeVisible();
   // What a conversation with the lead looks like, printed by the fake provider (its "screen" control).
@@ -128,8 +143,7 @@ test("step 4: talking to the lead in its own terminal", async ({ page }, testInf
   await page.screenshot({ path: wikiShotPath(testInfo, 'orchestrate-talk.png') });
 });
 
-test('step 5: helpers chosen across agents, machines and quota', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('step 5: helpers chosen across agents, machines and quota', async ({ page, lead }, testInfo) => {
   await planning(page, lead);
   await page.route(`**/api/teams/${lead}/plan`, (route) => route.fulfill({ json: { ...planningPlan(), state: 'ready', ready_at: at } }));
   const member = (id: string, parent: string | null, depth: number, name: string, agent: string, machine: string,
@@ -164,7 +178,7 @@ test('step 5: helpers chosen across agents, machines and quota', async ({ page }
                 { eligible: false, rejections: ['fresh provider quota reaches owner threshold'] }),
     ] }] } }));
   await page.setViewportSize({ width: 1440, height: 2600 });
-  await page.goto(`/sessions/${lead}?tab=team#settings`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#settings`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   const treeView = page.getByRole('tree');
   await expect(treeView.getByRole('treeitem', { name: /Importer/ })).toBeVisible();
   await treeView.getByRole('treeitem', { name: /Importer/ }).focus();
@@ -182,7 +196,7 @@ test('step 5: helpers chosen across agents, machines and quota', async ({ page }
 
 test('step 5: the owner orders providers and models in Settings', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1400 });
-  await page.goto('/settings#selection-allow-lists');
+  await gotoLoadedPage(page, '/settings#selection-allow-lists', ['Settings']);
   const section = page.locator('#selection-allow-lists');  // the Settings section's anchor
   await expect(section.getByRole('heading', { name: 'Selection allow-lists' })).toBeVisible();
   await expect(section.getByText('Allow-list 2', { exact: true })).toBeVisible();
@@ -194,13 +208,14 @@ test('step 5: the owner orders providers and models in Settings', async ({ page 
     clip: { x: box.x, y: box.y, width: box.width, height: end.y - box.y - 4 } });
 });
 
-test('step 7: stopping the whole team', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
-  await page.goto(`/sessions/${lead}?tab=team#settings`);
+test('step 7: stopping the whole team', async ({ page, lead }, testInfo) => {
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#settings`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   await page.getByRole('button', { name: 'Stop team' }).click();
   const dialog = page.getByRole('dialog', { name: 'Stop team?' });
   await expect(dialog).toContainText('Stop the lead and every helper.');
   await page.screenshot({ path: wikiShotPath(testInfo, 'orchestrate-stop.png') });
   await dialog.getByRole('button', { name: 'Stop team' }).click();
+  // The request accepts an asynchronous stop; wait for the real team confirmation.
+  await waitForTeamStopped(page, lead);
   await expect(page.getByRole('heading', { name: 'Stop confirmed', exact: true })).toBeVisible();
 });

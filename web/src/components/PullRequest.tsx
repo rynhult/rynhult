@@ -78,7 +78,7 @@ function CreatePull({ session, status, onCreated }: { session: SessionDetail; st
     <Card>
       <CardHeader icon={GitPullRequest} title="Create a pull request" subtitle={`${status.branch} → ${status.default_branch}`} />
       <div className="space-y-4 p-4">
-        {!status.pushed && <p className="rounded-md border border-wait/30 bg-wait/10 p-3 text-xs text-wait">{status.branch} isn't on GitHub yet. Ask the agent to push the branch, then refresh.</p>}
+        {!status.pushed && <p className="rounded-md border border-wait/30 bg-wait/10 p-3 text-xs text-wait">{status.branch} isn't on GitHub yet. Use Push branch in Changes, then return here to create the pull request.</p>}
         {draft.isLoading ? <Skeleton className="h-40" /> : <>
           <Field label="Title"><Input value={values.title} maxLength={256} onChange={(e) => setForm({ ...values, title: e.target.value })} /></Field>
           <Field label="Description" hint={draft.data?.body ? `Prefilled from the session's ${draft.data.source}; edit it as you like.` : "No handoff note or summary yet: describe the change."}>

@@ -91,6 +91,8 @@ def router(ctx: Context) -> APIRouter:
     settings, supervisor, db = ctx.settings, ctx.supervisor, ctx.db
     api = APIRouter(prefix="/api/catalog")
     store = CatalogStore(settings.catalog_dir, settings.catalog_local_dir)
+    from .themes import register
+    register(api, ctx, store)
     previews = catalog_import.Previews()
     restores = catalog_import.Previews()
     restorer = Restorer(settings.catalog_dir, settings.catalog_local_dir)

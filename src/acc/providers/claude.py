@@ -47,9 +47,19 @@ class Claude(Provider):
         # Only the live footer/task rows, not old transcript output (captured 2026-10-24).
         tail = "\n".join([line.rstrip() for line in screen.splitlines() if line.strip()][-5:])
         return bool(re.search(
-            r"^\s*(?:✻[^\n]*·\s*[1-9]\d* shells? still running\b"
-            r"|⏵⏵[^\n]*[·,]\s*[1-9]\d* (?:shells?|monitors?)\b"
-            r"|◯\s+\S+[^\S\n]{2,}\S)", tail, re.MULTILINE))
+            r"^\s*(?:[✻✽✶✳✢·][^\n]*\besc to interrupt\b|◯\s+\S+[^\S\n]{2,}\S)",
+            tail, re.MULTILINE | re.IGNORECASE))
+
+    def screen_idle(self, screen: str) -> str | None:
+        tail = "\n".join([line.rstrip() for line in screen.splitlines() if line.strip()][-5:])
+        counts = re.findall(r"^\s*⏵⏵[^\n]*?[·,]\s*([1-9]\d*) (shells?|monitors?|tasks?)\b", tail, re.MULTILINE)
+        if not counts:
+            counts = re.findall(r"^\s*✻[^\n]*·\s*([1-9]\d*) (shells?) still running\b", tail, re.MULTILINE)
+        if counts:
+            count, kind = counts[-1]
+            noun = "shell" if kind.startswith("shell") else "task"
+            return f"{count} background {noun}{'s' if int(count) != 1 else ''}"
+        return None
 
     def compile(self, inputs, ctx: CompileContext, instructions: str) -> dict[str, str]:
         from ..server.compiler import safe_markdown  # catalog content rules live with the compiler
@@ -147,7 +157,7 @@ class Claude(Provider):
     def auth_health(self, exe: str, home: Path) -> dict:
         health: dict = {"logged_in": False}
         try:
-            data = json.loads(run([exe, "auth", "status", "--json"]).stdout or "{}")
+            data = json.loads(run([exe, "auth", "status"]).stdout or "{}")
             health.update(logged_in=bool(data.get("loggedIn")), method=data.get("authMethod"),
                           email=data.get("email"), subscription=data.get("subscriptionType"))
         except (OSError, ValueError) as error:

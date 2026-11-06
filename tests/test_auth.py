@@ -133,15 +133,24 @@ async def test_terminal_websocket(api, env, project, live):
 
     async with websockets.connect(url, additional_headers={**cookie, **good_origin}) as writer_ws:
         mode = json.loads(await asyncio.wait_for(writer_ws.recv(), 5))
-        assert mode == {"t": "mode", "write": True}
+        assert mode == {"t": "mode", "write": True, "partial": False, "reason": None, "wheel": False}
         output = await asyncio.wait_for(writer_ws.recv(), 5)
         assert isinstance(output, bytes) and output
 
         async with websockets.connect(url, additional_headers={**cookie, **good_origin}) as viewer:
-            assert json.loads(await asyncio.wait_for(viewer.recv(), 5)) == {"t": "mode", "write": False}
+            assert json.loads(await asyncio.wait_for(viewer.recv(), 5)) == {
+                "t": "mode", "write": False, "partial": False, "wheel": False, "rows": 40, "cols": 120,
+                "reason": "another window has control"}
 
-        async with websockets.connect(url + "?take=1", additional_headers={**cookie, **good_origin}) as taker:
-            assert json.loads(await asyncio.wait_for(taker.recv(), 5)) == {"t": "mode", "write": True}
+        async with websockets.connect(url + "?take=1", additional_headers={**cookie, **good_origin}) as unexplained:
+            assert json.loads(await asyncio.wait_for(unexplained.recv(), 5)) == {
+                "t": "mode", "write": False, "partial": False, "wheel": False, "rows": 40, "cols": 120,
+                "reason": "Choose a supported reason to take control."}
+
+        async with websockets.connect(url + "?take=1&take_reason=manual_handover",
+                                      additional_headers={**cookie, **good_origin}) as taker:
+            assert json.loads(await asyncio.wait_for(taker.recv(), 5)) == {
+                "t": "mode", "write": True, "partial": False, "reason": None, "wheel": False}
             with pytest.raises(websockets.ConnectionClosed) as closed:
                 while True:
                     await asyncio.wait_for(writer_ws.recv(), 5)

@@ -1,10 +1,11 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, KeyRound } from "lucide-react";
 import { useState } from "react";
 import { api, post } from "../lib/api";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useConfirm } from "./confirm";
-import { announce, Badge, Button, Card, CardHeader, Dialog, ErrorNote, Field, Input, Note, QueryState, Select } from "./ui";
+import { announce, Badge, Button, Dialog, ErrorNote, Field, Input, Note, QueryState, Select } from "./ui";
 
 type Qualification = "qualified" | "preview";
 interface ProviderChoice { id: string; qualification: Qualification }

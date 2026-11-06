@@ -10,7 +10,7 @@ Browse and edit a [project](/User-Guide/Glossary#project)'s folder, a workspace,
 
 ![Markdown editor, folder tree and live preview](/.attachments/files-editor.png)
 
-4. Select **Save** to write the file. **Refresh files** reloads the tree and, when there are no unsaved edits, the open file. Switching files asks before discarding a draft.
+4. Select **Save** to write the file. **Refresh files** reloads the tree and, when there are no unsaved edits, the open file. The new layout keeps open file drafts in their tabs.
 5. On phones, choosing a file collapses the tree and focuses the loaded file. **Show tree** brings it back; **Hide tree** closes it manually. Cancelling a draft warning keeps the draft, selected file and open tree unchanged. The tree stays open on desktop.
 
 ![Phone editor with its tree collapsed](/.attachments/files-phone.png)
@@ -100,9 +100,6 @@ Known vault values, including retained previous values, are redacted from everyt
 
 If a file cannot be opened, check its size, path and type. **Broker unavailable** means its machine or agent broker is disconnected; reconnect it and refresh. Old machines need a broker update before they can serve Files. Files and commits remain on the machine where the project lives.
 
-Unsaved edits also prompt before Back/Forward, changing tabs or following another
-Rynhult link. Choose **Cancel** to keep editing, or **Discard draft** to leave. Reloading
-or closing the page uses your browser's unsaved-changes warning.
 
 Starting a save clears the previous save message. If the connection fails, your
 draft stays in the editor and the error is shown; retry **Save** after reconnecting.
@@ -113,3 +110,17 @@ Cancelling a navigation warning also keeps an in-progress save's status intact.
 An upload finishing or a delayed refresh response does not replace a draft you
 have started typing. The draft keeps the revision you originally opened, so a
 later **Save** still detects intervening disk edits and offers the conflict choices.
+
+## Files in the new layout
+
+The [new layout](/User-Guide/New-Layout) keeps each open file editor and its original
+revision while you move its tab, change columns, fill the working panel or browse
+elsewhere. Opening the same physical file through another project/session link
+focuses its existing editor. Similar names in different folders remain separate.
+Closing a dirty file asks before discarding; a save in progress must finish first.
+Reloading still loses unsaved in-memory drafts after the browser's warning.
+
+Saves also check that the underlying folder is the one you opened. If a checkout
+or parent folder was replaced, the draft cannot silently land there, even when the
+new file has identical bytes. Copy the retained draft before closing and reopening
+the file. Access loss clears private file content and shows an unavailable view.

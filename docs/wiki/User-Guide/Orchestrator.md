@@ -1,5 +1,7 @@
 # Orchestrator
 
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+
 Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 They illustrate earlier layouts; the rc.1 brief, run modes and new result states are described in the text.
 
@@ -974,3 +976,18 @@ The lead receives the project's current reserved ports at launch and resume. If 
 An unchanged app-exported project brief can remain in the working tree during an unrelated helper merge. Independently edited or staged files still require review before merging. If an export overlaps the helper's changes, review and commit the approved export on the writing task branch before retrying; Rynhult never stashes or discards it to force a merge. Include approved public brief and roadmap snapshots in the final handoff.
 
 A need card requires an answer before it can be completed or dismissed. Describe what happened, or choose **Skip this input** to record an explicit outcome for the lead. Image-related needs also link to **Check image access** (owners only) and **Upload a reference** in the project brief. Uploading or checking does not answer the card automatically; report the result. Skipping an input does not authorize changing requirements or constraints. Replies made with an installation API token show **Owner via API**; audit records retain the token identity.
+
+### Who makes approval decisions
+
+Routine team coordination stays within the frozen grant. Audit records identify
+the root lead and the session that actually acted, including its lead or helper role. Workers cannot approve their own authority requests, add
+a machine/account or widen a Prepare assignment. A person's exact scoped consent
+is separate from the team grant, and a durable project policy issues bounded
+permission for a particular active team. Stop, expiry and revocation prevent new
+use; revocation does not undo work already dispatched.
+
+The first server phase records and evaluates these permissions in shadow mode.
+It does not yet enable a lead to install account tools or finish into main
+automatically. A tool permission cannot authorize main, and main merge and remote
+push require separate explicit consent. Missing verified tests/review, group
+approvals or a qualified finalization path keep the action with the person.

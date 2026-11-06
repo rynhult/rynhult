@@ -3,7 +3,7 @@ import { Button, Card, Page } from "./ui";
 
 /** One page failing to render (e.g. odd content an agent wrote) must not blank the whole dashboard. Resets when
     the route changes (`resetKey`). */
-export class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode; reloadOnRetry?: boolean }, { error: Error | null }> {
+export class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode; reloadOnRetry?: boolean; landmark?: boolean }, { error: Error | null }> {
   state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) { return { error }; }
@@ -16,7 +16,7 @@ export class ErrorBoundary extends Component<{ resetKey: string; children: React
 
   render() {
     if (!this.state.error) return this.props.children;
-    return (
+    const content = (
       <Page>
         <Card className="p-6">
           <h1 className="text-[15px] font-semibold">This page couldn't be shown</h1>
@@ -26,5 +26,6 @@ export class ErrorBoundary extends Component<{ resetKey: string; children: React
         </Card>
       </Page>
     );
+    return this.props.landmark ? <main id="main" tabIndex={-1} aria-label="Content">{content}</main> : content;
   }
 }

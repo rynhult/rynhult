@@ -139,6 +139,27 @@ async def write_in_thread(work, *args):
         raise
 
 
+def release_read(session) -> bool:
+    """End a read-only SQLite snapshot before awaiting broker or other slow IO.
+
+    While a deferred snapshot is open it counts against _TransactionGate, so every
+    off-loop writer (worker bodies and sync mutating requests) waits for it; held
+    across awaits it starves them for seconds under load. Commits only when the
+    transaction wrote nothing (no pending ORM state, no SQLite changes) and is not a
+    write-intent transaction, so it never publishes or drops work. Objects stay
+    loaded (expire_on_commit=False); a later lazy load opens a new short snapshot.
+    """
+    if session is None or WRITE_INTENT.get() or not session.in_transaction():
+        return False
+    if session.new or session.dirty or session.deleted or session.get_bind().dialect.name != "sqlite":
+        return False
+    raw = session.connection().connection.driver_connection
+    if raw.total_changes != getattr(raw, "changes_at_begin", None):
+        return False
+    session.commit()
+    return True
+
+
 class MaintenanceBusy(TimeoutError):
     """Retry after capture releases its short application mutation barrier."""
 
@@ -246,6 +267,7 @@ def make_engine(url: str, keepalive: bool = False) -> Engine:
                 release_gate()
 
         raw.release_transaction = release
+        raw.changes_at_begin = raw.total_changes
         try:
             connection.exec_driver_sql("BEGIN IMMEDIATE" if WRITE_INTENT.get() else "BEGIN")
         except BaseException:

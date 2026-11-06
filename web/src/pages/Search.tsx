@@ -6,7 +6,8 @@ import { api } from "../lib/api";
 import { ago } from "../lib/format";
 import { useProjects, useProviderRegistry } from "../lib/queries";
 import type { SearchResponse } from "../lib/types";
-import { Button, Card, Empty, ErrorNote, Field, Input, LoadingRows, Page, PageHeader, SearchInput, Select, useDocumentTitle } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Field, Input, LoadingRows, SearchInput, Select, useDocumentTitle } from "../components/ui";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { ProviderBadge } from "../components/session-bits";
 
 /** "…the \x02billing\x03 webhooks…" with the matched words highlighted (no HTML from the server). */

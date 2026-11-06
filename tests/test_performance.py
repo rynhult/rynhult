@@ -10,7 +10,7 @@ from sqlalchemy import event, select, update
 
 from acc.server.api.schemas import session_out
 from acc.server.app import create_app
-from acc.server.models import AttentionItem, Node, Session
+from acc.server.models import AttentionItem, Event, Node, Session
 
 SCALE = dict(people=3, projects=12, sessions=150, events=600, long_sessions=2, long_events=50, audit=50,
              inbox=40, machines=6, running=0)
@@ -91,6 +91,11 @@ async def test_inbox_batching_keeps_project_risk_policies_distinct(seeded):
         for title, sid in [('Hidden scope', hidden_session), ('Visible scope', shown_session)]:
             db.add(AttentionItem(dedupe_key=title, title=title, session_id=sid, kind='needs_input', source='test',
                                  risk={'label': 'Review', 'reason': 'Synthetic prompt'}))
+        for sid in (hidden_session, shown_session):
+            db.add(Event(session_id=sid, source='claude_hook', kind='PermissionRequest',
+                         payload={'acc_permission_id': 'a' * 32, 'acc_complete_input': '{"command":"true"}'}))
+        db.flush()
+        db.add(Event(session_id=hidden_session, source='claude_hook', kind='PermissionExpired'))
         security_settings.save(db, {'kind': 'project', 'project_id': hidden_project}, {'risk_labels': False},
                                actor='@api', expected_revision=0)
         db.commit()
@@ -100,5 +105,10 @@ async def test_inbox_batching_keeps_project_risk_policies_distinct(seeded):
     items = {item['title']: item for item in response.json()}
     assert items['Hidden scope']['risk'] is None
     assert items['Visible scope']['risk'] == {'label': 'Review', 'reason': 'Synthetic prompt'}
+    assert 'permission_id' not in items['Hidden scope']
+    assert items['Visible scope']['permission_id'] == 'a' * 32
+    assert items['Visible scope']['permission_input'] == '{"command":"true"}'
     reads = [sql for sql in seeded.statements if 'FROM session' in sql and 'attention_item' not in sql]
     assert len(reads) == 1 and ' IN ' in reads[0].upper()
+    event_reads = [sql for sql in seeded.statements if 'FROM event' in sql]
+    assert len(event_reads) == 1 and ' IN ' in event_reads[0].upper()

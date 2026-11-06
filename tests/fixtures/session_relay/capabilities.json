@@ -1,0 +1,596 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "capabilities",
+ "cases": [
+  {
+   "name": "support is per operation; omitted means unsupported",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "text": "qualified",
+    "follow": "unqualified",
+    "steer": "unsupported",
+    "interrupt": "policy_blocked",
+    "history": "unsupported"
+   }
+  },
+  {
+   "name": "qualified without evidence is invalid",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "blanket capability is invalid",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "supports_chat": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with an empty provider",
+   "declaration": {
+    "provider": "",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with a blank CLI version",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with an invalid digest",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "abc",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with no adapter version",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with no schema version",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with no transport",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with no qualification id",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "qualified with an impossible date",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-13-40",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "bare string evidence",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": "fixture-record-1"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "unknown status",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "mostly"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "operations not an object",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": []
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "scope not an object",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": 5,
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "missing field",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "qualificationId": "qual-1",
+    "qualificationDate": "2026-11-02",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "text": {
+      "status": "qualified",
+      "evidence": [
+       "fixture-record-1"
+      ]
+     },
+     "follow": {
+      "status": "unqualified",
+      "reason": "not yet tested"
+     },
+     "steer": {
+      "status": "unsupported",
+      "reason": "no native steer"
+     },
+     "interrupt": {
+      "status": "policy_blocked",
+      "reason": "frozen policy"
+     }
+    }
+   },
+   "expect": {
+    "invalid": true
+   }
+  },
+  {
+   "name": "nothing qualified needs no pin",
+   "declaration": {
+    "provider": "example",
+    "cliVersion": "1.0.0",
+    "cliDigest": "",
+    "adapterVersion": "1",
+    "schemaVersion": "1",
+    "transport": "unix",
+    "qualificationId": "qual-1",
+    "qualificationDate": "",
+    "scope": {
+     "platform": "linux",
+     "placement": "local"
+    },
+    "operations": {
+     "follow": {
+      "status": "unqualified"
+     }
+    }
+   },
+   "expect": {
+    "follow": "unqualified"
+   }
+  }
+ ]
+}

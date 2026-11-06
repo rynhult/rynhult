@@ -1,8 +1,24 @@
-import { expect, test, type Page } from '@playwright/test';
+import { gotoLoadedPage, reloadLoadedPage } from './loaded-page';
+import { expect, type Page } from './fixtures';
+import { test as base } from './shell-state';
 import { AUTH_FILE, gitProject } from './helpers';
 
+// The real machine-check endpoint has an installation-wide 30s rate limit.
+// Wait from its recorded completion in a resource phase; never retry a refused
+// check or bypass the server's guard to make the announcement assertion pass.
+const test = base.extend<{ machineCooldown: void }>({
+  machineCooldown: [async ({ page }, use) => {
+    const response = await page.request.get('/api/nodes/check');
+    expect(response.ok()).toBe(true);
+    const last = await response.json();
+    if (last.checked_at) await expect.poll(() => Date.now() - Date.parse(last.checked_at),
+      { timeout: 31_000, message: 'Previous real machine-check cooldown elapsed' }).toBeGreaterThanOrEqual(30_000);
+    await use();
+  }, { timeout: 35_000 }],
+});
+
 // RC accessibility audit (beyond axe): what a screen reader hears, and that every tab list is named.
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 /** Live regions (not hidden, not aria-live=off) whose text includes `text`: each one is a separate announcement. */
 const liveRegionsWith = (page: Page, text: string) => page.evaluate((wanted) =>
@@ -51,7 +67,7 @@ test('Settings announces a late error once, a late warning elsewhere once, and n
 
 test('every tab list on the project page has a name, and the selected tab and its panel point at each other', async ({ page }) => {
   const { id } = await gitProject(page, 'a11y-tabs');
-  await page.goto(`/projects/${id}`);
+  await gotoLoadedPage(page, `/projects/${id}`, ["ProjectPage"], ["/api/projects"]);
   await expect(page.getByRole('tablist', { name: 'Project views', exact: true })).toBeVisible();
   await expect(page.getByRole('tablist', { name: 'Project sections', exact: true })).toBeVisible();
   const lists = await page.evaluate(() => [...document.querySelectorAll('[role=tablist]')].map(list => {
@@ -64,23 +80,36 @@ test('every tab list on the project page has a name, and the selected tab and it
   expect(lists).toEqual(lists.map(() => ({ named: true, wired: true })));
 });
 
-test('Host announces a machine check the person asked for, not the page loading', async ({ page }) => {
-  await page.goto('/host');
+test('Host announces a machine check the person asked for, not the page loading', async ({ page, machineCooldown }) => {
+  void machineCooldown;
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/nodes/check']);
   const announcer = page.getByTestId('machine-check-announcer');
   await expect(announcer).toHaveText('');
+  const checked = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/nodes/check');
   await page.getByRole('button', { name: 'Check machines now', exact: true }).click();
+  expect((await checked).ok()).toBe(true);
+  expect(await (await checked).finished()).toBeNull();
   await expect(announcer).toHaveText(/^Checked \d+ machines?: \d+ responding/);
   // Opening Host again shows the last result without reading the whole list out.
-  await page.reload();
+  await reloadLoadedPage(page, ['Host'], ['/api/host', '/api/nodes/check']);
   await expect(page.getByText(/Connected and responding/).first()).toBeVisible();
   await expect(announcer).toHaveText('');
   expect(await liveRegionsWith(page, 'Connected and responding')).toBe(0);
 });
 
 test('Providers announces that Check now finished', async ({ page }) => {
-  await page.goto('/providers');
+  await gotoLoadedPage(page, '/providers', ['Providers'], ['/api/providers', '/api/accounts']);
   const announcer = page.getByTestId('providers-check-announcer');
   await expect(announcer).toHaveText('');
+  const checked = ['/api/providers', '/api/accounts'].map(path => page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === path && url.searchParams.get('refresh') === '1';
+  }).then(async response => {
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+  }));
   await page.getByRole('button', { name: 'Check now', exact: true }).click();
+  await Promise.all(checked);
   await expect(announcer).toHaveText('Sign-ins and usage checked.');
 });

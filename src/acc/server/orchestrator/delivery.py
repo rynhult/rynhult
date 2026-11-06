@@ -184,6 +184,8 @@ def enqueue(supervisor, session_id, actor, text):
 
 
 def enqueue_in_transaction(db, supervisor, session, actor, text, *, attempt_id=None):
+    from acc.server import claude_auth
+    claude_auth.require(db, session)
     validate_text(text)
     count = len(list(db.scalars(select(MessageDelivery.id).where(
         MessageDelivery.session_id == session.id, MessageDelivery.state.not_in(TERMINAL)).limit(21))))
@@ -228,6 +230,8 @@ def authorized(db, session, actor):
 async def safety(supervisor, session_id, writer_token=None, actor=None):
     with supervisor.db() as db:
         session = supervisor._get(db, session_id)
+        from acc.server import claude_auth
+        claude_auth.require(db, session)
         if not runnable(session) or actor is not None and not authorized(db, session, actor):
             return False
         if session.team_id:
@@ -356,6 +360,16 @@ async def _deliver(supervisor, identifier, progress=None):
         with supervisor.db() as db:
             row = db.get(MessageDelivery, identifier)
             session_id, text, actor = row.session_id, row.body, row.actor
+            if writers:
+                session = db.get(Session, session_id)
+                if session and session.runs:
+                    writers.bind_run(session_id, str(session.runs[-1].id))
+        with supervisor.db() as db:
+            from acc.server import claude_auth
+            session = supervisor._get(db, session_id)
+            await claude_auth.refresh(supervisor, db, session)
+            db.commit()
+            claude_auth.require(db, session)
         if writers:
             acquired, displaced = writers.claim(session_id, writer_token, False)
             if not acquired:
@@ -392,10 +406,13 @@ async def _deliver(supervisor, identifier, progress=None):
                 if trusted is not None and peer_uid(writer) not in trusted:
                     raise ValueError('untrusted broker')
             writer.write(json.dumps({'id': 1, 'method': 'attach', 'params':
-                {'tmux_name': name, 'readonly': False, 'rows': 30, 'cols': 120}}).encode() + b'\n')
+                {'tmux_name': name, 'readonly': False, 'automated': True, 'rows': 30, 'cols': 120}}).encode() + b'\n')
             await writer.drain()
             hello = response_from(await asyncio.wait_for(reader.readline(), 5), 1, attach=True)
             if not hello.get('ok'):
+                from acc.server.claude_auth import AutomationRefused
+                if hello.get('code') == AutomationRefused.code:
+                    raise AutomationRefused()
                 raise ValueError('attach refused')
             ready = asyncio.Event()
             async def drain():
@@ -499,7 +516,9 @@ async def _deliver(supervisor, identifier, progress=None):
         with supervisor.db() as db:
             row = db.get(MessageDelivery, identifier)
             if row and row.state not in TERMINAL:
-                transition(db, row, 'failed', error='input_conflict' if isinstance(error, InputConflict) else 'submission_unconfirmed')
+                from acc.server.claude_auth import AutomationRefused
+                transition(db, row, 'failed', error='claude_subscription_automation' if isinstance(error, AutomationRefused)
+                           else 'input_conflict' if isinstance(error, InputConflict) else 'submission_unconfirmed')
                 db.commit()
     finally:
         if writers and session_id:

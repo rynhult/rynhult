@@ -2,7 +2,7 @@
 
 Rynhult is an **Operate** surface (impeccable's term): a dense, calm control room used mostly from a MacBook, sometimes from a phone.
 References: Linear (navigation, density, ⌘K), Vercel and Railway (status and project cards), GitHub (lists), Grafana (meters).
-Everything visual is defined in `web/src/index.css` (tokens) and `web/src/components/ui.tsx` (primitives). Pages compose those; they never define colours, radii or type sizes of their own.
+Everything visual is defined in `web/src/index.css` (shared tokens), `web/src/shell-palette.css` (new-shell palette tokens) and `web/src/components/ui.tsx` (primitives). Pages compose those; they never define colours, radii or type sizes of their own.
 
 ## Principles
 1. **Status first, prose second.** The first screen answers "what needs me, what is running, is acc-host healthy".
@@ -38,6 +38,10 @@ The Rynhult kit supplies Charcoal, Slate, Frost, Snow, Periwinkle, Text and Mute
 | `idle` | #b9cfe1 | #50657a | idle / stopped |
 
 `line` and `line-strong` are decorative. Essential control boundaries use `line-input`, and keyboard focus uses `accent` with a 2 px outline and 2 px offset. Status always has words or a labelled icon as well as colour. Danger, warning and healthy colours remain distinct from the brand accent. Native controls use the matching `color-scheme`. The browser theme-colour metadata uses Charcoal / Snow; the installed-app splash uses Charcoal.
+
+### Selection readability (P5)
+
+App text selection uses opaque `accent` / `accent-ink`, preserving the text and boundary contrast above in both appearances. The terminal retains its app-owned palette: xterm selection `#52627a` against `#0b0d10` has 3.14:1 boundary contrast and `#e6e8eb` selected text has 5.05:1 contrast. The plain selectable terminal fallback uses opaque `#abb6ff` / `#10191f` in both appearances. Community palettes cannot override terminal colors; generated custom selection pairs and trusted built-in review chrome are checked separately.
 
 ### Computed contrast (WCAG 2.x, 2026-10-24)
 
@@ -159,6 +163,333 @@ People read words, not engine identifiers. The exact value stays reachable in a 
 - External sessions (root-admin) open in Claude Remote Control from the sidebar and ⌘K; ACC never holds a terminal into a root session.
 - Accounts merged into **Providers** (logins, re-login and plan usage in one place). `/accounts` redirects there.
 
+## New shell (P1 and P2a, Preview)
+
+### Mockup palette (desktop first)
+
+`Shell` sets `html[data-shell-palette="mockup"]` before paint and removes it on
+unmount. Cold Status board documents do not mount the shell; warm trips retain
+its working-view resources while hiding frame chrome and removing the attribute. The attribute
+scopes the overrides in `shell-palette.css`, including body-mounted dialogs.
+The stylesheet loads with the lazy Shell chunk, keeping its tokens out of the
+initial sign-in and standard-layout CSS payload. The standard
+layout, sign-in and views outside the frame keep the original v3 palette.
+`Shell.css` uses the sidebar surface and selected tint rather than approximating
+those with the card surface. The main content uses `--panel`, matching the
+mockup's `.ry-main`; the dark sidebar is darker than the content. Cards retain
+their existing borders on that same panel surface. No preference, latch, layout
+or terminal behavior changes.
+
+Values come from the rendered `#rynhult-concept` / `#rynhult-recovery` styles in
+the assigned workspace and exception-states prototypes, which override their
+generic blue framework defaults. These are the warm neutrals/lavender visible in
+the dark/light workspace mockups. Existing semantic names remain the public API:
+
+| Mockup role / inner token | Rynhult token | Dark | Light |
+| --- | --- | --- | --- |
+| Background / `ry-bg`, `bg` | `--bg` | `#141719` | `#f6f5f2` |
+| Main content and card / `ry-panel`, `panel` | `--panel` | `#1c2023` | `#fffefa` |
+| Secondary/sidebar / `ry-side`, `side` | `--panel-2` | `#191c1f` | `#eeede8` |
+| Hover surface (derived) | `--panel-3` | `#292e32` | `#e3e3df` |
+| Foreground / `ry-ink`, `ink` | `--text` | `#eceeea` | `#242930` |
+| Muted foreground / `ry-muted`, `muted` | `--muted`, `--faint` | `#a2abae` | `#5b6469` |
+| Primary/ring (light contrast variant) / `ry-accent`, `accent` | `--accent` | `#b6b7fa` | `#414da6` |
+| Selected/accent surface / `ry-tint`, `tint` | `--accent-tint` (new) | `#303044` | `#e9e9fa` |
+| Divider / `ry-line`, `line` | `--border` | `#33393b` | `#dedfd9` |
+| Control edge (production AA variant) | `--border-input`, `--border-strong` | `#8da4b2` | `#627987` |
+| Primary hover (production variant) | `--accent-strong` | `#939ef2` | `#3d4c9e` |
+| On primary (production variant) | `--accent-ink` | `#10191f` | `#ffffff` |
+| Good (production safety variant) | `--ok` | `#84ecb7` | `#086039` |
+| Warning (production safety variant) | `--wait` | `#ffd78d` | `#794200` |
+| Danger (production safety variant) | `--bad` | `#ffa0a0` | `#aa1e24` |
+| Information (production variant) | `--info` | `#b6ddff` | `#174f9e` |
+
+The light mockup muted text `#626b70` is darkened slightly for AA over hover
+surfaces. The light accent replaces mockup `#5355ad` with `#414da6` so accent
+text and focus rings retain at least the legacy contrast on all four surfaces
+(6.79 / 7.34 / 6.31 / 5.75:1 on background / panel / sidebar / hover).
+Quiet dividers are decorative; controls use the stronger input edge.
+Production warning/danger colours, status ink, badge opacity and focus-ring
+thickness are retained so Security/Unrestricted and offline/attention states
+remain prominent. Checks cover 4.5:1 text across the four surfaces, tinted status
+badges, selected text and primary buttons, plus 3:1 control edges/focus colour.
+Existing Inter/mono type, 11/12/15px shell label/meta/title scale, body type and
+6px shell control radius remain unchanged; this slice transfers colour, not the
+mockup's future multi-pane layout or renderer/terminal palette.
+
+
+`new_shell` defaults off and is sensitive: enabling the Preview requires recent
+sign-in verification. A person's `ui_shell.<username>` preference opts in only
+when that feature is enabled. App owns a per-person, per-load latch, including trips
+to the full-screen `/board`. Neither query refreshes nor preference saves replace a
+mounted frame. Sign-out clears the latch. Preference/feature changes apply on the
+person's next reload or sign-in. The old frame and old Project Overview remain the
+default; Continue working is rendered only under the latched new frame.
+
+**Coordinator amendment, 1 November 2026:** no Switch now action, programmatic
+reload or layout-changing navigation. The preference says “Takes effect the next
+time you reload Rynhult.” If the feature becomes disabled while Shell is mounted,
+a non-modal notice says “An owner turned the new layout off. Rynhult will use the
+standard layout the next time you reload.” It has no reload button. Save work
+before a self-initiated reload: scrollback and in-memory drafts are not preserved
+by this slice. Legacy form guards and draft persistence are unchanged. A shared
+unsaved-work registry and visible persistence failures are a separate P0 contract.
+
+- **Navigation:** `shell/navigation.ts` derives rail and Tools from `navFor`'s role,
+  group-administration, desktop and feature filtering. Its level-visibility hook
+  defaults to showing all authorized entries. Rail items are buttons with
+  `aria-pressed`; they open each primary destination and select its sub-navigation.
+  Hosts opens `/hosts`, Tools opens `/catalog`; Overview and Grid hide the context column.
+  `/board` hides new-shell chrome while retaining its resource owner; the desktop `/` → `/projects` redirect stays.
+- **Project sidebar at volume:** Available projects is paged at 20, stably ordered
+  by slug then ID. Search covers the full authorized list (name, slug, repository)
+  and resets paging. Data-derived filtering/order is memoized against project data;
+  keyed rows retain DOM identity across unrelated polling. Pinned/recent selections
+  remain separate. Phone Browse gives the sidebar a bounded flex scroll area below
+  its fixed mode controls. Rows use ordinary layout, without offscreen containment.
+- **Project menu (polish 1):** project rows are native Overview links. The route
+  determines the authorized menu: Work, Project and Working locations. Session
+  routes resolve their project through the authorized session summaries and project
+  list, including Files and Changes tabs. No previous selection is retained as a
+  fallback for an unknown session. Changes
+  is a new-shell-only index linking to existing session Changes views; it never
+  attaches a terminal. Pinning is separate; Back to all projects opens the list.
+- **Security shield (polish 1):** the owner's required header control is a native
+  link to the existing scoped Security editor, styled as a compact shield button.
+  Hover/focus exposes a dismissible, hoverable tooltip containing full current
+  copy and scope. Neutral check, warning exclamation, unavailable question mark
+  and offline slash distinguish states without relying on colour alone. Unrestricted
+  uses solid warning fill and status ink; older-session counts use an amber marker.
+  Stale data is labelled last known. Shared policy selection and member boundaries
+  stay unchanged; the standard layout and frozen-session badges keep their dialogs.
+- **Sidebar sizing (polish 1):** a focusable vertical separator resizes 208–400 px,
+  using pointer capture, Left/Right steps of 8 px, Home/End limits and double-click
+  reset to 256 px. Width and collapse persist in origin/person local keys. F6
+  skips collapsed or unused context columns; selecting a desktop destination with sub-navigation expands it.
+- **Header:** brand/host/broker, optional modules, project-aware New session and
+  account. The optional defaults are Machine load, Plan usage, Go to (existing
+  palette), Search conversations and Find project files. Security badge, Live
+  indicator, connection banner and Update available retain Layout's
+  visibility conditions and cannot be hidden or reordered by customization. The
+  desktop header uses one compact row; connection and Inbox notices remain below.
+  Below 1200 px optional modules move into Header tools. Desktop search/customize
+  controls use icons with accessible names and hover titles. Provider summaries
+  show the highest used window per provider; their keyboard-accessible popover
+  lists every window and provenance.
+  Only owners mount `/api/board`, `/api/providers` and `/api/accounts` readings;
+  absent member-visible load data means no load module. Usage retains account,
+  provider, window, age and source; no cross-provider utilization total.
+- **Header customization (AC-008):** GET/PUT `/api/preferences/ui-header` stores
+  `ui_header.<authenticated username>`, using ui-shell's principal/CSRF contract.
+  Installation tokens have their own principal namespace. The preference is
+  `{order, hidden}`: order is a permutation of the five known optional module IDs
+  (`machine_load`, `plan_usage`, `go_to`, `conversation_search`, `file_search`),
+  hidden is a unique subset. Both lists are bounded to five; unknown/required IDs,
+  duplicates, missing order entries and extra fields are rejected. Invalid stored
+  presentation falls back to defaults; the identity inventory includes `ui_header.`.
+  The client query is person-keyed. Explicit Save applies only a successful server
+  response; errors retain the editor's choices. Reset fills the default draft for
+  Save. This is a small last-save-wins preference, not a shared layout revision.
+  Move up/down buttons support keyboard reordering and announce the new position.
+  On phones, visible optional modules and customization live in Header tools, a
+  mixed-content overflow popover with ordinary Tab navigation and Escape. The
+  file-search controller stays mounted outside the popover so its target and
+  shortcut survive closing/resizing. Owner reading queries retain their existing
+  role gate and polling whether shown or hidden; members never mount them.
+- **Keyboard/phone:** arrows move rail focus, Enter selects, F6 cycles header →
+  rail → sidebar → content (reverse with Shift, skipping unused context columns). Existing terminal F6 escape
+  takes precedence. Phone: one view, bottom rail and More sheet, unchanged
+  terminal key bar. The sidebar edge separator supports keyboard adjustment. Shell styles
+  use shared light/dark color tokens and centralized `--shell-*` type/radius tokens.
+- **Local presentation:** origin is the installation namespace. The preference
+  API returns an opaque UUID5 from the immutable, permanently reserved username,
+  rather than the reusable SQLite User.id. Keys are
+  `rynhult:shell:v1:<encoded origin>:<opaque person id>:<mode|width|collapsed|pins|recent>`.
+  Service principals return no person ID and do not persist presentation. Pins
+  and recents contain only project IDs, resolved against the current authorized
+  list on every render. Other people's keys remain inert after sign-out. Storage
+  errors fall back to current in-memory presentation; no draft is stored here.
+- **Continue:** a normal link to `/sessions/:id`, including offline machines.
+  It never launches, resumes, stops, sends input or requests takeover. **Slice
+  exception to P2's view-restoration contract:** opening a terminal retains the
+  P1 automatic input claim only when no writer exists (superseded for P2 working views below). An existing writer
+  keeps control and the new window is read-only. No `take=1`, tty arbitration or
+  terminal-lifetime changes. Resume/Stop/New session stay separate. Machine offline
+  disables only Resume, with the machine reason. Stop, Interrupt and Archive keep
+  their standard-layout state/connection conditions (S1); an offline machine alone
+  cannot disable them.
+  Continue lists use 20-row pages. Members read older-settings facts only through
+  these visible sessions’ existing detail endpoints (at most 20 polls per 10s);
+  owners reuse the existing policy inventory. No security API is widened. Older settings
+  is informational; Resume eligibility and refusal wording belong to the server.
+- **States:** reuse `session-bits` and `order`, without inventing a state layer:
+  `starting` → Starting, `active` → Working, `waiting_input` → Needs you,
+  `idle` → Idle, `exited` → Exited, `recovering` → Recovering,
+  `recovery_needed` → Recovery needed, `stopped` → Stopped, `archived` → Archived.
+  Stale observations are Unknown. Machine offline, recovery needed and an
+  unconfirmed stop remain distinct; offline rows retain the last observed state.
+
+- **Project filename search (AC-060):** shell-only header dialog, Ctrl/⌘ Shift F.
+  It initializes from the working project's route on first opening, never the
+  sidebar's browsed project. The selected project ID stays in memory for the frame's
+  lifetime unless explicitly changed, resolved through the authorized project list.
+  Project, machine, account and primary folder are visible; session worktrees are
+  explicitly excluded. The project Files search API owns placement and permissions.
+  Requests debounce 300ms, request at most 20 results, and cancel on typing, target
+  change or close; no automatic retries, polling or retained search-result cache.
+  Partial, offline/unavailable, error and complete empty states remain distinct.
+  Shared announcements report progress. Native result links support arrows/Enter
+  and open encoded Files deep links through existing unsaved-edit guards.
+
+### Recent results (AC-007, new shell only)
+
+The project Overview reuses its authorized Knowledge index and DocViewer for
+handoffs, council reports and research findings. Sort by file modification time,
+newest five indexed notes; call the age Updated, never completed. This is the
+checkout's bounded index (up to 100 filenames/category), not private-worktree or
+cross-source result history. View all opens the existing Knowledge section.
+Session attribution requires a whole filename ID matching exactly one authorized
+session in this project, including archived sessions. Missing/ambiguous references
+stay Session not recorded; an unavailable session list stays unavailable. No new
+backend APIs, grants or per-session detail fan-out. Initial failure, empty success
+and stale retained data remain distinct. Use shared cards, tokens and wrapping at
+phone widths. The standard Overview mounts no Recent results block.
+
+### Hosts destination (AC-011, new shell only)
+
+`/hosts` is the overview reached directly from the Hosts rail button. Machine
+links in the contextual sidebar open their existing `/host` detail destination. `/host` keeps
+its existing view and operations; the standard shell redirects the new alias
+there. Host cards use shared tokens and one column at phone widths.
+
+Owners reuse `/api/board` for machine inventory/node summaries and the existing
+`/api/host` for the main machine's separate live and collector provenance. Members
+only query their existing filtered `/api/host` main view, never board or node
+inventory. Authorized session/project
+queries supply visible active work and recorded working paths. Group placements
+come through existing group membership/viewer checks and link to the group's
+Projects surface, not personal-project routes. No endpoint or permission is
+added. Unknown/failed/offline connection states never imply Idle or zero health;
+observation and last-seen ages stay visible, including after a failed refresh.
+Main CPU/memory use live `measured_at` (or explicitly labelled response receipt
+when absent); disk uses collector `collected_at`, never board's mixed local-light
+timestamp. Collector stale alerts remain visible beside fresh live readings.
+Node readings name their summary source/age. Failed session refresh marks work
+unavailable and dates retained saved counts using the session query's own last
+success, in both sidebar and cards; machine freshness cannot date work counts.
+### Authority changes in shared project/session lists
+
+Project and session list query keys include current person, role and agent account.
+Role changes do not borrow wider cached rows as placeholders during a fresh read
+or failed refresh. Existing resource-prefix invalidation still reaches the scoped
+queries. Project Overview selects from the same authority-scoped project list;
+revoked project children cannot keep rendering cached Continue or result views.
+Settings picker and shell sidebar browsing selection reset with authority; stored
+pin/recent IDs remain inert unless resolved by the current authorized list. This
+is a client visibility boundary, not a replacement for backend authorization or a
+complete audit of every detail endpoint/cache.
+
+### Settings scopes (AC-013, new shell only)
+
+Account / Project / Installation organizes navigation to the existing sections.
+Installation stays owner-only. Project choice resolves only against the existing
+authorized project list; a context URL supersedes an earlier browsing selection.
+Project links retain runtime/desktop/managed/private-workspace availability.
+Members retain read-only project Security and no owner policy inventory.
+
+Security shortcuts use the existing scoped URL and sole Security component;
+Allowed folders shortcuts use the existing sole account root-list route, with
+machine/account coordinates where known. Project policy does not become a
+project-only filesystem grant. No editor, save API, permission or store is copied.
+All existing section fragments, aliases and dedicated routes keep working; the
+standard shell is unchanged. The new Project settings fragment is links only.
+Hidden section mounting, draft caches, dialogs, validation/error reveals and
+attention summaries retain their existing behavior. Scope navigation uses native
+links and shared tokens, including phone wrapping and focus outlines.
+
+P2 adds server-backed personal working layouts and retained terminal/editor
+resources, as described below.
+
+### Opt-in page chrome (U1)
+
+`components/shell/PagePrimitives.tsx` provides page-body presentation, separate
+from the shared header/sidebar and the future column runtime. Each primitive
+checks the existing `ShellChoice`; standard layout delegates to `ui.tsx` with
+unchanged props and markup. Nothing changes feature defaults or preferences.
+
+| Primitive | Contract |
+| --- | --- |
+| `ShellPage` | Existing 1280/1600px max widths; 20px desktop gutter/rhythm, 16px narrow gutter; 14px/1.5 base type. |
+| `Workbar` | Optional `breadcrumb` React content (omitted unless a caller supplies actual context), 20px/600 h1, 13px description, wrapping actions/meta and a bottom divider. Retains document-title behavior. Use links for navigable breadcrumb parts. |
+| `Surface`, `SurfaceHeader` | Semantic section/h2, flat panel with divided edges, no shadow/rounded container nesting; wrapping existing header/actions. Domain widgets retain their own styling. |
+| `PaneTabs` | Existing `Tabs` API, IDs, panels, roving keyboard selection and overflow; 32px desktop pills, 44px coarse-pointer targets, semantic selected tint. |
+| `PageStack` | Shared 20px vertical rhythm; legacy 24px rhythm outside the new shell. |
+
+All colours are existing semantic tokens, including `accent-tint`; no new
+palette or font family. `PagePrimitives.css` targets only explicitly rendered
+primitive classes, not arbitrary cards, dialogs, warnings, terminal output or
+recovery notices. Consumers can alias these exports to their existing local
+Page/PageHeader/Card names; do not switch the shared legacy primitives globally.
+
+Initial adopters: global Overview, Sessions list, Inbox, Settings, Host details,
+Catalog/Tools panels and Files tree/selected-file chrome. The global Overview
+and Files were gated with 1440px dark/light before/after screenshots before
+rolling to the other routes. Project pages, shared shell header/sidebar and
+recovery-state presentation remain with their respective owners. Their owners
+can adopt these same primitives without adding another style or state system.
+
+P2a adds device-local working columns and persistent terminal/editor hosts below.
+Server-backed layout synchronization, Hosts redesign and recent results remain
+follow-ups, not implied capabilities of this shell.
+
+### P2a working columns and resource ownership
+
+The new shell's `WorkingArea` owns up to three tabbed columns. Terminal/page minimum
+width is 320px; Files and Chat need 360px, Preview 400px. Below the combined minima,
+one complete column exposes every tab without rewriting the saved desktop layout.
+Move and resize use pointer controls and labelled keyboard controls; Fill/Restore
+changes geometry only. Tabs use route-independent IDs; geometry never adds history.
+Use shared surfaces, borders, type tokens and visible focus styles. On 320–390px
+headers, keep the brand's intrinsic width; wrap or shrink the host independently.
+
+Stable keyed view hosts retain Files/Chat components. `TerminalOwner` wraps the
+reviewed registry and a body-level host layer: xterm, its input subscription and
+socket stay attached to one host. Geometry waits for preedit to finish. Terminal
+selection is mapped back from selected content to cells after reflow (including
+wide characters); scrolled readers retain an anchored buffer line. Hidden views
+stop expensive detail/artifact/delivery/Chat work. One shared status/auth watcher
+per retained session and a bounded Files recheck remain; terminal output still drains.
+
+Working terminals attach as observers, bound to the server's current SessionRun
+and stored node/account. Control is explicit on the same socket and tmux client.
+Input/control/resize carry the run and writer epoch; the existing writer arbiter
+also fences automated delivery. Partial printable input blocks automation but permits an explicit human handover or release after confirmation; unacknowledged bytes and active composition still block. Arrow keys, mouse reports and terminal replies do not create a partial-input hint. Handover never clears or replays bytes. Both shells use bounded reason enums; granted and refused attempts audit the previous actor/channel, target run, new channel, reason and outcome without input text.
+Recheck never replays input. Closing a placement never stops a session or releases
+a retained writer with unresolved input. Clean hidden writers release automatically; partial input offers an inline Show chip. Other controllers use one inline toolbar chip. Explicit Detach
+frees the attachment, warning about unresolved input. Auth/run loss seals input
+and removes terminal content; restored unavailable views use neutral placeholders.
+
+The column registry bounds references to 32, attachments/xterm hosts to eight,
+visible terminals to four, and scrollback to 10,000 rows each. Eight file buffers
+have 1 Mi UTF-16-unit limits for each draft/base version; conflict copies use the
+same file-read limit. Dirty, composing and unresolved-input resources stay pinned. At the attachment budget, the least recently used clean hidden terminal releases control and detaches; returning reattaches with its saved scroll position. Protected input may exceed the attachment budget. Clean hidden terminals also expire after ten minutes. The open session Terminal rechecks the run and claims free control after a restart.
+These are enforced registry limits, not a measured whole-browser memory budget.
+
+Files use a shared canonical document owner, server file identity and a checkout
+revision derived from pinned directory identities. Aliases focus the existing
+editor. A replaced checkout cannot receive an old draft, even with identical
+content. Concurrent writes preserve the original base and draft for resolution.
+Drafts remain volatile until server Save succeeds; closing a dirty file asks,
+pending saves refuse close, and one beforeunload guard covers retained work.
+The broader P0 unsaved-form/durable-draft work remains separate.
+
+`deviceLayoutStore.ts` is the device-only persistence seam. Versioned, strictly validated
+presentation records are scoped to installation, immutable person ID and project
+or private workspace. Sign-out/frame teardown removes their private file paths; person changes and refreshed authorization inventories remove obsolete scopes. Explicit archived-history links remain readable; only restored archived references are neutral placeholders. Workspace Files landing pages without a session bypass resource restoration and show their existing guidance. They store references/placement only. Read/write/quota
+failures remain visible and keep the current in-memory layout. No server layout
+sync, authority restoration, command replay or automatic process launch is added.
+Chat stays read-only and uses these columns for its beside-terminal action.
+
 ## Status board
 `/board` (owners) is the one page outside the shell: no sidebar or top bar, made for a 16:9 display read from across a room, and usable in an ordinary window. It follows the same tokens and theme, and the same principles; "healthy is quiet" matters most here.
 - **Layout:** a header row of `BoardStat`s (Needs you, Working, Machines, Machine alerts, Inbox), then a 12-column, two-row grid filling the rest of the screen: Machines and Projects (4 columns), Running sessions (5, both rows), and Plan usage, Inbox and Recent alerts (3). The page never scrolls at 1440x900 or larger; each `BoardPanel` scrolls on its own (a focusable region named after it). Below `lg` the panels stack.
@@ -195,3 +526,55 @@ cd web && npm ci && npm run build
 ```
 
 accd serves the build from disk, so no restart is needed. The previous build is also archived at `/var/backups/acc/ui-static-pre-ux-redesign.tar.gz`.
+
+### New-shell project pages
+
+Under the mounted new shell, Projects uses a 20-row directory with Project,
+Source repositories, Working locations and Activity columns. Search, host,
+repository owner and archived filters use the existing authorized project/session
+queries; no machine inventory is fetched to populate the host filter. Filters
+update native controls synchronously and persist in the URL. Archive and Delete
+remain secondary row-menu actions. The standard Projects component is unchanged.
+
+Project Overview keeps notes on one compact line and puts section tabs directly
+below the title. Sessions retains the existing Continue actions and paging.
+Results and Working locations have their own tabs; the duplicate brief summary
+is removed. Repository and authorized group-location details live in Working locations.
+Existing Files, Preview, health information and project sections remain reachable.
+Page styles are shell-scoped, using semantic palette tokens only. The directory
+shows the registered repository and primary host that the current project API
+provides; it does not invent multi-repository counts, completion claims or wider
+member visibility. Recent results reuses Knowledge and its document viewer.
+
+
+### New-shell polish round 3
+
+The optional shell replaces its Inbox status banner with an open-count rail badge (zero hidden, visual 99+ cap, full accessible count and unavailable/stale wording). The standard layout retains its existing banner. Inbox remains the destination for every notice category.
+
+New-shell session pages use one primary line plus a tabs row. Title/provider/state and primary lifecycle controls remain visible; metadata and secondary actions use Session details. Delivery is an inline chip linking to Activity. Retained terminal controls render into the tab row through a portal owned by the same SessionPage; no terminal-owner acquisition, writer fencing or lifecycle behavior changes. Secondary terminal controls use the shared keyboard-accessible popover. Narrow panes wrap controls without widening the working column.
+
+Hosts context links show names and connection dots only, pointing directly to the existing per-host view. Rich observations remain in the Hosts overview and existing host pages. Every rail item opens its primary page directly; Tools opens Catalog. Useful sub-navigation remains, with no intermediate open-page links. Grid and Overview hide their context columns. Retained working resources survive rail navigation. These are presentation changes only, with no permission or legacy-layout changes.
+
+Shell follow-up: Grid adopts ShellPage/Workbar while keeping its flexible terminal area; standard layout delegates to its original frame. Rail selection derives from whole route segments in authorized navigation, including nested session/project and Tools routes. Terminal key rows use coarse-pointer visibility rather than viewport width, so narrow desktop panes do not acquire touch chrome.
+
+The context column reserves horizontal space beside its heading for collapse, rather than an empty band above it. Title and short stats form a compact header. Scoped lists use 36–40px desktop rows and at least 44px coarse-pointer targets; long content may wrap. Footer hints stay muted, and project titles retain their full accessible name and hover title.
+
+Session panes in column layouts keep the compact primary line, 12px side gutters and the metadata title scale. New-shell Session views place Setup, Activity and Handoffs under More; the selected tab stays in the strip with the existing tab/panel IDs and keyboard behavior. Standard layout keeps its default desktop strip.
+
+Registered terminal views grow into the remaining session pane height through the chat/terminal frame, retaining a 320px minimum on short viewports. Height changes use the existing slot/terminal resize observers and do not reacquire the terminal or change its writer.
+
+### Terminal file gestures
+
+Both terminal layouts capture paste/drop only when DataTransfer contains files;
+text-only paste remains xterm-owned. Terminal uploads reuse the Files upload API,
+limits and broker folder policy, with a ten-file gesture limit. The server binds
+uploads to the person's current writer connection; the broker chooses unique,
+sanitized paths under `.rynhult/uploads/`. Local Git info/exclude is updated only
+when the session folder is the repository root; linked worktrees must have a
+matching metadata backlink. Exclude files are opened without following symlinks,
+and an exact whole-line match prevents duplicate rules.
+The browser accepts only `.rynhult/uploads/` paths with ASCII letters, digits,
+dots, underscores and hyphens in the filename. An invalid path refuses insertion
+of the entire batch. Successful paths are relative to the session folder and go
+through terminal input without a newline. Progress/refusals appear in a polite
+status beside the toolbar; its tooltip explains the relative-path base.

@@ -1,3 +1,4 @@
+import { Surface as Card, SurfaceHeader as CardHeader, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -6,7 +7,7 @@ import { api } from "../lib/api";
 import { ago, size } from "../lib/format";
 import { diskMountWords } from "../lib/words";
 import { Activity, ChevronRight, Container, Cpu, HardDrive, Laptop, MemoryStick, RefreshCw, ServerCog, Users } from "lucide-react";
-import { Badge, Button, Card, CardHeader, Dot, Empty, ErrorNote, Meter, Page, PageHeader, Skeleton, StaleNote, Stat } from "../components/ui";
+import { Badge, Button, Dot, Empty, ErrorNote, Meter, Skeleton, StaleNote, Stat } from "../components/ui";
 import type { HostView, RemoteHostView } from "../lib/types";
 import { useInstance, useRole } from "../lib/queries";
 import { HostBackups } from "../components/HostBackups";

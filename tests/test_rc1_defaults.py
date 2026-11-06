@@ -1,5 +1,5 @@
-"""A fresh installation is closed by default (final RC security audit): Previews, company sign-in, mobile enrollment
-and remote access are off; Orchestrator is on by owner decision; first-run setup needs the one-time token; every answer carries the security headers."""
+"""A fresh installation is closed by default (final RC security audit): Higher-risk previews, company sign-in, mobile enrollment
+and remote access are off; the new layout is on; Orchestrator is on by owner decision; first-run setup needs the one-time token; every answer carries the security headers."""
 import httpx
 import pytest
 

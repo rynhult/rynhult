@@ -1,0 +1,393 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "receipts",
+ "cases": [
+  {
+   "name": "dispatch claim",
+   "from": "queued",
+   "to": "submitting",
+   "valid": true,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "cancel before claim",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "cancelled",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "expire before claim",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "expired",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "queued failure needs a reason",
+   "from": "queued",
+   "to": "failed",
+   "valid": false,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "queued cannot claim rejection",
+   "from": "queued",
+   "to": "failed",
+   "valid": false,
+   "reason": "rejected",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "queued cannot jump to accepted",
+   "from": "queued",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "provider_admission",
+   "method": "turn.submit"
+  },
+  {
+   "name": "provider admission",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "provider_admission",
+   "method": "turn.submit"
+  },
+  {
+   "name": "accepted without evidence",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "accepted on rejection evidence",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "provider_rejection",
+   "method": "turn.submit"
+  },
+  {
+   "name": "lost response",
+   "from": "submitting",
+   "to": "uncertain",
+   "valid": true,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "provider rejection",
+   "from": "submitting",
+   "to": "failed",
+   "valid": true,
+   "reason": "rejected",
+   "evidence": "provider_rejection",
+   "method": "turn.submit"
+  },
+  {
+   "name": "proven broker refusal",
+   "from": "submitting",
+   "to": "failed",
+   "valid": true,
+   "reason": "rejected",
+   "evidence": "broker_refusal",
+   "method": "turn.submit"
+  },
+  {
+   "name": "submitting cannot fail unproven",
+   "from": "submitting",
+   "to": "failed",
+   "valid": false,
+   "reason": "run_ended",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "submitted turn cannot be cancelled",
+   "from": "submitting",
+   "to": "failed",
+   "valid": false,
+   "reason": "cancelled",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "uncertain resolved by admission",
+   "from": "uncertain",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "provider_admission",
+   "method": "turn.submit"
+  },
+  {
+   "name": "uncertain resolved by rejection",
+   "from": "uncertain",
+   "to": "failed",
+   "valid": true,
+   "reason": "rejected",
+   "evidence": "provider_rejection",
+   "method": "turn.submit"
+  },
+  {
+   "name": "uncertain never requeues",
+   "from": "uncertain",
+   "to": "queued",
+   "valid": false,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "uncertain never resubmits",
+   "from": "uncertain",
+   "to": "submitting",
+   "valid": false,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "uncertain does not fail on expiry",
+   "from": "uncertain",
+   "to": "failed",
+   "valid": false,
+   "reason": "expired",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "accepted is terminal",
+   "from": "accepted",
+   "to": "failed",
+   "valid": false,
+   "reason": "rejected",
+   "evidence": "provider_rejection",
+   "method": "turn.submit"
+  },
+  {
+   "name": "failed is terminal",
+   "from": "failed",
+   "to": "submitting",
+   "valid": false,
+   "reason": null,
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "submitting cannot fail on rejected without evidence",
+   "from": "submitting",
+   "to": "failed",
+   "valid": false,
+   "reason": "rejected",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "refused before claim: busy",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "busy",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "refused before claim: limit",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "limit",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "refused before claim: policy_refused",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "policy_refused",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "refused before claim: unsupported",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "unsupported",
+   "evidence": null,
+   "method": "turn.submit"
+  },
+  {
+   "name": "evidence is meaningless before claim",
+   "from": "queued",
+   "to": "failed",
+   "valid": false,
+   "reason": "cancelled",
+   "evidence": "provider_admission",
+   "method": "turn.submit"
+  },
+  {
+   "name": "broker refusal evidence is meaningless before claim",
+   "from": "queued",
+   "to": "failed",
+   "valid": false,
+   "reason": "busy",
+   "evidence": "broker_refusal",
+   "method": "turn.submit"
+  },
+  {
+   "name": "hub commit settles control.claim",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "control.claim"
+  },
+  {
+   "name": "hub commit settles control.take",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "control.take"
+  },
+  {
+   "name": "hub commit settles control.release",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "control.release"
+  },
+  {
+   "name": "hub commit settles session.stop",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "session.stop"
+  },
+  {
+   "name": "hub commit settles session.resume",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "session.resume"
+  },
+  {
+   "name": "hub commit settles an uncertain control claim",
+   "from": "uncertain",
+   "to": "accepted",
+   "valid": true,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "control.claim"
+  },
+  {
+   "name": "provider evidence cannot settle control",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "provider_admission",
+   "method": "control.claim"
+  },
+  {
+   "name": "hub commit cannot settle turn.submit",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "turn.submit"
+  },
+  {
+   "name": "hub commit cannot settle turn.interrupt",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "turn.interrupt"
+  },
+  {
+   "name": "hub commit cannot settle decision.reply",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "decision.reply"
+  },
+  {
+   "name": "hub commit cannot settle an unknown method",
+   "from": "submitting",
+   "to": "accepted",
+   "valid": false,
+   "reason": null,
+   "evidence": "hub_commit",
+   "method": "turn.invented"
+  },
+  {
+   "name": "hub commit is not a rejection",
+   "from": "submitting",
+   "to": "failed",
+   "valid": false,
+   "reason": "rejected",
+   "evidence": "hub_commit",
+   "method": "control.claim"
+  },
+  {
+   "name": "late decision reply loses the race",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "conflict",
+   "evidence": null,
+   "method": "decision.reply"
+  },
+  {
+   "name": "contested take loses its CAS",
+   "from": "queued",
+   "to": "failed",
+   "valid": true,
+   "reason": "conflict",
+   "evidence": null,
+   "method": "control.take"
+  },
+  {
+   "name": "conflict needs evidence once submitted",
+   "from": "submitting",
+   "to": "failed",
+   "valid": false,
+   "reason": "conflict",
+   "evidence": null,
+   "method": "control.take"
+  }
+ ]
+}

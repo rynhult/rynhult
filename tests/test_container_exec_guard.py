@@ -221,7 +221,7 @@ def test_guard_executes_only_fixed_podman_after_successful_setup(monkeypatch):
     guard.main()
     # The relay binds and forks only after the identity drop, as the account; then the fixed Podman runs.
     assert events == [('delegate', (1004, 1005, 'acc-ct-s1a2b3c4d5-g1.service')),
-                      ('enter', (1004, 1005, (1, 2))), ('listen', (ATTACH, 1004)), ('relay', ('listener', RUNTIME, 1004)),
+                      ('enter', (1004, 1005, (1, 2))), ('listen', (ATTACH, 1004)), ('relay', ('listener', RUNTIME, 1004, 'acc-ct-s1a2b3c4d5-g1.service')),
                       ('exec', ('/usr/bin/podman', command))]
 
 
@@ -567,3 +567,31 @@ def test_a_client_that_stops_reading_is_dropped(tmp_path):
     assert not done.is_alive() and time.monotonic() - started < 10
     assert isinstance(result[0], TimeoutError)
     os.close(ctl)
+
+
+def test_auth_relay_has_only_a_fixed_read_only_probe(monkeypatch):
+    guard = load_guard()
+    sent, calls = [], []
+    class Client:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def getsockopt(self, *args): return guard.struct.pack('3i', 123, 1004, 1004)
+        def settimeout(self, timeout): pass
+        def sendall(self, data): sent.append(guard.json.loads(data))
+    class Listener:
+        first = True
+        def accept(self):
+            if not self.first:
+                raise RuntimeError('end test')
+            self.first = False
+            return Client(), None
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs['timeout'] == 8
+        return guard.subprocess.CompletedProcess(argv, 0, '{"auth_mode":"api_key"}')
+    monkeypatch.setattr(guard.subprocess, 'run', run)
+    with pytest.raises(RuntimeError, match='end test'):
+        guard.auth_relay(Listener(), RUNTIME, 1004, 'acc-ct-s1a2b3c4d5-g1.service')
+    assert calls[0][-6:] == ['exec', 'acc-ct-s1a2b3c4d5', '/usr/bin/python3', '-I', '-B',
+                             '/opt/acc/runtime/session_runtime.py']
+    assert sent == [{'auth_mode': 'api_key'}]

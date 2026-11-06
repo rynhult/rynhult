@@ -5,7 +5,8 @@ import { useState } from "react";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import { useConfirm } from "./confirm";
-import { Badge, Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, IconButton, Input, QueryState, Select } from "./ui";
+import { Surface as Card, SurfaceHeader as CardHeader } from "./shell/PagePrimitives";
+import { Badge, Button, Dialog, Empty, ErrorNote, Field, IconButton, Input, QueryState, Select } from "./ui";
 
 export interface ModelEndpoint {
   id: string; name: string; kind: string; styles: string[]; models: { id: string; label: string; size?: number }[];

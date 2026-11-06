@@ -1,3 +1,10 @@
+import { RecoverySecurity } from "../components/RecoverySecurity";
+import { SettingsSurfaceScope } from '../components/shell/SettingsSurfaces';
+import { useNewShell } from '../lib/uiShell';
+import { SettingsScopeLinks, settingsScope } from '../components/shell/SettingsScopes';
+import { SetupLevelSetting } from "../components/SetupLevelSetting";
+import { Surface as Card, SurfaceHeader as CardHeader, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
+import { PersonalAppearance } from '../components/PersonalAppearance';
 import { ImageAccess } from "../components/ImageAccess";
 import { AdminFeatures } from "../components/AdminFeatures";
 import { Feature, useFeatures } from "../components/Feature";
@@ -8,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { flushSync } from "react-dom";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { buttonClass, Card, CardHeader, Page, PageHeader, Select } from "../components/ui";
+import { buttonClass, Select } from "../components/ui";
 import { Devices } from "../components/Devices";
 import { NotificationDevices, NotificationSettings } from "../components/NotificationDevices";
 import { Passkeys } from "../components/Passkeys";
@@ -28,10 +35,22 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useInstance } from "../lib/queries";
 import type { AuthState } from "../lib/types";
 
-const PERSONAL = ['Access devices', 'Passkeys', 'Password', 'Sign-ins', 'Notifications', 'Notification devices', 'Keys', 'Risk labels', 'Guardrails', 'Security', 'Certificate'];
-const INSTANCE = ['Admin features', 'Remote access', 'Usage and bug reports', 'Updates', 'Publishing', 'People', 'Company sign-in', 'DNS', 'Issue sources', 'Tool approvals', 'Budgets', 'Selection allow-lists', 'Image access', 'Container limits'];
+import { PERSONAL, INSTANCE } from "../lib/settingsSections";
 const anchor = (name: string) => name.toLowerCase().replaceAll(' ', '-');
 const RENAMED: Record<string, string> = { 'your-devices': 'access-devices', devices: 'notification-devices' };
+/** Sections load after arrival from another route; keep the target at the top until they settle or the person takes over. */
+function holdInView(target: HTMLElement, root: HTMLElement) {
+  const resize = new ResizeObserver(() => target.scrollIntoView({ block: 'start' }));
+  const stop = () => {
+    resize.disconnect(); clearTimeout(timer);
+    for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.removeEventListener(type, stop, true);
+  };
+  const timer = setTimeout(stop, 3000);
+  for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.addEventListener(type, stop, true);
+  resize.observe(root);
+  return stop;
+}
+
 const SettingsView = createContext<{ selected: string; errors: string[] }>({ selected: "all", errors: [] });
 function SettingsSection({ name, children }: { name: string; children: React.ReactNode }) {
   const { selected, errors } = useContext(SettingsView);
@@ -141,6 +160,8 @@ function useAttentionNews(attention: Attention[], selected: string) {
 }
 
 export function Settings() {
+  const shell = useNewShell();
+  const location = useLocation();
   const { hash } = useLocation();
   const navigate = useNavigate();
   const content = useRef<HTMLDivElement>(null);
@@ -152,7 +173,7 @@ export function Settings() {
   // Usage and bug reports stays listed while telemetry is off: deleting data already sent must remain possible.
   const sectionFeatures: Record<string, string> = { "Remote access": "remote_access", Publishing: "publishing", "Issue sources": "issue_sources", "Company sign-in": "organizations", "Selection allow-lists": "orchestrator", Notifications: "notifications", "Notification devices": "notifications", "Risk labels": "risk_labels" };
   const groups = [
-    { label: 'Personal', names: PERSONAL.filter(name => (!sectionFeatures[name] || feature(sectionFeatures[name])) && (name !== 'Certificate' || owner || instance.private_ca)) },
+    { label: 'Personal', names: PERSONAL.filter(name => (!sectionFeatures[name] || feature(sectionFeatures[name])) && (name !== 'Setup level' || shell) && (name !== 'Certificate' || owner || instance.private_ca)) },
     ...(owner ? [{ label: 'Instance', names: INSTANCE.filter(name => (!sectionFeatures[name] || feature(sectionFeatures[name])) && (name !== 'Company sign-in' || instance.organizations) && (name !== 'Selection allow-lists' || instance.orchestrator)) }] : []),
   ];
   const requested = hash.slice(1);
@@ -160,7 +181,14 @@ export function Settings() {
   const known = groups.some(group => group.names.some(name => anchor(name) === section));
   // Unknown fragments retain the old full-page behavior, so future nested anchors
   // still work. An owner-only fragment never grants access to an owner component.
-  const selected = !requested ? 'passkeys' : requested === 'settings-index' || requested === 'all' || !known ? 'all' : section;
+  const selected = shell && requested === 'project-settings' ? 'project-settings' : !requested ? 'passkeys' : requested === 'settings-index' || requested === 'all' || !known ? 'all' : section;
+  const securityScope = settingsScope('security', owner, new URLSearchParams(location.search).get('security_scope'));
+  const securityNames = groups[0].names.filter(name => name === 'Security' || name === 'Guardrails');
+  const chooserGroups = shell ? [
+    { label: 'Account', names: [...groups[0].names.filter(name => name !== 'Security' && name !== 'Guardrails'), ...(securityScope === 'account' ? securityNames : [])] },
+    { label: 'Project', names: securityScope === 'project' ? securityNames : [] },
+    ...(owner ? [{ label: 'Installation', names: [...(groups[1]?.names ?? []), ...(securityScope === 'installation' ? securityNames : [])] }] : []),
+  ].filter(group => group.names.length) : groups;
   const previousFragment = useRef(requested);
   const choosingSection = useRef(false);
   useEffect(() => {
@@ -168,6 +196,7 @@ export function Settings() {
     previousFragment.current = requested;
     if (choosingSection.current) { choosingSection.current = false; return; }
     if (!requested && previous === requested) return;
+    let stopHolding = () => {};
     const targetId = requested === 'all' ? 'settings-index' : (RENAMED[requested] ?? requested) || 'passkeys';
     const focus = () => {
       const target = document.getElementById(targetId);
@@ -176,19 +205,21 @@ export function Settings() {
       if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
       target.scrollIntoView({ block: 'start' });
       target.focus({ preventScroll: true });
+      if (shell) stopHolding = holdInView(target, content.current!);
       return true;
     };
-    if (focus()) return;
+    if (focus()) return stopHolding;
     // Some bookmarked targets arrive with query results (e.g. DNS credentials).
     const observer = new MutationObserver(() => { if (focus()) observer.disconnect(); });
     observer.observe(content.current!, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [requested, selected]);
+    return () => { observer.disconnect(); stopHolding(); };
+  }, [requested, selected, shell]);
   const announced = useAttentionNews(attention, selected);
   return (
     <Page>
-      <PageHeader title="Settings" description="Your sign-in, keys, devices and notifications; owners also manage instance policy." />
-      <nav id="settings-index" tabIndex={-1} aria-label="Settings sections" className="space-y-3 scroll-mt-4">
+      <PageHeader title="Settings" description={shell ? undefined : 'Your sign-in, keys, devices and notifications; owners also manage instance policy.'} />
+      {shell && <div hidden={selected !== "project-settings"}><SettingsScopeLinks only="project"/></div>}
+      <nav hidden={shell} id={shell ? undefined : "settings-index"} tabIndex={-1} aria-label="Settings sections" className="space-y-3 scroll-mt-4">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-0 flex-1 space-y-1 text-xs text-muted" htmlFor="settings-section">Settings section
             <Select id="settings-section" className="w-full pointer-coarse:min-h-11" value={selected} onChange={event => {
@@ -197,22 +228,26 @@ export function Settings() {
               navigate(`#${event.target.value}`);
             }}>
               <option value="all">All sections</option>
-              {groups.map(group => <optgroup label={group.label} key={group.label}>{group.names.map(name => <option value={anchor(name)} key={name}>{name}</option>)}</optgroup>)}
+              {shell && <option value="project-settings">Project settings links</option>}
+              {chooserGroups.map(group => <optgroup label={group.label} key={group.label}>{group.names.map(name => <option value={anchor(name)} key={name}>{name}</option>)}</optgroup>)}
             </Select>
           </label>
           <Link className={buttonClass()} to={selected === 'all' ? '#passkeys' : '#all'}>{selected === 'all' ? 'Focus a section' : 'All sections'}</Link>
         </div>
-        {selected === 'all' && groups.map(group => <div key={group.label}><h2 className="text-xs font-semibold text-muted">{group.label}</h2><div className="flex flex-wrap gap-x-4 gap-y-1">{group.names.map(name => <Link className={buttonClass({ size: "sm" })} to={`#${anchor(name)}`} key={name}>{name}</Link>)}</div></div>)}
+        {!shell && selected === 'all' && groups.map(group => <div key={group.label}><h2 className="text-xs font-semibold text-muted">{group.label}</h2><div className="flex flex-wrap gap-x-4 gap-y-1">{group.names.map(name => <Link className={buttonClass({ size: "sm" })} to={`#${anchor(name)}`} key={name}>{name}</Link>)}</div></div>)}
       </nav>
-      {selected !== 'all' && attention.some(item => anchor(item.name) !== selected) && <section aria-label="Settings needing attention" className="[overflow-wrap:anywhere] space-y-2 rounded-lg border border-wait/30 p-3 text-xs">
-        <h2 className="font-semibold text-wait">Settings needing attention</h2>
+      {selected !== 'all' && attention.some(item => anchor(item.name) !== selected) && <section aria-label="Settings needing attention" className={shell ? "text-xs [overflow-wrap:anywhere]" : "[overflow-wrap:anywhere] space-y-2 rounded-lg border border-wait/30 p-3 text-xs"}>
+        <details open={shell ? undefined : true}><summary className={shell ? "cursor-pointer text-wait" : "hidden"}>Settings needing attention · {attention.filter(item => anchor(item.name) !== selected).length} sections</summary>
+        {!shell && <h2 className="font-semibold text-wait">Settings needing attention</h2>}
         {attention.filter(item => anchor(item.name) !== selected).map(item => <div key={item.name}>
           <Link className={buttonClass({ size: "sm" })} to={`#${anchor(item.name)}`}>{item.name}</Link>
           <ul className="list-disc space-y-1 pl-4 text-wait">{item.messages.map(message => <li key={message}>{message}</li>)}</ul>
         </div>)}
+        </details>
       </section>}
       <p role="status" className="sr-only" data-testid="settings-announcer">{announced}</p>
-      <SettingsView.Provider value={{ selected, errors: attention.filter(item => item.error).map(item => anchor(item.name)) }}><div ref={content} className="space-y-6">
+      <SettingsSurfaceScope value={true}><SettingsView.Provider value={{ selected, errors: attention.filter(item => item.error).map(item => anchor(item.name)) }}><div ref={content} id={shell ? "settings-index" : undefined} tabIndex={shell ? -1 : undefined} className="space-y-6">
+      {shell && <SettingsSection name="Setup level"><SetupLevelSetting /></SettingsSection>}
       {owner && <SettingsSection name="Admin features"><AdminFeatures /></SettingsSection>}
       {owner && <Feature name="remote_access"><SettingsSection name="Remote access"><Card><CardHeader title="Remote access" subtitle="Use your VPN or Tailscale from outside. Public access without one is off by default and not yet qualified · LAN device pairing" action={<Link className={buttonClass()} to="/settings/remote-access">Remote access</Link>} /></Card></SettingsSection></Feature>}
       <SettingsSection name="Access devices"><Devices owner={owner} /></SettingsSection>
@@ -234,11 +269,13 @@ export function Settings() {
       {owner && <SettingsSection name="Container limits"><ContainerLimits /></SettingsSection>}
       {(owner || instance.private_ca) && <SettingsSection name="Certificate"><Certificate owner={owner} privateCa={!!instance.private_ca} /></SettingsSection>}
       <SettingsSection name="Sign-ins"><SignIns /></SettingsSection>
+      <SettingsSection name="Appearance"><PersonalAppearance /></SettingsSection>
+      <SettingsSection name="Sign-in security"><RecoverySecurity /></SettingsSection>
       <SettingsSection name="Passkeys"><Passkeys owner={owner} /></SettingsSection>
       <SettingsSection name="Password"><PasswordCard /></SettingsSection>
       <Feature name="notifications"><SettingsSection name="Notifications"><NotificationSettings /></SettingsSection></Feature>
       <Feature name="notifications"><SettingsSection name="Notification devices"><NotificationDevices /></SettingsSection></Feature>
-      </div></SettingsView.Provider>
+      </div></SettingsView.Provider></SettingsSurfaceScope>
       <a href="#settings-index" className={buttonClass()}>Back to settings sections</a>
       <p className="text-center text-xs text-faint">Rynhult{instance.version ? ` v${instance.version}` : ""} · {instance.host} · <Link to="/guide" className="underline-offset-2 hover:underline">Guide</Link>{instance.source_url && <> · <a href={instance.source_url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">Source code</a> (MIT)</>}{instance.source_download && <> · <a href={instance.source_download} download className="underline-offset-2 hover:underline">Source of this version</a></>}</p>
     </Page>

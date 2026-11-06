@@ -1,0 +1,130 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "events",
+ "cases": [
+  {
+   "name": "durable",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "turn.started",
+    "eventSeq": 5,
+    "historyEpoch": 1,
+    "turnId": "turn-1"
+   },
+   "expect": "event"
+  },
+  {
+   "name": "transient",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "presence.changed",
+    "attachmentSeq": 2
+   },
+   "expect": "event"
+  },
+  {
+   "name": "durable without order",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "turn.started"
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "transient claiming durable order",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "terminal.output",
+    "attachmentSeq": 1,
+    "eventSeq": 2
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "unknown kind",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "turn.mystery",
+    "eventSeq": 5,
+    "historyEpoch": 1
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "newer schema",
+   "params": {
+    "schema": 2,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "turn.started",
+    "eventSeq": 5,
+    "historyEpoch": 1
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "malformed",
+   "params": {
+    "kind": "turn.started"
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "terminal ack carries its epoch",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "terminal.ack",
+    "attachmentSeq": 3,
+    "payload": {
+     "epoch": 8,
+     "admitted": 5,
+     "processed": 5
+    }
+   },
+   "expect": "event"
+  },
+  {
+   "name": "terminal ack without an epoch",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "terminal.ack",
+    "attachmentSeq": 3,
+    "payload": {
+     "admitted": 5,
+     "processed": 5
+    }
+   },
+   "expect": "unsupported"
+  },
+  {
+   "name": "terminal ack with a bad count",
+   "params": {
+    "schema": 1,
+    "sessionId": "sess-1",
+    "runId": "run-1",
+    "kind": "terminal.ack",
+    "attachmentSeq": 3,
+    "payload": {
+     "epoch": 8,
+     "admitted": -1,
+     "processed": 5
+    }
+   },
+   "expect": "unsupported"
+  }
+ ]
+}

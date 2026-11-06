@@ -1,10 +1,11 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2 } from "lucide-react";
 import { api, post } from "../lib/api";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useConfirm } from "./confirm";
-import { Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, Input, QueryState } from "./ui";
+import { Button, Dialog, Empty, ErrorNote, Field, Input, QueryState } from "./ui";
 
 interface IssueServer { id: string; base_url: string; addresses?: string[]; custom_ca: boolean }
 export const useIssueServers = () => useQuery({ queryKey: ["issue-servers"], queryFn: () => api<IssueServer[]>("/api/issue-servers") });

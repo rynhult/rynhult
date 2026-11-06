@@ -1,0 +1,58 @@
+/* Page-only structure. The shell-palette scope supplies all semantic colours. */
+.shell .shell-project-page { padding: 0; max-width: none; }
+.shell .shell-project-page > header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.shell .shell-project-page > :not(header) { margin-left: 20px; margin-right: 20px; }
+.shell-directory-filters { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr); gap: 12px; padding-top: 4px; }
+.shell-directory-filters > fieldset { grid-column: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.shell-directory-filters > fieldset > p { grid-column: 1 / -1; }
+.shell-directory-archived { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.shell-directory-archived input { accent-color: var(--accent); }
+.shell-directory-count, .shell-project-pagination { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
+.shell-directory-scroll { overflow: visible; }
+.shell-directory-scroll[data-overflow="horizontal"] { overflow-x: auto; }
+.shell-directory-table { width: 100%; min-width: 660px; table-layout: fixed; font-size: 13px; color: var(--muted); text-align: left; }
+.shell-directory-table thead th { font-size: 12px; font-weight: 400; padding: 0 12px 12px 0; }
+.shell-directory-table th:first-child { width: 28%; }
+.shell-directory-table th:nth-child(2) { width: 32%; }
+.shell-directory-table th:nth-child(3) { width: 23%; }
+.shell-directory-table tbody th, .shell-directory-table td { padding: 18px 16px 18px 0; border-top: 1px solid var(--border); vertical-align: top; font-weight: 400; overflow-wrap: anywhere; }
+.shell-directory-table tbody th a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.shell-directory-table tbody th a:hover { text-decoration: underline; }
+.shell-project-description { margin-top: 8px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.shell-project-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.shell-project-flags:empty { display: none; }
+.shell-project-pagination { padding-bottom: 24px; align-items: center; }
+.shell-project-pagination > div { display: flex; gap: 8px; }
+.shell-project-hero { padding-top: 8px; }
+.shell-project-hero h2 { font-size: 22px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; }
+.shell-project-hero > p:last-child { margin-top: 12px; color: var(--muted); font-size: 13px; }
+.shell-project-overview { min-width: 0; }
+.shell .shell-project-overview section { box-shadow: none; }
+.shell .shell-project-overview > div:first-child { gap: 28px; }
+.shell .shell-project-overview > div:first-child > section > section,
+.shell .shell-project-overview > div:first-child > div > section,
+.shell .shell-project-locations > div > section { background: transparent; border: none; border-radius: 0; }
+.shell .shell-project-overview section > div:first-child { border-bottom-color: var(--border); }
+.shell-project-locations { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 12px; }
+@media (max-width: 900px) {
+ .shell-directory-filters { grid-template-columns: 1fr 1fr; }
+ .shell-directory-filters > :first-child, .shell-directory-filters > fieldset { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+ .shell .shell-project-page > header { padding: 16px; }
+ .shell .shell-project-page > :not(header) { margin-left: 16px; margin-right: 16px; }
+ .shell-directory-filters { grid-template-columns: 1fr; }
+ .shell-directory-filters > fieldset { grid-column: 1; grid-template-columns: 1fr; }
+}
+.shell-directory-activity { display: flex; justify-content: space-between; align-items: flex-start; gap: 4px; }
+.shell .shell-project-overview [aria-label="Recent results"] > section { background: transparent; border: none; border-radius: 0; }
+.shell .shell-project-overview h2 { font-size: 17px; line-height: 1.4; }
+.shell .shell-project-page > header > div:first-child { display: flex; flex-direction: column; gap: 6px; }
+.shell .shell-project-page > header > div:first-child > div { order: -1; margin-top: 0; }
+
+@media (min-width: 80rem) { .shell-project-overview-grid { grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); } }
+
+.shell-project-hero > p:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
+
+.shell-project-page .shell-workbar-description { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.shell-project-page > [id^="project-tabs"] { margin-top: 0; }

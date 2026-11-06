@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime, timezone
 
 import pytest
-from helpers import control, wait_for
+from helpers import control, pause_supervisor, wait_for, write_db
 from isolated_settings import isolated_broker
 from test_ownership import two  # noqa: F401 (fixture)
 from test_supervisor import get, launch, state_is
@@ -40,6 +40,13 @@ async def test_no_editor_link_without_a_host(api, project):
     assert (await get(api, session["id"]))["editor"] is None
 
 
+@pytest.fixture
+def api_auth(monkeypatch):
+    """Input-box unit tests have an explicitly API-authenticated synthetic terminal."""
+    from acc.broker import claude_auth
+    monkeypatch.setattr(claude_auth, 'refresh', lambda *a, **kw: {'provider': 'claude', 'auth_mode': 'api_key'})
+
+
 def broker_config(tmp_path):
     return isolated_broker(tmp_path, socket_path=tmp_path / "s", run_dir=tmp_path, tmux_socket=f"acc-test-{tmp_path.name[-8:]}",
                         allowed_roots=(tmp_path,), allowed_uids=frozenset(), providers={}, hook_path="x")
@@ -64,7 +71,9 @@ class FakePane:
 
     def tmux(self, config, *args, check=False):
         output = ""
-        if args[0] == "send-keys":
+        if args[0] == "show-options":
+            output = "off"  # This fake pane has no wheel capability.
+        elif args[0] == "send-keys":
             if "-l" in args:
                 self.input = args[-1]
             else:
@@ -87,7 +96,7 @@ class FakePane:
 @pytest.mark.parametrize("marker", [
     None, "[Pasted Content 1200 chars]", "[Pasted text #1 +12 lines]", "[Paste #1]", "[Pasted ~12 lines]",
 ])
-def test_send_text_submits_once_even_when_paste_needs_another_enter(tmp_path, monkeypatch, provider, marker):
+def test_send_text_submits_once_even_when_paste_needs_another_enter(tmp_path, monkeypatch, provider, marker, api_auth):
     text = "x" * 1200 if marker else "Review:\n- a.py:1\t`x` — fix"
     fake = FakePane(accepts_after=2 if marker else 1, marker=marker)
     monkeypatch.setattr(ops, "tmux", fake.tmux)
@@ -98,7 +107,7 @@ def test_send_text_submits_once_even_when_paste_needs_another_enter(tmp_path, mo
     assert fake.enters == (2 if marker else 1)
 
 
-def test_send_text_bounds_retries_when_provider_never_accepts(tmp_path, monkeypatch):
+def test_send_text_bounds_retries_when_provider_never_accepts(tmp_path, monkeypatch, api_auth):
     fake = FakePane(accepts_after=100, marker="[Pasted Content 1200 chars]")
     monkeypatch.setattr(ops, "tmux", fake.tmux)
     monkeypatch.setattr(ops.time, "sleep", lambda _: None)
@@ -218,12 +227,54 @@ async def test_export_is_a_markdown_file_of_the_whole_session(api, project, env)
     assert "fake-claude" in doc.split("## Launch command", 1)[1]
 
 
+async def test_export_retries_a_missing_transcript_after_new_hooks(api, project, env, monkeypatch):
+    from acc.server.models import Session
+    from acc.server.supervisor_common import now
+
+    session = await launch(api, project)
+    await wait_for(state_is(api, session["id"], "idle"))
+    await pause_supervisor(api)
+    supervisor = api.app.state.supervisor
+    call = supervisor.broker.call
+    reads = 0
+
+    async def missing(method, *args, **kwargs):
+        nonlocal reads
+        if method == "transcript_messages":
+            reads += 1
+            return {"found": False}
+        return await call(method, *args, **kwargs)
+
+    with write_db(supervisor.db) as db:
+        db.get(Session, session["id"]).indexed_at = None
+        db.commit()
+    monkeypatch.setattr(supervisor.broker, "call", missing)
+    await supervisor.index_transcripts()
+    await supervisor.index_transcripts()
+    assert reads == 1
+    monkeypatch.setattr(supervisor.broker, "call", call)
+    before = now()
+    control(env, session["id"], "say please migrate the billing webhooks")
+
+    async def completed():
+        await supervisor.ingest_pass()
+        with supervisor.db() as db:
+            current = db.get(Session, session["id"])
+            return current.activity_at > before and current.observed_state == "idle"
+
+    await wait_for(completed)
+    await supervisor.index_transcripts()
+    response = await api.get(f"/api/sessions/{session['id']}/export")
+    assert response.status_code == 200
+    assert "billing webhooks" in response.text and "| State | idle |" in response.text
+
+
 async def test_a_member_cannot_export_someone_elses_session(two):  # noqa: F811 (fixture)
     response = await two["member"].get(f"/api/sessions/{two['session']['id']}/export")
     assert response.status_code == 404 and "Content-Disposition" not in response.headers
 
 
-def test_send_text_sees_a_paste_marker_wrapped_above_the_cursor(monkeypatch):
+def test_send_text_sees_a_paste_marker_wrapped_above_the_cursor(monkeypatch, api_auth):
     """Codex 2026-10-23: a long message folded into "[Pasted Content …]" wrapped onto the next row, the cursor row
     alone looked clear, and the unsubmitted message was reported as sent."""
     from acc.broker import ops

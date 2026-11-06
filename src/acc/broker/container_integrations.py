@@ -5,7 +5,7 @@ import stat
 import threading
 from pathlib import Path
 
-from acc.container_credentials import integration_policy, policy_digest, snapshot
+from acc.container_credentials import integration_policy, launch_snapshot, policy_digest, snapshot
 from acc.container_egress import Gateway, Policy
 from acc.env import environment
 
@@ -41,7 +41,7 @@ def _read_policy(path, policy_id):
         os.close(fd)
 
 
-def start(config, session_id, container, provider, run_dir):
+def start(config, session_id, container, provider, run_dir, *, env=None):
     try:
         try:
             entry = _read_policy(config.container_policy, container['policy_id'])
@@ -52,7 +52,12 @@ def start(config, session_id, container, provider, run_dir):
             return
         if environment.get('ACC_CONTAINERS') != '1':
             raise ValueError('ACC_CONTAINERS is disabled')
-        credentials = snapshot(Path.home(), provider, session_id, container['generation'])
+        from acc.providers.claude_auth import credential_env
+
+        from .claude_auth import supplied_mode
+        credentials = (launch_snapshot(credential_env(env), session_id, container['generation'])
+                       if provider == 'claude' and supplied_mode(env or {}) != 'unknown'
+                       else snapshot(Path.home(), provider, session_id, container['generation']))
         egress = options['egress']
         policy = Policy(tuple(egress['deny_hosts']), tuple(egress['deny_networks'])) if egress else Policy()
         gateway = Gateway(run_dir / '.acc-integrations.sock', session_id, container['generation'], provider,

@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { gotoLoadedPage } from './loaded-page';
+import { expect, test } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, wikiShotPath } from "./helpers";
 
@@ -9,7 +10,7 @@ test("owners set gate commands and the host budget, then queue and cancel a gate
   const { id, folder } = await gitProject(page, `gated-${Date.now()}`);
   execFileSync("git", ["-C", folder, "branch", "acc/team-demo"]);
   try {
-    await page.goto(`/projects/${id}#project-gates`);
+    await gotoLoadedPage(page, `/projects/${id}#project-gates`, ["ProjectPage"], ["/api/gates"]);
     // The card itself, not the Project settings section around it.
     const card = page.locator("section:not(#project-settings)").filter({ has: page.getByRole("heading", { name: "Gate queue" }) });
     await expect(card.getByText("The gate queue is off. Turn it on below.")).toBeVisible();

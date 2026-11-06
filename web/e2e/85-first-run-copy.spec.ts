@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean } from "./helpers";
 
 // First-run review follow-ups (docs/handoffs/2026-10-27-1235e44c1732-first-run-rc.md): plain words a new owner can act on.
@@ -48,7 +48,13 @@ test("backup target setup explains each field in plain words", async ({ page }) 
   await expect(page.getByRole("option", { name: "Cloud storage (S3-compatible)" })).toBeAttached();
   await expect(page.getByLabel("Machine to keep the backups on")).toHaveAccessibleDescription(/can add backups but never delete them/);
   await expect(page.getByLabel("Maximum backup space (GiB)")).toHaveAccessibleDescription(/half its free space/);
-  await expect(page.getByText(/A folder on this server is set up by an administrator instead/)).toBeVisible();
+  await page.getByLabel("Target type").selectOption("local");
+  await expect(page.getByLabel("Folder path")).toBeVisible();
+  await page.getByLabel("Folder path").fill("/mnt/recovery");
+  await page.getByRole("button", { name: "Show console command", exact: true }).click();
+  await expect(page.getByText(/Run this once in the server’s root console/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Folder command", exact: true })).toContainText("sudo rynhult-admin backup add-folder");
+  await expect(page.getByText(/same disk do not protect against disk loss/)).toBeVisible();
   await expect(page.getByText("Repository ceiling", { exact: false })).toHaveCount(0);
   await expectAxeClean(page, "main");
 });

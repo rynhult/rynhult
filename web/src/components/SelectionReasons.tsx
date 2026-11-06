@@ -1,10 +1,11 @@
+import { SettingsCard as Card } from './shell/SettingsSurfaces';
 /** Slice 3 exports: the live-tree and Settings owners mount these components. */
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, post, isNotFound } from '../lib/api';
 import { useSingleMutation } from '../lib/mutations';
-import { Button, Card, ErrorNote, Field, Input, QueryState, Select, Textarea } from './ui';
+import { Button, ErrorNote, Field, Input, QueryState, Select, Textarea } from './ui';
 
 interface Candidate {
   agent: string; profile: string | null; model: string | null; machine: string; permission: string;

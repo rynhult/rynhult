@@ -1,3 +1,4 @@
+import { useWorkingView } from "../lib/workingView";
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, post } from '../lib/api';
@@ -7,10 +8,11 @@ import { announce, Button, Card, ErrorNote, Input } from './ui';
 type Delivery = { id: string; state: string; notice: string | null; preview: string; text?: string; text_truncated?: boolean };
 const inFlight = (row: Delivery) => ['queued', 'typing', 'submitted'].includes(row.state);
 function useDeliveries(id: string, details = false) {
+  const view = useWorkingView();
   return useQuery({ queryKey: details ? ['deliveries', id, 'details'] : ['deliveries', id],
     queryFn: () => api<{ deliveries: Delivery[] }>(`/api/sessions/${id}/deliveries${details ? '?include_text=true' : ''}`),
     refetchInterval: query => query.state.data?.deliveries.some(inFlight) ? 2000 : 10000,
-    refetchIntervalInBackground: false });
+    enabled: !view || view.visible, refetchIntervalInBackground: false });
 }
 function useRetry(id: string) {
   const client = useQueryClient();
@@ -18,8 +20,9 @@ function useRetry(id: string) {
     onSuccess: () => client.invalidateQueries({ queryKey: ['deliveries', id] }) });
 }
 
-/** Reuses the phone metadata row; the desktop tab-bar slot stays fixed-height. */
+/** Pending delivery summary; the parent owns its layout, Activity owns full text. */
 export function SessionDeliveries({ id, onDetails }: { id: string; onDetails: () => void }) {
+  const view = useWorkingView();
   const rows = useDeliveries(id);
   const retry = useRetry(id);
   const pending = rows.data?.deliveries.filter(row => row.state !== 'acknowledged') ?? [];
@@ -28,7 +31,7 @@ export function SessionDeliveries({ id, onDetails }: { id: string; onDetails: ()
   const label = `${pending.length} message${pending.length === 1 ? '' : 's'} ${pending.some(inFlight) ? 'waiting to deliver' : 'not delivered'}`;
   const wasVisible = useRef(false);
   useEffect(() => {
-    if (visible && !wasVisible.current) announce(rows.error ? 'Message delivery status unavailable. Details in Activity.' : `${label}. Details in Activity.`);
+    if ((!view || view.visible) && visible && !wasVisible.current) announce(rows.error ? 'Message delivery status unavailable. Details in Activity.' : `${label}. Details in Activity.`);
     wasVisible.current = visible;
   }, [visible, label, rows.error]);
   if (!active && !rows.error) return null;
@@ -45,6 +48,7 @@ export function SessionDeliveries({ id, onDetails }: { id: string; onDetails: ()
 
 /** Full pending text and retained delivery history belong in Activity, away from the terminal. */
 export function DeliveryHistory({ id, focus = false }: { id: string; focus?: boolean }) {
+  const view = useWorkingView();
   const client = useQueryClient();
   const rows = useDeliveries(id, true);
   const section = useRef<HTMLElement>(null);
@@ -60,7 +64,7 @@ export function DeliveryHistory({ id, focus = false }: { id: string; focus?: boo
     acknowledged: 'Delivered', failed: 'Not delivered', expired: 'Expired' };
   return <section ref={section} tabIndex={-1} aria-label="Message delivery history"><Card className="space-y-3 p-3">
     <h2 className="text-sm font-medium">Message delivery</h2>
-    <p className="text-xs text-muted">Switch to Activity and close other terminal windows to release terminal control. Queued messages retry automatically; Retry checks again now.</p>
+    <p className="text-xs text-muted">{view ? "Use Release control in the terminal or its hidden-controller notice." : "Switch to Activity and close other terminal windows to release terminal control."} Queued messages retry automatically; Retry checks again now.</p>
     {rows.data.deliveries.map(row => <div key={row.id} className="space-y-1 border-t border-line pt-2 text-sm">
       <p className="font-medium">{labels[row.state] ?? row.state}</p>
       <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{row.text ?? row.preview}</p>

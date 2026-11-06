@@ -274,7 +274,8 @@ async def test_terminal_of_a_session_on_another_host(api, env, live):  # noqa: F
     opened = len(node.opened)
     headers = {"Cookie": f"acc_session={api.cookies.get('acc_session')}", "Origin": "http://127.0.0.1:18740"}
     async with websockets.connect(f"{live}/api/sessions/{session['id']}/tty", additional_headers=headers) as ws:
-        assert json.loads(await asyncio.wait_for(ws.recv(), 5)) == {"t": "mode", "write": True}
+        assert json.loads(await asyncio.wait_for(ws.recv(), 5)) == {
+            "t": "mode", "write": True, "partial": False, "reason": None, "wheel": False}
         seen = b""
         while b"fake-claude" not in seen:  # tmux's screen setup first, then the agent's own output
             seen += await asyncio.wait_for(ws.recv(), 5)
@@ -488,7 +489,8 @@ def test_legacy_project_host_becomes_local(tmp_path):
     with engine.begin() as db:
         columns = {c[1]: c for c in db.execute(text("PRAGMA table_info(project)"))}
         required = [name for name, c in columns.items() if c[3] and c[4] is None and name not in ("id",)]
-        values = {name: "x" for name in required}
+        # Later migrations read these rows through their column types, so seed what the old version wrote.
+        values = {name: "2026-10-22 00:00:00" if columns[name][2] == "DATETIME" else "x" for name in required}
         for slug, host in (("old", "acc-host"), ("far", "pc"), ("here", "local")):
             row = {**values, "slug": slug, "name": slug, "host": host, "workspace_path": f"/w/{slug}"}
             db.execute(text(f"INSERT INTO project ({', '.join(row)}) VALUES ({', '.join(':' + k for k in row)})"), row)
@@ -783,7 +785,7 @@ async def test_a_node_that_floods_text_is_ignored_not_trusted(api, env, live):  
     await ws.close()
 
 
-async def test_a_project_on_another_machine_runs_as_one_of_its_accounts(api, env):
+async def test_a_project_on_another_machine_runs_as_one_of_its_accounts(api, env, monkeypatch):
     """Found live: a machine whose installer named its agent account differently (acc-agent, installed as root) left
     the project on the owner's own account name, which the machine doesn't have. Now: yours if it has it, else its
     only one, else name one; never an account it didn't report."""
@@ -792,6 +794,16 @@ async def test_a_project_on_another_machine_runs_as_one_of_its_accounts(api, env
         s.add(Node(id="n" * 16, name="box", status="active", info={"accounts": ["acc-agent"]}))
         s.add(Node(id="m" * 16, name="two", status="active", info={"accounts": ["a-agent", "b-agent"]}))
         s.commit()
+    original_call = api.app.state.ctx.broker.call
+    identities = []
+
+    async def call(op, **params):
+        if op == 'workspace_identity':
+            identities.append(params)
+            return {'path': params['path'], 'allowed': True}
+        return await original_call(op, **params)
+
+    monkeypatch.setattr(api.app.state.ctx.broker, 'call', call)
     base = {"name": "R", "workspace_path": "/srv/acc/workspaces/r"}
     only = (await api.post("/api/projects", json={**base, "slug": "r1", "host": "box"})).json()
     assert only["account"] == "acc-agent"
@@ -799,6 +811,7 @@ async def test_a_project_on_another_machine_runs_as_one_of_its_accounts(api, env
     assert choose.status_code == 422 and "a-agent, b-agent" in choose.text
     named = (await api.post("/api/projects", json={**base, "slug": "r3", "host": "two", "account": "b-agent"})).json()
     assert named["account"] == "b-agent"
+    assert [(p['host'], p['account']) for p in identities] == [('box', 'acc-agent'), ('two', 'b-agent')]
     bad = await api.post("/api/projects", json={**base, "slug": "r4", "host": "two", "account": "root"})
     assert bad.status_code == 422
     here = await api.post("/api/projects", json={**base, "slug": "r5", "account": "b-agent",

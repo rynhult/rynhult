@@ -269,3 +269,21 @@ native claims additionally retain public CSR, installation/platform/key hash and
 the expected prior fingerprint for guarded renewal. `auth_session` adds nullable
 `device_fingerprint` and `device_bound_at`; ordinary browser sessions remain
 unbound. No private device key is persisted. See [Mobile devices](/Internal/Mobile-Devices).
+
+## Scoped approval foundation (0082)
+
+`approval_consent` retains issuer, exact action constraints, immutable authority
+snapshot, duration, expiry, remaining uses, revision and revocation evidence.
+Durable project policies issue uniquely bound team children through `parent_id`.
+A nullable project link follows project deletion's history-detachment convention;
+the original project ID remains in the snapshot and detached consent is unusable.
+
+`approval_operation` binds one tool request/digest, deciding lead and consent
+revision to a 30-second admission claim. `approval_batch` binds a person to up to
+50 exact reviewed request digests, Security revision, five-minute expiry and
+single-use state. `tool_request.decision` records the real source, issuer and
+request digest for new decisions; historical specific approvals are preserved.
+
+Consent eligibility runs in shadow mode. Execution qualification remains false;
+there is no new delegated broker or main-ref execution path. Any retained consent,
+claim, preview or per-request decision blocks downgrade to preserve authority and audit evidence.

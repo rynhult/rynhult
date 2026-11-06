@@ -8,40 +8,25 @@ The inbox lists everything that needs you. Items come from agent hooks, an agent
 
 Open items are grouped by type, in this order: **Waiting [sessions](/User-Guide/Glossary#session)** (an agent waiting for your answer, or a session needing recovery), **Approvals** (publishing and tool requests), **Alerts** (failures and warnings) and **Notes** (for your information, such as a guardrail refusal). Always-on offline and failed/stale backup alerts come first within Alerts; otherwise, newest first within each group. **History** lists past items by date.
 
-The **Inbox** badge in the sidebar and the phone tab bar counts every open item, notes included. It is amber while something waits on you, red when something has failed, and grey when only notes are open. **Needs you** (in the sidebar and on the Overview) counts something narrower: sessions blocked on you.
-
 ## Compact status, without blocking the page
 
-The same compact status line appears on desktop, phones and the installed app. It sits below the top bar except on a phone's session page, where it sits below the content and above the bottom navigation. The terminal stays near the top, and machine offline and failed/stale backup counts remain visible without scrolling. It does not overlay content, open a dialog or grow into a stack of alerts. Select **Inbox** for individual notices and their actions.
+In the [new layout](/User-Guide/New-Layout), the Inbox rail icon has a small open-count badge: hidden at zero, capped visually at **99+**, with the full count in its accessible name. There is no notices banner. All notices, including machine and backup alerts, remain reachable in Inbox. An unavailable or out-of-date count is announced through the button; open Inbox for its error and refresh controls.
 
-![A compact status line with offline machine and failed and stale backup counts above the Overview](/.attachments/inbox-status-desktop.png)
+![Desktop Inbox count in the rail](/.attachments/inbox-status-desktop.png)
 
-On a phone, the line wraps without hiding the page:
+![Phone Inbox count in the rail](/.attachments/inbox-status-phone.png)
 
-![The same compact alerts at 390 pixels, leaving the Overview usable](/.attachments/inbox-status-phone.png)
+![Desktop Inbox error with retry controls](/.attachments/inbox-unavailable-desktop.png)
 
-On a phone's session page, alerts stay below the terminal:
+![Phone Inbox error with retry controls](/.attachments/inbox-unavailable-phone.png)
 
-![A phone session with the terminal near the top and offline machine and backup counts above the bottom navigation](/.attachments/phone-session-alerts.png)
+Machine offline, backup failed and backup stale alerts remain available in Inbox. **Acknowledge** records that you saw an alert but leaves it open and counted. **Snooze 1 hour** hides that item until the hour ends; **History → End snooze** restores it sooner. Reconnecting the machine or fixing the backup resolves the alert. Machine snoozes also appear as planned maintenance in Host.
 
-**Collapse other notices** hides the ordinary-notice summary for this visit, not the Inbox items or their count. It does not change privacy choices. The optional usage-statistics prompt stays in Inbox: **Review privacy choices** opens Settings, or **Dismiss notice** clears the invitation without enabling anything.
-
-If notices cannot be loaded, the line says **Inbox unavailable**, even when other
-pages still work or you collapsed ordinary notices. Select **Retry Inbox**, or
-open **Inbox** for the detailed error. Previously loaded counts stay marked
-**stale**; an initial failure never claims there are zero notices.
-The unavailable line stays visible during a slow retry, with **Retry Inbox**
-disabled until it finishes. Only a successful check clears the outage.
-
-![An Inbox-only outage stays visible above usable desktop content](/.attachments/inbox-unavailable-desktop.png)
-
-![The same compact unavailable state and retry control on a phone](/.attachments/inbox-unavailable-phone.png)
-
-Always-on offline, backup failed and backup stale counts cannot be hidden this way. **Acknowledge** records that you saw an alert but leaves it open and counted. **Snooze 1 hour** hides that item until the hour ends; **History → End snooze** restores it sooner. Reconnecting the machine or fixing the backup resolves the alert. Machine snoozes also appear as planned maintenance in Host.
+The optional usage-statistics prompt stays in Inbox: **Review privacy choices** opens Settings, or **Dismiss notice** clears the invitation without enabling anything.
 
 ## Review individual items
 
-1. Select **Inbox** in the status line, sidebar or phone tab bar.
+1. Select **Inbox** in the rail.
 
 ![Individual machine and backup alerts with Review, Acknowledge and Snooze actions](/.attachments/inbox-operational-alerts.png)
 
@@ -51,7 +36,7 @@ Always-on offline, backup failed and backup stale counts cannot be hidden this w
 
 | Item | What to do |
 |---|---|
-| *session* needs your input | **Answer in terminal** opens the session; answer the prompt there |
+| *session* needs your input | Claude permission hooks show the tool and a shortened, key-redacted command or path. **Approve** or **Deny** answers that one live request; **Answer in terminal** opens the session for other prompts and providers, including Codex. |
 | Recovery needed | **Open session**, read its **Activity**, then **Resume** it |
 | Login expiring or logged out | Re-login on [Host and providers](/User-Guide/Host-and-Providers) |
 | CI failed | Open the run on GitHub from the [project](/User-Guide/Glossary#project) page |
@@ -71,6 +56,17 @@ Each item ends with where it came from, in words: **Claude Code** (or another ag
 
 **Dismiss notice** clears an ordinary item; it never answers anything for you. On a waiting session it sits behind **⋯**, because the session keeps waiting until you answer in its terminal. Operational alerts use **Acknowledge** and **Snooze 1 hour** instead. Items also clear themselves when the condition goes away. **History** shows past items, with dismissed ones marked **dismissed** and acknowledged operational alerts marked **acknowledged**.
 
+### Claude permission decisions
+
+Only a signed-in person allowed to type into the session can answer. Each click is
+recorded in Audit as `permission.answer` and `permission.result`. A second click,
+an expired hook, or an item already handled in the terminal returns **Already
+answered**. No permission rule is saved and no prompt is answered automatically.
+The hook waits up to 50 seconds for your decision, then returns control to Claude's
+terminal prompt without a decision. Existing sessions need to use the updated hook
+on their machine. Codex has no reply channel implemented here: use **Answer in terminal**.
+See Claude's [PermissionRequest hook response](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control).
+
 ## Team prompts
 
 [Orchestrator](/User-Guide/Orchestrator) helper prompts are labelled with their team. Open the helper to answer. The lead can inspect status and send ordinary messages, but cannot answer permission or input prompts on your behalf. A team time-limit notice also reaches your Inbox.
@@ -87,7 +83,7 @@ Each item ends with where it came from, in words: **Claude Code** (or another ag
 | **Review** | A project write, install, network request, outside read, or action Rynhult cannot classify |
 | **Risky** | A guardrail would refuse the action, or it involves outside writes/deletes, credentials, elevated privileges, or a network download piped to a shell |
 
-2. Select **Answer in terminal**, inspect the actual request in **Terminal**, and decide there.
+2. Read the tool details. For a live Claude permission hook, choose **Approve** or **Deny**. Otherwise select **Answer in terminal**, inspect the actual request in **Terminal**, and decide there.
    **Routine is not a safety guarantee.** Labels never answer, approve or
    dismiss a prompt, change the agent's permissions, or replace guardrails.
    No AI model is called.
@@ -118,3 +114,32 @@ request is marked failed when possible; that does not undo an install already
 started on the machine. Inspect the reported destination before trying again.
 
 Every request, approval, rejection and result is recorded in [Audit](/User-Guide/Audit) as `tool.request`, `tool.approve`, `tool.reject` and `tool.result`.
+
+### Exact decisions and duplicates
+
+Identical pending tool changes from workers in the same project, account and
+explicit team share one approval card. Solo sessions do not share cards. If that
+account/tool already has a pending change, resolve it before requesting it from
+another solo session. Changing the package version or operation needs its own
+review. Approving a request records the real person and reason; the resolved card
+and **Providers → Tools → Request history** show **Decided by**. Approval means
+permission to try the change; check the individual result before assuming success.
+
+The server also supports reviewed batches of up to 50 exact pending tool changes;
+the full selection controls will arrive with the new layout. A batch does not
+authorize future changes, and a changed or expired preview must be reviewed again.
+
+### Claude permission replies
+
+In session **Setup**, **Answer permission prompts from the Inbox** defaults on.
+Inbox replies are available for up to 50 seconds while nobody is watching the
+terminal. Attaching a tmux client or a browser terminal writer or observer returns
+the prompt to Claude immediately (checked on each half-second wait tick). If
+attachment state cannot be checked, use **Answer in terminal**. Container sessions
+currently use terminal-only permission replies.
+
+Read the complete redacted tool input in the scrollable panel before choosing
+**Approve** or **Deny**. All tool fields are included, including file contents,
+edits, prompts and MCP arguments. If the complete input exceeds 8 kB or is missing,
+only **Deny** and **Answer in terminal** are available, with a reason. Expired
+requests cannot be answered from the Inbox. Success shows **Approved** or **Denied**.

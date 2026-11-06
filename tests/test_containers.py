@@ -517,8 +517,11 @@ async def test_new_container_sessions_need_a_qualified_host_and_running_ones_are
 
 # ---- a container session end to end ---------------------------------------------------------------------------------
 
-async def test_container_session_launches_through_the_launcher_and_stops(containers_env, api, env, project):
+async def test_container_session_launches_through_the_launcher_and_stops(containers_env, api, env, project, monkeypatch):
     await container_project(api, env, project)
+    # The CLI belongs to the container; the host need not have it installed.
+    monkeypatch.setattr(containers_env, 'providers', dict(containers_env.providers))
+    monkeypatch.setitem(env['broker'].providers, 'claude', '/nonexistent/host-claude')
     session = (await api.post("/api/sessions", json={"project_id": project["id"], "provider": "claude",
                                                      "name": "Fix Login"})).json()
     assert session["container"] is True and session["worktree"]
@@ -968,12 +971,13 @@ def test_container_git_snapshot_preserves_racy_index_timestamp(tmp_path):
     assert 'app.py' in copied
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex"])
+# Claude container automation is refused (container auth is unobservable); team leads here are Codex.
+@pytest.mark.parametrize("provider", ["codex"])
 async def test_container_team_helpers_inherit_isolation_and_prepare_merge(containers_env, api, env, project, provider):
     from test_team import grant, request
 
     await container_project(api, env, project)
-    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude',
+    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'codex',
                              'name': 'Lead', 'worktree': True, 'orchestrator': grant(agents=[{'agent': provider}])})
     assert response.status_code == 201, response.text
     lead = response.json()
@@ -1083,7 +1087,7 @@ async def test_container_team_refuses_disabled_flag_and_remote_grant(containers_
         from acc.server.models import Node
         db.add(Node(id='elsewhere', name='elsewhere', status='active'))
         db.commit()
-    body = {'project_id': project['id'], 'provider': 'claude', 'name': 'Lead', 'worktree': True,
+    body = {'project_id': project['id'], 'provider': 'codex', 'name': 'Lead', 'worktree': True,
             'orchestrator': grant(machines=['local', 'elsewhere'])}
     response = await api.post('/api/sessions', json=body)
     assert response.status_code == 422 and 'local' in response.text
@@ -1094,7 +1098,7 @@ async def test_container_team_refuses_disabled_flag_and_remote_grant(containers_
     await wait_for(state_is(api, lead['id'], 'idle'))
     object.__setattr__(env['settings'], 'containers_enabled', False)
     try:
-        result = await request(api, env, lead, 'start', name='Helper', agent='claude', task='work')
+        result = await request(api, env, lead, 'start', name='Helper', agent='codex', task='work')
         assert not result['ok'] and 'turned off' in result['error']
     finally:
         object.__setattr__(env['settings'], 'containers_enabled', True)
@@ -1105,15 +1109,15 @@ async def test_refused_helper_container_has_no_native_fallback(containers_env, a
     from test_team import grant, request
 
     await container_project(api, env, project)
-    limits = grant()
+    limits = grant(agents=[{'agent': 'codex'}])
     limits.pop('machines')  # defaults are validated before the container-specific check
-    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude',
+    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'codex',
                              'name': 'Lead', 'worktree': True, 'orchestrator': limits})
     assert response.status_code == 201, response.text
     lead = response.json()
     await wait_for(state_is(api, lead['id'], 'idle'))
     containers_env.answers['launch'] = {'ok': False, 'code': 'unpinned_image', 'detail': 'qualification required'}
-    result = await request(api, env, lead, 'start', name='Helper', agent='claude', task='work')
+    result = await request(api, env, lead, 'start', name='Helper', agent='codex', task='work')
     assert result['ok'], result
     helper = result['result']
     async def failed():
@@ -1257,3 +1261,59 @@ async def test_project_registration_cannot_import_container_enable(api, env, pro
         'workspace_path': str(env['workspaces'] / 'imported'), 'containers': True})
     assert response.status_code == 201, response.text
     assert response.json()['containers'] is False
+
+
+@pytest.mark.claude_launch_auth
+@pytest.mark.parametrize('has_codex', [True, False])
+async def test_automated_container_without_claude_key_selects_codex(containers_env, api, env, project, monkeypatch, has_codex):
+    await container_project(api, env, project)
+    supervisor = api.app.state.supervisor
+    original = supervisor.broker.call
+    async def call(operation, **kwargs):
+        if operation == 'auth_health':
+            return {'codex': {'logged_in': has_codex}, 'checked_at': __import__('time').time()}
+        return await original(operation, **kwargs)
+    monkeypatch.setattr(supervisor.broker, 'call', call)
+    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude',
+                                                    'model': 'sonnet', 'name': 'automated container',
+                                                    'automation': {'autoresume': True}})
+    if not has_codex:
+        assert response.status_code == 409, response.text
+        assert response.json()['detail']['code'] == 'claude_subscription_automation'
+        assert not containers_env.requests
+        return
+    assert response.status_code == 201, response.text
+    session = response.json()
+    assert session['provider'] == 'codex' and session['model'] is None
+    grant = json.loads((env['settings'].containers_dir / 'grants' / f"{session['id']}.json").read_text())
+    assert grant['provider'] == 'codex' and grant['automated'] is True
+    events = (await api.get(f"/api/sessions/{session['id']}/events")).json()
+    assert any('Using Codex' in e['payload'].get('message', '') for e in events)
+
+
+@pytest.mark.claude_launch_auth
+async def test_automated_claude_container_with_vault_key_keeps_api_mode(containers_env, api, env, project, monkeypatch):
+    from test_vault import CANARY, add
+
+    from acc.broker import container_integrations
+    await container_project(api, env, project)
+    key = await add(api, 'Container Claude', 'ANTHROPIC_API_KEY')
+    assert (await api.post(f"/api/vault/keys/{key['id']}/give", json={'project_id': project['id']})).status_code == 200
+    supplied = []
+    original = container_integrations.start
+    def start(*args, **kwargs):
+        supplied.append(kwargs['env']['ANTHROPIC_API_KEY'] == CANARY)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(container_integrations, 'start', start)
+    monkeypatch.setattr(broker_containers, 'auth_mode', lambda *args: 'api_key')  # fake image auth RPC
+    response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude',
+                                                    'model': 'sonnet', 'name': 'API container', 'claude_auth': 'api_key',
+                                                    'automation': {'autoresume': True}})
+    assert response.status_code == 201, response.text
+    session = response.json()
+    assert session['provider'] == 'claude' and session['auth']['mode'] == 'api_key'
+    assert supplied == [True]
+    grant = env['settings'].containers_dir / 'grants' / f"{session['id']}.json"
+    assert CANARY not in grant.read_text()
+    assert CANARY not in json.dumps(session)
+    assert not any(CANARY.encode() in p.read_bytes() for p in Path(session['worktree']).rglob('*') if p.is_file())

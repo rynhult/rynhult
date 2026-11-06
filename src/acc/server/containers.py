@@ -105,12 +105,12 @@ def require_creation(db, settings, project, container: bool, host: str, actor: s
         raise LaunchRefused(problem)
 
 
-def write_grant(settings, session, generation: int, args: list[str], files: dict[str, str], limits: dict) -> Path:
+def write_grant(settings, session, generation: int, args: list[str], files: dict[str, str], limits: dict, *, automated: bool = False) -> Path:
     """grants/<session>.json, atomically and readable by root only through the folder (0750 acc:acc)."""
     grant = {"version": 1, "session_id": session.id, "generation": generation, "policy_id": settings.containers_policy,
              "account": session.run_as, "provider": session.provider, "args": list(args), "checkout": session.cwd,
              "run_dir": str(settings.session_run_dir(session)), "guard_files": guard_hashes(files),
-             "limits": check(limits)}
+             "limits": check(limits), "automated": automated}
     folder = settings.containers_dir / "grants"
     target = folder / f"{session.id}.json"
     tmp = folder / f".{session.id}.{os.getpid()}.tmp"

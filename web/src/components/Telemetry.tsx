@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Shield } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -5,7 +6,7 @@ import { api, post } from '../lib/api';
 import { useSingleMutation } from '../lib/mutations';
 import { useInstance } from '../lib/queries';
 import { useConfirm } from './confirm';
-import { Button, Card, CardHeader, ErrorNote, Input, LoadingRows, QueryState } from './ui';
+import { Button, ErrorNote, Input, LoadingRows, QueryState } from './ui';
 
 type Item = { id: string; kind: string; state: string; body: string; created: number; result: string; attempts: number; receipt: string; digest: string; destination: string };
 type State = { consent: { usage: boolean; reports: boolean; by?: string; at?: string; usage_schema?: string; report_schema?: string }; url: string; total: number; url_locked: boolean; policy: Record<string, string>; items: Item[] };

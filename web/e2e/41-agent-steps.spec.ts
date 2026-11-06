@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });

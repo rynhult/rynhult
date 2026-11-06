@@ -1,4 +1,4 @@
-"""Uninstalled target-local worker. No agent entrypoint, shell or request-selected UID.
+"""Fixed target-local worker. No agent entrypoint, shell or request-selected UID.
 
 The transport must authenticate the main service, not the agent account. A root
 administrator supplies the mapping and qualification; requests cannot supply it.
@@ -652,7 +652,7 @@ def reload_broker(account, payload, *, socket_path=None):
 
 
 def main():
-    """Socket-activated fixed worker; never installed/run by the development task."""
+    """Socket-activated fixed worker provisioned by the owner-invoked installer."""
     import pwd
     import socket
     import struct

@@ -338,6 +338,11 @@ def router(ctx):
                 raise HTTPException(409, 'The request changed while the checkout was being set up. Reload the page and try again.')
             live(node, account)
             row.path, row.trust, row.sync_status, row.approved_by = path, 'approved', 'ready', who.username
+            from .. import sources
+            try:
+                sources.approve_initial_placement(s, row, actor=who.username)
+            except sources.Refused as error:
+                raise HTTPException(409, str(error)) from None
             record(s, who, 'remote_placement_approve', group_id, project_id=project_id, placement_id=row.id)
             s.commit()
         return {'id': placement_id, 'trust': 'approved', 'sync_status': 'ready'}

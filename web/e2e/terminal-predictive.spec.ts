@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle } from './helpers';
 
@@ -94,7 +94,12 @@ test('remounting the Safari editor keeps exactly one native input owner', async 
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   const take = page.getByRole('button', { name: 'Take control', exact: true });
   await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
-  if (await take.isVisible()) await take.click();
+  if (await take.isVisible()) {
+    await take.click();
+    const dialog = page.getByRole('dialog', { name: 'Take terminal control' });
+    await dialog.getByLabel('Reason').selectOption('manual_handover');
+    await dialog.getByRole('button', { name: 'Take control', exact: true }).click();
+  }
   await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('after');
   await page.keyboard.press('Enter');

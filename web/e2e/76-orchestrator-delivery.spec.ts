@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, control, csrfHeaders, gitProject, info, wikiShotPath } from './helpers';
 
@@ -144,11 +144,14 @@ for (const width of [1440, 390]) test.describe(`delivery geometry ${width}`, () 
   await expect(indicator).toHaveCount(0, { timeout: 15_000 });
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   await expect(terminal).toBeVisible();
+  // Returning from Activity remounts the standard terminal. Measure the same
+  // connected control state as the baseline, after the handshake has settled.
+  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-terminal-notice]')).toHaveAttribute('title', /Partial input may remain/);
   const settled = (await terminal.boundingBox())!;
   expect(Math.abs(settled.y - initial.y)).toBeLessThan(1);
   expect(Math.abs(settled.height - initial.height)).toBeLessThan(1);
   await testInfo.attach('terminal-geometry', { contentType: 'application/json', body: JSON.stringify({ width, initial, queued, settled }) });
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
   await page.screenshot({ path: wikiShotPath(testInfo, width === 390 ? 'phone-terminal.png' : 'session-page.png'), animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
   await page.goto(`/sessions/${id}?tab=spec#automation`);

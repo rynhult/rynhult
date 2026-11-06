@@ -1,7 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, wikiShotPath } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const) {
   test(`owner feature panel at ${width}px in ${theme}`, async ({ page }, testInfo) => {

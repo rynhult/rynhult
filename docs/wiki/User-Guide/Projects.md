@@ -18,6 +18,74 @@ Each card leads with what is happening now: **1 needs you** in amber, how many s
 
 ![A project's actions menu on a phone, keeping Archive secondary to New session](/.attachments/projects-actions-phone.png)
 
+## Session launch target
+
+A session uses the project's recorded repository, machine, agent account and folder.
+Rynhult does not choose another checkout when that binding is missing, ambiguous
+or has changed. If launch asks you to review the target, ask an owner to check the
+project registration and machine identity before retrying. That refusal does not
+move files, clone a repository or grant access to another account. Existing
+sessions keep their recorded launch context when resumed.
+Saving a repository remote in **Issue sources**, or promoting a workspace with a
+GitHub repository, also updates the source used by subsequent launches. It does
+not replace an existing session's recorded folder or agent account.
+
+## Source filters in the new project directory
+
+In the new layout, **All projects** shows separate **Source repositories** and
+**Working locations** columns, with counts of the records visible to you. Use
+**Source owner** for a verified provider owner and **Working location machine**
+for a recorded location identity. An unresolved URL is searchable text; it does
+not create a verified source-owner option. Machines with the same display name
+keep separate identity suffixes.
+
+Filter options come from the visible page. Clear a selected filter to browse
+other options. Search covers project names, notes and authorized source text.
+Search, selected source/machine IDs, archived visibility and pagination stay in
+the URL across reload and Back. Changing a filter starts at the first page;
+refreshing the data retains the current page.
+
+A failed inventory read hides its rows, counts and filter suggestions until a
+successful retry. The directory does not fall back to a project's old single
+repository or host label. Existing project actions keep their existing checks.
+
+## Sources and working locations in the new layout
+
+When the new layout is enabled, open a project and find **Sources** and
+**Working locations** in its Working locations tab. Sources shows the recorded
+repository membership and its visible working locations. A saved URL is labelled
+**Unresolved locator** until its repository identity has been verified; a
+local-only project has no repository source.
+
+Working locations shows each visible registration’s machine, agent account and
+recorded folder. Identical folder text on two machines or accounts does not make
+one location. **Existing launch location** identifies the current recorded target;
+these views do not select a new target. Remote availability is explicitly
+unchecked; only installation owners see a recorded last-seen time, which is
+historical information.
+
+Repository and location counts use their recorded identities; separate custody
+registrations are retained even when they share one location identity.
+Counts say **visible** because another person’s private checkout is excluded.
+Group members see their own private checkouts; viewers see no private checkout
+locations. In **Groups → Projects**, choose **Sources and locations** for the
+corresponding read-only group view. A read failure hides previously loaded source
+and location details until a successful retry. Verified repository names, owners and hosting
+instances follow the same visibility rules as their source URLs; a redacted
+source is labelled as having hidden details, not as unresolved.
+
+After a project is transferred, its saved source and location records can still
+belong to the previous audience. Installation owners see a notice explaining
+this, without the hidden details. The view does not rewrite that audience or
+change the existing launch configuration.
+
+Adding or unlinking repositories, managing connections, preparing locations and
+changing launch targets are disabled with their reasons beside the controls.
+Existing single-source sessions continue through their existing launch checks.
+These views do not clone, move or delete files or change credentials or permissions.
+Large projects show at most 100 source memberships and 100 location registrations;
+a notice explains truncation, and counts still include all visible records.
+
 ## Git author
 
 In a project's **Issues and pull requests** section, **Git author** shows the name and email Git
@@ -60,6 +128,10 @@ Select **New project** (on Projects, in the Overview's **Get started** list, or 
 5. Decide on **Trust it for agent sessions** (see [Trust](#trust)). It's ticked for an empty folder. For a clone it starts unticked: trust lets agents run with the repository's own config and hooks, so tick it only for code you know. You can also trust it later, when you start the first session.
 6. Select **Create project** (or **Clone and add**, or **Create repository**).
 
+**Cancel** keeps the New project draft in this tab, including selected documents.
+Reloading while it is dirty asks for confirmation; that warning does not mean the
+documents or form can be restored after reload. See [Unsaved work and reload](/User-Guide/Sessions#unsaved-work-and-reload).
+
 **What you should see:** the project's card on Projects, and New session offers it. A project you didn't trust shows a **not trusted** badge until you do.
 
 ![New project identifies the named main machine rather than saying This machine](/.attachments/projects-machine-picker.png)
@@ -71,6 +143,11 @@ Select **New project** (on Projects, in the Overview's **Get started** list, or 
 **New project → Use existing folder** opens **Register folder**, which is also available directly on Projects. It is the other way in: it registers a folder that already exists, without creating or moving it. Use it for a checkout you made yourself, or once a machine is added (see [Nodes](/User-Guide/Nodes)) for a folder on that **Machine**; the project's sessions run there. They run as your agent account on that machine; if the machine has other accounts and not yours, an owner picks one under **Agent account**.
 
 Slugs are unique, and `local` and anything starting with `local-` are reserved for Rynhult's **Local workspaces** groups (see [Workspaces](/User-Guide/Workspaces)).
+
+Registering a folder on another machine requires that node to be online and its
+agent service to support workspace identity checks. If registration asks you to
+update, check **Host → Machines**, update the node, and retry. No project is
+registered until the check succeeds.
 
 ### Imported repositories without commits
 
@@ -222,6 +299,8 @@ A session's own pull request is finished from its [Pull request tab](/User-Guide
 ## Containers and autostart
 A project card shows how many of its compose containers are up. **Autostart** (owners only, off for new projects) brings its stack up whenever Rynhult starts, for example after a reboot. Members see their project's containers once an owner has turned on Autostart for it; until then the card says **Stack not run by Rynhult**.
 
+On Projects, container readings load as cards or rows come into view and refresh every 15 seconds while visible. Scroll to another project to read its status; readings pause while the browser tab is hidden.
+
 **You approve what autostart runs.** The stack runs under the projects' Docker account, normally the person who installed Rynhult, and agents in the project can edit its compose files. A volume in `compose.yaml` could reach that person's home. So:
 1. Ticking **Autostart** opens the stack's compose files for you to read (`compose.yaml` and any override file). Look for `volumes`, `privileged`, `network_mode: host` and images you don't expect, then choose **Approve and turn on autostart**.
 2. If the files change afterwards (or their `.env`, an included file, or anything else compose reads), the card shows **Changed · Approve compose files**, and Rynhult won't bring the stack up when it next starts. The [Inbox](/User-Guide/Glossary#inbox) says so too. Stacks that were never approved show **Not approved · Approve compose files**. The same button is on the project page under the **Runtime** tab → **Docker stack**.
@@ -325,7 +404,7 @@ git init
 
 ## Delete a project
 
-**Archive** stays available in the project's actions menu. To permanently remove a project, choose **Delete** from that menu or **Delete project** on its page. An owner can delete personal projects; members can delete their own. Built-in workspace projects and group projects cannot be deleted this way.
+**Archive** stays available in the project's actions menu. To permanently remove a project, choose **Delete** from that menu or **Delete project** on its page (in the new layout, under **Project actions**). An owner can delete personal projects; members can delete their own. Built-in workspace projects and group projects cannot be deleted this way.
 
 The in-page confirmation lists what will go. Type the project's exact slug, for example `demo-api`, to enable **Delete project**. Cancel leaves everything in place. A failure stays in the dialog so you can read it and retry.
 
@@ -354,3 +433,42 @@ root and OS permission are separate: allowing `/home/alex/src/demo-api` does not
 make that directory readable or writable. See [Allowed folders](/User-Guide/Settings#allowed-folders)
 for checks, target availability, stop requirements and the separately qualified Linux grant/Undo flow. Keep secrets out of a granted repository: its OS reader can
 read keys and untracked files too, despite prompt-based secret-read guardrails.
+
+### Ports and saved approval scope
+
+A port reservation names a project's listening port; it does not publish the app
+or change firewall access. The delegated-approval server foundation grants no new
+agent port endpoint. For example, reserving a port for **Demo Garden** does not
+make it reachable at `garden.example.lan`; publication needs its own person approval.
+## Projects in the new layout
+
+When you use the new layout, **Projects** opens **All projects**: a directory with
+Project, Source repositories, Working locations and Activity columns. Search by
+project name, notes or repository; use **Working location**, **Repository owner**
+and **Show archived** to narrow the list. Filters stay in the page address. Lists
+over 20 projects have Previous and Next controls. Each row opens its project.
+The directory uses the projects and sessions you are already allowed to see.
+
+The new project page keeps notes on one compact line. Its main tab row contains
+**Overview**, **Files**, **Changes**, **Preview**, **Recent results** and
+**Working locations**. On Overview, the section row sits directly below the main
+tabs: **Sessions**, **Issues & pull requests**, **Gate queue**, **Project brief**,
+**Knowledge**, **Keys**, **Backup**, **Ports** and **Runtime**, subject to the
+existing feature and access rules. CI health and open pull-request and issue counts remain available below the selected content. Failing CI keeps its warning colour; unavailable data is labelled. **Sessions** opens
+the same session; it does not resume a stopped session or take another window's
+terminal control. Project brief remains in the section row.
+Results are the latest five indexed handoffs, council reports and research notes
+from the project checkout, with a document viewer and a link to Knowledge. File
+update times do not mean the work was completed or approved. Private worktrees
+are not included. **Working locations** shows the registered repository,
+primary folder and any group locations you can access. Existing project sections,
+Files, Preview and New session remain available.
+
+
+
+When **Register folder** or **Trust** reports **Allow this folder in Security →
+Allowed folders**, follow **Open Allowed folders in Security**. An owner can check
+and review the exact repository folder, apply its policy, then retry registration
+or trust. This keeps the checkout where it is. Allowing a parent also authorizes
+its children; prefer the exact repository. Folder policy does not grant Unix
+permissions or trust repository code.

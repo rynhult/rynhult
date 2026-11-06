@@ -1,6 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { test } from './shell-state';
+import { expect } from '@playwright/test';
 import { AUTH_FILE, expectAxeClean } from './helpers';
-test.use({ storageState: AUTH_FILE });
+test.use({ shellLayout: 'standard', storageState: AUTH_FILE });
 
 test('qualification is panel information, while pending cleanup still needs action', async ({ page }) => {
   let pending: string[] = [];

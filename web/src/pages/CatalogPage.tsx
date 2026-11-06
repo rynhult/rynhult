@@ -1,15 +1,19 @@
+import { useSearchParams } from 'react-router-dom';
+import { AppearanceThemes } from "../components/AppearanceThemes";
+import { Surface as Card, ShellPage as Page, Workbar as PageHeader, PaneTabs as Tabs } from '../components/shell/PagePrimitives';
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, ExternalLink, Pencil, Plus, Server, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { AddMcpDialog, AddSkillDialog, AssignDialog, ProfileDialog } from "../components/CatalogDialogs";
 import { CatalogRestoreDialog } from "../components/CatalogRestoreDialog";
-import { Badge, Button, Card, Empty, Page, PageHeader, QueryState, SearchInput, TabPanel, Tabs, Toolbar } from "../components/ui";
+import { Badge, Button, Empty, QueryState, SearchInput, Toolbar } from "../components/ui";
+import { TabPanel } from "../components/Tabs";
 import { api } from "../lib/api";
 import type { Catalog, CatalogItem, CatalogProfile } from "../lib/types";
 import { providerShort, useProviderRegistry, useRole } from "../lib/queries";
 import { settingWords } from "../lib/words";
 
-type Tab = "profiles" | "skills" | "agents" | "mcps" | "deferred";
+type Tab = "profiles" | "skills" | "agents" | "mcps" | "deferred" | "themes";
 const match = (q: string, ...parts: (string | undefined)[]) => !q || parts.join(" ").toLowerCase().includes(q.toLowerCase());
 
 function Items({ items, catalog, onAssign }: { items: CatalogItem[]; catalog: Catalog; onAssign?: (item: CatalogItem) => void }) {
@@ -95,7 +99,10 @@ function ProfileCard({ profile, onEdit }: { profile: CatalogProfile; onEdit?: ()
 export function CatalogPage() {
   const { owner } = useRole();  // members use the catalog; owners change it
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/api/catalog") });
-  const [tab, setTab] = useState<Tab>("profiles");
+  const [search, setSearch] = useSearchParams();
+  const requestedTab = search.get('tab');
+  const tab: Tab = ['skills', 'agents', 'mcps', 'deferred', 'themes'].includes(requestedTab ?? '') ? requestedTab as Tab : 'profiles';
+  const setTab = (value: Tab) => setSearch(current => { const next = new URLSearchParams(current); next.set('tab', value); return next; }, { replace: true });
   const [query, setQuery] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [adding, setAdding] = useState<"skill" | "mcp" | null>(null);
@@ -125,10 +132,12 @@ export function CatalogPage() {
                 { id: "agents", label: "Subagents", count: c.agents.length },
                 { id: "mcps", label: "MCP servers", count: c.mcps.length },
                 { id: "deferred", label: "Not loaded by default", count: c.deferred.length },
+                { id: "themes", label: "Themes" },
               ]} />
               <Toolbar className="pb-1.5"><SearchInput value={query} onChange={setQuery} placeholder="Filter" className="w-56" /></Toolbar>
             </div>
             <TabPanel id="catalog-tabs" value={tab}>
+            {tab === "themes" && <AppearanceThemes />}
             {tab === "profiles" && (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {c.profiles.filter((p) => match(query, p.id, p.name, p.description, ...p.skills, ...p.mcps)).map((p) =>

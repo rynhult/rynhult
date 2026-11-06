@@ -356,3 +356,53 @@ async def test_plain_write_intent_thread_cannot_invalidate_loop_snapshot(engine)
             await asyncio.wait_for(task, 3)
     with engine.connect() as check:
         assert check.execute(text("SELECT v FROM t ORDER BY v")).scalars().all() == [1, 2]
+
+
+async def test_released_read_snapshot_lets_a_waiting_worker_commit(engine):
+    """A GET that awaits slow IO (team git/gate inspection) releases its snapshot first: workers don't starve."""
+    import asyncio
+
+    from acc.server.db import make_sessionmaker, release_read
+
+    done = threading.Event()
+
+    def work():
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO t VALUES (2)"))
+        done.set()
+
+    db = make_sessionmaker(engine)()
+    try:
+        db.execute(text("SELECT count(*) FROM t")).scalar()
+        task = asyncio.create_task(write_in_thread(work))
+        assert not await asyncio.to_thread(done.wait, 0.2)  # held snapshot: the worker waits
+        assert release_read(db)
+        assert not db.in_transaction()
+        await asyncio.wait_for(task, 3)  # the "await" a handler does after releasing
+        assert done.is_set()
+        assert db.execute(text("SELECT count(*) FROM t")).scalar() == 1  # a fresh, short snapshot
+    finally:
+        db.close()
+
+
+def test_release_read_never_commits_or_drops_work(engine):
+    from acc.server.db import make_sessionmaker, release_read
+
+    db = make_sessionmaker(engine)()
+    try:
+        assert not release_read(db)  # no transaction yet
+        db.execute(text("INSERT INTO t VALUES (1)"))  # flushed SQL write: not a read-only snapshot
+        assert not release_read(db)
+        assert db.in_transaction()
+        db.rollback()
+        token = WRITE_INTENT.set(True)
+        try:
+            db.execute(text("SELECT count(*) FROM t")).scalar()
+            assert not release_read(db)  # write-intent transactions keep their write lock and atomicity
+        finally:
+            db.rollback()
+            WRITE_INTENT.reset(token)
+    finally:
+        db.close()
+    with engine.connect() as check:
+        assert check.execute(text("SELECT count(*) FROM t")).scalar() == 0

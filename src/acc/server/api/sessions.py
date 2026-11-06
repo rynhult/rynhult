@@ -3,16 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import re
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import selectinload
 
 from ... import container_host_record, providers
@@ -21,7 +23,7 @@ from .. import budgets, explanations, export, gitbackup, guardrails, history, la
 from ..broker_client import BrokerError, BrokerUnavailable
 from ..compiler import CompileError, build_args, compile_files, not_delivered
 from ..issue_sources import IssueSourceError, issue_prompt, source_key
-from ..models import AuditLog, Event, Node, Observation, Project, Session, Team
+from ..models import API_PRINCIPAL, AuditLog, Event, Node, Observation, Project, Session, Team
 from ..orchestrator import delivery
 from ..public_errors import public_error, unknown_method
 from ..reconcile import host_of
@@ -55,6 +57,15 @@ ARTIFACT_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpe
                   **{ext: "text/plain; charset=utf-8" for ext in (".txt", ".log", ".md", ".xml", ".html")}}
 
 
+class GitAction(BaseModel):
+    message: str = Field('', max_length=2000)
+    fingerprint: str | None = None
+
+
+class InboxPermissions(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
 class SessionIn(BaseSessionIn):
     """Slice-owned launch additions; shared schemas remain owned by their slices."""
     task: str | None = Field(None, max_length=65536)
@@ -79,6 +90,7 @@ class SessionIn(BaseSessionIn):
 
 
 class ExplainIn(BaseModel):
+    claude_auth: Literal["subscription", "api_key"] = "subscription"
     provider: str = Field(min_length=1, max_length=32)
     model: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00-\x1f]+$")
     regenerate: bool = False
@@ -96,8 +108,11 @@ def router(ctx: Context) -> APIRouter:
         with db() as s:
             offline = offline_machines(s)
             rows = s.scalars(ctx.scope(select(Session), Session, who).order_by(Session.created_at.desc()).options(
-                selectinload(Session.project), selectinload(Session.launch_spec), selectinload(Session.placement)))
-            return json_list([session_out(x, offline_hosts=offline) for x in rows], request.headers.get("if-none-match"))
+                selectinload(Session.project), selectinload(Session.launch_spec), selectinload(Session.placement))).all()
+            from .. import claude_auth
+            modes = claude_auth.modes(s, rows)
+            return json_list([session_out(x, offline_hosts=offline, auth_modes=modes) for x in rows],
+                             request.headers.get("if-none-match"))
 
     def standalone_profile(body: SessionIn) -> None:
         profile = supervisor.catalog.profiles.get(body.profile or "")
@@ -259,6 +274,9 @@ def router(ctx: Context) -> APIRouter:
                     except LaunchRefused as error:
                         raise CompileError(str(error)) from None
                 keys = vault.plan(s, keys_project, who.username, remote, supervisor.catalog, inputs.mcps)
+                from acc.providers.claude_auth import AUTH_ENV
+                anthropic_keys = [k for k in keys.public()['keys'] if k['variable'] in AUTH_ENV]
+                keys = keys.claude_auth(inputs.provider, body.claude_auth)
                 where = selected_layout or (
                     supervisor.known_layout(host, account) or supervisor.known_layout("local", account))
                 from .. import security_settings
@@ -295,10 +313,17 @@ def router(ctx: Context) -> APIRouter:
                                   files=files)
             except (CompileError, vault.VaultError) as error:
                 raise HTTPException(422, str(error))
-            return {"command": [providers.get(inputs.provider).executable, *args], "cwd": cwd, "files": files,
+            preview_command = [providers.get(inputs.provider).executable, *args]
+            if inputs.provider == "claude" and body.claude_auth == "subscription":
+                from ...providers.claude_auth import subscription_command
+                preview_command = subscription_command(preview_command)
+            return {"command": preview_command, "cwd": cwd, "files": files,
                     "machine": host, "checkout": {"requires_clone": bool(body.project_id and
-                        host != (project.host or "local") and target_repo is None)},
-                    "keys": keys.public(),
+                        host != (project.host or "local") and target_repo is None),
+                        "repository": (target_repo if host != (project.host or "local") else project.workspace_path)
+                            if body.project_id else None},
+                    "keys": keys.public(), "claude_auth_keys": anthropic_keys if inputs.provider == "claude" else [],
+                    "claude_auth": body.claude_auth,
                     "digest": compiled.digest, "trusted": trusted, "import_mode": import_mode,
                     "inputs": inputs.as_dict(), "standalone": bool(body.topic or body.workspace),
                     "not_delivered": not_delivered(inputs, supervisor.catalog)}
@@ -350,6 +375,28 @@ def router(ctx: Context) -> APIRouter:
             inputs = await issue_inputs(body, who, frozen=bool(schedule_run_id))
         except (CompileError, KeyError) as error:
             raise HTTPException(422, str(error))
+        if inputs.provider == 'claude' and body.claude_auth == 'api_key':
+            with db() as s:
+                keys_project = body.project_id
+                if keys_project:
+                    ctx.project_for(s, who, keys_project)
+                elif body.workspace or body.topic:
+                    found = local_workspace.find_project(s, who.account)
+                    if found is not None:
+                        try:
+                            keys_project = local_workspace.check_project(found, settings.account_root(who.account),
+                                                                         who.account, lambda p: ctx.owns(p, who)).id
+                        except local_workspace.LocalProjectError as error:
+                            raise HTTPException(409, str(error)) from None
+                try:
+                    vault.plan(s, keys_project, who.username, selected_host != 'local',
+                               supervisor.catalog, inputs.mcps).claude_auth(inputs.provider, body.claude_auth)
+                except vault.VaultError as error:
+                    raise HTTPException(422, str(error)) from None
+        personal_task = bool(getattr(body, 'task', None) is not None and inputs.provider == 'claude'
+                             and getattr(who, 'user_id', None) is not None and not schedule_run_id)
+        if personal_task and len(body.task) > 20000:
+            raise HTTPException(422, 'A personal Claude launch task must be at most 20000 characters.')
         dangerous = providers.get(inputs.provider).dangerous(inputs)
         if dangerous and not body.confirm_dangerous:
             raise HTTPException(409, "This launch lets the agent run commands without asking. Tick the confirmation to go ahead.")
@@ -471,27 +518,40 @@ def router(ctx: Context) -> APIRouter:
                                                          owner=who.username, worktree=worktree, orchestrator=limits,
                                                          schedule_run_id=schedule_run_id, multirun_entry=multirun_entry,
                                                          container=container, automation_policy=body.automation,
-                                                         machine=selected_host if body.machine else None, checkout_repo=checkout_repo)
+                                                         machine=selected_host if body.machine else None, checkout_repo=checkout_repo,
+                                                         personal_task=body.task if personal_task else None, claude_auth=body.claude_auth)
             except Exception:
                 if worktree:  # nothing will use it: don't leave an empty worktree behind
                     await broker.call("remove_worktree", account=account, host=host, repo=repo, path=worktree["path"])
                 raise
         except (LaunchRefused, CompileError, BrokerError) as error:
+            from .. import claude_auth
+            if claude_auth.MESSAGE in str(error):
+                raise HTTPException(409, claude_auth.detail(body.project_id)) from None
             if isinstance(error, BrokerError) and "isn't a git repository with a commit yet" in str(error):
                 raise HTTPException(409, "This project has no Git commit yet. Open the project page and choose Make the first commit, then start the session or team again.") from None
             raise refused(error)
         with db() as s:
             session = s.get(Session, acc_id)
+            from .. import claude_auth
+            if claude_auth.MESSAGE in (session.last_error or ''):
+                raise HTTPException(409, {**claude_auth.detail(body.project_id), 'session_id': acc_id})
             if body.issue_source:
                 session.issue_source = {**body.issue_source.model_dump(), "actor": who.username}
                 s.commit()
             if body.automation:
-                automation.configure(s, session, body.automation, who.username)
+                try:
+                    automation.configure(s, session, body.automation, who.username)
+                except LaunchRefused as error:
+                    raise refused(error)
                 s.commit()
             result = session_out(session, detail=True, ssh_host=settings.editor_host)
         task = getattr(body, 'task', None)
-        if task is not None:
-            result['delivery'] = await supervisor.send_text(acc_id, who.username, task)
+        if task is not None and not (personal_task and result['launch_spec']['inputs'].get('initial_prompt') == task):
+            try:
+                result['delivery'] = await supervisor.send_text(acc_id, who.username, task)
+            except claude_auth.AutomationRefused:
+                raise HTTPException(409, {**claude_auth.detail(body.project_id), 'session_id': acc_id}) from None
         return result
 
     ctx.launch_session = launch_session
@@ -628,8 +688,85 @@ def router(ctx: Context) -> APIRouter:
         except BrokerError as error:
             raise refused(error)
         with db() as s:  # the diff as the UI shows it: with the session's keys redacted
-            changes = supervisor.vault.redactor(s, ctx.session_for(s, who, acc_id).vault_keys).deep(changes)
-            return {**changes, "revision": explanations.revision(changes)}
+            session = ctx.session_for(s, who, acc_id)
+            changes = supervisor.vault.redactor(s, session.vault_keys).deep(changes)
+            from acc.backup_activation import held
+            # Reading an owned session does not require ownership of its project.
+            # Git mutations still require project access, including remote reservations.
+            allowed = False
+            try:
+                project = ctx.project_for(s, who, session.project_id)
+            except HTTPException as error:
+                if error.status_code != 404:
+                    raise
+            else:
+                policy = guardrails.policy(s, session.cwd, session.owner, project.id,
+                                          machine=session.host, account=session.run_as)
+                allowed = (project.trusted and project.import_mode != 'readonly' and not held(s, session)
+                           and not session.container and not changes.get('truncated')
+                           and bool(session.worktree or not policy['rules'].get('push_default', True)))
+            return {**changes, "revision": explanations.revision(changes), 'git_actions_allowed': allowed}
+
+    @api.post('/api/sessions/{acc_id}/git/{action}')
+    async def session_git(acc_id: str, action: str, body: GitAction, who=Depends(ctx.principal)):
+        from acc.backup_activation import held
+
+        from .. import pulls
+        if action not in ('commit', 'push'):
+            raise HTTPException(404, 'Unknown Git action.')
+        vault_keys = []
+        audit_detail = {'message_hash': hashlib.sha256(body.message.encode()).hexdigest()[:12]}
+        try:
+            with db() as s:
+                session = ctx.session_for(s, who, acc_id)
+                vault_keys = session.vault_keys
+                project = ctx.project_for(s, who, session.project_id)
+                policy = guardrails.policy(s, session.cwd, session.owner, project.id,
+                                          machine=session.host, account=session.run_as)
+                if held(s, session) or project.import_mode == 'readonly' or not project.trusted:
+                    raise HTTPException(403, 'This session is read-only.')
+                if not session.worktree and policy['rules'].get('push_default', True):
+                    raise HTTPException(403, 'The project guardrails do not allow Git changes in the main checkout.')
+                where = dict(account=session.run_as, host=session.host, path=session.cwd)
+                repo = project.repo
+                audit_detail.update(repo=repo, remote_host='github.com' if repo else None)
+            params = dict(action=action, person=who.username, message=body.message, fingerprint=body.fingerprint, custom=policy['custom'])
+            if action == 'push':
+                if not repo:
+                    raise HTTPException(409, 'A GitHub repository is required to check branch protection.')
+                github = pulls.BrokerGitHub(broker, where['account'], where['host'])
+                state = await broker.call('session_git', **where, action='status')
+                branch = state['branch']
+                audit_detail.update(branch=branch, repo=repo, remote_host='github.com')
+                info = await pulls.call(github, 'GET', f'repos/{repo}')
+                code, protection = await github.request('GET', f"repos/{repo}/branches/{quote(branch, safe='')}")
+                rules_code, rules = await github.request('GET', f"repos/{repo}/rules/branches/{quote(branch, safe='')}")
+                if (branch in {info.get('default_branch'), 'main', 'master'} or code not in (200, 404)
+                        or (code == 200 and protection.get('protected')) or rules_code != 200 or rules):
+                    raise HTTPException(403, 'Cannot push the default or a protected branch; branch protection must be readable.')
+                params.update(branch=branch, default_branch=info['default_branch'], repo=repo)
+            result = await broker.call('session_git', **where, **params)
+            with db() as s:
+                redactor = supervisor.vault.redactor(s, ctx.session_for(s, who, acc_id).vault_keys)
+                result = redactor.deep(result)
+                s.add(AuditLog(actor=who.username, action='git.' + action, target=acc_id,
+                               detail=redactor.deep({**audit_detail, 'outcome': 'success' if result.get('ok', True) else 'failed',
+                                       'commit': result.get('commit'), 'branch': result.get('branch'),
+                                       'remote_host': result.get('remote_host', audit_detail.get('remote_host')),
+                                       'file_count': result.get('file_count')})))
+                s.commit()
+            return result
+        except (HTTPException, BrokerError, pulls.PullError) as error:
+            with db() as s:
+                redactor = supervisor.vault.redactor(s, vault_keys)
+                reason = redactor.deep(str(error.detail) if isinstance(error, HTTPException) else str(error))
+                s.add(AuditLog(actor=who.username, action='git.' + action, target=acc_id, detail=redactor.deep({**audit_detail, 'outcome': 'refused', 'reason': reason[:2000]})))
+                s.commit()
+            if isinstance(error, BrokerError):
+                raise refused(type(error)(reason))
+            if isinstance(error, pulls.PullError):
+                raise HTTPException(error.status, reason) from None
+            raise HTTPException(error.status_code, reason) from None
 
     def explanation_key(acc_id, changes):
         return f"explain:{acc_id}:{explanations.revision(changes)[:36]}"
@@ -645,13 +782,23 @@ def router(ctx: Context) -> APIRouter:
     @api.get("/api/sessions/{acc_id}/explanation/agents")
     async def explanation_agents(acc_id: str, who=Depends(ctx.principal)):
         with db() as s:
-            ctx.session_for(s, who, acc_id)
+            source = ctx.session_for(s, who, acc_id)
+            from acc.broker.claude_auth import supplied_mode
+            claude_available = True
+            try:
+                plan = vault.plan(s, source.project_id, who.username, False, supervisor.catalog)
+                credentials = {key.variable: '1' for key in plan.keys}
+            except vault.VaultError:
+                claude_available = False
+                credentials = {}
         try:
             health = await broker.call("auth_health", account=who.account, host="local")
         except BrokerError as error:
             raise refused(error)
         return {"agents": [{"id": p.id, "label": p.label} for p in providers.PROVIDERS.values()
-                           if (health.get(p.id) or {}).get("logged_in")]}
+                           if (p.id != 'claude' or claude_available) and (
+                               (health.get(p.id) or {}).get("logged_in") or p.id == 'claude' and (
+                                   supplied_mode(credentials) != 'unknown' or (health.get('codex') or {}).get('logged_in')))]}
 
     @api.post("/api/sessions/{acc_id}/explanation")
     async def create_explanation(acc_id: str, body: ExplainIn, who=Depends(ctx.principal)):
@@ -667,18 +814,15 @@ def router(ctx: Context) -> APIRouter:
                 if cached and (cached.value["status"] == "running"
                                or cached.value["status"] == "ready" and not body.regenerate):
                     return supervisor.vault.redactor(s, ctx.session_for(s, who, acc_id).vault_keys).deep(cached.value)
-                paused = budgets.paused(s, who.username, body.provider, project_id=ctx.session_for(s, who, acc_id).project_id)
-                if paused:
-                    raise HTTPException(409, f"Your budget pauses new {providers.get(body.provider).label} launches ({', '.join(paused)}). Choose another agent.")
             agents = await explanation_agents(acc_id, who)
-            if body.provider not in {p["id"] for p in agents["agents"]}:
+            if body.provider != "claude" and body.provider not in {p["id"] for p in agents["agents"]}:
                 raise HTTPException(422, "Choose an agent that's installed and signed in on this machine.")
             with db() as s:
                 project_id = local_project(s, who)
                 s.commit()
             try:
                 return await supervisor.launch_explanation(project_id, who.username, body.provider, body.model,
-                                                            key, changes, acc_id)
+                                                            key, changes, acc_id, claude_auth=body.claude_auth)
             except (LaunchRefused, CompileError, BrokerError) as error:
                 raise refused(error)
             except ValueError as error:
@@ -762,13 +906,63 @@ def router(ctx: Context) -> APIRouter:
     async def _action(acc_id: str, who, start):
         """Run a supervisor action on one of your sessions (`start` builds the coroutine once access is checked)."""
         with db() as s:
-            ctx.session_for(s, who, acc_id)
+            project_id = ctx.session_for(s, who, acc_id).project_id
         try:
             await start()
         except (LaunchRefused, BrokerError) as error:
+            from .. import claude_auth
+            if isinstance(error, claude_auth.AutomationRefused):
+                raise HTTPException(409, claude_auth.detail(project_id)) from None
             raise refused(error)
         with db() as s:
             return session_out(s.get(Session, acc_id))
+
+    @api.post("/api/sessions/archive-stopped")
+    async def archive_stopped(who=Depends(ctx.principal)):
+        if who.username == API_PRINCIPAL:
+            raise HTTPException(403, "A signed-in person is required to archive stopped sessions.")
+
+        def eligible(query):
+            return query.where(
+                Session.desired_state == "stopped",
+                Session.observed_state.in_(["stopped", "exited", "error"]),
+                Session.team_stop_pending.is_(False), Session.multirun_stop_pending.is_(False),
+                or_(Session.last_error.is_(None), ~Session.last_error.startswith("stop not confirmed:")))
+
+        # Bound selection outside the lifecycle lock. The extra row signals another batch.
+        with db() as s:
+            candidates = s.scalars(eligible(ctx.scope(select(Session), Session, who))
+                                   .order_by(Session.id).limit(201)).all()
+            ids = []
+            for session in candidates:
+                try:
+                    ctx.session_for(s, who, session.id)
+                except HTTPException as error:
+                    if error.status_code == 404:
+                        continue
+                    raise
+                ids.append(session.id)
+        count = 0
+        for acc_id in ids[:200]:
+            # Recheck eligibility and authorization after taking the lock: a session may restart.
+            async with supervisor._lock:
+                with db() as s:
+                    session = s.scalar(eligible(select(Session).where(Session.id == acc_id)))
+                    if session is None:
+                        continue
+                    try:
+                        ctx.session_for(s, who, acc_id)
+                    except HTTPException as error:
+                        if error.status_code == 404:
+                            continue
+                        raise
+                    session.desired_state = "archived"
+                    session.activity = None
+                    supervisor._set_state(s, session, "archived", "api")
+                    s.add(AuditLog(actor=who.username, action="session.archive", target=session.id))
+                    s.commit()
+                    count += 1
+        return {"archived": count, "more_remain": len(ids) > 200}
 
     @api.post("/api/sessions/{acc_id}/stop")
     async def stop(acc_id: str, who=Depends(ctx.principal)):
@@ -794,6 +988,13 @@ def router(ctx: Context) -> APIRouter:
                 s.commit()
                 raise
         return await _action(acc_id, who, lambda: supervisor.stop_held(acc_id, who.username))
+
+    @api.get("/api/sessions/{acc_id}/resume-check")
+    def resume_check(acc_id: str, who=Depends(ctx.principal)):
+        with db() as s:
+            session = ctx.session_for(s, who, acc_id)
+            reason = supervisor.resume_preflight(s, session, who.username)
+            return {"eligible": reason is None, "reason": reason}
 
     @api.post("/api/sessions/{acc_id}/resume")
     async def resume(acc_id: str, who=Depends(ctx.principal)):
@@ -1023,6 +1224,12 @@ def router(ctx: Context) -> APIRouter:
             if existing is not None and not existing.private_workspace:
                 raise HTTPException(409, "This workspace is already a project.")
             existing_id = existing.id if existing else None
+            if existing is not None:
+                from .. import sources
+                try:
+                    sources.require_legacy_rebindable(s, existing)
+                except sources.Refused as error:
+                    raise HTTPException(409, str(error)) from None
             path, session_name, account = session.workdir, session.name, session.run_as
         repo = None
         if body.github and not who.is_owner:
@@ -1049,11 +1256,40 @@ def router(ctx: Context) -> APIRouter:
                 project.backup_identity = gitbackup.identity(project)
                 project.slug, project.name, project.repo = body.slug, body.name.strip(), repo
                 project.private_workspace = False
+                from .. import sources
+                try:
+                    sources.rebind_legacy_source(s, project, actor=who.username)
+                except sources.Refused as error:
+                    raise HTTPException(409, str(error)) from None
             s.add(project)
             s.add(AuditLog(actor=who.username, action="workspace.promote", target=body.slug,
                            detail={"session": acc_id, "path": path, "repo": repo}))
             s.commit()
             return project_out(project)
+
+    @api.get("/api/sessions/{acc_id}/inbox-permissions")
+    @api.put("/api/sessions/{acc_id}/inbox-permissions")
+    async def inbox_permissions(acc_id: str, body: InboxPermissions | None = None, who=Depends(ctx.principal)):
+        from ...backup_activation import held
+        from .security_settings import human
+        if body is not None:
+            human(who)
+        with db() as s:
+            session = ctx.session_for(s, who, acc_id)
+            if held(s, session) or session.container or session.management != "acc" or session.provider != "claude":
+                raise HTTPException(400, "Answer permissions in the terminal for this session.")
+            account, host, name = session.run_as, session.host, session.tmux_name
+        try:
+            result = await broker.call("inbox_permissions", account=account, host=host, tmux_name=name,
+                                     enabled=body.enabled if body else None)
+            if body is not None:
+                with db() as s:
+                    s.add(AuditLog(actor=who.username, action="session.inbox_permissions", target=acc_id,
+                                   detail={"enabled": result["enabled"]}))
+                    s.commit()
+            return result
+        except BrokerError as error:
+            raise refused(error) from None
 
     @api.post("/api/sessions/{acc_id}/rename")
     def rename(acc_id: str, body: RenameIn, who=Depends(ctx.principal)):
@@ -1075,8 +1311,14 @@ def router(ctx: Context) -> APIRouter:
         async with supervisor._lock:
             with db() as s:
                 session = ctx.session_for(s, who, acc_id)
+                from .. import claude_auth
+                await claude_auth.refresh(supervisor, s, session)
+                s.commit()
                 try:
+                    claude_auth.require(s, session) if body.get('autoresume') or body.get('goal') else None
                     automation.configure(s, session, body, who.username)
+                except claude_auth.AutomationRefused:
+                    raise HTTPException(409, claude_auth.detail(session.project_id))
                 except ValueError as error:
                     raise HTTPException(422, str(error))
                 s.commit()
@@ -1085,12 +1327,15 @@ def router(ctx: Context) -> APIRouter:
     @api.post("/api/sessions/{acc_id}/message")
     async def message(acc_id: str, body: MessageIn, wait: float = Query(0, ge=0, le=8), who=Depends(ctx.principal)):
         with db() as s:
-            ctx.session_for(s, who, acc_id)
+            project_id = ctx.session_for(s, who, acc_id).project_id
         if not delivery.enabled():
             return await _action(acc_id, who, lambda: supervisor.send_text(acc_id, who.username, body.text))
         try:
             result = await supervisor.send_text(acc_id, who.username, body.text)
         except LaunchRefused as error:
+            from .. import claude_auth
+            if isinstance(error, claude_auth.AutomationRefused):
+                raise HTTPException(409, claude_auth.detail(project_id)) from None
             raise refused(error) from None
         deadline = asyncio.get_running_loop().time() + wait
         while wait and result['state'] not in delivery.TERMINAL and asyncio.get_running_loop().time() < deadline:

@@ -2,10 +2,15 @@
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
-Settings holds your sign-in, keys, notifications and device preferences. Owners also manage people, guardrails,
+Settings holds your appearance, sign-in, keys, notifications and device preferences. Owners also manage people, guardrails,
 container limits, certificates, remote-access preparation and Rynhult updates.
 
-Choose **Settings section** to show one section. With a keyboard, arrow keys change the choice without moving focus away from the chooser; Tab continues to the page controls. Section links and browser Back still open and focus their destination. **All sections** shows the full page without losing drafts. Section navigation uses button-styled links that preserve bookmarks and keyboard access. The **Remote access** button opens its dedicated page.
+In the [new layout](/User-Guide/New-Layout#settings-scopes), Settings groups links
+under **Account**, **Project** and owner-only **Installation**. Choose a project
+before opening its existing settings. Security links select the same scoped editor;
+Allowed folders remains the account-level root-list editor. Old bookmarks remain available.
+
+In the new layout, choose a section in the contextual sidebar; expand **Settings needing attention** for warning details and links. Section links and browser Back still open and focus their destination. **All sections** shows the full page without losing drafts. Section navigation uses button-styled links that preserve bookmarks and keyboard access. The **Remote access** button opens its dedicated page.
 
 **Settings needing attention** links to warnings or errors that need action. Admin feature badges such as **Needs verification** and **Needs qualification** stay on the Admin features panel; an unqualified Preview alone is not an action. Actual cleanup failures and failed changes still need attention. Updates stays in its own section (or All sections), even if an update check fails; its attention link opens the error there.
 
@@ -17,6 +22,17 @@ backup and update controls, and the optional daily installation schedule. Member
 See [Updating Rynhult](/User-Guide/Updating) for update steps and recovery, [Keys](/User-Guide/Keys) for API keys,
 [People and sign-in](/User-Guide/People-and-Sign-in) for accounts, and
 [Notifications and app](/User-Guide/Notifications-and-App) for devices.
+
+## Layout
+
+The new layout is the only layout for everyone signed in. Classic is retired,
+including saved classic choices. Settings has no layout choice and Features
+has no New layout switch. Use Setup level to choose how much you see.
+See [New layout](/User-Guide/New-Layout).
+
+## Personal appearance
+
+Choose **Appearance** in **Settings section** (under **Account** in the new layout). **Appearance mode** sets System, Light or Dark in this browser. Installed-theme cards reuse the existing validated **Preview** and **Apply to my account** flow; every signed-in person chooses only for themselves. Owners manage installations through **Manage themes in Catalog**. See [Community themes](/User-Guide/Themes).
 
 ## Remote access and your devices
 
@@ -193,13 +209,15 @@ using its legacy credential until that consumer cutover is qualified.
 
 The **[Passkeys](/User-Guide/Glossary#passkey)** card lets each person add, name, list and remove passkeys after recent verification. Owners also set Allow or Require per role. Save an offline recovery code and enroll spare authenticators before requiring passkeys. See [People and sign-in](/User-Guide/People-and-Sign-in#add-and-manage-passkeys) for setup, hostname rules and lost-passkey recovery.
 
+After signing in with a recovery code and losing your authenticator, open **Sign-in security** and verify with your password and a different unused recovery code. Choose **Add a passkey** first: the five-minute recovery window permits one action. Regenerating codes also ends the window. After adding a passkey, verify with it to create new recovery codes.
+
 Passkey changes are disabled while Rynhult is offline. The controls work again after the connection returns.
 
 ## Find a section
 
 Settings opens at **Passkeys**. Use the labelled **Settings section** chooser to focus one section: **Personal** holds your own access devices, passkeys, password, sign-ins, notifications and notification devices, keys, risk labels, Security and the old Guardrails link (and **Certificate** when it applies to you); owners also see **Instance** administration. **All sections** shows the full page and its grouped links for scanning. **Back to settings sections** returns to the chooser. Section links stay in the URL, so bookmarks, reload and the browser’s Back button work.
 
-Switching sections keeps unsaved drafts while you remain on Settings. Warnings and errors from other sections remain in **Settings needing attention**, with links to their controls. A section with an error also opens so its error and controls remain available. Choosing a section does not save its form. Leaving Settings or reloading can discard unsaved drafts.
+Switching sections keeps unsaved drafts while you remain on Settings. Warnings and errors from other sections remain in **Settings needing attention**, with links to their controls. A section with an error also opens so its error and controls remain available. Choosing a section does not save its form. Reloading with dirty settings asks for the browser’s leave-page confirmation. Save first: accepting it can discard the draft. See [Unsaved work and reload](/User-Guide/Sessions#unsaved-work-and-reload).
 
 ## DNS credentials and certificates
 
@@ -423,10 +441,14 @@ here. Allowing another root never changes where new projects are created.
    Unix permissions. Later service operations use the new roots and revision;
    an operation outside a removed root can be refused even for an older session.
 
-An updated, separately provisioned and reviewed target folder service with
-interrupted-delivery recovery is required for changes.
-This build does not install or qualify it. If unavailable, keep the draft and ask
-an administrator for local setup; existing installer roots remain in use. Never
+The Linux main installer installs and enables the folder-policy service on fresh
+installs and upgrades. It associates the installer-selected agent account with
+the configured human owner and preserves existing administrator mappings on
+upgrade. Policy changes do not require a manual broker restart. Additional
+accounts and remote machines need explicit administrator provisioning. Automatic
+OS permission grants remain separately qualified; allowing a folder alone cannot
+repair missing Unix access. If unavailable, keep the draft and ask an administrator
+for local setup; existing installer roots remain in use. Never
 interpret a saved request as target acknowledgement. A changed revision or machine
 identity needs a fresh preview. If an already-approved change is pending,
 **Review pending application** opens it for any recently verified owner;
@@ -439,8 +461,11 @@ Review the target's acknowledged roots and On/Off value, then confirm. Recovery
 closes the old delivery and reloads that acknowledged policy at a newer revision.
 It can widen or restrict later account-service access for running sessions; native
 launch protections and OS permissions remain unchanged. A lost recovery reply can
-be retried; if recovery is refused, refresh the pending review before confirming
-again. Unreachable targets keep the fence until they reconnect. After recovery,
+be retried. A stale recovery review or unavailable status is refused before sending
+recovery, leaving **Retry reviewed application** available if the original delivery
+can still finish. Once recovery has been sent, a refusal or lost reply keeps retry
+closed: refresh the pending review and finish recovery instead. Unreachable targets
+keep the fence until they reconnect. After recovery,
 the last acknowledged value and direct Security link remain visible after reload:
 restore that setting in Security, or preview a fresh folder policy. If the values
 already match, choose **Review acknowledged folder policy** in Security and apply
@@ -518,3 +543,29 @@ other inode depends on them; only known helper-added memberships are removed.
 macOS and Windows drives use existing access only; no privacy, automount or WSL
 isolation setting changes here. Native agents can access anything their OS account
 can access: this root list is not a filesystem sandbox.
+
+## Setup level
+
+This section appears only in the new layout. **Setup level** is personal and
+saved across browsers. Choose a level and select
+**Save what I see**. It controls normal rail/Tools visibility in the new layout;
+Security, feature switches and running work stay unchanged. Team and Security
+recommendations are offered separately. See [Setup levels](/User-Guide/Setup-Levels).
+
+## Delegated approvals (foundation)
+
+The server can retain a person's exact tool or main-operation consent separately
+from Security switches. This first phase evaluates eligibility without enabling a
+new delegated executor. **Unrestricted**, a saved exemption or a low risk label
+does not create consent. Existing requests still need their authorized person.
+A saved record can expire or be revoked; team permission ends with that team.
+The full **Delegated approvals** editor is not available in this layout yet.
+
+Consent discovery currently uses a paged server API while the full editor is
+pending. It lists active records by default; revoked history is a separate filter.
+Owners can inspect another person's consent within an explicitly selected project
+they can already access. The default list remains personal. Finding a record does
+not change its authority, and saved permissions still cannot execute in this phase.
+Group checkouts remain outside these approval routes for every role, including
+installation owners. The server refuses inaccessible approval resources before
+checking form fields.

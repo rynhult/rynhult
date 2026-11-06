@@ -18,12 +18,28 @@ set -euo pipefail
 umask 022
 
 # Phase B can be deployed independently of the normal installer: reload only,
-# never run setup, account helpers or restart services. Dry-run plans aliases only.
+# never run setup, account helpers or restart services. Dry-run validates aliases and the installed folder mapping.
 case " $* " in
   *" --aliases-only "*|*" --rollback-aliases "*|*" --dry-run "*)
     alias_repo=$(cd "$(/usr/bin/dirname "$0")/.." && pwd)
     /usr/bin/python3 -I "$alias_repo/deploy/lib/public-aliases.py" --role main "$@"
-    case " $* " in *" --dry-run "*) ;; *) /usr/bin/systemctl daemon-reload ;; esac
+    case " $* " in
+      *" --dry-run "*)
+        # Alias parsing above has already validated these arguments. Use the same
+        # offline host for folder validation, without loading caller PATH tools.
+        folder_root=/
+        folder_args=("$@")
+        for ((i=0; i<${#folder_args[@]}; i++)); do
+          case "${folder_args[i]}" in
+            --alias-root) folder_root=${folder_args[i+1]} ;;
+            --alias-root=*) folder_root=${folder_args[i]#--alias-root=} ;;
+          esac
+        done
+        /usr/bin/python3 -I "$alias_repo/deploy/folders/install.py" --repo "$alias_repo" --dry-run --root "$folder_root" \
+          --owner "${OWNER:-}" --agent "${AGENT_USER:-}"
+        ;;
+      *) /usr/bin/systemctl daemon-reload ;;
+    esac
     exit 0
     ;;
 esac
@@ -136,6 +152,9 @@ done
 acc_safe_link /srv/acc/bin/acc-guard /srv/acc/bin/rynhult-guard
 acc_safe_link /srv/acc/bin/acc-guard /usr/local/bin/rynhult-guard
 
+# Emergency owner recovery is a root-console program, with no sudoers grant or socket.
+install -o root -g root -m 0755 "$REPO/deploy/admin/rynhult-admin" /usr/local/sbin/rynhult-admin
+
 echo "== web UI"
 bash "$REPO/deploy/lib/build-assets.sh" "$REPO" web
 
@@ -183,6 +202,13 @@ install -o root -g root -m 0755 "$REPO/deploy/broker/acc-agent-add" "$REPO/deplo
 /usr/local/sbin/acc-agent-add "$AGENT_USER"
 /usr/local/sbin/acc-agent-add "$OWNER" --services
 /usr/local/sbin/acc-agent-share "$AGENT_USER" "$OWNER" /srv/acc/workspaces
+
+# Owner-invoked fresh installs and upgrades provision the same fixed root helper.
+# Individual folder changes still require the verified owner's reviewed API action.
+/usr/bin/python3 -I "$REPO/deploy/folders/install.py" --repo "$REPO" --owner "$OWNER" --agent "$AGENT_USER"
+/usr/bin/python3 -I "$REPO/deploy/lib/public-aliases.py" --role main
+systemctl daemon-reload
+systemctl enable --now acc-folder-policy.socket
 
 install -m 0644 "$REPO/deploy/accd.service" "$REPO/deploy/accd.socket" /etc/systemd/system/
 /usr/bin/python3 -I "$REPO/deploy/lib/public-aliases.py" --role main

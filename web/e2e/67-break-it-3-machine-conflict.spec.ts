@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, csrfHeaders } from './helpers';
 

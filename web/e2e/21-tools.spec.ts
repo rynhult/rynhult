@@ -1,6 +1,6 @@
 import { wikiShotPath } from "./helpers";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { appendFileSync } from "node:fs";
 import { AUTH_FILE, info } from "./helpers";
 

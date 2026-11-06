@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>View registry test fixture</title>
+<style>
+body { margin: 0; color: white; background: #171b22; font: 16px system-ui; }
+header { height: 70px; } main { display: flex; gap: 20px; padding: 20px; }
+.slot { width: 42vw; height: 320px; } #two { width: 36vw; height: 420px; }
+#fill { position: fixed; inset: 80px 10px 10px; width: auto; height: auto; }
+</style>
+<header><h1>View registry isolated fixture</h1></header>
+<main><div id="one" class="slot"></div><div id="two" class="slot"></div></main>
+<div id="fill" class="slot"></div>
+<script type="module" src="/e2e/fixtures/view-registry/fixture.ts"></script></html>

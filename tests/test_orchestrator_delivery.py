@@ -2,7 +2,7 @@
 import json
 
 import pytest
-from helpers import wait_for
+from helpers import wait_for, write_executable
 from sqlalchemy import select
 from test_orchestrator_selection_api import assigned_start
 
@@ -17,6 +17,13 @@ def preview(monkeypatch):
 
 @pytest.fixture
 async def v2(api, monkeypatch):
+    from acc.server.vault import Vault
+    original = Vault.deliver
+    def deliver(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result.env['ANTHROPIC_API_KEY'] = 'fixture-key'
+        return result
+    monkeypatch.setattr(Vault, 'deliver', deliver)
     monkeypatch.setenv('RYNHULT_ORCHESTRATOR_V2_DELIVERY', '1')
     from acc.server import orchestrator
     monkeypatch.setattr(orchestrator, 'ON_STATE', [*orchestrator.ON_STATE, delivery.on_state])
@@ -200,8 +207,7 @@ def raw_provider(env, tmp_path):
                                    'line = raw.decode("utf-8").lstrip("\\x1b\\x15")')
     compile(source, '<raw fake>', 'exec')
     binary = tmp_path / 'fake-claude-raw'
-    binary.write_text(source)
-    binary.chmod(0o700)
+    write_executable(binary, source)
     env['broker'].providers['claude'] = str(binary)
 
 
@@ -345,7 +351,7 @@ async def dropped_enter_v2(raw_provider, env, v2, request):
         return
 ''')
     compile(source, '<dropped Enter fake>', 'exec')
-    Path(binary).write_text(source)
+    write_executable(Path(binary), source)
     return v2
 
 
@@ -518,8 +524,7 @@ def input_tui(env, tmp_path):
     compile(source, '<input TUI>', 'exec')
     for provider in ('claude', 'codex', 'copilot'):
         binary = tmp_path / f'fake-{provider}-tui'
-        binary.write_text(source)
-        binary.chmod(0o700)
+        write_executable(binary, source)
         env['broker'].providers[provider] = str(binary)
 
 
@@ -647,7 +652,7 @@ async def test_uncleared_input_is_reported_without_appending(input_v2, project, 
     binary = env['broker'].providers[provider]
     from pathlib import Path
     path = Path(binary)
-    path.write_text(path.read_text().replace('if character == "\\x15":\n            pending_input = ""',
+    write_executable(path, path.read_text().replace('if character == "\\x15":\n            pending_input = ""',
                                             'if character == "\\x15":\n            pass'))
     sid = await launched(v2, project, provider)
     sup = v2.app.state.supervisor

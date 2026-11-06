@@ -1,5 +1,7 @@
 # Schedules
 
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+
 Schedules start ordinary [sessions](/User-Guide/Glossary#session) at times you choose. Every schedule belongs to its creator and runs under that person's [agent account](/User-Guide/Glossary#agent-account). Only that person or a Rynhult owner can edit, pause or delete it.
 
 Before you start, register and trust a managed [project](/User-Guide/Glossary#project) in your agent account. Each run uses its own [worktree](/User-Guide/Glossary#worktree) by default, so the project needs a git repository. Sign in to the chosen agent first.
@@ -28,3 +30,5 @@ Failures appear in your **[Inbox](/User-Guide/Glossary#inbox)** and use your exi
 Saved launches retain issue-source selections and [Orchestrator](/User-Guide/Glossary#orchestrator-lead-and-helpers) settings. Explicit confirmation of helper permission modes applies to each run of the saved schedule.
 
 Occurrences whose target machine is offline are skipped with a **Machine offline** note. They do not create a failed session or a failure alert. The next scheduled occurrence uses the normal schedule. See [machine roles and offline state](/User-Guide/Nodes#roles-and-offline-machines).
+
+Claude schedules save the **Claude sign-in** choice, which you can change in the schedule editor. Existing Claude schedules for projects with an Anthropic credential grant retain API delivery during upgrade. Automated runs still require API authentication confirmed by the CLI; a subscription login or subscription token cannot authorize scheduled prompts.

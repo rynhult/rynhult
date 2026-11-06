@@ -140,3 +140,52 @@ def test_a_refused_relaunch_keeps_the_running_generation_and_replaces_an_older_o
     with pytest.raises(ContainerError):  # never back to an older generation
         integrations.start(world, 's12345678', {'generation': 1, 'policy_id': 'pinned'}, 'codex', run)
     assert integrations._gateways[(world.run_dir, 's12345678')].metadata['generation'] == 2
+
+
+@pytest.mark.parametrize('credentials,mode', [({'ANTHROPIC_API_KEY': 'synthetic-claude-key'}, 'api_key'),
+                                             ({'ANTHROPIC_AUTH_TOKEN': 'synthetic-claude-token'}, 'api_key'),
+                                             ({'CLAUDE_CODE_USE_BEDROCK': '1', 'AWS_ACCESS_KEY_ID': 'synthetic-id',
+                                               'AWS_SECRET_ACCESS_KEY': 'synthetic-secret'}, 'cloud')])
+def test_claude_launch_credentials_replace_account_subscription(world, monkeypatch, credentials, mode):
+    from acc.broker.claude_auth import supplied_mode
+    run = world.run_dir / 's12345678'; run.mkdir()
+    monkeypatch.setattr(integrations, 'snapshot', lambda *a, **kw: pytest.fail('read account subscription'))
+    integrations.start(world, 's12345678', {'generation': 1, 'policy_id': 'pinned'}, 'claude', run,
+                       env={**credentials, 'UNRELATED_PROJECT_KEY': 'must-not-deliver'})
+    envelope = integrations._gateways[(world.run_dir, 's12345678')].metadata['credentials']
+    assert envelope['credentials'] == {'launch_env': credentials}
+    assert supplied_mode(envelope['credentials']['launch_env']) == mode
+    assert not list(run.rglob('auth.json'))
+
+
+@pytest.mark.parametrize('reported', ['subscription', 'unknown', 'cloud'])
+def test_container_auth_is_downgrade_only(world, monkeypatch, reported):
+    from acc.broker import claude_auth, containers
+    actual = ['api_key']
+    monkeypatch.setattr(containers, 'auth_mode', lambda *args: actual[0])
+    world.auth_contexts['acc-test'] = dict(acc_id='s12345678', provider='claude', env={'ANTHROPIC_API_KEY': 'synthetic'},
+                                           container={'generation': 1, 'policy_id': 'pinned'})
+    assert claude_auth.refresh(world, 'acc-test')['auth_mode'] == 'api_key'
+    actual[0] = reported
+    assert claude_auth.refresh(world, 'acc-test')['auth_mode'] == (reported if reported != 'cloud' else 'unknown')
+    actual[0] = 'api_key'
+    assert claude_auth.refresh(world, 'acc-test')['auth_mode'] == 'unknown'
+
+
+@pytest.mark.parametrize('trusted', [False, True])
+def test_container_auth_probe_requires_the_session_cgroup(world, monkeypatch, trusted):
+    from acc.broker import container_attach, containers
+    class Client:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def settimeout(self, value): assert value == 10
+        def connect(self, path): assert path.endswith('/auth.sock')
+        def recv(self, size):
+            assert trusted, 'untrusted listener must not supply an auth mode'
+            return b'{"auth_mode":"api_key"}\n'
+    monkeypatch.setattr(containers.socket, 'socket', lambda *args: Client())
+    def identity(conn, unit):
+        assert unit == containers.unit_cgroup('s12345678', 1)
+        return trusted
+    monkeypatch.setattr(container_attach, 'relay_is_the_units', identity)
+    assert containers.auth_mode(world, 's12345678', {'generation': 1}) == ('api_key' if trusted else 'unknown')

@@ -47,9 +47,13 @@ def audit(db, session, action, detail=None, actor='supervisor'):
 
 def configure(db, session, data, actor):
     validate(data, session.provider)
+    if data.get('autoresume') or data.get('goal'):
+        from .claude_auth import require
+        require(db, session)
     if session.management != 'acc' or session.launch_spec.inputs.get('endpoint'):
         raise ValueError('Automation requires a managed session using its provider plan.')
     state = dict(session.automation or {})
+    state.pop('pending_configuration', None)
     if session.observed_state == 'starting' and session.launch_spec.inputs.get('initial_prompt'):
         state['expect_initial'] = True
     if 'autoresume' in data:

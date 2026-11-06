@@ -1,9 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { existsSync } from "node:fs";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, info, openAdvanced, waitForSessionState, wikiShotPath } from "./helpers";
 
 /* UX review 2, beta item 1: from setup to a first project and session in the browser, with no server shell. */
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 test.describe.configure({ mode: "serial" });
 
 const workspaces = () => info().workspace.replace(/\/demo$/, "");

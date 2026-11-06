@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { draftField } from '../lib/unsaved';
+import { useUnsavedDraft } from '../lib/useUnsaved';
+import { useState } from "react";
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { OFFLINE_TITLE, useOffline } from "../lib/queries";
 import { api, post } from "../lib/api";
 import { useConfirm } from "./confirm";
-import { announce, Button, Card, CardHeader, ErrorNote, Field, Input, QueryState, Select } from "./ui";
+import { announce, Button, ErrorNote, Field, Input, QueryState, Select } from "./ui";
 
 export interface PublishingAddress {
   id: string; label: string; address: string; access: "public" | "internal"; default: boolean; source: string;
@@ -16,17 +19,14 @@ export function PublishingAddresses() {
   const offline = useOffline();
   const confirm = useConfirm();
   const entries = useQuery({ queryKey: ["publish-addresses"], queryFn: () => api<PublishingAddress[]>("/api/publish/addresses") });
-  const [address, setAddress] = useState("");
-  const [label, setLabel] = useState("");
-  const [access, setAccess] = useState<"public" | "internal">("public");
-  useEffect(() => {
-    if (!address && !label) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [address, label]);
+  const [address, setAddress] = useState(() => draftField("publishing-address", "address", ""));
+  const [label, setLabel] = useState(() => draftField("publishing-address", "label", ""));
+  const [access, setAccess] = useState<"public" | "internal">(() => draftField("publishing-address", "access", "public"));
+  useUnsavedDraft('publishing-address', 'publishing-address', 'Publishing address',
+    !!address || !!label || access !== 'public', { address, label, access },
+    () => { setAddress(''); setLabel(''); setAccess('public'); });
   const edit = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => post(path, body),
-    onSuccess: (_data, variables) => { if (variables.body) { setAddress(""); setLabel(""); } announce("Publishing addresses updated."); client.invalidateQueries({ queryKey: ["publish-addresses"] }); client.invalidateQueries({ queryKey: ["publish-zones"] }); } });
+    onSuccess: (_data, variables) => { if (variables.body) { setAddress(""); setLabel(""); setAccess("public"); } announce("Publishing addresses updated."); client.invalidateQueries({ queryKey: ["publish-addresses"] }); client.invalidateQueries({ queryKey: ["publish-zones"] }); } });
   const detect = useMutation({ mutationFn: () => post<Detection>("/api/publish/addresses/detect"), onSuccess: () => announce("Address detection finished. Review the suggestions; nothing has been saved.") });
   return <section aria-label="Publishing addresses"><Card>
     <CardHeader title="Publishing" subtitle="DNS targets for published sites. Configure firewall routing separately." />

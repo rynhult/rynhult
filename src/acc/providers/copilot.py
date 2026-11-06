@@ -187,48 +187,9 @@ class Copilot(Provider):
         tmp.chmod(0o600)
         tmp.replace(path)
 
-    def _account(self, home: Path) -> dict | None:
-        """GitHub's Copilot account record for the signed-in user (plan, organisations, quotas). Internal and
-        undocumented (`/copilot_internal/user`, what Copilot's own /usage shows): read defensively and labelled. The
-        token is read here, as the agent account, and only sent to api.github.com."""
-        import urllib.request
-        config = _read_jsonc(home / ".copilot" / "config.json")
-        user = config.get("lastLoggedInUser") or config.get("last_logged_in_user") or {}
-        tokens = config.get("authTokens") or {}
-        login = user.get("login") if isinstance(user, dict) else None
-        entry = tokens.get(f"https://github.com:{login}") or next(iter(tokens.values()), None) if isinstance(tokens, dict) else None
-        token = entry.get("token") if isinstance(entry, dict) else None
-        if not token:
-            return None
-        request = urllib.request.Request("https://api.github.com/copilot_internal/user", headers={
-            "Authorization": f"token {token}", "Accept": "application/json", "User-Agent": "acc"})
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                data = json.load(response)
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
-
     def usage(self, exe: str, home: Path) -> dict | None:
-        """Plan and AI-credit usage for this billing cycle (premium requests), as GitHub's settings page shows it."""
-        import time
-        data = self._account(home)
-        if data is None:
-            return None
-        snapshots = data.get("quota_snapshots") or {}
-        credits = snapshots.get("premium_interactions") or {}
-        pick = lambda q: {"unlimited": bool(q.get("unlimited"))} if isinstance(q, dict) else None
-        return {
-            "plan": data.get("copilot_plan"), "sku": data.get("access_type_sku"),
-            "organizations": [o for o in (data.get("organization_login_list") or []) if isinstance(o, str)][:10],
-            "resets_at": data.get("quota_reset_date_utc") or data.get("quota_reset_date"),
-            "credits": {"used": credits.get("credits_used"), "entitlement": credits.get("entitlement"),
-                        "remaining": credits.get("remaining"), "percent_remaining": credits.get("percent_remaining"),
-                        "unlimited": bool(credits.get("unlimited")), "overage_permitted": credits.get("overage_permitted"),
-                        "overage_count": credits.get("overage_count")} if credits else None,
-            "chat": pick(snapshots.get("chat")), "completions": pick(snapshots.get("completions")),
-            "observed_at": time.time(), "source": "github copilot_internal/user (internal)",
-        }
+        """Quota is available in GitHub settings; do not read CLI credentials or query account APIs."""
+        return {"message": "See GitHub settings", "usage_url": self.usage_url, "source": "GitHub settings"}
 
     def auth_health(self, exe: str, home: Path) -> dict:
         """No status command: a stored login is either in the system keyring or ~/.copilot's config file."""
@@ -238,10 +199,6 @@ class Copilot(Provider):
             next(iter(config.get("logged_in_users") or config.get("loggedInUsers") or []), None)
         if isinstance(user, dict):
             health.update(logged_in=True, login=user.get("login"), email=user.get("login"))
-            account = self._account(home)
-            if account:  # the plan behind the login (e.g. an enterprise seat through an organisation)
-                health.update(plan=account.get("copilot_plan"), sku=account.get("access_type_sku"),
-                              organizations=(account.get("organization_login_list") or [])[:10])
         version = (run([exe, "--version"], timeout=20).stdout.strip().splitlines() or [""])[0]
         if version:
             health["version"] = version.removeprefix("GitHub Copilot CLI ").rstrip(".")[:40]

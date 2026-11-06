@@ -18,6 +18,7 @@ def test_defaults_match_existing_installation():
     assert features.enabled('schedules')
     assert not features.enabled('containers')
     assert not features.enabled('organizations')
+    assert not features.enabled('chat')
 
 
 def test_database_choice_and_explicit_false_server_configuration(monkeypatch):

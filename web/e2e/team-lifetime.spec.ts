@@ -1,4 +1,5 @@
-import { expect, test as base } from '@playwright/test';
+import { gotoLoadedPage, loadPage, reloadLoadedPage } from './loaded-page';
+import { expect, test as base } from './fixtures';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped, wikiShotPath, settleSession } from './helpers';
@@ -34,14 +35,14 @@ for (const width of [1440, 390]) {
   await page.clock.setFixedTime(new Date('2035-01-01T00:00:00Z'));
   const { id: lead, project: id, headers } = owned;
   // Real grant form exposes the default as an empty optional number input.
-  await page.goto(`/projects/${id}`);
+  await gotoLoadedPage(page, `/projects/${id}`, ["ProjectPage"], ["/api/projects"]);
   await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
   await dialog.getByRole('button', { name: /^Advanced/ }).click();
   await dialog.getByRole('radio', { name: /With helpers/ }).check();
   await expect(dialog.getByLabel('Hours', { exact: true })).toHaveValue('');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.goto(`/sessions/${lead}?tab=team#overview`);
+    await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ["SessionPage", "TeamPanel"], [`/api/sessions/${lead}/team`]);
     await expect(page.getByText('No time limit for this team.', { exact: true })).toBeVisible();
     const url = `/api/sessions/${lead}/team`;
     expect((await page.request.post(url + '/lifetime', { headers, data: { hours: 1 } })).ok()).toBeTruthy();
@@ -50,8 +51,9 @@ for (const width of [1440, 390]) {
     const deadline = Date.parse((await warning.json()).expires_at);
     await page.goto('/inbox');
     await expect(page.locator(`a[href="/sessions/${lead}?tab=team#overview"]`).filter({ hasText: 'Review team time limit' })).toBeVisible({ timeout: 20000 });
-    await page.locator(`a[href="/sessions/${lead}?tab=team#overview"]`).filter({ hasText: 'Review team time limit' }).click();
-    await expect(page.getByText(/This team stops at/)).toBeVisible();
+    await loadPage(page, () => page.locator(`a[href="/sessions/${lead}?tab=team#overview"]`).filter({ hasText: 'Review team time limit' }).click(),
+      ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
+    await expect(page.getByRole('region', { name: 'Team lifetime', exact: true }).getByText(/This team stops at/)).toBeVisible();
     const [extended] = await Promise.all([
       page.waitForResponse(r => new URL(r.url()).pathname === url + '/lifetime' && r.request().method() === 'POST'),
       page.getByRole('button', { name: 'Extend 4 h', exact: true }).click(),
@@ -66,10 +68,12 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('No time limit for this team.', { exact: true })).toBeVisible();
  });
  test(`Expiry and saved helper resume at ${width}px`, async ({ page, lead: owned }, ti) => {
+    // Two real helper starts, expiry/confirmed stop, resume and a WCAG audit.
+    test.slow();
     await page.setViewportSize({ width, height: 900 });
     const { id: lead, headers } = owned;
     const url = `/api/sessions/${lead}/team`;
-    await page.goto(`/sessions/${lead}?tab=team#overview`);
+    await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ["SessionPage", "TeamPanel"], [`/api/sessions/${lead}/team`]);
     await tool(page, lead, 'plan_update', { reason: 'Bounded fixture work', idea: 'Lifetime fixtures', scope: { in: ['Fixture'], out: [], parked: [] }, phases: [{ key: 'work', title: 'Work' }] });
     await tool(page, lead, 'plan_ready', { reason: 'Bounded fixture plan' });
     async function helper(name: string) {
@@ -88,7 +92,7 @@ for (const width of [1440, 390]) {
     expect((await page.request.post(`/e2e-test/teams/${lead}/deadline`, { data: { phase: 'expired' } })).ok()).toBeTruthy();
     await expect.poll(async () => (await (await page.request.get(url)).json()).stopped, { timeout: 20000 }).toBe(true);
     await waitForTeamStopped(page, lead);
-    await page.reload();
+    await reloadLoadedPage(page, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
     await expect(page.getByText('This team stopped because its time limit ended.', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Resume team', exact: true }).click();
     const resume = page.getByRole('dialog', { name: 'Resume this team?', exact: true });
@@ -98,7 +102,11 @@ for (const width of [1440, 390]) {
     await expectAxeClean(page);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await resume.screenshot({ path: wikiShotPath(ti, `team-lifetime-${width}.png`) });
+    const resuming = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === url + '/resume');
     await resume.getByRole('button', { name: 'Confirm resume', exact: true }).click();
+    expect((await resuming).ok()).toBe(true);
+    expect((await (await resuming).json()).errors).toEqual({});
     await expect(resume).toHaveCount(0);
     await expect.poll(async () => (await (await page.request.get(`/api/sessions/${worker.id}`)).json()).desired_state).toBe('running');
     await expect.poll(async () => (await (await page.request.get(`/api/sessions/${worker.id}`)).json()).observed_state, { timeout: 20000 }).toBe('idle');

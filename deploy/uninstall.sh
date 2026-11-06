@@ -115,7 +115,7 @@ done
 
 echo "== helpers, commands and settings"
 for name in acc-update acc-packages acc-tool-policy.py acc-claude-apt-repo acc-agent-add acc-agent-share acc-publish \
-            acc-hoststate acc-backup acc-accounts acc-root-session acc-containers acc_env.py acc-env.sh; do
+            acc-hoststate acc-backup acc-accounts acc-root-session acc-containers acc_env.py acc-env.sh rynhult-admin; do
   remove "/usr/local/sbin/$name"
 done
 remove /usr/local/bin/acc-env.sh

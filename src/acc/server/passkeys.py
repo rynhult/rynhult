@@ -26,7 +26,8 @@ def recovery_required(user, role=None):
 def recently_verified(s, session_hash, user):
     """This login verified again within five minutes, with a passkey when the person's role requires one. 403 otherwise."""
     record = s.get(AuthSession, session_hash) if session_hash else None
-    if (user is None or record is None or record.user_id != user.id or record.reauthenticated_at is None or
+    if (user is None or record is None or record.user_id != user.id or
+            record.method in ("recovery", "recovery_enroll") or record.reauthenticated_at is None or
             auth.now() - record.reauthenticated_at > timedelta(minutes=REAUTH_MINUTES) or
             (required(s, user) and not record.passkey_verified)):
         raise HTTPException(403, 'Verify your sign-in again in Settings → Passkeys, then try again within five minutes.')
@@ -41,3 +42,13 @@ def relying_party(settings, origin):
             or (parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')))):
         raise HTTPException(403, 'Passkeys need HTTPS at the configured Rynhult address (or localhost for testing).')
     return parsed.hostname
+
+
+def recovery_enrollment_until(s, session_hash, user):
+    record = s.get(AuthSession, session_hash) if session_hash else None
+    if (user and record and record.user_id == user.id and record.method == 'recovery_enroll'
+            and record.passkey_enroll_until is not None):
+        end = record.passkey_enroll_until
+        if end > auth.now():
+            return end
+    return None

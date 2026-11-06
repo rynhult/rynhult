@@ -587,8 +587,12 @@ async def test_reconnecting_node_session_left_running_by_old_main_stays_quaranti
         assert (await api.post(f'/api/sessions/{left}/resume', headers=owner)).status_code >= 400
         assert (await api.post(f'/api/sessions/{left}/message', headers=owner, json={'text': 'continue'})).status_code >= 400
         headers = {'Cookie': f"acc_session={api.cookies.get('acc_session')}", 'Origin': ORIGIN['Origin']}
-        async with websockets.connect(f'{live}/api/sessions/{left}/tty?mode=write&take=1', additional_headers=headers) as ws:
-            assert json.loads(await asyncio.wait_for(ws.recv(), 5)) == {'t': 'mode', 'write': False}
+        # Refused as held, not for a missing reason: a valid take with a confirmed handover gets the same answer.
+        for query in ('mode=write&take=1', 'mode=write&take=1&take_reason=manual_handover&confirm_partial=1'):
+            async with websockets.connect(f'{live}/api/sessions/{left}/tty?{query}', additional_headers=headers) as ws:
+                assert json.loads(await asyncio.wait_for(ws.recv(), 5)) == {
+                    't': 'mode', 'write': False, 'partial': False, 'wheel': False, 'rows': 50, 'cols': 200,
+                    'reason': 'this terminal is read-only here'}
         with api.app.state.db() as db:
             assert db.get(Session, left).desired_state == 'archived'
 

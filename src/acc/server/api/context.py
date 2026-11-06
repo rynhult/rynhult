@@ -102,6 +102,7 @@ class Context:
     edge: object = None  # edge.Edge: open public connections by client leaf (set by create_app)
     oidc: object = None  # oidc.Providers: company sign-in's discovery and key cache (set by create_app)
     remove_person: object = None  # People > Remove's whole path (set by the users router; company sign-in uses it too)
+    terminal_instance: str = field(default_factory=lambda: secrets.token_hex(16))  # public, process-scoped reference identity
     terminal_recheck: float = 30.0  # seconds between checks that a terminal's login is still valid
 
     @property
@@ -281,6 +282,9 @@ class Context:
 
     @staticmethod
     def refused(error: Exception) -> HTTPException:
+        from ..claude_auth import MESSAGE, detail
+        if MESSAGE in str(error):
+            return HTTPException(409, detail())
         message = _public_error(error)
         if isinstance(error, BrokerError) and unknown_method(error):
             return HTTPException(500, message)
@@ -289,5 +293,8 @@ class Context:
         if isinstance(error, BrokerUnavailable):
             return HTTPException(503, f"The agent account's session service isn't answering: {message}")
         if isinstance(error, BrokerError):
+            if ("Allow this folder in Security → Allowed folders" in str(error)
+                    or "this account's workspace folders" in str(error)):
+                return HTTPException(409, "Allow this folder in Security → Allowed folders, then retry. Ask an owner if you cannot edit Security.")
             return HTTPException(502, message)
         return HTTPException(409, message)

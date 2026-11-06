@@ -1,4 +1,4 @@
-import { test, expect, type Locator } from '@playwright/test';
+import { test, expect, type Locator } from './fixtures';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, verifyAgain } from './helpers';
 

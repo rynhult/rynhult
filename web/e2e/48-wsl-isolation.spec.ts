@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });

@@ -8,6 +8,11 @@ How to put Rynhult on a computer. Every computer is one of two things:
 - the **main Rynhult**: the dashboard everyone opens, standalone or with other machines attached;
 - an **additional machine** (a *[node](/User-Guide/Glossary#machine-node)*): it runs [sessions](/User-Guide/Glossary#session) for an existing main Rynhult, which you keep using as the one dashboard. Using machines once they're added is in [Nodes](/User-Guide/Nodes).
 
+After browser setup, Rynhult opens in the [new layout](/User-Guide/New-Layout).
+The new layout is the only layout, including after upgrades; classic is retired.
+The compact Overview prompt links to **Settings → Setup level**
+and can be dismissed without choosing a level. See [Getting started](/User-Guide/Getting-Started).
+
 ## v1.0 platform scope
 
 **v1.0 is the self-hosted Linux server**, used through a browser on any client
@@ -154,8 +159,15 @@ before provisioning them.
 1. Get Rynhult and start the installer:
    ```
    git clone https://github.com/rynhult/rynhult acc
-   sudo acc/deploy/acc-install
+   cd acc
+   git fetch --tags
+   git checkout <release-tag>
+   sudo deploy/acc-install
    ```
+   Replace `<release-tag>` with the published `v*` release tag you intend to install (for example `v0.15.0-rc.3`).
+   A clean checkout at that tag supports signed in-app updates from **Settings → Updates**, using
+   `rynhult/rynhult` by default. Installing an untagged development branch requires manual updates instead.
+   See [Updating](/User-Guide/Updating).
 2. Choose **Main Rynhult**.
 3. Answer the questions. Each shows a default; press Enter to keep it.
    - **Linux user who owns Rynhult's projects**: you.

@@ -195,7 +195,14 @@ class IngestMixin:
         if name == "AccRequest":
             self._agent_request(db, session, hook)
             return
-        db.add(Event(session_id=session.id, source=f"{provider}_hook", kind=name, payload=_trim(hook)))
+        stored = _trim(hook)
+        if provider == "claude" and name == "PermissionRequest":
+            # Compute completeness AFTER vault redaction but BEFORE generic event trimming.
+            # Never trust an agent-supplied completeness flag or trimmed tool_input.
+            tool_input = hook.get("tool_input")
+            rendered = json.dumps(tool_input, ensure_ascii=False, indent=2) if isinstance(tool_input, dict) else ""
+            stored["acc_complete_input"] = rendered if rendered and len(rendered.encode("utf-8")) <= 8192 else None
+        db.add(Event(session_id=session.id, source=f"{provider}_hook", kind=name, payload=stored))
         if provider in providers.PROVIDERS:  # each CLI's events in ACC's vocabulary (Claude Code's names and fields)
             hook = providers.get(provider).normalize_hook(hook)
             name = _text(hook.get("hook_event_name"), 64) or name
@@ -243,6 +250,10 @@ class IngestMixin:
                 return
         elif session.observed_state in ("stopped", "exited", "archived", "recovery_needed"):
             return  # late hooks from a process that is going away do not revive it
+        # Copilot asks before tools it may approve itself. Only its on-screen
+        # prompt is evidence that a person is needed; advisory hooks never wait.
+        if provider == "copilot" and name == "PermissionRequest":
+            return
         self._note_activity(session, name, hook)
         guard = record.get("guard") if isinstance(record.get("guard"), dict) else None
         if guard and name == "PreToolUse":
@@ -264,6 +275,11 @@ class IngestMixin:
             self._set_state(db, session, new_state, f"{provider}_hook")
 
     def _needs_input(self, db: DbSession, session: Session, hook: dict, provider: str) -> None:
+        if hook.get("notification_type") == "permission_prompt":
+            previous = db.scalar(select(Event).where(Event.session_id == session.id,
+                Event.kind == "PermissionRequest", Event.source == f"{provider}_hook").order_by(Event.id.desc()).limit(1))
+            if previous and isinstance(previous.payload, dict) and previous.payload.get("tool_name"):
+                hook = previous.payload
         tool_input = hook.get("tool_input") if isinstance(hook.get("tool_input"), dict) else {}
         target = tool_input.get("command") or tool_input.get("file_path") or tool_input.get("url") or tool_input.get("description")
         what = (f"{hook.get('tool_name')}: {target}" if hook.get("tool_name") and target else None) \
@@ -272,7 +288,8 @@ class IngestMixin:
         risk = risk_labels.classify(hook, session.cwd, guard_path=Path(self.settings.hook_path).with_name("acc-guard"),
                                     policy=policy, run_dir=str(self.settings.session_run_dir(session)))
         attention.raise_item(db, f"needs_input:{session.id}", kind="needs_input", source=f"{provider}_hook",
-                             session_id=session.id, title=f"{session.name} needs your input", detail=str(what)[:500],
+                             session_id=session.id, title=f"{session.name} needs your input",
+                             detail=str(what) if len(str(what)) <= 500 else str(what)[:499] + "…",
                              risk=risk)
 
     @staticmethod

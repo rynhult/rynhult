@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject } from './helpers';
 test.use({ storageState: AUTH_FILE });
 

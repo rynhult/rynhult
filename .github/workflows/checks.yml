@@ -8,7 +8,8 @@ jobs:
     # Runs once the repository is public; private development is gated locally before each merge.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Serialized browser gate measured ~90m before the mobile project; allow Python and qualifications too.
+    timeout-minutes: 240
     env:
       PYTHONPATH: src
       ACC_E2E_BASE: /tmp/acc-ci-e2e
@@ -46,6 +47,9 @@ jobs:
       - name: UI build
         working-directory: web
         run: npm run build -- --configLoader runner
+      - name: Browser isolation policy
+        working-directory: web
+        run: npm run test:e2e-isolation
       - name: Third-party notices
         run: uv run --frozen python scripts/third_party_notices.py --check
       - name: Browser dependencies
@@ -64,8 +68,9 @@ jobs:
           ACC_E2E_BASE: /tmp/acc-ci-csrf
         run: npx playwright test --config playwright.csrf.config.ts --workers=1
       - name: Desktop and mobile browsers
+        timeout-minutes: 150
         working-directory: web
-        run: npx playwright test --project=desktop --project=mobile
+        run: npx playwright test --project=view-registry --project=desktop-stateful --project=mobile-stateful --project=terminal-chromium --project=desktop --project=mobile --workers=1
       # The harness enables its test signer and simulated edge by default. Real installations usually have neither
       # helper, so the remote-access safety cases that need them absent run here too (security review 7, SR7-9).
       - name: Remote access with both test helpers absent

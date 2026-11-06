@@ -1,5 +1,7 @@
 # Host and providers
 
+For Claude subscription sign-ins, read [Claude Code: subscriptions and automation](/Providers/Claude) before configuring schedules, goals or teams.
+
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
 The **Provider sections** button group jumps to Sign-ins and usage, Tools, Model connections or Available models. The current deep-linked section is marked. Use arrow keys, Home and End to move between links, then Enter to follow one; section URLs still work when bookmarked. The group wraps on phones.
@@ -157,6 +159,12 @@ Each agent's CLI is optional. Setup asks which to install (`ACC_AGENT_CLIS`); af
 
 Every agent gets its own account row here with its login status and **Log in** (Copilot signs in with a device code, like Codex). Launch options differ per agent; for Copilot they are **Mode** (interactive, plan first, or autopilot) and **Permissions** (asking is the default; allowing all tools or everything needs the same confirmation as other unrestricted launches).
 
+Copilot usage shows **See GitHub settings**, linking to [Copilot settings](https://github.com/settings/copilot/features).
+Rynhult does not read the CLI's stored OAuth token for quota or call undocumented account APIs.
+Plan and limit information is shown only when the CLI reports it to the session; there is currently no account quota reading.
+The optional documented billing API is not enabled or implemented pending owner-token qualification.
+
+
 ### OpenCode
 OpenCode isn't tied to one vendor: it reaches 75+ model providers. Rynhult doesn't sign it in for you. Its row on this page shows **Ready** when it answers; expand **Account details** for **Connected**, listing the providers it can use (**Free models only** when there are none). There are three ways to give it models:
 
@@ -228,3 +236,27 @@ For recurring shutdowns or an unknown return time, use **Planned Downtime** in
 **Machine settings**. It suppresses offline and receiver backup alerts while keeping
 backup age visible. See [Plan machine downtime](/User-Guide/Nodes#plan-machine-downtime)
 and [Backup age and planned downtime](/User-Guide/Backups#backup-age-and-planned-downtime).
+
+### Tool decision history
+
+Open **Providers → Tools → Request history** to see who decided a tool request
+and why. **Reviewed exact requests together** identifies a person-reviewed batch.
+**Owner via API** identifies an installation-token decision rather than a named
+person. Check each request's applied or failed result separately. Saved consent
+eligibility currently runs in shadow mode: it does not install a tool automatically.
+System tools, shared installations and removal keep their existing person approval.
+
+### Dashboard GitHub token
+
+Owners can save, replace or remove the **GitHub token** on **Providers**, with the
+main machine selected. Each change requires recent sign-in verification. Saving
+checks GitHub's `/user` endpoint and shows the login and reported OAuth scopes;
+fine-grained tokens may not report scopes. Give the token the repository permissions
+needed for your intended operations; a successful identity check does not guarantee
+repository creation permission.
+
+The dashboard stores this credential as an `acc`-owned, mode `0600` file at
+`data/secrets/github_token`. Saved values are never returned; only **Set, ends …abcd**
+is shown. Changes are audited without the value. **Remove token** stops dashboard
+use; revoke the token on GitHub too if needed. Agent GitHub CLI sign-ins remain
+separate and are not imported into this field.

@@ -1,0 +1,1892 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "commands",
+ "cases": [
+  {
+   "name": "valid initialize",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/initialize",
+    "params": {
+     "major": 1,
+     "minor": 0,
+     "features": [
+      "queue",
+      "terminal"
+     ],
+     "clientId": "client-1"
+    }
+   },
+   "expect": {
+    "method": "initialize",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid session.attach",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.attach",
+    "params": {
+     "sessionId": "sess-1",
+     "clientId": "client-1",
+     "connectionSeq": 1
+    }
+   },
+   "expect": {
+    "method": "session.attach",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid session.detach",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.detach",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 2
+    }
+   },
+   "expect": {
+    "method": "session.detach",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid session.snapshot",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.snapshot",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "method": "session.snapshot",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid history.page",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/history.page",
+    "params": {
+     "sessionId": "sess-1",
+     "cursor": "c.1",
+     "limit": 200
+    }
+   },
+   "expect": {
+    "method": "history.page",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid events.read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/events.read",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "cursor": "c.2"
+    }
+   },
+   "expect": {
+    "method": "events.read",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid events.ack",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/events.ack",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "eventSeq": 41
+    }
+   },
+   "expect": {
+    "method": "events.ack",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid operation.register",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "turn.submit",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "operation.register",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid operation.get",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.get",
+    "params": {
+     "sessionId": "sess-1",
+     "operationId": "op-1"
+    }
+   },
+   "expect": {
+    "method": "operation.get",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid operation.cancel",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.cancel",
+    "params": {
+     "sessionId": "sess-1",
+     "operationId": "op-1",
+     "expectedRevision": 1
+    }
+   },
+   "expect": {
+    "method": "operation.cancel",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid turn.submit",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid turn.steer",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.steer",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "turnId": "turn-1",
+     "text": "Use the smaller file."
+    }
+   },
+   "expect": {
+    "method": "turn.steer",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid turn.interrupt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.interrupt",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "turnId": "turn-1"
+    }
+   },
+   "expect": {
+    "method": "turn.interrupt",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid decision.reply",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/decision.reply",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "decisionId": "dec-1",
+     "choiceId": "allow-once",
+     "expectedRevision": 4,
+     "actionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "decision.reply",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid configuration.read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/configuration.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "method": "configuration.read",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid configuration.request",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/configuration.request",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "expectedRevision": 2,
+     "model": "example-model"
+    }
+   },
+   "expect": {
+    "method": "configuration.request",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid control.claim",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/control.claim",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "attachmentId": "att-1",
+     "expectedRevision": 3
+    }
+   },
+   "expect": {
+    "method": "control.claim",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid control.take",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/control.take",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "attachmentId": "att-1",
+     "expectedRevision": 3,
+     "reason": "Taking over to finish the review"
+    }
+   },
+   "expect": {
+    "method": "control.take",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid control.release",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/control.release",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "attachmentId": "att-1",
+     "expectedRevision": 3
+    }
+   },
+   "expect": {
+    "method": "control.release",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid terminal.attach",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.attach",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 3
+    }
+   },
+   "expect": {
+    "method": "terminal.attach",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid terminal.detach",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.detach",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 4
+    }
+   },
+   "expect": {
+    "method": "terminal.detach",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid terminal.input",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.input",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "inputGrant": "grant-1",
+     "inputEpoch": 7,
+     "frameSeq": 11,
+     "data": "aGVsbG8="
+    }
+   },
+   "expect": {
+    "method": "terminal.input",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid terminal.resize",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.resize",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 5,
+     "geometryGrant": "geo-1",
+     "cols": 120,
+     "rows": 40
+    }
+   },
+   "expect": {
+    "method": "terminal.resize",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid terminal.drain",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.drain",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "inputGrant": "grant-1"
+    }
+   },
+   "expect": {
+    "method": "terminal.drain",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid switch.prepare",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/switch.prepare",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "target": "chat",
+     "expectedRevision": 5
+    }
+   },
+   "expect": {
+    "method": "switch.prepare",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid switch.commit",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/switch.commit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "planId": "plan-1",
+     "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "expectedRevision": 6
+    }
+   },
+   "expect": {
+    "method": "switch.commit",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid switch.cancel",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/switch.cancel",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "planId": "plan-1"
+    }
+   },
+   "expect": {
+    "method": "switch.cancel",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid session.stop",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.stop",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1"
+    }
+   },
+   "expect": {
+    "method": "session.stop",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid session.resume",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.resume",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "expectedRevision": 9
+    }
+   },
+   "expect": {
+    "method": "session.resume",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid attachment.begin",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.begin",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "uploadKey": "up-1",
+     "name": "notes.png",
+     "mimeType": "image/png",
+     "size": 1024,
+     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "attachment.begin",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid attachment.chunk",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.chunk",
+    "params": {
+     "sessionId": "sess-1",
+     "uploadId": "upload-1",
+     "offset": 0,
+     "chunk": "aGVsbG8=",
+     "chunkDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "attachment.chunk",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid attachment.finish",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.finish",
+    "params": {
+     "sessionId": "sess-1",
+     "uploadId": "upload-1",
+     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "attachment.finish",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid attachment.get",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.get",
+    "params": {
+     "sessionId": "sess-1",
+     "stagedId": "staged-1"
+    }
+   },
+   "expect": {
+    "method": "attachment.get",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid attachment.read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.read",
+    "params": {
+     "sessionId": "sess-1",
+     "stagedId": "staged-1"
+    }
+   },
+   "expect": {
+    "method": "attachment.read",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid attachment.remove",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.remove",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "stagedId": "staged-1"
+    }
+   },
+   "expect": {
+    "method": "attachment.remove",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "valid presence.update",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/presence.update",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 6,
+     "view": "chat",
+     "focused": true
+    }
+   },
+   "expect": {
+    "method": "presence.update",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid security.read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "method": "security.read",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "not json",
+   "frame": "{",
+   "expect": {
+    "rpc": -32700,
+    "id": null
+   }
+  },
+  {
+   "name": "duplicate key changes meaning",
+   "frame": "{\"jsonrpc\":\"2.0\",\"id\":1,\"id\":2,\"method\":\"ry/security.read\",\"params\":{\"sessionId\":\"sess-1\"}}",
+   "expect": {
+    "rpc": -32700,
+    "id": null
+   }
+  },
+  {
+   "name": "non-finite number",
+   "frame": "{\"jsonrpc\":\"2.0\",\"id\":NaN,\"method\":\"ry/security.read\",\"params\":{}}",
+   "expect": {
+    "rpc": -32700,
+    "id": null
+   }
+  },
+  {
+   "name": "batch",
+   "frame": [
+    {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "ry/security.read",
+     "params": {
+      "sessionId": "sess-1"
+     }
+    }
+   ],
+   "expect": {
+    "rpc": -32600,
+    "id": null
+   }
+  },
+  {
+   "name": "notification",
+   "frame": {
+    "jsonrpc": "2.0",
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": null
+   }
+  },
+  {
+   "name": "wrong version",
+   "frame": {
+    "jsonrpc": "1.0",
+    "id": 1,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": 1
+   }
+  },
+  {
+   "name": "extra envelope field",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    },
+    "actor": "person-2"
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": 1
+   }
+  },
+  {
+   "name": "boolean id",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": true,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": null
+   }
+  },
+  {
+   "name": "null id",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": null,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": null
+   }
+  },
+  {
+   "name": "unsafe integer id",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 9007199254740992,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32600,
+    "id": null
+   }
+  },
+  {
+   "name": "method not allowlisted security.read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "security.read",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/session/new",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session/new",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/session/load",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session/load",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted session/prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "session/prompt",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/fs/read_text_file",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/fs/read_text_file",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/terminal/create",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal/create",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/preferences.sessionView.set",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/preferences.sessionView.set",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/provider.rpc",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/provider.rpc",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/permission.setMode",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/permission.setMode",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/account.login",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/account.login",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "method not allowlisted ry/mcp.call",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/mcp.call",
+    "params": {
+     "sessionId": "sess-1"
+    }
+   },
+   "expect": {
+    "rpc": -32601,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field actor",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "actor": "person-2"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field account",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "account": "agent-2"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field provider",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "provider": "codex"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field bindingId",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "bindingId": "b-1"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field nativeId",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "nativeId": "n-1"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field socketPath",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "socketPath": "/tmp/x"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field permissionMode",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "permissionMode": "bypass"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "spoofed or unknown field mystery",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "mystery": 1
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "missing operationId",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "params not object",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/security.read",
+    "params": []
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "boolean revision",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.resume",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "expectedRevision": true
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "float revision",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/session.resume",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "expectedRevision": 1.0
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "negative sequence",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/events.ack",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "eventSeq": -1
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "empty prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "ifBusy outside enum",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "wait"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "path in an id",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/security.read",
+    "params": {
+     "sessionId": "../other"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "short digest",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "turn.submit",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:abc"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "uppercase digest",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "turn.submit",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "register a read",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "session.snapshot",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "register registration",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "operation.register",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "register unknown method",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "provider.rpc",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "history page over maximum",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/history.page",
+    "params": {
+     "sessionId": "sess-1",
+     "limit": 201
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "terminal frame not base64",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.input",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "inputGrant": "grant-1",
+     "inputEpoch": 7,
+     "frameSeq": 11,
+     "data": "not base64!"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "zero dimensions",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/terminal.resize",
+    "params": {
+     "sessionId": "sess-1",
+     "attachmentId": "att-1",
+     "connectionSeq": 5,
+     "geometryGrant": "geo-1",
+     "cols": 0,
+     "rows": 40
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "empty configuration request",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/configuration.request",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "expectedRevision": 2
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "path as upload name",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/attachment.begin",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "uploadKey": "up-1",
+     "name": "../../etc/passwd",
+     "mimeType": "image/png",
+     "size": 1024,
+     "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "take with blank reason",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/control.take",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "attachmentId": "att-1",
+     "expectedRevision": 3,
+     "reason": ""
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "R1 refuses registering a later method",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/operation.register",
+    "params": {
+     "sessionId": "sess-1",
+     "registrationKey": "key-1",
+     "method": "turn.steer",
+     "expectedRunId": "run-1",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "expect": {
+    "method": "operation.register",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "R1 refuses staged attachments on a turn",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "Keep the original notes.",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject",
+     "stagedIds": [
+      "staged-1"
+     ]
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "UNSUPPORTED"
+   }
+  },
+  {
+   "name": "LF is multiline",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "one\ntwo",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "multiline",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "CR is multiline",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "one\rtwo",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "multiline",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "NEL is multiline",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "onetwo",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "multiline",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "LS is multiline",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "one two",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "multiline",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "PS is multiline",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "one two",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "multiline",
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "tab stays single line",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "one\ttwo",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "method": "turn.submit",
+    "admit": "ok",
+    "capabilities": [
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "NUL in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "a\u0000b",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "paste end in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "\u001b[201~\u0003",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "backspace in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "a\bb",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "vertical tab in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "a\u000bb",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "form feed in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "a\fb",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "DEL in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "C1 CSI in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "first C1 in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "C1 below NEL in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "C1 above NEL in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  },
+  {
+   "name": "last C1 in prompt",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/turn.submit",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "text": "ab",
+     "expectedConfigurationRevision": 2,
+     "ifBusy": "reject"
+    }
+   },
+   "expect": {
+    "rpc": -32602,
+    "id": 1
+   }
+  }
+ ]
+}

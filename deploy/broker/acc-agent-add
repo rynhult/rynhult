@@ -20,11 +20,12 @@ hook=${prefix:+$prefix/bin/acc-hook}
 hook=${hook:-/srv/acc/bin/acc-hook}
 account=${1:?usage: acc-agent-add <account> [--services] [--roots a:b]}; shift
 [[ $account =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "bad account name" >&2; exit 1; }
+roots_explicit=''
 role=agents roots=/srv/acc/workspaces:/srv/acc/app cpu='' memory='' tasks='' nolimits=''
 while [ $# -gt 0 ]; do
   case $1 in
     --services) role=services ;;
-    --roots) roots=$2; shift ;;
+    --roots) roots=$2; roots_explicit=1; shift ;;
     --cpu) cpu=$2; shift; [[ $cpu =~ ^[0-9]{1,5}%$ ]] || { echo "--cpu like 400%" >&2; exit 1; } ;;
     --memory) memory=$2; shift; [[ $memory =~ ^[0-9]+[KMGT]$ ]] || { echo "--memory like 16G" >&2; exit 1; } ;;
     --tasks) tasks=$2; shift; [[ $tasks =~ ^[0-9]+$ ]] || { echo "--tasks like 2048" >&2; exit 1; } ;;
@@ -74,6 +75,13 @@ fi
 install -d -o root -g "$client" -m 0751 "$run_root"  # others may only pass through to their own folder
 install -d -m 0755 /etc/acc/broker
 env=/etc/acc/broker/$account.env
+# An ordinary installer upgrade must retain administrator workspace roots.
+# UI policy lives in the root worker's revisioned state, independently of this
+# legacy baseline; changing the first root would prevent its live acknowledgement.
+if [ -z "$roots_explicit" ] && [ -f "$env" ]; then
+  roots=$(acc_setting_file ACC_ALLOWED_ROOTS "$env")
+  [ -n "$roots" ] || { echo "missing existing broker roots; administrator review required" >&2; exit 1; }
+fi
 {
   echo "# Written by acc-agent-add. Broker settings for $account ($role)."
   echo "ACC_BROKER_ROLE=$role"

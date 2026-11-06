@@ -545,7 +545,7 @@ async def test_w1_owner_recovers_started_unfinishable_delivery(api, project, tmp
             json={'digest': data['digest'], 'recovery_digest': '0' * 64})
         assert refused.status_code == 409
         with api.app.state.db() as db:
-            assert db.query(SecurityFolderPolicy).one().state == 'recovering'
+            assert db.query(SecurityFolderPolicy).one().state == 'pending'
         response = await api.post(f"/api/security/folders/{data['id']}/recover", headers=headers,
             json={'digest': data['digest'], 'recovery_digest': recovery['digest']})
         assert response.status_code == 200, response.text
@@ -732,3 +732,72 @@ async def test_x3_only_acknowledged_recovery_offers_unchanged_confirmation(api, 
     assert applied.status_code == 200, applied.text
     with api.app.state.db() as db:
         assert policy.folder_revision(db, 'local', account) == 2
+
+
+@pytest.mark.parametrize('refusal', ['stale-consent', 'status-offline', 'lost-recovery-reply'])
+async def test_y1_recovery_preserves_retry_only_before_dispatch(api, project, tmp_path, monkeypatch, refusal):
+    """Do not close retry for a recovery we never sent; never reopen after uncertain dispatch."""
+    import os
+
+    from acc import folder_channel
+    from acc.folder_worker import FolderWorker
+    from acc.server.models import SecurityFolderPolicy
+    headers = await verified(api)
+    account = project['account']
+    host = tmp_path / 'host'
+    (host / 'home/alex/src/repo').mkdir(parents=True)
+    state = tmp_path / 'worker'
+    state.mkdir(mode=0o700)
+    roots = ['/home/alex-agent/workspaces']
+    mapping = {'machine_id': 'local', 'qualified': False, 'policy_qualified': True, 'accounts': {account: {
+        'uid': 12345, 'owner_uid': os.getuid(), 'homes': ['/home/alex'], 'protected': ['/srv/acc'], 'roots': roots}}}
+    applying, failing_status, recovery_sent = False, False, []
+    with FolderWorker(state, mapping, host_root=host, owner=os.getuid(),
+                      reload=lambda _, value: {'revision': value['revision']}) as worker:
+        async def target(message):
+            if message['action'] == 'policy_apply' and not applying:
+                raise OSError('apply not delivered')
+            if message['action'] == 'status' and failing_status:
+                raise OSError('status unavailable')
+            if message['action'] == 'policy_recover':
+                recovery_sent.append(message)
+                reply = worker.handle(message)
+                if refusal == 'lost-recovery-reply':
+                    raise OSError('recovery reply lost')
+                return reply
+            return worker.handle(message)
+        monkeypatch.setattr(folder_channel, 'request', target)
+        preview = await api.post('/api/security/folders/preview', headers=headers, json={
+            'machine': 'local', 'account': account, 'roots': roots + ['/home/alex/src/repo'], 'revision': 0})
+        assert preview.status_code == 200, preview.text
+        data = preview.json()
+        base = f"/api/security/folders/{data['id']}"
+        assert (await api.post(base + '/apply', headers=headers, json={'digest': data['digest']})).status_code == 503
+        review = await api.get(f"/api/security/folders/operations/{data['id']}", headers=headers)
+        assert review.json()['retry_available'] is True
+        consent = review.json()['recovery']['digest']
+        failing_status = refusal == 'status-offline'
+        response = await api.post(base + '/recover', headers=headers, json={'digest': data['digest'],
+            'recovery_digest': '0' * 64 if refusal == 'stale-consent' else consent})
+        assert response.status_code == (409 if refusal == 'stale-consent' else 503), response.text
+        failing_status = False
+        with api.app.state.db() as db:
+            assert db.query(SecurityFolderPolicy).one().state == (
+                'recovering' if refusal == 'lost-recovery-reply' else 'pending')
+        review = await api.get(f"/api/security/folders/operations/{data['id']}", headers=headers)
+        assert review.json()['retry_available'] is (refusal != 'lost-recovery-reply')
+        if refusal != 'lost-recovery-reply':
+            assert recovery_sent == []
+            applying = True
+            retried = await api.post(base + '/retry', headers=headers, json={'digest': data['digest']})
+            assert retried.status_code == 200, retried.text
+            assert retried.json()['state'] == 'applied'
+        else:
+            assert len(recovery_sent) == 1
+            assert (await api.post(base + '/retry', headers=headers, json={'digest': data['digest']})).status_code == 409
+            # Recovery remains the in-product route out, using fresh durable status.
+            refusal = 'finish'
+            recovered = await api.post(base + '/recover', headers=headers, json={'digest': data['digest'],
+                'recovery_digest': consent})
+            assert recovered.status_code == 200, recovered.text
+            assert recovered.json()['revision'] == 2

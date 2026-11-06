@@ -39,6 +39,8 @@ def pytest_configure(config):
     for key in PROTECTED_SESSION_VARIABLES:
         os.environ.pop(key, None)
     os.environ['ACC_TEST'] = '1'  # No real telemetry transport in any test process.
+    config.addinivalue_line('markers', 'claude_launch_auth: the test controls Claude launch authentication itself')
+    config.addinivalue_line('markers', 'claude_launch_cloud: fake Claude sessions launch with cloud (Bedrock) authentication')
     if config.option.basetemp is None:
         # Do not participate in other pytest processes' numbered-directory retention/cleanup.
         root = tempfile.TemporaryDirectory(prefix="acc-pytest-")
@@ -172,6 +174,29 @@ def owned_tmux(monkeypatch):
 def fixed_totp_time(monkeypatch):
     # Replace this module's clock, not time.time globally: throttles and asyncio keep their real monotonic clock.
     monkeypatch.setattr(auth, "time", SimpleNamespace(time=lambda: TOTP_AT, monotonic=time.monotonic))
+
+
+@pytest.fixture(autouse=True)
+def claude_api_key(monkeypatch, request):
+    """Model a vault-delivered Anthropic API key at launch, so fake Claude sessions may be automated.
+
+    The subscription guard grants automation only from launch environment Rynhult supplied, and
+    the fake CLI reports API authentication. Tests that exercise subscription/unknown launches
+    themselves are marked ``claude_launch_auth`` and get no key.
+    """
+    if request.node.get_closest_marker('claude_launch_auth'):
+        return
+    supplied = ({'CLAUDE_CODE_USE_BEDROCK': '1'} if request.node.get_closest_marker('claude_launch_cloud')
+                else {'ANTHROPIC_API_KEY': 'fixture-key'})
+    from acc.server.vault import Vault
+    original = Vault.deliver
+
+    def deliver(*args, **kwargs):
+        result = original(*args, **kwargs)
+        for key, value in supplied.items():
+            result.env.setdefault(key, value)
+        return result
+    monkeypatch.setattr(Vault, 'deliver', deliver)
 
 
 @pytest.fixture

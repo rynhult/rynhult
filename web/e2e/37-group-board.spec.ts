@@ -1,5 +1,5 @@
 import { environmentValue } from "../../src/acc/env.mjs";
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, info, PASSWORD, totp } from './helpers';

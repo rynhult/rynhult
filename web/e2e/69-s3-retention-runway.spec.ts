@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
+import { gotoLoadedPage } from './loaded-page';
 import { AUTH_FILE, expectAxeClean, wikiShotPath } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
@@ -13,7 +14,7 @@ for (const width of [1440, 390]) {
         immutable_until: Date.now() / 1000 + 37 * 86400, immutability_checked_at: Date.now() / 1000,
         retention_runway_days: 7, retention_warning: true, retention_lapsed: false,
       }] } }));
-    await page.goto('/host');
+    await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
     await expect(page.getByTestId('backup-status')).toContainText('retention maintenance due');
     const details = page.getByRole('button', { name: 'Details', exact: true });
     await details.focus();
@@ -39,7 +40,7 @@ for (const [days, lapsed, text] of [[30, false, 'Retention runway: 30 days'], [0
       id: 'b'.repeat(32), kind: 's3', repository: 's3:https://s3.example.com/demo-backups/acc/demo/repository', enabled: true,
       status: 'backed up, not protected', stale: false, retention_runway_days: days, retention_warning: days === 0, retention_lapsed: lapsed,
     }] } }));
-    await page.goto('/host#host-backups');
+    await gotoLoadedPage(page, '/host#host-backups', ['Host'], ['/api/host', '/api/host/backups']);
     await expect(page.getByTestId('retention-runway')).toContainText(text);
     if (days === 30) await expect(page.getByTestId('backup-status')).not.toContainText('retention maintenance due');
   });
@@ -51,7 +52,7 @@ test('maintenance guidance opens the shipped runbook and a parseable restricted 
       repository: 's3:https://s3.example.com/demo-backups/acc/demo/repository', enabled: true,
       status: 'backed up, not protected', stale: false, retention_runway_days: 7, retention_warning: true,
     }] } }));
-  await page.goto('/host#host-backups');
+  await gotoLoadedPage(page, '/host#host-backups', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('link', { name: 'Retention maintenance guide' }).focus();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/guide\/User-Guide\/Backups#independent-retention-maintenance$/);

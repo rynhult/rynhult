@@ -1,0 +1,276 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "decisions",
+ "cases": [
+  {
+   "name": "first valid answer reserves",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "reserved"
+  },
+  {
+   "name": "late answer",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "reserved",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_RESOLVED"
+  },
+  {
+   "name": "late answer with stale revision still hears resolved",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 0,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "answered",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_RESOLVED"
+  },
+  {
+   "name": "answer after outcome unknown cannot repeat",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "outcome_unknown",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_RESOLVED"
+  },
+  {
+   "name": "cancelled by run replacement",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "cancelled",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_RESOLVED"
+  },
+  {
+   "name": "expired record",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "expired",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_EXPIRED"
+  },
+  {
+   "name": "expired by clock",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 2000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_EXPIRED"
+  },
+  {
+   "name": "stale revision",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 3,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "REVISION_CONFLICT"
+  },
+  {
+   "name": "changed action",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "changed",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "REVISION_CONFLICT"
+  },
+  {
+   "name": "choice not offered",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-always",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "POLICY_REFUSED"
+  },
+  {
+   "name": "service cannot answer as a person",
+   "reply": {
+    "actor": "service",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "POLICY_REFUSED"
+  },
+  {
+   "name": "privileged stays in its workflow",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "privileged",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "POLICY_REFUSED"
+  },
+  {
+   "name": "answer at exactly the expiry",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1500,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_EXPIRED"
+  },
+  {
+   "name": "answer one millisecond before expiry",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1499,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 2
+   },
+   "expect": "reserved"
+  },
+  {
+   "name": "stale run",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "other",
+    "policyRevision": 2
+   },
+   "expect": "STALE_RUN"
+  },
+  {
+   "name": "stale run beats expiry",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 2000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "other",
+    "policyRevision": 2
+   },
+   "expect": "STALE_RUN"
+  },
+  {
+   "name": "late answer from an old run still hears resolved",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "answered",
+    "kind": "tool_approval",
+    "run": "other",
+    "policyRevision": 2
+   },
+   "expect": "DECISION_RESOLVED"
+  },
+  {
+   "name": "policy changed since the card was shown",
+   "reply": {
+    "actor": "person",
+    "choice": "allow-once",
+    "revision": 4,
+    "digest": "match",
+    "nowMs": 1000,
+    "status": "pending",
+    "kind": "tool_approval",
+    "run": "match",
+    "policyRevision": 3
+   },
+   "expect": "REVISION_CONFLICT"
+  }
+ ]
+}

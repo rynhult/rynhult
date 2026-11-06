@@ -23,11 +23,12 @@ from acc.env import environment
 from . import bundle
 from .updates import (
     BUILD,
+    DEFAULT_REPOSITORY,
     GIT_MESSAGE,
     check,
+    checkout_blocks_update,
     download_release,
     fetch,
-    repository,
     selected_channel,
     validate_request,
     version,
@@ -229,7 +230,7 @@ class Transaction:
 
     def _apply(self):
         try:
-            if (self.source / ".git").exists():
+            if checkout_blocks_update(self.source, require_root_owned=True):
                 raise ValueError(GIT_MESSAGE)
             version(self.target)
             self.step("backup", self.backup)
@@ -391,7 +392,7 @@ def main():
                        'detail': 'Backup target updates require independent owner review'}, group)
             return 0
         authorized_repo = environment.get(
-            "ACC_UPDATE_REPOSITORY", repository(environment.get("ACC_SOURCE_URL", "https://github.com/rynhult/rynhult"))
+            "ACC_UPDATE_REPOSITORY", DEFAULT_REPOSITORY
         )
         config = {
             "repository": authorized_repo,

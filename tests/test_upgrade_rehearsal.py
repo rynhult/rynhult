@@ -37,25 +37,44 @@ def test_upgrade_keeps_every_value_and_downgrade_restores_the_schema(url, tmp_pa
     counts = rehearsal.seed(url, tmp_path / 'data')
     assert sum(counts.values()) > 250 and counts['event'] == 120
     base = rehearsal.schema(url)
+    assert 'decision' not in base['tool_request']
     before = rehearsal.snapshot(url, base)
 
     migrate(url)  # the path accd takes at startup
     assert rehearsal.version(url) == rehearsal.head(url)
+    upgraded = rehearsal.schema(url)
+    approval_tables = {'approval_consent', 'approval_operation', 'approval_batch'}
+    assert approval_tables.isdisjoint(base)
+    assert approval_tables <= upgraded.keys()
+    assert 'decision' in upgraded['tool_request']
+    assert rehearsal.snapshot(url, {name: upgraded[name] for name in approval_tables}) == {
+        'approval_consent': [], 'approval_operation': [], 'approval_batch': []}
     after = rehearsal.snapshot(url, base)
     assert {t for t in before if before[t] != after[t]} == set()
     assert rehearsal.integrity(url) == []
     engine = make_engine(url)
     try:  # new rows still get ids after explicit seeded ones (PostgreSQL sequences)
         with engine.begin() as db:
+            assert db.scalar(text('SELECT count(*) FROM tool_request WHERE decision IS NOT NULL')) == 0
             db.execute(text("insert into audit_log (ts, actor, action, detail) values (:ts, 'alex', 'rehearsal.check', '{}')"),
                        {'ts': rehearsal.at(1)})
     finally:
         engine.dispose()
 
+    upgraded_schema = rehearsal.schema(url)
+    from acc.server.source_schema_v1 import TABLES
+    retained_schema = {name: upgraded_schema[name] for name in TABLES}
+    retained = rehearsal.snapshot(url, retained_schema)
     added = rehearsal.after_upgrade(url)
     rehearsal.downgrade(url, rehearsal.BASE)
     assert rehearsal.version(url) == rehearsal.BASE
-    assert rehearsal.schema(url) == base
+    downgraded = rehearsal.schema(url)
+    assert {table: downgraded[table] for table in base} == base
+    # Sources deliberately retains additive compatibility data on downgrade.
+    # Require exactly its frozen tables, with unchanged columns and rows.
+    assert set(downgraded) - set(base) == set(TABLES)
+    assert {name: downgraded[name] for name in TABLES} == retained_schema
+    assert rehearsal.snapshot(url, retained_schema) == retained
     assert rehearsal.integrity(url) == []
     down = rehearsal.snapshot(url, base)
     # 0067's downgrade deletes what older code would misread (security review 9, SR9-8): the phone-bound sign-in and

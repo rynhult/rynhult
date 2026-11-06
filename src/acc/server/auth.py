@@ -20,11 +20,11 @@ from urllib.parse import quote
 import segno
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import joinedload
 
-from .models import AuthSession, RetiredUser, User
+from .models import AuthSession, RecoveryCode, RetiredUser, User
 
 SESSION_DAYS = 14
 LAST_SEEN_STEP = timedelta(minutes=5)
@@ -220,3 +220,25 @@ class LoginThrottle:
 
     def reset(self, key: str) -> None:
         self.failures.pop(key, None)
+
+# 128 random bits per code make a fast salted digest safe from offline guessing.
+def recovery_digest(salt: str, code: str) -> str:
+    return hashlib.sha256((salt + ":" + ''.join(code.lower().replace('-', '').split())).encode()).hexdigest()
+
+
+def generate_recovery_codes(db: DbSession, user: User) -> list[str]:
+    db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
+    codes = [secrets.token_hex(16) for _ in range(10)]
+    for code in codes:
+        salt = secrets.token_hex(16)
+        db.add(RecoveryCode(user_id=user.id, salt=salt, code_hash=recovery_digest(salt, code)))
+    return codes
+
+
+def consume_recovery_code(db: DbSession, user: User, code: str) -> bool:
+    for record in db.scalars(select(RecoveryCode).where(RecoveryCode.user_id == user.id)):
+        if hmac.compare_digest(record.code_hash, recovery_digest(record.salt, code)):
+            # Conditional deletion makes one use atomic, including on PostgreSQL.
+            return db.execute(delete(RecoveryCode).where(RecoveryCode.id == record.id)).rowcount == 1
+    return False

@@ -1,8 +1,12 @@
 # Sessions
 
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
 A session is one native agent conversation (Claude Code, Codex, Copilot, Antigravity, Cursor or OpenCode) running in tmux on its selected machine, in a [project](/User-Guide/Glossary#project)'s folder or a [workspace](/User-Guide/Workspaces).
+
+In the [new layout](/User-Guide/New-Layout#start-a-session-in-the-workspace), **New session** opens a task-first workspace page with the same launch and permission checks. It shows **Name** beside the main Task and Agent fields. Keep the suggested name or choose **Rename**; **Use automatic name** returns to the suggestion.
 
 Rynhult retains startup hooks that arrive during launch and uses them to verify the new run. If the agent does not report starting within its verification window, Rynhult asks you to inspect the terminal.
 
@@ -11,10 +15,28 @@ stays with the right run. A large backlog is read in bounded batches and can del
 session, closing the run waits until its machine's last hooks can be checked. Existing history-size limits still
 apply; a truncated final hook cannot hold a dead run indefinitely.
 
+## Claude sign-in
+
+When an Anthropic credential is granted, New session offers **Your Claude login (subscription)**
+by default, or **API key: <key name> (API billing)**. The subscription choice withholds
+Anthropic auth variables and keeps other project keys. Setup shows the stored choice.
+Restart, resume and auto-resume keep it. A subscription session cannot be automated under
+the existing Claude subscription guard; auto-resume does not silently switch it to an API key.
+
+API callers can send `claude_auth: "subscription" | "api_key"` to `POST /api/sessions`
+and `/api/sessions/preview`. Omission means `"subscription"`; `"api_key"` requires an applicable
+Anthropic credential grant (otherwise 422). Responses expose the choice and key names, never
+key values. Scheduled launches store the same field in `launch`; team and orchestrator helper
+start requests accept `claude_auth` too. Automation that needs API auth must explicitly request
+`"api_key"`; omitting it keeps subscription sign-in and its automation guard. This setting
+applies to Claude; other providers retain their existing credential delivery. The explanation helper
+API accepts the same field; without explicit API sign-in it keeps the existing subscription refusal
+or uses its documented signed-in Codex fallback.
+
 ## Finding a session
 - **Sidebar** lists running sessions under **Needs you**, **Working**, **Unknown** and **Idle**: up to five each, then **+N more**. When many are running, that list scrolls on its own, so **Operate** and **Configure** stay in view. Select a group's name (or **+N more**) to see all of its sessions on the Sessions page. The number beside **Needs you** is how many sessions are blocked on you, the same number as on the Overview.
 - **What it's doing now.** While a session works, its row and its page header show its current step, from the agent's own tool events: "Thinking", "Running npm test", "Editing src/api.py", "Asking to run rm -rf build". It clears when the turn ends. Antigravity and Codex report steps after they finish ("Ran …").
-- **Claude background work.** After a turn ends, running shells, monitors or helper agents shown at the bottom of Claude's terminal keep the session under **Working**, with "Working in background". It becomes **Idle** when those indicators disappear. Permission requests still show **Needs you**.
+- **Claude background work.** A shell or task counter alone leaves Claude under **Idle**, with a label such as "1 background shell". An activity line or a working hook keeps it under **Working**; a background counter does not override that hook. Permission requests still show **Needs you**.
 - **Sessions** lists all of them, what needs you first: **Needs you**, then **Working**, **Unknown**, **Idle** and (with **Stopped** or **All**) **Stopped**, each newest first, under the same headings as the Overview. **Recent** lists them by last activity instead. Filters: **Live / Stopped / All**, a text filter (name, project or id), agent and project. Arriving from a group link shows only that group, with a button to show all.
 
 ![The sessions list groups sessions by priority and offers filters](/.attachments/sessions-list.png)
@@ -41,6 +63,8 @@ expired merely because a permission question has been waiting for an answer.
 
 ![Unknown status and its evidence age on a phone](/.attachments/sessions-unknown-phone.png)
 
+In **Sessions → Stopped**, **Archive all stopped** asks for confirmation in the page and reports how many were archived. It applies across filters to stopped sessions you may archive: owners can archive everyone’s; members can archive their own. A signed-in person is required; installation API tokens cannot use this action. Each request archives up to 200 stopped sessions and reports when more remain; repeat the action for another batch. Sessions still stopping are skipped. This bulk action keeps transcripts, worktrees and branches. Stopped and archived sessions hide their previous activity label.
+
 ## Grid: several terminals at once
 **Grid** (in the sidebar) shows up to four live sessions side by side, each as its real terminal: watch several agents work and answer whichever needs you without switching pages.
 
@@ -58,6 +82,12 @@ expired merely because a permission question has been waiting for an answer.
 ![Expanded Grid terminal](/.attachments/terminal-expanded-grid-desktop.png)
 
 ![Expanded Grid on a phone](/.attachments/terminal-expanded-grid-phone.png)
+
+### Experimental persistent observer terminals
+
+Ordinary installations keep the terminal controls described above. A qualification build can instead show **Read-only · observing this session**. In that build, switching routes, tabs, Grid or Expand keeps one terminal attachment in this browser tab. A second placement offers **Show shared terminal here** rather than opening a second connection.
+
+These views never take control or send keys. **Disconnect** releases the attachment without stopping the session; **Recheck** checks access again and opens a new read-only connection. The read-only terminal keeps a fixed grid that scrolls inside its slot, so resizing your view does not reflow the agent. Hidden attachments appear in the background-terminal summary and can be released there. They still receive output. Every lost observer connection clears its cached output; use **Recheck** to resolve current access again. An older machine broker may require updating before this experimental view can attach. Sign-out clears them. A process restart, a browser reload or a disconnected attachment requires a new connection; the earlier connection does not survive those events. **Open as text** and **Copy recent output** use only the output this browser retained for that run; older lines may be missing. This experiment does not retain file edits or form drafts across navigation.
 
 ## Worktrees
 Several agents in one project's folder see and change the same files. Tick **Own worktree** in New session to give a session its own working copy instead:
@@ -85,7 +115,52 @@ the session page and the Audit record retain the chosen machine. Resume stays
 there. The clone path copies committed Git state only and has an 8 MiB limit;
 it does not copy uncommitted changes or login credentials.
 
+## Unsaved work and reload
+
+Reloading or closing the tab asks the browser to warn when a Files buffer,
+project brief, Security or Remote access setting, Publishing form, New project
+or New session dialog, working-list edit, plan or folder registration is dirty.
+Changing only an option, such as Publishing access, counts too. Closing a creation
+dialog keeps its draft and warning until you save or discard it.
+
+Brief, working-list, plan and registration drafts try to save in this tab's local
+storage. **Couldn't save this draft locally** means the current edit is still in
+memory: keep the tab open or copy your changes yourself. **Retry local save**
+tries again; it does not apply settings or send work to an agent. Local storage
+is scoped to your sign-in and installation, and is not a backup. Older drafts
+without a known owner are not automatically imported. Other forms and attached
+files may be memory-only. Accepting the browser's leave warning can lose them;
+browser crashes and forced termination may give no warning. Save important work
+before leaving. Existing in-app discard/brief prompts still apply.
+
+Completing an invite or reset link opens Overview in a fresh page for that
+sign-in, even if the tab was previously signed in as someone else. Failed
+completion keeps you on the form and does not clear draft ownership.
+
+A failed sign-in verification leaves the draft and warning intact. If your sign-in
+expires during Save, the leave-page warning still lets you keep the tab open and
+copy your edits. Keeping the tab open continues checking your sign-in; a later
+different sign-in reloads the page and removes the previous person's draft from
+view. This also works on section links such as Settings → Security. A role change
+reloads the page before editors use the new role; unsaved edits still warn before
+that navigation. Explicit sign-out removes local
+draft copies, including older tab drafts, when browser storage permits it.
+
+An explicit project or issue launch starts with that preset, rather than another
+retained session's task or choices. Opening an untouched dialog does not make a
+draft merely because its defaults finish loading. Changing the project inside a
+preset New session moves that dialog's draft to the selected project; a successful
+launch clears it from both the original and selected targets. A clean form does
+not warn about removing a local copy unless a copy is known to exist. Schedule drafts are separate
+from ordinary New session drafts; **Discard draft** clears a new or edited
+schedule without saving it. If local removal fails, the warning explains that an
+older copy may return after reload and lets you retry removal.
+
 ## The session page
+
+Chat is off by default. An owner can enable **Chat** in **Settings → Admin features**. Unsupported Chat stays on its read-only notice until you choose **Open Terminal**; it never opens a terminal connection automatically.
+
+The [read-only Chat view](/User-Guide/Chat) offers a full Chat tab and, on wide pages, an optional panel beside Terminal when the backend reports a qualified source. Chat does not send messages or change terminal control.
 
 The terminal keeps its input editor in place while background status refreshes. Browser spelling corrections and inline writing suggestions are disabled in this field so they cannot rewrite text already sent to the agent. Safari still supports ordinary typing, paste and composed text; only committed input is sent, once. Chromium IME input also keeps a completed composition from being repeated by delayed browser input processing. Panels in other tabs do not keep polling while you type. Pending message deliveries refresh quickly; empty or settled delivery history checks less often, and pauses its timer while the browser tab is hidden.
 
@@ -158,6 +233,33 @@ On phones, each event's time and source stack above its content. Long errors and
 
 ![An Activity event on a phone with the complete error wrapped below its metadata](/.attachments/session-activity-phone.png)
 
+### Commit and push from Changes
+
+Enter a required **Commit message** and select **Commit all** to stage tracked and
+untracked changes (respecting `.gitignore`) and create a local commit as the agent
+account. Commit all requires a session at the repository root so the review includes
+every staged file. If files changed after the displayed review, Commit all refuses
+with “changes moved, review again”; refresh Changes before retrying. The commit records
+`Rynhult-Person: <username>` without adding your email; any person trailers in the
+entered message are removed.
+Protected credential files are refused. **Push branch** sends the current branch
+to origin using that account's existing Git credentials and displays Git's result.
+It never forces a push. Detached HEAD, the default branch, main/master and protected
+branches are refused. GitHub branch protection must be readable, and origin must
+match the project's GitHub repository.
+
+These actions use the same session and project access checks as terminal input,
+respect custom command guardrails, and are audited. They are available for worktree
+sessions; in the main checkout, the project's **Block pushes to main or master**
+guardrail must be disabled. Read-only or untrusted projects and restored sessions
+held for recovery cannot use them. If Git's index is locked, the action says
+“agent is busy, try again”; wait for the agent's Git command to finish.
+After pushing, open **Pull request** and select **Create pull request**.
+
+Reading Changes and generating an explanation follow session access. If you can access a
+session but cannot access its project, you can still review its diff; Commit and Push
+remain unavailable and require project access.
+
 ### How Changes chooses its comparison
 
 Rynhult uses the current branch's shared ancestor (**merge-base**) with origin/main or local main. If neither is available, it tries the locally recorded origin default branch, configured upstream, origin/master and master. Main takes priority over the feature branch's own upstream, so pushing the feature does not hide its changes. It never fetches or changes branches for this. Commits already on that comparison branch are not counted as new session work.
@@ -179,7 +281,7 @@ The header shows the branch the session's folder is on (refreshed with **Changes
 ### Pull requests
 Use the **Pull request** tab to take a session's branch from "pushed" to "merged" without leaving Rynhult. It appears on sessions of a project with a GitHub repository; give the session its own [worktree](/User-Guide/Sessions#worktrees) so it works on its own branch.
 
-**Before you start:** the agent has pushed its branch to GitHub. You need to be an owner, or the member whose session and project it is. Rynhult acts on GitHub only when you click, as you: owners use Rynhult's GitHub token (the same one as the project's GitHub views); members use their [agent account](/User-Guide/Glossary#agent-account)'s own GitHub sign-in (**Providers → GitHub**).
+**Before you start:** commit and push the branch from **Changes**, or have the agent push it to GitHub. You need to be an owner, or the member whose session and project it is. Rynhult acts on GitHub only when you click, as you: owners use Rynhult's GitHub token (the same one as the project's GitHub views); members use their [agent account](/User-Guide/Glossary#agent-account)'s own GitHub sign-in (**Providers → GitHub**).
 
 1. Open the session and select **Pull request**.
 
@@ -258,6 +360,7 @@ Very large diffs are reduced to per-file summaries and excerpts first;
 the panel warns when input was reduced or the source diff was truncated.
 
 Reopening an unchanged revision uses the saved result without spending usage.
+Whether Commit and Push are available does not change the diff's revision.
 **Regenerate** opens the agent/model form for another explicit run. A changed
 revision needs a new walkthrough; Rynhult never generates one automatically.
 
@@ -290,7 +393,8 @@ The **Terminal** tab embeds the session's tmux session in the page. It is the re
 
 - **Typing.** Click into the terminal and type. Answer a permission prompt with its number or the arrow keys and Enter; press Esc to cancel, as in a local terminal.
 - **Focus while loading.** On desktop, if you focus a tab or another control while the terminal loads, it keeps focus when the terminal appears.
-- **One writer.** Only one window types at a time. Opening the session somewhere else shows **Read-only · another window has control** with **Take control**, which moves typing to that window.
+- **One writer.** Only one window types at a time. Opening the session somewhere else shows **Read-only · another window has control** with **Take control**. Choose a reason (Manual handover, Controller unavailable or Team intervention) and confirm to move typing to that window. Partial input stays in the terminal: inspect it before typing. Handover never clears or replays input, and waits for unacknowledged bytes or active composition to finish. Automated messages cannot mix into partial human input.
+- **Unsent text.** If you reload or return with typed text you hadn't sent, you keep writing and the terminal shows **Partial input may remain. Inspect it before typing.** Messages from your team and automation wait until that text is sent or cleared. Anyone else needs **Take control**.
 - **Phone.** Opening a terminal does not focus its text input or open the phone keyboard. Tap the grid to type. A key bar under the terminal adds the keys a touch keyboard lacks. The ones that finish or stop an answer come first and always fit the screen: **⏎** (Enter), **Esc**, **^C** (interrupt), **↑**, **↓** and **Tab**. **More keys** adds **Ctrl** (tap it, then a letter; it stays highlighted until used), **←**, **→**, PgUp/PgDn and **Paste**. To answer a permission prompt: tap **↑**/**↓** to pick an option, then **⏎**.
 - **Keyboard.** Inside the terminal, **Tab** and **Shift+Tab** go to the agent for completion and other CLI actions. Press **F6** to leave for **Screen reader output**, then use **Tab** normally to reach **Open as text** and **Copy recent output**. **Shift+F6** leaves backwards, including from a screen reader row. On keyboards with media keys, you may need **Fn+F6**. A visible hint sits in the top bar. The **Skip terminal** link appears when reached by keyboard, before the grid, and goes straight to the output controls.
 - **Reconnecting.** After waking the browser or losing its connection, use **Reconnect** if the terminal says **Disconnected**. Check the current prompt before continuing: reconnecting does not replay previously typed or pasted text, and input entered while disconnected is not queued. Accented characters and IME compositions are committed once, without reinserting earlier text.
@@ -648,3 +752,47 @@ to main. Read-only reviewers return findings through reports and do not edit cod
 Native subagents share their parent's slot and permissions. They are not shown in the team tree, and their
 count cannot be capped. If a council cannot use managed helpers within the grant, its sequential views
 are labelled **single-session perspectives**, rather than independent reviews.
+
+## Pasting images and files into a session
+
+With terminal control, paste a screenshot or image with Ctrl+V (Cmd+V on macOS),
+or drag files onto the terminal. Rynhult uploads them into `.rynhult/uploads/`
+inside that session's working folder and inserts their relative paths at the
+cursor. These paths are relative to the session folder; if your shell or agent
+has changed directory, return there or adjust the paths before using them.
+Add your instructions and press Enter yourself. Uploading never sends
+Enter. Ordinary text paste keeps its existing behavior, including any newlines.
+
+The status beside the terminal controls announces progress and errors. Read-only
+terminals must acquire control before uploading. Each gesture accepts up to ten
+files, 4 MiB each and 16 MiB total. Names are sanitized and made unique; uploads
+are owned by the agent account and, when the session folder is a repository root,
+excluded through Git's local `info/exclude`,
+without changing `.gitignore`. Files remain in the working folder until you
+remove them. If control changes during upload, use Files to find their paths.
+
+### Codex terminal scrollback
+
+Codex defaults to **Keep scrollback (inline mode)** in its launch options. On a CLI
+that advertises `--no-alt-screen`, output stays in terminal history. Older CLIs
+continue without the flag. Support is checked once per account service process;
+restart that service after updating an older CLI if inline mode is still unavailable.
+The bundled container CLI supports inline mode.
+
+Existing Codex sessions pick up this default on their next launch/resume; a running
+terminal is unchanged. Turn the option off at launch to use Codex's alternate screen.
+
+Codex writers scroll retained tmux output with the wheel or trackpad. A wheel notch
+moves about three lines; smaller trackpad movements accumulate smoothly. Scrolling
+down to the bottom returns to live output. Typing, sent messages and interrupts
+cancel copy mode before delivery after wheel scrolling, so input reaches Codex intact.
+Unscrolled terminals and other providers do not need that copy-mode check. Wheel frames are
+coalesced at up to 30 scroll operations per second per attachment; typing clears
+pending scrolling. Browser drag selection still copies to the browser clipboard. Other providers keep their
+existing wheel behaviour. Read-only terminals cannot scroll the shared tmux view;
+use **Open as text** to read retained output there.
+
+The browser retains up to 10,000 terminal rows and tmux retains up to 50,000 history
+rows. Reconnecting or resizing can redraw or reflow the screen; retained output is
+not a permanent transcript, and tmux can show duplicated or displaced rows after an
+inline TUI redraw. Inline mode does not remove these tmux caveats.

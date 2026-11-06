@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, expectAxeClean, gitProject, openAdvanced } from './helpers';
 export function finalControlTests() {
 test.use({ storageState: AUTH_FILE });

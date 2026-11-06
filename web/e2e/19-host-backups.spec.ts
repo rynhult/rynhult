@@ -1,7 +1,8 @@
+import { gotoLoadedPage, reloadLoadedPage } from './loaded-page';
 import { environmentValue } from "../../src/acc/env.mjs";
 import { execFileSync } from 'node:child_process';
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, wikiShotPath } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
@@ -21,7 +22,7 @@ test('owners see capture age, protection limits and confirm recovery kit export'
     exported = true;
     return r.fulfill({json:{format:1,instructions:'Example kit'}, headers:{'Content-Disposition':'attachment; filename="acc-recovery-kit.json"'}});
   });
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await expect(page.getByRole('heading',{name:'Backups',exact:true})).toBeVisible();
   await expect(page.getByTestId('backup-status')).toHaveText('No off-machine backup yet · Last local backup 30m ago · scheduled backups off · restore test due');
   await expect(page.getByText('backed up, not protected',{exact:true})).toHaveCount(0);  // details on request
@@ -48,7 +49,7 @@ test('members neither see nor request host backups', async ({page}) => {
   await page.route('**/api/auth/state', r => r.fulfill({json:{authenticated:true,setup_required:false,
     username:'demo-member',role:'member',account:'demo-agent',instance:{host:'acc-host'}}}));
   await page.route('**/api/host/backups**', r => {requests++; return r.fulfill({status:403,json:{detail:'owners only'}});});
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host']);
   await expect(page.getByRole('heading',{name:'Host',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Backups',exact:true})).toHaveCount(0);
   expect(requests).toBe(0);
@@ -56,7 +57,7 @@ test('members neither see nor request host backups', async ({page}) => {
 
 test('without a target, Backups is one amber line that says how to set it up', async ({ page }) => {
   await page.route('**/api/host/backups', r => r.fulfill({ json: { targets: [], quarterly_due: false, drill: {}, coverage: 'Rynhult database and secrets.' } }));
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await expect(page.getByTestId('backup-status')).toHaveText('Not set up · no backup target yet');
   await expect(page.getByTestId('backup-status')).toHaveClass(/text-wait/);
   await expect(page.locator('#host-backups').getByRole('link', { name: 'Set up' })).toHaveAttribute('href', '/host/backups/setup');
@@ -69,7 +70,7 @@ test('owner prepares a Linux target, reads exact commands and checks setup', asy
   await page.route('**/api/host/backups', r => r.fulfill({json:{targets:[{id,kind:'node',repository:'enrolled:archive-node',enabled:false,setup_verified_at:null,status:'no verified backup',stale:true}],coverage:'Rynhult backup',drill:{}}}));
   await page.route(`**/api/host/backups/${id}/setup`, r => r.fulfill({json:{max_size_bytes:32212254720,commands:execFileSync('python3', ['-c', "from acc.backup_targets import setup_commands; print(setup_commands({'id':'c'*32,'max_size_bytes':32212254720},'d'*32,'{SHA}EXAMPLE'))"], {cwd:'..',env:{...process.env,PYTHONPATH:'src'}}).toString()}}));
   await page.route(`**/api/host/backups/${id}/check`, r => { checked = true; return r.fulfill({json:{id,setup_verified_at:Date.now()/1000}}); });
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('link',{name:'Target setup',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Target setup',exact:true})).toBeVisible();
@@ -94,7 +95,7 @@ test('owner lists historical generations and requests an explicit isolated resto
     {backup_id:backup,snapshot_id:genuine,time:'2026-10-23T00:00:00Z',duplicate:true},
     {backup_id:backup,snapshot_id:impostor,time:'2026-10-23T05:00:00Z',duplicate:true}]}}));
   await page.route(`**/api/host/backups/${id}/verify`, r => { requested=r.request().postDataJSON(); return r.fulfill({json:{state:'queued'}}); });
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('button',{name:'List backups',exact:true}).click();
   await expect(page.getByText(backup,{exact:true})).toHaveCount(2);
@@ -116,7 +117,7 @@ test('owner records a restore drill of an older generation, not only the latest'
     {backup_id:older,snapshot_id:'3'.repeat(64),time:'2026-07-02T00:00:00Z',duplicate:true},
     {backup_id:latest,snapshot_id:'2'.repeat(64),time:'2026-10-23T00:00:00Z',duplicate:false}]}}));
   await page.route('**/api/host/backups/drill', r => { recorded=r.request().postDataJSON(); return r.fulfill({json:{ok:true}}); });
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('button',{name:'List backups',exact:true}).click();
   await page.getByRole('button',{name:`Record restore drill of snapshot ${'3'.repeat(12)}`,exact:true}).click();
@@ -130,7 +131,7 @@ test('history warns when the target no longer lists the last verified backup', a
   const id = 'a'.repeat(32);
   await page.route('**/api/host/backups', r => r.fulfill({json:{targets:[{id,kind:'node',setup_verified_at:1,repository:'enrolled:archive-node',status:'append-only receiver · independent offline copy still required',enabled:false}],drill:{}}}));
   await page.route(`**/api/host/backups/${id}/snapshots`, r => r.fulfill({json:{verified_missing:true,items:[{backup_id:'b'.repeat(32),snapshot_id:'c'.repeat(64),time:'2026-10-23T00:00:00Z',duplicate:false}]}}));
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('button',{name:'List backups',exact:true}).click();
   await expect(page.getByRole('alert')).toContainText('no longer lists the last verified backup');
@@ -263,7 +264,7 @@ test('owner can pause hourly capture before independent maintenance', async ({pa
   await page.route('**/api/host/backups', r => r.fulfill({json:{targets:[{id,kind:'s3',enabled:true,
     setup_verified_at:1,repository:'s3:https://s3.example.com/demo-backups/acc/demo',status:'backed up, not protected'}],drill:{}}}));
   await page.route(`**/api/host/backups/${id}/disable`, r => {paused=true;return r.fulfill({json:{}});});
-  await page.goto('/host');
+  await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('button',{name:'Pause scheduled backups',exact:true}).click();
   await expect.poll(() => paused).toBe(true);
@@ -285,7 +286,7 @@ for (const width of [1440, 390]) {
       requested++;
       return r.fulfill({status:202,json:{state:'queued'}});
     });
-    await page.goto('/host');
+    await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
     await page.getByRole('button',{name:'Details',exact:true}).click();
     await expect(page.getByText('archive.example.lan · PID 2718 · age 7200s · exclusive', {exact:true})).toBeVisible();
     await page.getByRole('button',{name:'Remove stale lock',exact:true}).click();
@@ -317,7 +318,7 @@ for (const width of [1440, 390]) {
       return r.fulfill({json:{targets:[],drill:{}}});
     });
     await page.route(`**/api/host/backups/${id}/run`, r => r.fulfill({status:409,json:{detail:'A backup is running; try again shortly.'}}));
-    await page.goto('/host');
+    await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
     await page.getByRole('button',{name:'Details',exact:true}).click();
     const backups = page.locator('#host-backups');
     await expect(backups).toContainText('machine removed');
@@ -334,7 +335,7 @@ for (const width of [1440, 390]) {
     await page.getByRole('dialog').getByRole('button',{name:'Remove target',exact:true}).click();
     await expect(backups.getByRole('button',{name:'Remove target',exact:true})).toHaveCount(0);
     unavailable = true; removed = false;
-    await page.reload();
+    await reloadLoadedPage(page, ['Host'], ['/api/host', '/api/host/backups']);
     await page.getByRole('button',{name:'Details',exact:true}).click();
     await backups.getByRole('button',{name:'Back up now',exact:true}).click();
     await expect(backups.getByText('A backup is running; try again shortly.',{exact:true})).toBeVisible();
@@ -359,7 +360,7 @@ for (const width of [1440,390]) for (const colorScheme of ['light','dark'] as co
       expect(r.request().postDataJSON()).toEqual({confirmed:true,schedule_seconds:3600,verify_interval_seconds:604800});
       saves++;capture=3600;await r.fulfill({json:{ok:true}});
     });
-    await page.goto('/host#host-backups');
+    await gotoLoadedPage(page, '/host#host-backups', ['Host'], ['/api/host', '/api/host/backups']);
     const region = page.locator('#host-backups');
     await expect(region.getByText('Cloud providers bill egress', {exact:false})).toBeVisible();
     await expect(region.getByTestId('backup-cost-estimate')).toContainText('12,270 requests');
@@ -396,13 +397,13 @@ for (const width of [1440, 390]) {
       removed = true;
       return r.fulfill({json:{targets:[],drill:{}}});
     });
-    await page.goto('/host');
+    await gotoLoadedPage(page, '/host', ['Host'], ['/api/host', '/api/host/backups']);
     await page.getByRole('button',{name:'Details',exact:true}).click();
     const backups = page.locator('#host-backups');
     const remove = backups.getByRole('button',{name:'Remove target',exact:true});
     await expect(remove).toBeDisabled();
     pending = false;
-    await page.reload();
+    await reloadLoadedPage(page, ['Host'], ['/api/host', '/api/host/backups']);
     await page.getByRole('button',{name:'Details',exact:true}).click();
     await remove.click();
     const dialog = page.getByRole('dialog');
@@ -417,3 +418,36 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth-window.innerWidth)).toBeLessThanOrEqual(0);
   });
 }
+
+test('owner gets a quoted console command without starting a backup in HTTP', async ({page}) => {
+  const bodies: unknown[] = [];
+  await page.route('**/api/host/backups/local-targets', async route => {
+    const body = route.request().postDataJSON();
+    bodies.push(body);
+    await route.fulfill({json:{command:`sudo rynhult-admin backup add-folder ${body.same_disk ? '--same-disk ' : ''}-- '/mnt/owner disk'`}});
+  });
+  await gotoLoadedPage(page, '/host/backups/setup?kind=local', ['BackupTargetSetup']);
+  await page.getByLabel('Folder path').fill('/mnt/owner disk');
+  await page.getByRole('button',{name:'Show console command'}).click();
+  await expect(page.getByRole('region',{name:'Folder command'})).toHaveText("sudo rynhult-admin backup add-folder -- '/mnt/owner disk'");
+  await expect(page.getByRole('button',{name:'Copy folder command'})).toBeVisible();
+  await page.getByLabel('I understand this is the same disk').check();
+  await expect(page.getByRole('region',{name:'Folder command'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Show console command'}).click();
+  await expect(page.getByRole('region',{name:'Folder command'})).toContainText('--same-disk');
+  expect(bodies).toEqual([{confirmed:true,folder:'/mnt/owner disk',same_disk:false},{confirmed:true,folder:'/mnt/owner disk',same_disk:true}]);
+});
+
+test('install timer is read-only and snapshot guidance includes full recorded IDs', async ({page}) => {
+  const id='a'.repeat(32), backup='b'.repeat(32), snapshot='c'.repeat(64);
+  await page.route('**/api/host/backups', route => route.fulfill({json:{targets:[{id,kind:'local',repository:'/mnt/recovery/repo',status:'backed up, not protected',enabled:false}],drill:{},installed_local:{repository:'/var/backups/acc',last_run:1793766600,next_run:1793853000,bytes:null,state:'success'}}}));
+  await page.route(`**/api/host/backups/${id}/snapshots`, route => route.fulfill({json:{verified_missing:false,items:[{backup_id:backup,snapshot_id:snapshot,time:'2026-11-04T00:00:00Z',duplicate:false}]}}));
+  await gotoLoadedPage(page, '/host#host-backups', ['Host'], ['/api/host','/api/host/backups']);
+  await expect(page.getByRole('heading',{name:'Local backup on this disk'})).toBeVisible();
+  await expect(page.getByText('Read-only install-time timer.',{exact:false})).toContainText('does not protect against disk loss');
+  await page.getByRole('button',{name:'List backups',exact:true}).click();
+  await page.getByText('Restore this snapshot manually',{exact:true}).click();
+  const command=page.locator('#host-backups pre');
+  await expect(command).toContainText(`--target-id ${id} --backup-id ${backup} --snapshot-id ${snapshot}`);
+  await expect(command).toContainText('--destination /secure/example-replacement');
+});

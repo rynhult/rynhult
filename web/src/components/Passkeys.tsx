@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound } from 'lucide-react';
@@ -6,7 +7,7 @@ import { OFFLINE_TITLE, useOffline } from '../lib/queries';
 import type { AuthState } from '../lib/types';
 import { passkeyCeremony, passkeysAvailable } from '../lib/passkeys';
 import { useConfirm } from './confirm';
-import { Button, Card, CardHeader, Dialog, ErrorNote, Field, Input, LoadingRows, QueryState, Select } from './ui';
+import { Button, Dialog, ErrorNote, Field, Input, LoadingRows, QueryState, Select } from './ui';
 
 interface Key { id: number; name: string; rp_id: string; last_used_at: string | null }
 interface Policy { owners: string; members: string }

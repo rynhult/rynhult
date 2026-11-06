@@ -1,9 +1,10 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useSingleMutation as useMutation } from '../lib/mutations';
 import { useConfirm } from './confirm';
-import { buttonClass, Badge, Card, CardHeader, ErrorNote, QueryState } from './ui';
+import { buttonClass, Badge, ErrorNote, QueryState } from './ui';
 
 interface FeatureRow { id: string; label: string; description: string; enabled: boolean; preview: boolean; sensitive: boolean; locked: boolean; qualified?: boolean }
 interface FeatureState { revision: number; features: FeatureRow[]; cleanup_pending?: string[] }

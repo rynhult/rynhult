@@ -10,6 +10,15 @@ User=root
 Group=root
 UMask=0077
 NoNewPrivileges=yes
+# Descriptor traversal/ACL restoration, fixed group tools and UID verification.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictNamespaces=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectHostname=yes
 # No per-connection mount namespace: preview/apply must observe the same host
 # mount identities. The fixed worker confines mutations by pinned descriptors,
 # trusted mapping and reviewed inode manifests, not an editable shell command.

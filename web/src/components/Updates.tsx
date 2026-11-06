@@ -1,10 +1,11 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { api, post } from '../lib/api';
 import { useConfirm } from './confirm';
-import { Badge, Button, Card, CardHeader, ErrorNote, Field, Input, QueryState, Select } from './ui';
+import { Badge, Button, ErrorNote, Field, Input, QueryState, Select } from './ui';
 
 export type UpdateState = {
   version: string; build: string; latest?: string; latest_build?: string; notes?: string; published_at?: string; checked_at?: number;

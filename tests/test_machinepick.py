@@ -17,6 +17,7 @@ from test_users import csrf
 from acc.server.models import AuditLog, GroupMachineAccount, Node, Project, ScheduleRun, Session
 from acc.server.orchestrator import project_briefs
 from acc.server.schedules import Scheduler
+from acc.server.sources import rebind_legacy_source
 
 
 @pytest.fixture
@@ -79,12 +80,16 @@ async def test_machine_choice_uses_an_existing_registered_checkout(api, project,
     with write_db(api.app.state.db) as db:
         original = db.get(Project, project["id"])
         original.remote_url = "https://example.com/demo/app.git"
-        db.add(Project(slug="existing", name="Existing", workspace_path=str(remote_path), host="pc", account="agent",
-                       owner=original.owner, trusted=True, import_mode="managed", remote_url=original.remote_url))
+        rebind_legacy_source(db, original, actor=original.owner)
+        checkout = Project(slug="existing", name="Existing", workspace_path=str(remote_path), host="pc", account="agent",
+                           owner=original.owner, trusted=True, import_mode="managed", remote_url=original.remote_url)
+        db.add(checkout)
+        db.flush()
         db.commit()
     body = {"project_id": project["id"], "provider": "claude", "name": "Reuse checkout", "machine": "pc"}
     preview = (await api.post("/api/sessions/preview", json=body)).json()
     assert preview["checkout"]["requires_clone"] is False
+    assert preview["checkout"]["repository"] == str(remote_path)
     launched = await api.post("/api/sessions", json=body)
     assert launched.status_code == 201, launched.text
     assert launched.json()["host"] == "pc"
@@ -92,6 +97,10 @@ async def test_machine_choice_uses_an_existing_registered_checkout(api, project,
 
 
 async def test_machine_inventory_and_provider_queries_use_the_projects_account(api, project, machine, monkeypatch):
+    from datetime import datetime, timezone
+    with write_db(api.app.state.db) as db:
+        db.scalar(select(Node).where(Node.name == 'pc')).last_seen = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+        db.commit()
     broker = api.app.state.ctx.broker
     call = broker.call
 
@@ -107,6 +116,7 @@ async def test_machine_inventory_and_provider_queries_use_the_projects_account(a
     rows = {row["name"]: row for row in inventory.json()}
     assert rows["local"]["label"] == "This Rynhult (main)"
     assert rows["pc"]["connected"] and rows["pc"]["system"]
+    assert rows["pc"]["last_seen"].startswith("2026-11-01T12:00")
     assert {p["id"]: p["installed"] for p in rows["pc"]["providers"]}["claude"] is False
     providers = (await api.get("/api/providers/registry", params={"project_id": project["id"], "machine": "pc"})).json()
     assert {p["id"]: p["installed"] for p in providers["providers"]}["claude"] is False
@@ -181,11 +191,19 @@ async def test_schedules_launch_and_check_availability_on_the_selected_machine(a
         local = env["workspaces"] / "available"
         repo(local)
         with write_db(api.app.state.db) as db:
-            original = db.get(Project, project["id"])
-            original.host, original.remote_url = "pc", "https://example.com/demo/app.git"
-            db.add(Project(slug="available", name="Available", workspace_path=str(local), host="local",
-                           account=person.account, owner=person.username, trusted=True, import_mode="managed",
-                           remote_url=original.remote_url))
+            # Register the remote origin at creation; never silently retarget the
+            # fixture's existing frozen local registration.
+            original = Project(slug="remote-origin", name="Remote origin", host="pc",
+                               workspace_path=project["workspace_path"], remote_url="https://example.com/demo/app.git",
+                               account=person.account, owner=person.username, trusted=True, import_mode="managed")
+            db.add(original)
+            db.flush()
+            project = {**project, "id": original.id}
+            checkout = Project(slug="available", name="Available", workspace_path=str(local), host="local",
+                               account=person.account, owner=person.username, trusted=True, import_mode="managed",
+                               remote_url=original.remote_url)
+            db.add(checkout)
+            db.flush()
             db.commit()
     selected = "local" if outage == "source" else "pc"
     made = await api.post("/api/schedules", json={
@@ -254,3 +272,20 @@ async def test_remote_lead_materializes_brief_documents_on_its_selected_machine(
         api.app.state.supervisor, lead_id, {"action": "brief_reference", "reference": reference})
     assert (Path(lead.json()["worktree"]) / result["path"]).read_bytes() == b"Room booking board"
     assert locations == ["pc"]
+
+
+async def test_launch_inventory_keeps_remote_last_seen_owner_only(two, machine):  # noqa: F811
+    from datetime import datetime, timezone
+
+    owner, member = two["owner"], two["member"]
+    with write_db(owner.app.state.db) as db:
+        node = db.scalar(select(Node).where(Node.name == "pc"))
+        node.last_seen = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+        node.info = {**(node.info or {}), "accounts": ["agent", "dana-agent"]}
+        db.commit()
+    owner.app.state.ctx.broker.hub.links["pc"].accounts = ["agent", "dana-agent"]
+    owners = (await owner.get("/api/nodes", params={"launch": 1})).json()
+    members = (await member.get("/api/nodes", params={"launch": 1})).json()
+    assert next(row for row in owners if row["name"] == "pc")["last_seen"].startswith("2026-11-01T12:00")
+    assert {row["name"] for row in members} == {"local", "pc"}
+    assert all("last_seen" not in row for row in members)

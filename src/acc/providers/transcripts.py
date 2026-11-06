@@ -21,7 +21,7 @@ MAX_CHARS = 8000
 MAX_BYTES = 64 << 20  # input read per conversation file; MAX_MESSAGES and MAX_CHARS only bound what is kept
 MAX_LINE = 4 << 20  # a longer JSONL line (or Cursor blob) is skipped
 MAX_STORE = 256 << 20  # a larger Cursor store.db (plus its -wal) isn't read
-WRAPPED = re.compile(r"<(user_query|USER_REQUEST)>\s*(.*?)\s*</\1>", re.S)
+MAX_PROMPT = 128 << 10
 CONTEXT_ONLY = re.compile(r"^\s*<(environment_context|user_info|system-reminder|command-|local-command|"
                           r"ADDITIONAL_METADATA|timestamp)", re.S)
 
@@ -39,9 +39,20 @@ def _text(content) -> str:
 
 def _prompt(text: str) -> str:
     """The user's own words from a prompt a CLI wrapped in context tags; "" when it's context only."""
-    wrapped = WRAPPED.search(text)
-    if wrapped:
-        return wrapped.group(2)
+    # Each fixed delimiter is searched once. Never backtrack from every unclosed
+    # opener (a transcript is agent-writable and Python regex holds the GIL).
+    if len(text) > MAX_PROMPT:
+        return ""
+    matches = []
+    for tag in ('user_query', 'USER_REQUEST'):
+        opening, closing = '<' + tag + '>', '</' + tag + '>'
+        begin = text.find(opening)
+        if begin >= 0:
+            end = text.find(closing, begin + len(opening))
+            if end >= 0:
+                matches.append((begin, text[begin + len(opening):end].strip()))
+    if matches:
+        return min(matches, key=lambda item: item[0])[1]
     return "" if CONTEXT_ONLY.match(text) else text
 
 

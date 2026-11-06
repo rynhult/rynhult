@@ -207,3 +207,19 @@ def return_branch(source: Path, checkout: Path, branch: str) -> str | None:
     except (ContainerError, OSError) as error:
         return str(error)
     return None if result.returncode == 0 else (result.stderr.strip()[-300:] or "git fetch failed")
+
+
+def auth_mode(config, session_id, container):
+    from .container_attach import relay_is_the_units
+    path = attach_socket(config.containers_attach_root, session_id, container['generation']).with_name('auth.sock')
+    try:
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.settimeout(10)
+            conn.connect(str(path))
+            if not relay_is_the_units(conn, unit_cgroup(session_id, container['generation'])):
+                return 'unknown'
+            value = json.loads(conn.recv(1024))
+            mode = value.get('auth_mode')
+            return mode if mode in ('api_key', 'cloud', 'subscription', 'unknown') else 'unknown'
+    except (OSError, ValueError):
+        return 'unknown'

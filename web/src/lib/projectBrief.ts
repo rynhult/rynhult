@@ -2,13 +2,13 @@ import { useSyncExternalStore } from 'react';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
 
 // The open form must still reach launch consent when browser storage is full or blocked.
-const liveDrafts = new Map<number, BriefDraft>();
+
 export function readBriefDraft(projectId: number) {
-  return liveDrafts.get(projectId) ?? loadDraft<BriefDraft>(`brief:${projectId}`);
+  return loadDraft<BriefDraft>(`brief:${projectId}`);
 }
-export function keepBriefDraft(projectId: number, draft: BriefDraft | null) {
-  if (draft) { liveDrafts.set(projectId, draft); saveDraft(`brief:${projectId}`, draft); }
-  else { liveDrafts.delete(projectId); clearDraft(`brief:${projectId}`); }
+export function keepBriefDraft(projectId: number, draft: BriefDraft | null, discard?: () => void) {
+  if (draft) { saveDraft(`brief:${projectId}`, draft, discard); }
+  else { clearDraft(`brief:${projectId}`); }
   window.dispatchEvent(new Event('acc-brief-draft-change'));
 }
 

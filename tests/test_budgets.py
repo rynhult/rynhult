@@ -135,3 +135,15 @@ async def test_a_window_past_its_reset_neither_pauses_nor_alerts(api, project):
     seed(api, used=90)  # a fresh reading over the cap: enforced again
     with api.app.state.db() as s:
         assert budgets.paused(s, "@api", "claude") == ["Claude 7-day window"]
+
+
+async def test_saved_copilot_quota_no_longer_creates_a_budget_window(api):
+    intent = WRITE_INTENT.set(True)
+    try:
+        with api.app.state.db() as db:
+            db.merge(Observation(key="copilot.usage", source="legacy", observed_at=time.time(), value={
+                "credits": {"percent_remaining": 0}, "resets_at": "2099-01-01T00:00:00Z"}))
+            db.commit()
+            assert not any(w["provider"] == "copilot" for w in budgets.windows(db))
+    finally:
+        WRITE_INTENT.reset(intent)

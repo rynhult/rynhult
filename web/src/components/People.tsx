@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { CopyBlock } from "./InstallSteps";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
@@ -7,7 +8,7 @@ import { type FormEvent, useState } from "react";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import { useConfirm } from "./confirm";
-import { Badge, Button, Card, CardHeader, ErrorNote, Field, IconButton, Input, Segmented, Select } from "./ui";
+import { Badge, Button, ErrorNote, Field, IconButton, Input, Segmented, Select } from "./ui";
 
 interface SignIn { id: string; user_agent: string | null; created_at: string; last_seen_at: string; expires_at: string; current: boolean }
 interface Person { id: number; username: string; role: "owner" | "member"; account: string; created_at: string; last_seen_at: string | null; you: boolean }

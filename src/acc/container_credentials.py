@@ -27,6 +27,23 @@ def _narrow(provider, value):
     if not isinstance(value, dict):
         raise ValueError('unsupported credential format')
     if provider == 'claude':
+        if set(value) == {'launch_env'}:
+            env = value['launch_env']
+            # Shared stdlib adapter; the allowlist is deliberately repeated here.
+            allowed = {'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY',
+                       'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+                       'CLAUDE_CODE_USE_FOUNDRY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+                       'AWS_SESSION_TOKEN', 'AWS_REGION', 'AWS_DEFAULT_REGION', 'ANTHROPIC_BEDROCK_BASE_URL',
+                       'ANTHROPIC_VERTEX_PROJECT_ID', 'CLOUD_ML_REGION', 'GOOGLE_CLOUD_PROJECT',
+                       'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_API_KEY',
+                       'ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL'}
+            if (not isinstance(env, dict) or not env or set(env) - allowed
+                    or any(not isinstance(v, str) or not v or len(v) > 16384 or '\0' in v for v in env.values())
+                    or not (env.get('ANTHROPIC_API_KEY') or env.get('ANTHROPIC_AUTH_TOKEN')
+                            or env.get('ANTHROPIC_FOUNDRY_API_KEY') or any(env.get(k) == '1' for k in (
+                        'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY')))):
+                raise ValueError('unsupported launch credentials')
+            return {'launch_env': dict(env)}
         auth = value.get('claudeAiOauth', {})
         expires = auth.get('expiresAt')
         if 'scopes' in auth and (not isinstance(auth['scopes'], list) or 'user:inference' not in auth['scopes']):
@@ -127,5 +144,12 @@ def integration_policy(entry):
 def policy_digest(entry):
     import hashlib
     binding = {'image': entry.get('image'), 'providers': entry.get('providers'),
-               'network': entry.get('network', 'none'), 'integrations': integration_policy(entry)}
+               'network': entry.get('network', 'none'), 'integrations': integration_policy(entry),
+               **({'claude_auth': entry['claude_auth']} if 'claude_auth' in entry else {})}
     return hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def launch_snapshot(env, session_id, generation):
+    value = {'version': 1, 'provider': 'claude', 'session_id': session_id,
+             'generation': generation, 'credentials': {'launch_env': env}}
+    return validate(value, 'claude', session_id, generation)

@@ -13,7 +13,9 @@ import selectors
 import socket
 import stat
 import struct
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -297,12 +299,44 @@ def relay(listener, runtime, uid):
                     pass
 
 
-def start_relay(listener, runtime, uid):
+def auth_relay(listener, runtime, uid, unit):
+    """No caller parameters: one read-only auth probe of this exact container."""
+    name = unit.rsplit('-g', 1)[0]
+    while True:
+        client, _ = listener.accept()
+        with client:
+            mode = 'unknown'
+            try:
+                peer = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if peer[1] != uid:
+                    continue
+                result = subprocess.run([
+                    '/usr/bin/podman', '--remote=false', '--cgroup-manager=cgroupfs', '--storage-driver=overlay',
+                    f'--root={runtime}/storage', f'--runroot={runtime}/run', f'--tmpdir={runtime}/tmp',
+                    'exec', name, '/usr/bin/python3', '-I', '-B', '/opt/acc/runtime/session_runtime.py'],
+                    capture_output=True, text=True, timeout=8)
+                value = json.loads(result.stdout) if result.returncode == 0 else {}
+                if value.get('auth_mode') in ('api_key', 'cloud', 'subscription', 'unknown'):
+                    mode = value['auth_mode']
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass
+            try:
+                client.settimeout(1)
+                client.sendall(json.dumps({'auth_mode': mode}).encode() + b'\n')
+            except OSError:
+                pass
+
+
+def start_relay(listener, runtime, uid, unit=None):
     """Fork the relay; the parent (soon Podman) keeps no copy of the listener. It ends with the unit."""
     child = os.fork()
     if child == 0:
         try:
             listener.listen(1)  # the relay, which lives as long as the unit, is the listener the pane checks
+            if unit is not None:
+                auth = listen(str(Path(listener.getsockname()).with_name('auth.sock')), uid)
+                auth.listen(4)
+                threading.Thread(target=auth_relay, args=(auth, runtime, uid, unit), daemon=True).start()
             relay(listener, runtime, uid)
         finally:
             os._exit(0)
@@ -332,7 +366,7 @@ def main():
         # No account-controlled program runs until setup and all checks finish.
         delegate_cgroup(uid, gid, unit)
         enter_namespace(uid, gid, (device, inode))
-        start_relay(listen(attach, uid), runtime, uid)
+        start_relay(listen(attach, uid), runtime, uid, unit)
     except BaseException as error:  # anything, even a signal after the drop, is a refusal the launcher can audit
         print(json.dumps({'code': 'unsafe_runtime_namespace', 'detail': str(error) or type(error).__name__}),
               file=sys.stderr)

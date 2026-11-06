@@ -332,3 +332,23 @@ def test_github_api_broker_op_runs_gh_api_as_the_account(env):
                          ("GET", "/repos/o/r"), ("GET", "orgs/o/members"), ("GET", "repos/o/r pulls")]:
         with pytest.raises(ops.OpError):
             ops.github_api(config, method, path)
+
+
+@pytest.mark.parametrize('mode', ['subscription', 'unknown', 'api_key',
+                                  pytest.param('cloud', marks=pytest.mark.claude_launch_cloud)])
+@pytest.mark.parametrize('kind', ['checks', 'reviews'])
+async def test_feedback_auth_guard(api, world, fake, monkeypatch, mode, kind):
+    from acc.broker import claude_auth
+    from acc.providers.claude_auth import CODE
+    fake.open_pull()
+    if kind == 'checks':
+        fake.check('test', 'failure', job=51)
+    else:
+        fake.thread(1, 'app.py', 1, ('reviewer-example', 'Please rename this variable.'))
+    preview = await api.post(f"{world['url']}/feedback", json={'kind': kind})
+    assert preview.status_code == 200, preview.text
+    monkeypatch.setattr(claude_auth, 'probe', lambda *a, **kw: mode)
+    response = await api.post(f"{world['url']}/feedback/{preview.json()['id']}/send")
+    assert response.status_code == (200 if mode in ('api_key', 'cloud') else 409), response.text
+    if response.status_code == 409:
+        assert response.json()['detail']['code'] == CODE

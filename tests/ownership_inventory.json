@@ -747,6 +747,36 @@
     "other_member_status": 403
   },
   {
+    "method": "PUT",
+    "path": "/api/sessions/{acc_id}/inbox-permissions",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "inbox_permissions",
+    "principal": "owner/member / installation API token for bodyless reads; signed-in human required when a body is supplied",
+    "ownership": "session_for requires own session or trusted installation owner (including group authorization and remote reservation checks); unrelated member receives 404. Only managed, non-container, non-held Claude sessions. An optional enabled body changes the tmux toggle on either method; bodyless requests only read it.",
+    "audit": "session.inbox_permissions records successful toggle writes and the resulting enabled value; bodyless reads have no durable access event",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/inbox-permissions",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "inbox_permissions",
+    "principal": "owner/member / installation API token for bodyless reads; signed-in human required when a body is supplied",
+    "ownership": "session_for requires own session or trusted installation owner (including group authorization and remote reservation checks); unrelated member receives 404. Only managed, non-container, non-held Claude sessions. An optional enabled body changes the tmux toggle on either method; bodyless requests only read it.",
+    "audit": "session.inbox_permissions records successful toggle writes and the resulting enabled value; bodyless reads have no durable access event",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/git/{action}",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "session_git",
+    "principal": "owner/member / installation API token",
+    "ownership": "session_for and project_for require own session and personal project, or trusted installation owner; unrelated members and group projects receive 404, including remote account reservation checks. Held, read-only-import and untrusted projects are refused; main-checkout guardrails apply. Push also refuses default/protected branches or unreadable protection.",
+    "audit": "git.commit / git.push (success, failure or refusal after session authorization)",
+    "other_member_status": 404
+  },
+  {
     "method": "GET",
     "path": "/api/sessions",
     "source": "src/acc/server/api/sessions.py",
@@ -761,7 +791,7 @@
     "source": "src/acc/server/api/sessions.py",
     "handler": "preview_session",
     "principal": "owner/member / installation API token",
-    "ownership": "Validate launch against caller-owned project or own workspace/account; preview grants no execution authority.",
+    "ownership": "Validate launch against caller-owned project or own workspace/account; preview grants no execution authority. Claude sign-in defaults to subscription; api_key requires an applicable credential grant.",
     "audit": "none (preview/read/protocol step; no durable access event)"
   },
   {
@@ -770,7 +800,7 @@
     "source": "src/acc/server/api/sessions.py",
     "handler": "create_session",
     "principal": "owner/member / installation API token",
-    "ownership": "Lists scoped to caller-owned resources (trusted owner override); creation validates caller account/project, no default group sharing.",
+    "ownership": "Lists scoped to caller-owned resources (trusted owner override); creation validates caller account/project, no default group sharing. Claude sign-in defaults to subscription; api_key requires an applicable credential grant.",
     "audit": "session.create (supervisor; optional team.grant); session.dangerous_confirmed (conditional launch helper)"
   },
   {
@@ -897,7 +927,7 @@
     "source": "src/acc/server/api/sessions.py",
     "handler": "create_explanation",
     "principal": "owner/member / installation API token",
-    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects. Claude sign-in defaults to subscription; API credential delivery requires explicit api_key.",
     "audit": "session.create (explanation helper launch, supervisor)",
     "other_member_status": 404
   },
@@ -939,6 +969,16 @@
     "principal": "owner/member / installation API token",
     "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
     "audit": "session.archive (supervisor)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/resume-check",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "resume_check",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "audit": "none (read-only eligibility; no grant consumption)",
     "other_member_status": 404
   },
   {
@@ -1244,6 +1284,16 @@
     "other_member_status": 404
   },
   {
+    "method": "POST",
+    "path": "/api/attention/{item_id}/permission",
+    "source": "src/acc/server/api/inbox.py",
+    "handler": "answer_permission",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Personal inbox_scope (owners see own plus unowned items, never other members\u2019 personal alerts) plus session_for; unrelated member receives 404. Requires managed, non-container, non-held Claude session waiting for input and the current unexpired token. Allow additionally requires complete redacted input.",
+    "audit": "permission.answer (attempt); permission.result (answered / already_answered)",
+    "other_member_status": 404
+  },
+  {
     "method": "GET",
     "path": "/api/attention",
     "source": "src/acc/server/api/inbox.py",
@@ -1340,6 +1390,15 @@
     "path": "/api/board",
     "source": "src/acc/server/api/board.py",
     "handler": "board",
+    "principal": "owner / installation API token",
+    "ownership": "Trusted installation administrator; resource IDs do not delegate authority.",
+    "audit": "none (read/protocol step; no durable access event)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/readings/machine",
+    "source": "src/acc/server/api/board.py",
+    "handler": "machine_readings",
     "principal": "owner / installation API token",
     "ownership": "Trusted installation administrator; resource IDs do not delegate authority.",
     "audit": "none (read/protocol step; no durable access event)"
@@ -2028,6 +2087,42 @@
   },
   {
     "method": "GET",
+    "path": "/api/preferences/ui-shell",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "get_ui_shell",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller-specific setting key and stable caller id; no other person\u2019s preferences.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/preferences/ui-shell",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "put_ui_shell",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller-specific setting key and stable caller id; no other person\u2019s preferences.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/preferences/ui-header",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "get_ui_header",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller-specific setting key; bounded optional presentation modules only. No other person's preferences or authority change.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/preferences/ui-header",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "put_ui_header",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller-specific setting key; bounded optional presentation modules only. No other person's preferences or authority change.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "GET",
     "path": "/api/guardrails",
     "source": "src/acc/server/api/settings_routes.py",
     "handler": "get_guardrails",
@@ -2271,8 +2366,8 @@
     "source": "src/acc/server/api/vault.py",
     "handler": "add_key",
     "principal": "owner/member / installation API token",
-    "ownership": "Key owner edits; explicitly shared keys usable per vault rules; project grants require project ownership; no human value retrieval.",
-    "audit": "vault.add"
+    "ownership": "Creates a key owned by the caller; optional project_id is authorized by project_for before creation (own personal project or trusted installation owner, including remote reservation checks; group projects excluded). Grant can attach only the newly created key; key, grant and audit commit atomically. No human value retrieval.",
+    "audit": "vault.add; vault.give when project_id is supplied"
   },
   {
     "method": "POST",
@@ -2440,6 +2535,15 @@
     "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
     "audit": "project.backup_download",
     "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/host/backups/local-targets",
+    "source": "src/acc/server/api/host_backups.py",
+    "handler": "add_local",
+    "principal": "owner / installation API token",
+    "ownership": "Trusted installation administrator; confirmed request returns a quoted local backup setup command only, without provisioning or inspecting the folder. Absolute ASCII paths without traversal, system paths or volatile storage are required.",
+    "audit": "none (command preview only; no durable access event)"
   },
   {
     "method": "GET",
@@ -3042,6 +3146,16 @@
   },
   {
     "method": "GET",
+    "path": "/api/sessions/{acc_id}/terminal-reference",
+    "source": "src/acc/server/api/terminal.py",
+    "handler": "terminal_reference",
+    "principal": "owner/member / installation API token",
+    "ownership": "Session owner or installation-owner override via session_for; current running ACC process required; no-store identity only, no writer grant.",
+    "audit": "none (reference resolution only; terminal.attach audits actual access)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
     "path": "/api/sessions/{acc_id}/terminal-output",
     "source": "src/acc/server/api/terminal.py",
     "handler": "terminal_output",
@@ -3227,7 +3341,7 @@
     "source": "src/acc/server/api/group_board.py",
     "handler": "launch",
     "principal": "signed-in human group member/maintainer with dedicated agent account",
-    "ownership": "Writable group and matching project; actual non-viewer membership even for installation owner; caller-owned reviewed local checkout/placement, dedicated bound account, safe task and explicit source trust; personal budget and group quotas enforced.",
+    "ownership": "Writable group and matching project; actual non-viewer membership even for installation owner; caller-owned reviewed local checkout/placement, dedicated bound account, safe task and explicit source trust; personal budget and group quotas enforced. Claude sign-in defaults to subscription; api_key requires an applicable credential grant.",
     "audit": "session.create, group.source_trust (delegated supervisor); group.quota_pause (on newly exhausted quota); none on idempotent existing-session return",
     "other_member_status": 404
   },
@@ -4422,5 +4536,357 @@
     "ownership": "Verified human owner confirms the exact removed machine; no enrolled/connected/local machine or running session; stop marker only, no process action.",
     "audit": "security.session.stop_marker_cleared; security.policy.refused/conflict/failed on errors",
     "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/files/search",
+    "source": "src/acc/server/api/files.py",
+    "handler": "project_search",
+    "principal": "owner/member / installation API token",
+    "ownership": "Same Files project/session/workspace ownership and placement resolution (owner override); agent account and machine come from the stored location, never query parameters; bounded descriptor-confined filename search.",
+    "audit": "none (filename search read; no durable access event)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/files/search",
+    "source": "src/acc/server/api/files.py",
+    "handler": "session_search",
+    "principal": "owner/member / installation API token",
+    "ownership": "Same Files project/session/workspace ownership and placement resolution (owner override); agent account and machine come from the stored location, never query parameters; bounded descriptor-confined filename search.",
+    "audit": "none (filename search read; no durable access event)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/files/{kind}/{key}/search",
+    "source": "src/acc/server/api/files.py",
+    "handler": "search",
+    "principal": "owner/member / installation API token",
+    "ownership": "Same Files project/session/workspace ownership and placement resolution (owner override); agent account and machine come from the stored location, never query parameters; bounded descriptor-confined filename search.",
+    "audit": "none (filename search read; no durable access event)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/preferences/setup-level",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "get_setup_level",
+    "principal": "signed-in person (no installation API token)",
+    "ownership": "Caller-specific presentation only; no other person or Security setting.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/preferences/setup-level",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "put_setup_level",
+    "principal": "signed-in person (no installation API token)",
+    "ownership": "Caller-specific presentation only; no other person or Security setting.",
+    "audit": "none (presentation preference; no authority change)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/layouts/{device}/{viewport}",
+    "source": "src/acc/server/api/layouts.py",
+    "handler": "read",
+    "principal": "signed-in person; installation API token refused",
+    "ownership": "Current project access; own personal layout only, including for owners. Resource references confer no access.",
+    "audit": "none (personal presentation read/save)",
+    "other_member_status": 404
+  },
+  {
+    "method": "PUT",
+    "path": "/api/projects/{project_id}/layouts/{device}/{viewport}",
+    "source": "src/acc/server/api/layouts.py",
+    "handler": "save",
+    "principal": "signed-in person; installation API token refused",
+    "ownership": "Current project access; own personal layout only, including for owners. Resource references confer no access.",
+    "audit": "none (personal presentation read/save)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects/{project_id}/layouts/{device}/{viewport}/reset",
+    "source": "src/acc/server/api/layouts.py",
+    "handler": "reset",
+    "principal": "signed-in person; installation API token refused",
+    "ownership": "Current project access; own personal layout only, including for owners. Resource references confer no access.",
+    "audit": "layout.reset (scope/revision only)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/repositories",
+    "source": "src/acc/server/api/projects.py",
+    "handler": "project_repositories",
+    "principal": "signed-in person or installation owner token; no agent token",
+    "ownership": "Existing personal project_for authorization, including machine-account reservation exclusions; group projects excluded.",
+    "audit": "none (read-only identity projection)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/locations",
+    "source": "src/acc/server/api/projects.py",
+    "handler": "project_locations",
+    "principal": "signed-in person or installation owner token; no agent token",
+    "ownership": "Existing personal project_for authorization, including machine-account reservation exclusions; group projects excluded.",
+    "audit": "none (read-only identity projection)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/groups/{group_id}/projects/{project_id}/repositories",
+    "source": "src/acc/server/api/groups.py",
+    "handler": "project_repositories",
+    "principal": "signed-in person or installation owner token; no agent token",
+    "ownership": "Existing group membership/project scope; locations exclude viewers and filter non-owner by exact Placement person (including null exclusion).",
+    "audit": "none (read-only identity projection)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/groups/{group_id}/projects/{project_id}/locations",
+    "source": "src/acc/server/api/groups.py",
+    "handler": "project_locations",
+    "principal": "signed-in person or installation owner token; no agent token",
+    "ownership": "Existing group membership/project scope; locations exclude viewers and filter non-owner by exact Placement person (including null exclusion).",
+    "audit": "none (read-only identity projection)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/themes",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "list_themes",
+    "principal": "signed-in person",
+    "ownership": "Approved installation themes; preview tokens and preferences bound to current person only.",
+    "audit": "none (read-only approved shared Catalog themes)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/themes/review",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "review_theme",
+    "principal": "human owner",
+    "ownership": "Owner-only shared Catalog mutation; no agent tokens.",
+    "audit": "none (bounded expiring review; no durable change)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/themes/install",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "install_theme",
+    "principal": "human owner",
+    "ownership": "Owner-only shared Catalog mutation; no agent tokens.",
+    "audit": "catalog.theme.install"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/themes/preview",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "preview_theme",
+    "principal": "signed-in person",
+    "ownership": "Approved installation themes; preview tokens and preferences bound to current person only.",
+    "audit": "none (actor-bound approved-package preview)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/themes/cancel",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "cancel_theme",
+    "principal": "signed-in person",
+    "ownership": "Approved installation themes; preview tokens and preferences bound to current person only.",
+    "audit": "none (actor-bound review cancellation)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/themes/preference",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "get_theme_preference",
+    "principal": "signed-in person",
+    "ownership": "Approved installation themes; preview tokens and preferences bound to current person only.",
+    "audit": "none (caller-only presentation preference)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/catalog/themes/preference",
+    "source": "src/acc/server/api/themes.py",
+    "handler": "put_theme_preference",
+    "principal": "signed-in person",
+    "ownership": "Approved installation themes; preview tokens and preferences bound to current person only.",
+    "audit": "theme.apply / theme.reset"
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/chat",
+    "source": "src/acc/server/api/chat.py",
+    "handler": "chat",
+    "principal": "authenticated owner/member or installation API token",
+    "ownership": "Session view authority via session_for; caller/session/account/node/run-bound cursor; refreshed after awaited broker reads and before SSE emission.",
+    "other_member_status": 404,
+    "audit": "chat.read (pages); chat.open/chat.close (follow); session/run IDs only, no transcript bytes"
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/chat/events",
+    "source": "src/acc/server/api/chat.py",
+    "handler": "events",
+    "principal": "authenticated owner/member or installation API token",
+    "ownership": "Session view authority via session_for; caller/session/account/node/run-bound cursor; refreshed after awaited broker reads and before SSE emission.",
+    "other_member_status": 404,
+    "audit": "chat.read (pages); chat.open/chat.close (follow); session/run IDs only, no transcript bytes"
+  },
+  {
+    "method": "GET",
+    "path": "/api/approvals/consents",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "consents",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Personal by default; bounded active/history keyset pages. Explicit project_id requires existing project access before field validation; group checkouts refused for all roles. Human owners can inspect all issuers in that personal project, members only their own. Cursor anchors use the same authorized scope; installation tokens refused.",
+    "audit": "none (scoped read)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/consents",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "grant",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Recent verified person, active own Build lead and accessible non-group project/account; strict typed scope. Recent verification, resource access and group-checkout refusal precede field validation.",
+    "audit": "approval.grant"
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/consents/{consent_id}/revoke",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "revoke",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Issuer or named human instance owner; expected revision; no step-up needed to narrow authority. Resource access and group-checkout refusal precede field validation.",
+    "audit": "approval.revoke (including child revocations)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/consents/{consent_id}/bind",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "bind",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Recently verified issuer; same project/account; active Build team; cannot widen parent. Recent verification, resource access and group-checkout refusal precede field validation.",
+    "audit": "approval.bind (verified person actor; target lead in detail)",
+    "other_member_status": 403
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/batches/preview",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "preview",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Human with existing per-tool visibility/decision authority; 1\u201350 exact pending IDs. Resource access and group-checkout refusal precede field validation.",
+    "audit": "approval.batch.preview"
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/batches/{batch_id}/approve",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "approve",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Original human principal; fresh unused preview, exact digests, Security revision and current per-item authority. Resource access and group-checkout refusal precede field validation.",
+    "audit": "approval.batch.use; tool.approve; per-item tool.result",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects/{project_id}/layouts/file-refs",
+    "source": "src/acc/server/api/layouts.py",
+    "handler": "file_ref",
+    "principal": "signed-in person; installation API token refused",
+    "ownership": "Current project access; own opaque file reference only, including for owners. Session locations resolve through session_for and must belong to the project; a reference confers no access and resolves through current authorization on every layout read.",
+    "audit": "none (presentation reference; no file content)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/source-views/projects/{project_id}",
+    "source": "src/acc/server/api/source_views.py",
+    "handler": "project_view",
+    "principal": "signed-in principal",
+    "ownership": "Existing project_for, personal ownership and reserved-account exclusions; matching metadata audience and locator authority; current Placement.person visibility.",
+    "audit": "none (read only; no authority or filesystem changes)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/source-views/groups/{group_id}/projects/{project_id}",
+    "source": "src/acc/server/api/source_views.py",
+    "handler": "group_project_view",
+    "principal": "signed-in principal",
+    "ownership": "Current group membership or installation owner, exact group project; audience-scoped sources, current Placement.person for nonowners, no locations for viewers.",
+    "audit": "none (read only; no authority or filesystem changes)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/source-views/directory",
+    "source": "src/acc/server/api/source_views.py",
+    "handler": "project_directory",
+    "principal": "signed-in principal",
+    "ownership": "Personal project ownership and reserved-account exclusions before filtering/pagination/counts; same authorized membership/location edge; facets from visible page only.",
+    "audit": "none (read only; no authority or filesystem changes)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/passkeys/recovery-reauth",
+    "source": "src/acc/server/api/passkeys.py",
+    "handler": "recovery_reauth",
+    "principal": "signed-in human; no installation API token",
+    "ownership": "Own recovery-authenticated human session; current password and a different unused recovery code open a bounded passkey enrollment window.",
+    "audit": "auth.passkey_recovery_enrollment_verified, auth.passkey_failed"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/passkeys/recovery-codes",
+    "source": "src/acc/server/api/passkeys.py",
+    "handler": "recovery_codes",
+    "principal": "signed-in human; no installation API token",
+    "ownership": "Own human account; recent verification or one-use recovery enrollment window. Replaces offline recovery codes.",
+    "audit": "auth.recovery_codes_created"
+  },
+  {
+    "method": "GET",
+    "path": "/api/providers/github-token",
+    "source": "src/acc/server/api/github_token.py",
+    "handler": "get_token",
+    "principal": "installation owner; installation API token read-only (GET)",
+    "ownership": "Installation owner only. Returns whether the dashboard GitHub token is set and its last 4 characters, never the value.",
+    "audit": "none"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/providers/github-token",
+    "source": "src/acc/server/api/github_token.py",
+    "handler": "save_token",
+    "principal": "installation owner signed-in human; no installation API token",
+    "ownership": "Installation owner only; recent verification before and after the GitHub check. Validates against api.github.com, then writes the dashboard token atomically (0600).",
+    "audit": "github_token.save"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/providers/github-token",
+    "source": "src/acc/server/api/github_token.py",
+    "handler": "remove_token",
+    "principal": "installation owner signed-in human; no installation API token",
+    "ownership": "Installation owner only; recent verification. Removes the dashboard GitHub token and drops the cached client.",
+    "audit": "github_token.remove"
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/archive-stopped",
+    "source": "src/acc/server/api/sessions.py",
+    "handler": "archive_stopped",
+    "principal": "signed-in person; no installation API token",
+    "ownership": "Bounded bulk action: members archive only their own authorized sessions; owners may archive all authorized sessions. Rechecks session authorization and stopped state per session.",
+    "audit": "session.archive",
+    "other_member_status": null
   }
 ]

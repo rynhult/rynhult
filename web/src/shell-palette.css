@@ -1,0 +1,33 @@
+/* New-shell mockup palette only. Shell owns this root attribute so portals share
+   its colours; unmount (including Status board) restores the legacy tokens.
+   Source: workspace/exception-states concept styles, not their wrapper defaults. */
+html[data-shell-palette="mockup"] {
+  --bg: #f6f5f2;
+  --panel: #fffefa;
+  --panel-2: #eeede8;
+  --panel-3: #e3e3df;
+  --border: #dedfd9;
+  --text: #242930;
+  --muted: #5b6469;
+  --accent: #414da6;
+  --accent-tint: #e9e9fa;
+  --faint: var(--muted);
+  --border-strong: #7f807a; /* Quietest neutral that keeps 3:1 on every surface. */
+  /* Accent retains legacy text/focus contrast on these warmer surfaces.
+     Muted light text is darker than mockup #626b70 for AA on hover surfaces.
+     Production input, hover, status and terminal variants keep their contrast. */
+}
+/* Keeps disabled secondary buttons at their pre-palette contrast. */
+html[data-shell-palette="mockup"] .disabled\:opacity-50:disabled { opacity: .6; }
+html.dark[data-shell-palette="mockup"] {
+  --bg: #141719;
+  --panel: #1c2023;
+  --panel-2: #191c1f;
+  --panel-3: #292e32;
+  --border: #33393b;
+  --text: #eceeea;
+  --muted: #a2abae;
+  --accent: #b6b7fa;
+  --accent-tint: #303044;
+  --border-strong: #71777b;
+}

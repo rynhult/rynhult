@@ -1,4 +1,4 @@
-"""Owners only; destinations are provisioned locally, never accepted as API paths."""
+"""Owner-only backup targets and recovery observations."""
 from __future__ import annotations
 
 from typing import Literal
@@ -20,6 +20,11 @@ CHECK_ADVICE = ('Check connection, writer permissions, receiver or S3 setup and 
 class Confirmed(BaseModel):
     model_config = ConfigDict(extra='forbid')
     confirmed: Literal[True]
+
+
+class LocalFolder(Confirmed):
+    folder: str = Field(min_length=1, max_length=4096)
+    same_disk: bool = Field(default=False, strict=True)
 
 
 class Schedule(Confirmed):
@@ -73,7 +78,16 @@ def router(ctx):
 
     @api.get('')
     def state(who=Depends(ctx.owner)):
-        return jobs.state()
+        from ..local_backups import installed_backup
+        return {**jobs.state(), 'installed_local': installed_backup(ctx.settings.hoststate_path)}
+
+    @api.post('/local-targets')
+    def add_local(body: LocalFolder, who=Depends(ctx.owner)):
+        from ..local_backups import folder_command
+        try:
+            return {'command': folder_command(body.folder, body.same_disk)}
+        except Refused as error:
+            raise HTTPException(409, str(error)) from None
 
     @api.post('/targets', status_code=201)
     def add_target(body: NodeTarget, who=Depends(ctx.owner)):

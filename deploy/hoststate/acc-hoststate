@@ -12,6 +12,7 @@ import runpy as _compat_runpy
 import stat as _compat_stat
 from pathlib import Path as _CompatPath
 
+
 def _compat_reader(relative):
     # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
     # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
@@ -53,6 +54,7 @@ import os
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 OUT = Path(environment.get("ACC_HOSTSTATE", "/srv/acc/hoststate/hoststate.json"))
@@ -231,6 +233,32 @@ def tailscale() -> dict:
     return {"state": data.get("BackendState"), "ips": self_node.get("TailscaleIPs", []), "online": self_node.get("Online")}
 
 
+def installed_backup(previous: dict) -> dict:
+    """Fixed install-time destination only, through the existing read-only collector."""
+    status = {'repository': '/var/backups/acc', 'last_run': None, 'next_run': None,
+              'bytes': None, 'state': 'Status unavailable'}
+    for unit, prop, field in [('acc-backup.service', 'ExecMainExitTimestamp', 'last_run'),
+                              ('acc-backup.timer', 'NextElapseUSecRealtime', 'next_run')]:
+        code, out = run('systemctl', 'show', unit, '--property=' + prop, '--value',
+                        env={**os.environ, 'TZ': 'UTC'})
+        if code == 0 and out.strip() not in ('', 'n/a'):
+            try:
+                status[field] = datetime.strptime(out.strip(), '%a %Y-%m-%d %H:%M:%S %Z').replace(tzinfo=timezone.utc).timestamp()
+            except ValueError:
+                pass
+    code, out = run('systemctl', 'show', 'acc-backup.service', '--property=Result', '--value')
+    if code == 0:
+        status['state'] = out.strip() or 'Not run'
+    before = previous.get('installed_backup', {})
+    now = time.time()
+    if now - before.get('size_at', 0) < DU_EVERY:
+        status.update(bytes=before.get('bytes'), size_at=before.get('size_at'))
+    else:
+        # du does not follow symlinks and -x stays on the destination filesystem.
+        status.update(bytes=_du(['/var/backups/acc']), size_at=now)
+    return status
+
+
 def main() -> None:
     _, kernel = run("uname", "-r")
     try:
@@ -244,6 +272,7 @@ def main() -> None:
         "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
         "reboot_required": Path("/var/run/reboot-required").exists(),
         "disks": disks(), "smart": smart(), "gpu": gpu(), "services": services(),
+        "installed_backup": installed_backup(previous),
         "containers": containers(), "tailscale": tailscale(), "accounts": accounts(previous),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

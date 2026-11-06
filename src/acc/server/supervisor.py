@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import sessionmaker
 
@@ -101,6 +101,19 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         self.broker_ok = False
         self._wake = asyncio.Event()
         self._lock = asyncio.Lock()
+        # Conservative index: publish additions before flush so a newly enabled
+        # goal never takes the fast path, including while its commit is pending.
+        # Rollbacks may leave harmless positives. Stopped goals retain history
+        # and reset timestamps and keep the existing cancellation semantics.
+        self._automation_sessions: set[str] = set()
+        self._refresh_automation_index()
+
+        def track_automation(session_db, _context, _instances):
+            for row in session_db.new | session_db.dirty:
+                if isinstance(row, Session) and row.automation:
+                    self._automation_sessions.add(row.id)
+
+        event.listen(db, "before_flush", track_automation)
         self.workspace_operations = WorkspaceOperations()
         self._launching: set[str] = set()
         self._autostarted: set[int] = set()
@@ -123,6 +136,22 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         self.init_backups()
 
     # ---------------------------------------------------------------- public actions
+
+    def _automation_authority(self):
+        authority = getattr(self.broker, "authority", None)
+        return authority, getattr(authority, "epoch", None)
+
+    def _refresh_automation_index(self) -> None:
+        self._automation_index_valid = False
+        authority = self._automation_authority()
+        with self.db() as db:
+            # Union rather than replacement: never lose a concurrent listener's
+            # conservative addition. A failed refresh leaves the fast path off.
+            self._automation_sessions.update(sid for sid, state in db.execute(
+                select(Session.id, Session.automation).where(Session.automation.is_not(None))
+            ) if state)
+        self._automation_index_authority = authority
+        self._automation_index_valid = True
 
     def endpoint_info(self, db: DbSession, endpoint_id: str | None) -> dict | None:
         """A model endpoint as the compiler needs it (no key), or None."""
@@ -169,7 +198,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                              team_member: dict | None = None, schedule_run_id: str | None = None,
                              multirun_entry: tuple[str, int] | None = None, container: bool = False,
                              group_checkout: str | None = None, group_task: str | None = None, automation_policy: dict | None = None,
-                             machine: str | None = None, checkout_repo: str | None = None) -> str:
+                             machine: str | None = None, checkout_repo: str | None = None,
+                             personal_task: str | None = None, claude_auth: str = "subscription") -> str:
         from .admin_features import launch_refusal
         if problem := launch_refusal(self.settings, automation=automation_policy, orchestrator=orchestrator or team_member,
                                      schedule=bool(schedule_run_id), multirun=bool(multirun_entry)):
@@ -198,6 +228,12 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 where = (placement.host, placement.account)
             else:
                 where = (machine or (team_member or {}).get("team_host") or project.host or "local", project.account) if project is not None else ("local", "")
+            if project is not None:
+                from . import sources
+                try:
+                    source_target = sources.compatibility_target(db, project, placement if project.group_id else None)
+                except sources.Refused as error:
+                    raise LaunchRefused(str(error)) from None
         if project is not None and project.group_id is None and where[0] != 'local':
             from .group_remote import reserved_for_other
             with self.db() as db:
@@ -205,6 +241,27 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 person = db.scalar(select(User).where(User.username == owner))
                 if person and person.role != 'owner' and reserved_for_other(db, where[0], where[1], owner):
                     raise LaunchRefused('That agent account on this machine belongs to another person. Choose another machine.')
+        provider_note = None
+        if container and inputs.provider == 'claude' and (orchestrator or team_member or schedule_run_id or automation_policy):
+            from acc.broker.claude_auth import supplied_mode
+            from acc.providers.claude_auth import DOCS, MESSAGE, credential_env
+            with self.db() as db:
+                launch_env = credential_env(self.vault.deliver(db, project_id, owner or project.owner,
+                                                              where[0] != 'local', self.catalog, provider=inputs.provider, claude_auth=claude_auth).env)
+            if supplied_mode(launch_env) == 'unknown':
+                health = await self.broker.call('auth_health', account=where[1], host=where[0])
+                if not (health.get('codex') or {}).get('logged_in'):
+                    raise LaunchRefused(f'{MESSAGE} {DOCS}')
+                from dataclasses import replace
+                inputs = replace(inputs, provider='codex', model=None, effort=None, endpoint=None, options={}, extra_args=(), remote_control=False)
+                build_inputs = inputs.as_dict()
+                provider_note = 'Using Codex because automated Claude containers need a vault API key or configured cloud credentials.'
+                with self.db() as db:
+                    if budgets.paused(db, owner or project.owner, 'codex', project_id=project_id,
+                                      machine=where[0], account=where[1]):
+                        raise LaunchRefused('Your budget pauses new Codex launches. Check your budget first.')
+            else:
+                provider_note = 'Using Claude with API or cloud credentials supplied by Rynhult at launch.'
         with self.db() as identity_db:
             identity_project = identity_db.get(Project, project_id)
         identity_warning = None
@@ -259,10 +316,17 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                         planning.check_assignment(db, team.id, assignment, inputs)
                     elif current_plan and current_plan.run_mode == 'prepare':
                         raise LaunchRefused('prepare helpers require a read-only discovery assignment')
+            from . import sources
+            try:
+                current_target = sources.compatibility_target(db, project, placement if group else None)
+                if current_target != source_target:
+                    raise sources.Refused('The launch target changed while starting. Review it, then try again.')
+            except sources.Refused as error:
+                raise LaunchRefused(str(error)) from None
             account = where[1]  # sessions run as the account that owns the project's folder
             try:  # refused before anything is recorded: two keys with one variable, an MCP key it can't have
                 key_plan = vault.plan(db, project.id, owner or project.owner, (where[0] != "local"), self.catalog,
-                           inputs.mcps)
+                           inputs.mcps).claude_auth(inputs.provider, claude_auth)
             except vault.VaultError as error:
                 raise LaunchRefused(str(error)) from None
             if orchestrator:
@@ -326,13 +390,14 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             acc_id = group_checkout if group else (intent.reserved_session_id if intent else (team_member or {}).get('attempt_id') or uuid.uuid4().hex[:12])
             safe = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]", "-", name.lower())).strip("-")[:30] or project.slug  # tmux: ASCII only
             session = Session(
-                id=acc_id, project=project, provider=inputs.provider, name=name,
+                id=acc_id, project=project, provider=inputs.provider, name=name, claude_auth=claude_auth,
                 tmux_name=f"acc-attempt-{acc_id}" if (team_member or {}).get("attempt_id") else f"acc-{safe}-{acc_id[:8]}", launch_spec=spec,
                 native_id=providers.get(inputs.provider).new_native_id() if providers.get(inputs.provider).session_id == "assigned" else None,
                 desired_state="running", observed_state="starting", workdir=workdir, run_as=account,
                 worktree=(worktree or {}).get("path"), worktree_branch=(worktree or {}).get("branch"),
                 run_dir=f"{layout['run_dir'].rstrip('/')}/{acc_id}", owner=owner or project.owner,
-                container=container,
+                container=container, automation=({'pending_configuration': True} if automation_policy and (
+                    automation_policy.get('autoresume') or automation_policy.get('goal')) else None),
                 team_repo=checkout_repo,
             )
             if team_member:
@@ -369,6 +434,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 db.flush()
             session.placement = binding
             db.add(session)
+            db.flush()
+            try:
+                sources.freeze_session(db, session, source_target)
+            except sources.Refused as error:
+                raise LaunchRefused(str(error)) from None
             if orchestrator and planning.enabled():
                 db.flush()
                 plan = planning.plan_for(db, acc_id)
@@ -395,6 +465,10 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 db.flush()  # foreign key: attach the session and intent in the same transaction
                 intent.session_id, intent.status = acc_id, "running"
                 self.telemetry.count(db, "schedule.run")
+            if provider_note:
+                db.flush()
+                db.add(Event(session_id=acc_id, source='supervisor', kind='provider_choice',
+                             payload={'message': provider_note, 'provider': inputs.provider}))
             if identity_warning:
                 db.flush()  # the warning event references the newly created session
                 db.add(Event(session_id=acc_id, source="supervisor", kind="git_identity_warning",
@@ -420,7 +494,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                     session = db.get(Session, acc_id)
                     # A person can cancel while trust_workspace is in flight.
                     if session.desired_state == "running":
-                        await self._start(db, session, reason="launch")
+                        await self._start(db, session, reason="launch", personal_task=personal_task)
                     db.commit()
         except Exception:  # including an unavailable broker: the session shows it and reconcile retries
             log.exception("launch of %s failed after it was recorded; reconcile takes over", acc_id)
@@ -580,57 +654,92 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         else:
             await self._resume(acc_id, actor)
 
+    def resume_preflight(self, db: DbSession, session: Session, actor: str) -> str | None:
+        """Read-only eligibility snapshot; None means eligible, otherwise the exact refusal.
+
+        Authorization belongs to the caller. Never flush caller changes, consume a
+        replacement grant, revive an attempt, reserve quota or contact a target.
+        Actual resume rechecks under its normal workspace/team serialization.
+        """
+        with db.no_autoflush:
+            try:
+                self._check_resume(db, session, actor)
+            except LaunchRefused as error:
+                return str(error)
+        return None
+
+    def _check_resume(self, db: DbSession, session: Session, actor: str, *, check_capacity: bool = True) -> None:
+        from .sources import session_problem
+        if problem := session_problem(db, session):
+            raise LaunchRefused(problem)
+        if session.project is None:
+            raise LaunchRefused("This project was deleted. Its archived sessions cannot be resumed.")
+        if "explanation.json" in session.launch_spec.files:
+            raise LaunchRefused("An explanation can't be resumed. Open the original session's Changes tab and explain the changes again.")
+        if session.management == "external":
+            raise LaunchRefused(f"Rynhult didn't start this session, so it can't resume it. Start it where it was started ({session.external_unit}).")
+        if session.project.private_workspace and not json.loads(session.launch_spec.files.get("guardrails.json", "{}" )).get("local_only"):
+            raise LaunchRefused("This workspace is now a Development workspace, so this session can't resume. Start a new session in it.")
+        from .security_settings import Conflict, check_generation
+        try:
+            check_generation(db, session)
+        except Conflict as error:
+            raise LaunchRefused(str(error)) from None
+        if session.desired_state == "archived":
+            from ..backup_activation import resume_permitted
+            if not resume_permitted(db, session, consume=False):
+                raise LaunchRefused("This session is archived, so it can't be resumed.")
+        if ((session.team_id or session.project.group_id) and session.team_stop_pending) or session.multirun_stop_pending:
+            raise LaunchRefused("The machine hasn't confirmed that this session stopped. Wait a moment, then try again.")
+        if session.sleep_paused_at and (session.last_error or '').startswith('stop not confirmed:'):
+            raise LaunchRefused("The machine hasn't confirmed that this session stopped. Wait a moment, then try again.")
+        if session.parent_session_id:
+            from .models import Team
+            team = db.get(Team, session.team_id)
+            if team.stopped or (team.expires_at is not None and now() >= team.expires_at):
+                raise LaunchRefused("This team is stopped or its time limit ended. Open Team and choose Resume team to reactivate this grant.")
+            running = len(list(db.scalars(select(Session.id).where(Session.team_id == team.id,
+                               Session.parent_session_id.is_not(None), (Session.desired_state == "running") | Session.team_stop_pending, Session.id != session.id))))
+            if running >= team.limits["at_once"]:
+                raise LaunchRefused("The team already has as many helpers running as its limit allows. Stop a helper first.")
+            from .orchestrator import assignments
+            assignments.require_resume(db, session, consume=False)
+        if session.project.group_id:
+            if budgets.paused(db, session.owner, session.provider, project_id=session.project_id, machine=session.host, account=session.run_as):
+                raise LaunchRefused("Your budget pauses this agent, so the group session can't resume. Check your budget first.")
+            if not group_board.authorized(db, session, self.settings.groups_remote_enabled):
+                raise LaunchRefused("You no longer have access to this group session.")
+            if session.host != 'local':
+                from . import group_remote
+                source = group_remote.source_placement(db, session)
+                if not source or not group_remote.connected(self.broker, db, source):
+                    raise LaunchRefused('Your machine for this group is offline, or its agent account changed. Reconnect it, then try again.')
+            if check_capacity and session.desired_state != 'running':
+                group_board.reserve(db, db.get(Group, session.project.group_id), consume=False)
+        from .orchestrator import planning
+        planning.require_resume(db, session)
+
     async def _resume(self, acc_id: str, actor: str) -> None:
         """Manual resume: same conversation only. Resets the retry budget."""
         with self.db() as db:
             session = self._get(db, acc_id)
-            if "explanation.json" in session.launch_spec.files:
-                raise LaunchRefused("An explanation can't be resumed. Open the original session's Changes tab and explain the changes again.")
-            if session.management == "external":
-                raise LaunchRefused(f"Rynhult didn't start this session, so it can't resume it. Start it where it was started ({session.external_unit}).")
-            if session.project.private_workspace and not json.loads(session.launch_spec.files.get("guardrails.json", "{}" )).get("local_only"):
-                raise LaunchRefused("This workspace is now a Development workspace, so this session can't resume. Start a new session in it.")
-            from .security_settings import Conflict, check_generation
-            try:
-                check_generation(db, session)
-            except Conflict as error:
-                raise LaunchRefused(str(error)) from None
+            with db.no_autoflush:
+                self._check_resume(db, session, actor, check_capacity=False)
+            if session.project.group_id and session.desired_state != 'running':
+                # A real refusal persists the quota pause/review/audit. Reserve
+                # before grant consumption or attempt revival: it may commit.
+                group_board.reserve(db, db.get(Group, session.project.group_id))
             exception = None
             if session.desired_state == "archived":
                 from ..backup_activation import resume_permitted
                 if not resume_permitted(db, session, consume=True):
                     raise LaunchRefused("This session is archived, so it can't be resumed.")
                 exception = {"replacement_exception": True, "node": session.host}
-            if ((session.team_id or session.project.group_id) and session.team_stop_pending) or session.multirun_stop_pending:
-                raise LaunchRefused("The machine hasn't confirmed that this session stopped. Wait a moment, then try again.")
-            if session.sleep_paused_at and (session.last_error or '').startswith('stop not confirmed:'):
-                raise LaunchRefused("The machine hasn't confirmed that this session stopped. Wait a moment, then try again.")
             if session.parent_session_id:
-                from .models import Team
-                team = db.get(Team, session.team_id)
-                if team.stopped or (team.expires_at is not None and now() >= team.expires_at):
-                    raise LaunchRefused("This team is stopped or its time limit ended. Open Team and choose Resume team to reactivate this grant.")
-                running = len(list(db.scalars(select(Session.id).where(Session.team_id == team.id,
-                                   Session.parent_session_id.is_not(None), (Session.desired_state == "running") | Session.team_stop_pending, Session.id != session.id))))
-                if running >= team.limits["at_once"]:
-                    raise LaunchRefused("The team already has as many helpers running as its limit allows. Stop a helper first.")
                 from .orchestrator import assignments
                 assignments.require_resume(db, session)
-            if session.project.group_id:
-                if budgets.paused(db, session.owner, session.provider, project_id=session.project_id, machine=session.host, account=session.run_as):
-                    raise LaunchRefused("Your budget pauses this agent, so the group session can't resume. Check your budget first.")
-                if not group_board.authorized(db, session, self.settings.groups_remote_enabled):
-                    raise LaunchRefused("You no longer have access to this group session.")
-                if session.host != 'local':
-                    from . import group_remote
-                    source = group_remote.source_placement(db, session)
-                    if not source or not group_remote.connected(self.broker, db, source):
-                        raise LaunchRefused('Your machine for this group is offline, or its agent account changed. Reconnect it, then try again.')
-                if session.desired_state != 'running':
-                    group_board.reserve(db, db.get(Group, session.project.group_id))
-                    db.add(GroupLaunch(id=uuid.uuid4().hex, session_id=session.id))
-            from .orchestrator import planning
-            planning.require_resume(db, session)
+            if session.project.group_id and session.desired_state != 'running':
+                db.add(GroupLaunch(id=uuid.uuid4().hex, session_id=session.id))
             session.desired_state = "running"
             session.sleep_paused_at = None
             session.recovery_attempts = 0
@@ -689,6 +798,10 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             db.commit()
 
     async def cancel_automation(self, acc_id: str) -> None:
+        if (self._automation_index_valid
+                and self._automation_index_authority == self._automation_authority()
+                and acc_id not in self._automation_sessions):
+            return
         from . import automation
 
         def work():
@@ -701,7 +814,17 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
 
     async def send_text(self, acc_id: str, actor: str, text: str) -> dict | None:
         """Type a message into a running session's prompt and submit it (review feedback from the Changes tab)."""
+        from . import claude_auth
         from .orchestrator import delivery
+        with self.db() as db:
+            session = self._get(db, acc_id)
+            if session.management == 'external':
+                raise LaunchRefused("Rynhult didn't start this session, so it can't type into it.")
+            if not delivery.enabled() and session.observed_state not in ('active', 'waiting_input', 'idle'):
+                raise LaunchRefused("The session isn't running. Resume it first.")
+            await claude_auth.refresh(self, db, session)
+            db.commit()
+            claude_auth.require(db, session)
         if delivery.enabled():
             result = delivery.enqueue(self, acc_id, actor, text)
             delivery.start_worker(self)
@@ -952,6 +1075,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             db.commit()
 
     async def run(self) -> None:
+        # HA reuses this object on promotion; another main may have enabled goals
+        # since construction. Stay conservative before/during every worker start.
+        self._automation_index_valid = False
+        async with self._lock:
+            self._refresh_automation_index()
         from .admin_features import CURRENT
         if features := getattr(self.settings, "features", None):
             CURRENT.set(features)
@@ -982,6 +1110,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         try:
             await self._loop(stage, sync_skills, autostart)
         finally:
+            self._automation_index_valid = False
             if self._backup_task is not None:
                 self._backup_task.cancel()
                 await asyncio.gather(self._backup_task, return_exceptions=True)

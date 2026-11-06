@@ -58,6 +58,7 @@ html:not(.dark) {
   color-scheme: light;
 }
 
+
 @theme inline {
   --color-bg: var(--bg);
   --color-panel: var(--panel);
@@ -96,15 +97,18 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+::selection { background: var(--accent); color: var(--accent-ink); }
+pre[aria-label="Selectable terminal text"]::selection { background: #abb6ff; color: #10191f; }
 .xterm { padding: 8px 10px; height: 100%; }
 .xterm-viewport { background: var(--term-bg) !important; }
 
 /* Numbers that change or line up (counts, percentages, times) never jitter. */
 .tnum { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* A nonzero universal transition duration activates default transition: all,
+   delaying visibility/focus even on elements that otherwise never animate. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
 }
 /* Thin, quiet scrollbars on dark surfaces. */
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { AUTH_FILE, expectAxeClean, gitProject } from "./helpers";
 

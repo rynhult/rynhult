@@ -19,12 +19,13 @@ from ..release_signatures import SignatureError
 from ..update_helper import read_json, write_json
 from ..updates import (
     BUILD,
+    DEFAULT_REPOSITORY,
     GIT_MESSAGE,
     REPO,
     SOURCE_ERRORS,
     ReleaseSourceError,
     available,
-    repository,
+    checkout_blocks_update,
     selected_channel,
     validate_request,
     version,
@@ -72,7 +73,7 @@ class Updates:
         return (
             self.settings.update_repository
             if self.settings.update_repository is not None
-            else repository(self.settings.source_url)
+            else DEFAULT_REPOSITORY
         )
 
     def defaults(self):
@@ -141,6 +142,7 @@ class Updates:
         value = self.observation()
         helper = self.helper_state()
         git = (self.settings.update_source / ".git").exists()
+        git_blocked = checkout_blocks_update(self.settings.update_source)
         config_error = None
         try:
             config = self.config()
@@ -161,7 +163,7 @@ class Updates:
             "version": __version__,
             "build": self.build,
             "git_checkout": git,
-            "blocked": config_error or (GIT_MESSAGE if git else policy_block),
+            "blocked": config_error or (GIT_MESSAGE if git_blocked else policy_block),
             "helper": (self.settings.updates_dir / "requests").is_dir(),
             "progress": helper,
             "pending": any((self.settings.updates_dir / "requests").glob("*.json")),

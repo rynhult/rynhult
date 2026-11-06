@@ -68,5 +68,6 @@ def test_folder_policy_storage_retains_applied_vs_desired_revision(api):
 def test_security_follows_main_team_migration_with_one_head(tmp_path):
     from alembic.script import ScriptDirectory
     scripts = ScriptDirectory.from_config(alembic_config('sqlite:///' + str(tmp_path / 'chain.db')))
-    assert scripts.get_heads() == ['0081']
+    assert scripts.get_heads() == ['0087']
     assert scripts.get_revision('0081').down_revision == '0080'
+    assert scripts.get_revision('0082').down_revision == '0081'

@@ -1,3 +1,5 @@
+import { GitHubToken } from '../components/GitHubToken';
+import { Surface as Card, SurfaceHeader as CardHeader, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 import { useRovingFocus } from "../components/keyboard";
 import { Feature } from "../components/Feature";
 import { desktopBuild } from "../lib/desktop";
@@ -9,11 +11,13 @@ import { CheckCircle2, ExternalLink, GitBranch, KeyRound, RefreshCw, XCircle } f
 import { api } from "../lib/api";
 import { ago, until } from "../lib/format";
 import type { AccountHealth, ProviderHealth, ProviderInfo } from "../lib/types";
-import { Badge, Button, Card, CardHeader, ErrorNote, Meta, Meter, Page, PageHeader, Segmented } from "../components/ui";
+import { Badge, Button, ErrorNote, Meta, Meter, Segmented } from "../components/ui";
 import { useConfirm } from "../components/confirm";
 import { EndpointsCard } from "../components/Endpoints";
 import { InstallSteps } from "../components/InstallSteps";
 import { onMachine, OtherSoftwareCard, type PackageState, ProviderSoftware, SoftwareStatus, usePackageAction, usePackages } from "../components/Packages";
+import { MachineLabelScope, useMachineLabel } from "../lib/machineLabel";
+import { useNewShell } from "../lib/uiShell";
 import { MachinePicker, SystemBadge, useNodes } from "../components/Machines";
 import { type Provider, ReloginDialog } from "./Relogin";
 import { useInstance, useProviderRegistry, useRole } from "../lib/queries";
@@ -90,6 +94,7 @@ function LoginState({ ok, ready, check }: { ok?: boolean; ready?: boolean; check
  * would refuse. */
 function NotInstalled({ id, machine, owner, entry, helper, kind }: { id: string; machine?: string; owner: boolean; entry?: PackageState; helper?: boolean; kind?: string | null }) {
   const { host } = useInstance();
+  const name = useMachineLabel(machine);
   const install = usePackageAction(machine);
   const queryClient = useQueryClient();
   if (owner && entry?.installable === false && entry.guide) {
@@ -100,7 +105,7 @@ function NotInstalled({ id, machine, owner, entry, helper, kind }: { id: string;
     };
     return (
       <div className="space-y-3">
-        <p className="text-xs text-muted">Not installed on {machine ?? host} yet, and Rynhult can't install it there. Install it by hand:</p>
+        <p className="text-xs text-muted">Not installed on {name ?? host} yet, and Rynhult can't install it there. Install it by hand:</p>
         <InstallSteps guide={entry.guide} machine={machine} onCheck={check} checking={install.isPending || !!entry.running} onCard />
         <ErrorNote error={install.error} />
       </div>
@@ -108,7 +113,7 @@ function NotInstalled({ id, machine, owner, entry, helper, kind }: { id: string;
   }
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <p className="flex-1 text-xs text-muted">Not installed on {machine ?? host} yet{owner ? "" : ": ask an owner to install it"}.</p>
+      <p className="flex-1 text-xs text-muted">Not installed on {name ?? host} yet{owner ? "" : ": ask an owner to install it"}.</p>
       {owner && <Button size="sm" disabled={install.isPending || install.isSuccess} onClick={() => install.mutate({ name: id, action: "install" })}>
         {install.isSuccess ? "Installing…" : "Install"}</Button>}
       <ErrorNote error={install.error} />
@@ -117,12 +122,11 @@ function NotInstalled({ id, machine, owner, entry, helper, kind }: { id: string;
 }
 
 /** Any provider without a bespoke card: login, account and plan as its CLI reports them, re-login, usage link. */
-function ProviderCard({ info, health, account, onRelogin, usage, machine, installedThere, check, notInstalled, software }: { info: ProviderInfo; health?: ProviderHealth; account: string; onRelogin: () => void; usage?: Obs; machine?: string; installedThere?: boolean; software?: React.ReactNode; check: CheckState; notInstalled: React.ReactNode }) {
-  const credits = machine ? undefined : usage?.value?.credits;  // usage is this machine's sessions' only
-  const orgs = (health?.organizations as string[] | undefined) ?? usage?.value?.organizations;
+function ProviderCard({ info, health, account, onRelogin, machine, installedThere, check, notInstalled, software }: { info: ProviderInfo; health?: ProviderHealth; account: string; onRelogin: () => void; machine?: string; installedThere?: boolean; software?: React.ReactNode; check: CheckState; notInstalled: React.ReactNode }) {
+  const orgs = health?.organizations as string[] | undefined;
   const installed = machine ? installedThere !== false : info.installed !== false;
   const billing = info.usage_url ? <a className="inline-flex pointer-coarse:min-h-11 items-center gap-1.5 text-xs text-accent" href={info.usage_url} target="_blank" rel="noreferrer">
-    <ExternalLink size={12} aria-hidden="true" /> Usage and billing</a> : null;
+    <ExternalLink size={12} aria-hidden="true" /> {info.id === "copilot" ? "See GitHub settings" : "Usage and billing"}</a> : null;
   return (
     <AccountRow label={info.label} title={<><ProviderMark provider={info.id} />
         {info.label}{info.preview && <Badge tone="wait">preview</Badge>}</>}
@@ -141,15 +145,6 @@ function ProviderCard({ info, health, account, onRelogin, usage, machine, instal
         </> : billing}>
         {health?.error && <p className="text-xs text-wait">{String(health.error)}</p>}
         {software}
-        {installed && credits && (
-          <div className="mt-4">
-            {credits.unlimited ? <p className="text-xs text-muted">Unlimited AI credits this cycle</p> : (
-              <Usage label={`AI credits this cycle · ${Number(credits.used ?? 0).toLocaleString()} of ${Number(credits.entitlement ?? 0).toLocaleString()}${credits.overage_permitted ? " (overage allowed)" : ""}`}
-                percent={100 - (credits.percent_remaining ?? 100)} resets={usage?.value?.resets_at}
-                source={`GitHub Copilot account (internal API) · ${age(usage)}`} />
-            )}
-          </div>
-        )}
         {!installed && notInstalled}
     </AccountRow>
   );
@@ -175,6 +170,7 @@ export function Providers() {
   const [account, setAccount] = useState<string | undefined>(undefined);  // undefined: the default agent account
   const [params, setParams] = useSearchParams();
   const machine = params.get("machine") || undefined;  // undefined: this machine
+  const shell = useNewShell();
   const nodes = useNodes(owner);
   const machines = (nodes.data ?? []).filter((n) => n.status === "active");
   const pick = (id: string) => { setAccount(undefined); setParams(id === "local" ? {} : { machine: id }, { replace: true }); };
@@ -215,7 +211,10 @@ export function Providers() {
   const github = accounts.data?.github;
   const left = days(claude?.login_expires_at);
   const tier = claude?.rate_limit_tier?.includes("20x") ? " 20x" : claude?.rate_limit_tier?.includes("5x") ? " 5x" : "";
-  const selectedMachine = machine ?? instance.host;
+  // The URL names the machine; only the authorized list may repeat that name as context.
+  const knownMachine = !machine || machine === instance.host || machines.some((n) => n.name === machine);
+  const machineLabel = shell && !knownMachine ? "the selected machine" : undefined;
+  const selectedMachine = machineLabel ?? machine ?? instance.host;
   // Read as a sentence (first-run review): the machine, then the agent account its sessions run as.
   const selectedScope = `On ${selectedMachine}${machine ? "" : " (the main Rynhult)"}, for sessions running as ${agentAccount}`;
   const requestLogin = async (provider: Provider) => {
@@ -230,8 +229,8 @@ export function Providers() {
     ...(owner && !machine ? [["connections", "Model connections"]] : []),
   ] : []), ["models", "Available models"]];
   return (
-    <Page>
-      <PageHeader title="Providers" description="Sign-ins, plan usage and agent software."
+    <MachineLabelScope value={machineLabel}><Page>
+      <PageHeader breadcrumb={selectedScope} title="Providers" description="Sign-ins, plan usage and agent software."
         meta={accounts.data?.checked_at ? <span>Logins checked {ago(new Date(accounts.data.checked_at * 1000).toISOString())} (every 15 minutes)</span> : undefined}
         actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCw size={14} className={refresh.isPending ? "animate-spin" : ""} aria-hidden="true" /> Check now</Button>} />
       <div ref={sectionLinks} role="group" aria-label="Provider sections" onKeyDown={sectionKeys}
@@ -321,7 +320,7 @@ export function Providers() {
         <>
           {others.map((p) => <ProviderCard key={p.id} info={p} health={accounts.data?.[p.id] as ProviderHealth | undefined}
             account={agentAccount} onRelogin={() => requestLogin(p.id)}
-            usage={usageHere ? o[`${p.id}.usage`] : undefined} machine={machine}
+            machine={machine}
             installedThere={installedThere(p.id)} check={check} notInstalled={missing(p.id)} software={software(p.id)} />)}
         </>
       )}
@@ -336,6 +335,7 @@ export function Providers() {
         {github?.error && <p className="text-xs text-wait">{github.error}</p>}
       </AccountRow>
       </div></Card>
+      {!desktopBuild && owner && !machine && <GitHubToken />}
       {!desktopBuild && owner && <OtherSoftwareCard key={`${machine ?? "local"}:${agentAccount}`} machine={machine} account={accounts.data?.account}
         providers={["claude", "codex", ...others.map((p) => p.id)]} />}
       </ProviderSection>
@@ -361,6 +361,6 @@ export function Providers() {
         <ul className="list-disc space-y-1 py-4 pl-8 pr-4 text-[13px] text-muted">{view.data?.not_exposed.map((x) => <li key={x}>{x}</li>)}</ul>
       </Card>
       <ReloginDialog provider={relogin?.provider ?? null} account={relogin?.account} machine={relogin?.machine} onClose={() => setRelogin(null)} />
-    </Page>
+    </Page></MachineLabelScope>
   );
 }

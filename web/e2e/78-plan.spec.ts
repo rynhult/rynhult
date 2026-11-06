@@ -1,8 +1,25 @@
-import { expect, test, type Page } from '@playwright/test';
-import { AUTH_FILE, expectAxeClean, gitProject, wikiShotPath } from './helpers';
+import { expect, test as base, type Page } from './fixtures';
+import { gotoLoadedPage } from './loaded-page';
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, waitForSessionState, waitForTeamStopped, wikiShotPath } from './helpers';
 
 // Orchestrator v2, slice 6: the plan and roadmap on the Team tab. The browser suite's server runs with orchestrator v2
 // off, so the first test checks it stays hidden; the others answer the plan API in the page (route) to drive the UI.
+const test = base.extend<{ lead: string; ownedLeads: string[] }>({
+  ownedLeads: [async ({ page }, use) => {
+    const leads: string[] = [];
+    await use(leads);
+    for (const lead of leads) {
+      expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+      await waitForTeamStopped(page, lead);
+    }
+  }, { timeout: 45_000 }],
+  lead: [async ({ page, ownedLeads }, use) => {
+    const lead = await teamLead(page);
+    ownedLeads.push(lead);
+    await waitForSessionState(page, lead, 'idle', 'claude_hook');
+    await use(lead);
+  }, { timeout: 45_000 }],
+});
 test.use({ storageState: AUTH_FILE });
 
 async function teamLead(page: Page) {
@@ -17,21 +34,19 @@ const at = new Date().toISOString();
 const phase = (key: string, title: string, status: string, depends_on: string[], blocked_by: string[], extra: object = {}) =>
   ({ key, title, summary: '', check: '', status, depends_on, blocked_by, ...extra });
 
-test('the plan stays hidden while orchestrator v2 is off', async ({ page }) => {
-  const lead = await teamLead(page);
+test('the plan stays hidden while orchestrator v2 is off', async ({ page, lead }) => {
   const live = await page.request.get(`/api/teams/${lead}/plan`);
   test.skip(live.status() !== 404, 'this server runs with orchestrator v2 on');
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   await expect(page.getByText('Team limits', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Plan', exact: true })).toHaveCount(0);
 });
 
-test('a planning session says no helpers start yet', async ({ page }) => {
-  const lead = await teamLead(page);
+test('a planning session says no helpers start yet', async ({ page, lead }) => {
   await page.route(`**/api/teams/${lead}/plan`, (route) => route.fulfill({ json: {
     state: 'planning', idea: '', version: 0, ready_at: null, scope: { in: [], out: [], parked: [] }, phases: [], person_edits: {},
     open_questions: [], mermaid: 'flowchart TD', history: [] } }));
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   await expect(page.getByText('Planning session: no helpers start until the lead finishes the plan.')).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'The lead is still planning with you' })).toBeVisible();
 });
@@ -61,10 +76,9 @@ function readyPlan() {
   };
 }
 
-test('person reads the roadmap as a diagram, its dependencies, open questions and history', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('person reads the roadmap as a diagram, its dependencies, open questions and history', async ({ page, lead }, testInfo) => {
   await page.route(`**/api/teams/${lead}/plan`, (route) => route.fulfill({ json: readyPlan() }));
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   const roadmap = page.getByRole('region', { name: 'Roadmap' });
   await expect(page.getByText('Version 3. Answer its open questions', { exact: false })).toBeVisible();
   // The diagram is SVG drawn in the browser, one node per phase and an edge per dependency.
@@ -93,8 +107,7 @@ test('person reads the roadmap as a diagram, its dependencies, open questions an
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });
 
-test('a hostile diagram source renders no script, HTML, handler or link', async ({ page }) => {
-  const lead = await teamLead(page);
+test('a hostile diagram source renders no script, HTML, handler or link', async ({ page, lead }) => {
   const hostile = readyPlan();
   hostile.mermaid = [
     '%%{init: {"securityLevel": "loose", "flowchart": {"htmlLabels": true}}}%%',
@@ -107,7 +120,7 @@ test('a hostile diagram source renders no script, HTML, handler or link', async 
   ].join('\n');
   await page.addInitScript(() => { (window as unknown as { __pwnedCall: () => void }).__pwnedCall = () => { (window as unknown as { __pwned: number }).__pwned = 5; }; });
   await page.route(`**/api/teams/${lead}/plan`, (route) => route.fulfill({ json: hostile }));
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   const diagram = page.getByRole('region', { name: 'Dependency diagram' }).getByRole('img', { name: /Roadmap diagram/ });
   await expect(diagram.locator('svg')).toBeVisible({ timeout: 15_000 });  // Mermaid loads on first use; slow on a busy machine
   await diagram.locator('svg .node').first().click({ force: true });
@@ -119,9 +132,8 @@ test('a hostile diagram source renders no script, HTML, handler or link', async 
   expect(await diagram.innerHTML()).not.toContain('javascript:');
 });
 
-test('a diagram directive cannot restyle the diagram or the page', async ({ page }) => {
+test('a diagram directive cannot restyle the diagram or the page', async ({ page, lead }) => {
   // Review 2026-10-26: securityLevel strict still applies an init directive's themeCSS, fonts and theme variables.
-  const lead = await teamLead(page);
   const hostile = readyPlan();
   hostile.mermaid = [
     '%%{init: {"themeCSS": ".node rect { fill: rgb(1, 2, 3) !important; } svg { position: fixed; inset: 0; }", '
@@ -132,7 +144,7 @@ test('a diagram directive cannot restyle the diagram or the page', async ({ page
     '  p0 --> p1',
   ].join('\n');
   await page.route(`**/api/teams/${lead}/plan`, (route) => route.fulfill({ json: hostile }));
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   const diagram = page.getByRole('region', { name: 'Dependency diagram' }).getByRole('img', { name: /Roadmap diagram/ });
   await expect(diagram.locator('svg .node').first()).toBeVisible({ timeout: 15_000 });  // Mermaid loads on first use; slow on a busy machine
   const styled = await diagram.locator('svg .node rect, svg .node polygon, svg .node path').first()
@@ -143,8 +155,7 @@ test('a diagram directive cannot restyle the diagram or the page', async ({ page
   expect(await diagram.innerHTML()).not.toContain('#010203');
 });
 
-test('person edits the plan as a new version, and a conflict keeps the edit to re-apply', async ({ page }) => {
-  const lead = await teamLead(page);
+test('person edits the plan as a new version, and a conflict keeps the edit to re-apply', async ({ page, lead }) => {
   const current = readyPlan();
   const sent: Record<string, unknown>[] = [];
   let conflictOnce = true;
@@ -165,7 +176,7 @@ test('person edits the plan as a new version, and a conflict keeps the edit to r
     current.history.unshift({ version: current.version, reason: body.reason ?? 'Edited by alex', actor: 'alex', at });
     return route.fulfill({ json: current });
   });
-  await page.goto(`/sessions/${lead}?tab=team#overview`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`]);
   await page.getByRole('button', { name: 'Edit plan' }).click();
   const form = page.getByRole('form', { name: 'Edit the plan' });
   await form.getByLabel('Idea').fill('Import customer lists from CSV and TSV files.');
@@ -185,8 +196,7 @@ test('person edits the plan as a new version, and a conflict keeps the edit to r
   expect(sent[1]).toEqual({ version: 4, idea: 'Import customer lists from CSV and TSV files.', reason: 'TSV too' });
 });
 
-test('a card shows the default the lead goes ahead with until you answer', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('a card shows the default the lead goes ahead with until you answer', async ({ page, lead }, testInfo) => {
   const list = { now: '', now_updated_at: null, now_updated_by: null, revision: 1, idle_minutes: 5, items: [{
     id: 7, position: 1, kind: 'decision', title: 'Which delimiter by default?', steps: '', state: 'open', revision: 1,
     options: [{ id: 'comma', label: 'Comma', consequence: 'Most files' }, { id: 'detect', label: 'Detect it', consequence: 'Slower' }],
@@ -194,7 +204,7 @@ test('a card shows the default the lead goes ahead with until you answer', async
     in_effect: { from: 'default', value: 'comma' }, answer: null, answered_by: null, answered_at: null, ingested_at: null,
     done_at: null, note: null, source: 'lead', owner_edited: false, links: [], created_at: at, updated_at: at }] };
   await page.route(`**/api/teams/${lead}/worklist`, (route) => route.fulfill({ json: list }));
-  await page.goto(`/sessions/${lead}?tab=team#worklist`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
   const card = page.getByRole('region', { name: 'What the lead needs from you' }).getByRole('listitem', { name: 'Which delimiter by default?' });
   await expect(card.getByText('Default until you answer')).toBeVisible();
   await expect(card).toContainText('The lead goes ahead with Comma. Your answer replaces it.');

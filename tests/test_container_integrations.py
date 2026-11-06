@@ -327,3 +327,38 @@ def test_cloud_platform_endpoints_on_public_addresses_are_denied():
     from acc.container_egress import Policy
     assert not Policy().permits('168.63.129.16')
     assert Policy().permits('168.63.129.17')
+
+
+@pytest.mark.parametrize('method,expected', [('api_key', 'api_key'), ('third_party', 'cloud'),
+                                            ('claude.ai', 'subscription'), ('unknown', 'unknown')])
+def test_container_probe_uses_launch_credentials_and_immutable_settings(tmp_path, monkeypatch, method, expected):
+    import subprocess
+    runtime = _image_module('session_runtime')
+    credentials = ({'CLAUDE_CODE_USE_BEDROCK': '1', 'AWS_SECRET_ACCESS_KEY': 'synthetic'}
+                   if method == 'third_party' else {'ANTHROPIC_API_KEY': 'synthetic'})
+    for folder in ('run/acc-container', 'run/acc-credentials'):
+        (tmp_path / folder).mkdir(parents=True)
+    (tmp_path / 'run/acc-credentials/auth.json').write_text(json.dumps({'launch_env': credentials}))
+    (tmp_path / 'run/acc-container/contract.json').write_text(json.dumps({
+        'provider': 'claude', 'checkout': '/private/checkout', 'auth_executable': '/pinned/claude',
+        'auth_args': ['--settings', '/immutable/settings.json', 'never-send-this-prompt']}))
+    def run(argv, **kwargs):
+        assert argv == ['/pinned/claude', '--settings', '/immutable/settings.json', 'auth', 'status']
+        assert kwargs['cwd'] == '/private/checkout'
+        assert kwargs['env'].items() >= credentials.items()
+        return subprocess.CompletedProcess(argv, 0, json.dumps({'loggedIn': True, 'authMethod': method}))
+    monkeypatch.setattr(runtime.subprocess, 'run', run)
+    assert runtime.auth_mode(tmp_path) == expected
+
+
+def test_container_probe_cannot_authorize_unsupplied_api_key(tmp_path, monkeypatch):
+    import subprocess
+    runtime = _image_module('session_runtime')
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.delenv('CLAUDE_CODE_USE_BEDROCK', raising=False)
+    (tmp_path / 'run/acc-container').mkdir(parents=True)
+    (tmp_path / 'run/acc-container/contract.json').write_text(json.dumps({
+        'provider': 'claude', 'checkout': '/private', 'auth_executable': '/pinned/claude'}))
+    monkeypatch.setattr(runtime.subprocess, 'run', lambda *a, **kw: subprocess.CompletedProcess([], 0,
+                        json.dumps({'loggedIn': True, 'authMethod': 'api_key_helper'})))
+    assert runtime.auth_mode(tmp_path) == 'unknown'

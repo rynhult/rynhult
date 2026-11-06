@@ -1,16 +1,17 @@
+import { SessionActions } from "./SessionActions";
 import clsx from "clsx";
 import { useInstance } from "../lib/queries";
 import { Link } from "react-router-dom";
 import { TerminalSquare } from "lucide-react";
 import { ago, teamOrder } from "../lib/format";
 import type { SessionSummary } from "../lib/types";
-import { nowDoing, NowDoing, ProviderBadge, SessionActions, SessionMachine, sessionMachineName, StateBadge } from "./session-bits";
+import { nowDoing, NowDoing, ProviderBadge, SessionMachine, sessionMachineName, sessionState, StateBadge } from "./session-bits";
 import { Badge } from "./ui";
 import { ChangeCount } from "./ChangeCount";
 
 /** One session row layout everywhere: name/project · status · provider · activity · actions.
     Columns follow the list's own width (container queries), so it works in a full page and in a narrow card. */
-export function SessionList({ sessions, showProject = true, header = true, hostOrder, onHostSort }: { sessions: SessionSummary[]; showProject?: boolean;
+export function SessionList({ sessions, showProject = true, header = true, hostOrder, onHostSort, continueWorking = false, older = [] }: { continueWorking?: boolean; older?: string[]; sessions: SessionSummary[]; showProject?: boolean;
   /** False for the later groups of a grouped list: the column names show once (screen readers still get them). */ header?: boolean;
   hostOrder?: "asc" | "desc" | null; onHostSort?: () => void }) {
   const { host } = useInstance();
@@ -18,7 +19,7 @@ export function SessionList({ sessions, showProject = true, header = true, hostO
   if (hostOrder) ordered.sort((a, b) => sessionMachineName(a, host).localeCompare(sessionMachineName(b, host)) * (hostOrder === "asc" ? 1 : -1));
   return (
     <div role="table" aria-label="Sessions" className="@container text-[13px]">
-      <div role="row" className={header ? "hidden grid-cols-[minmax(0,1fr)_5.5rem_7.5rem_5rem_4rem_8.5rem] gap-3 border-b border-line px-4 py-2 text-[11px] font-medium uppercase tracking-[0.06em] text-faint @2xl:grid" : "sr-only"}>
+      <div role="row" className={header && !continueWorking ? "hidden grid-cols-[minmax(0,1fr)_5.5rem_7.5rem_5rem_4rem_8.5rem] gap-3 border-b border-line px-4 py-2 text-[11px] font-medium uppercase tracking-[0.06em] text-faint @2xl:grid" : "sr-only"}>
         <span role="columnheader">Session</span>
         <span role="columnheader" aria-sort={hostOrder === "asc" ? "ascending" : hostOrder === "desc" ? "descending" : "none"}>
           {onHostSort ? <button type="button" onClick={onHostSort} className="pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 items-center underline underline-offset-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent">Host</button> : "Host"}
@@ -30,7 +31,7 @@ export function SessionList({ sessions, showProject = true, header = true, hostO
         {ordered.map((s) => (
           <div role="row" key={s.id}
             className={clsx("group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-2.5 transition-colors hover:bg-panel-2/70",
-              "@2xl:grid-cols-[minmax(0,1fr)_5.5rem_7.5rem_5rem_4rem_8.5rem] @2xl:gap-x-3")}>
+              !continueWorking && "@2xl:grid-cols-[minmax(0,1fr)_5.5rem_7.5rem_5rem_4rem_8.5rem] @2xl:gap-x-3")}>
             <div role="cell" className="min-w-0"><Link to={`/sessions/${s.id}`} className="block min-w-0 pointer-coarse:min-h-11 outline-offset-[-2px]">
               <div className="truncate font-medium text-fg group-hover:text-accent" style={{ paddingInlineStart: `${(s.team_depth ?? 0) * 16}px` }}>{s.parent_session_id ? "↳ " : ""}{s.name}{s.team_id === s.id && <span className="ml-2 text-xs text-muted">Orchestrator</span>}</div>
               <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
@@ -43,18 +44,24 @@ export function SessionList({ sessions, showProject = true, header = true, hostO
                   {s.management === "external" && <span className="text-faint">{showProject ? " · " : ""}observe-only · {s.run_as}</span>}
                   {!s.machine_offline && s.last_error && <span className="text-bad"> · {s.last_error}</span>}
                 </span>
-                <span className="shrink-0 @2xl:hidden"><SessionMachine session={s} inline /></span>
+                <span className={clsx("shrink-0", !continueWorking && "@2xl:hidden")}><SessionMachine session={s} inline /></span>
               </div>
-            </Link></div>
-            <div role="cell" className="hidden min-w-0 truncate text-xs text-muted @2xl:block" title={sessionMachineName(s, host)}>{sessionMachineName(s, host)}</div>
+            </Link>{continueWorking && <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <ProviderBadge provider={s.provider} /><span>{s.worktree_branch ?? s.git?.branch ?? s.changes?.branch ?? 'Branch not reported'}</span>
+              <span className="break-all">{s.worktree ?? s.workdir ?? s.cwd}</span><span>Last seen {ago(s.status_at ?? s.last_output_at)}</span>
+              {older.includes(s.id) && <Badge>older settings</Badge>}
+              {s.machine_offline && <span>Last state: {sessionState(s).label}</span>}
+              {s.last_error?.startsWith('stop not confirmed:') && <span className="text-wait">{s.last_error}</span>}
+            </div>}</div>
+            <div role="cell" className={clsx("hidden min-w-0 truncate text-xs text-muted", !continueWorking && "@2xl:block")} title={sessionMachineName(s, host)}>{sessionMachineName(s, host)}</div>
             <div role="cell" className="justify-self-end @2xl:justify-self-start"><StateBadge session={s} />{s.team_stop_pending && <Badge tone="wait">Stop pending</Badge>}</div>
-            <div role="cell" className="hidden min-w-0 @2xl:block"><ProviderBadge provider={s.provider} model={s.model} /></div>
-            <div role="cell" className="tnum hidden text-xs text-muted @2xl:block" title="Last terminal output (heuristic)">{ago(s.last_output_at)}</div>
-            <div role="cell" className="col-span-2 flex items-center justify-end gap-0.5 @2xl:col-span-1">
-              <SessionActions session={s} compact />
-              <Link to={`/sessions/${s.id}`} title="Open terminal" aria-label={`Open ${s.name}`}
-                className="inline-grid size-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-fg pointer-coarse:size-11">
-                <TerminalSquare size={15} aria-hidden="true" />
+            <div role="cell" className={clsx("hidden min-w-0", !continueWorking && "@2xl:block")}><ProviderBadge provider={s.provider} model={s.model} /></div>
+            <div role="cell" className={clsx("tnum hidden text-xs text-muted", !continueWorking && "@2xl:block")} title="Last terminal output (heuristic)">{ago(s.last_output_at)}</div>
+            <div role="cell" className={clsx("col-span-2 flex items-center justify-end gap-0.5", !continueWorking && "@2xl:col-span-1")}>
+              <SessionActions session={s} compact checkResume={continueWorking} />
+              <Link to={`/sessions/${s.id}`} title={continueWorking ? "Open this session" : "Open terminal"} aria-label={`${continueWorking ? "Continue" : "Open"} ${s.name}`}
+                className={continueWorking ? "shell-link text-accent" : "inline-grid size-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-fg pointer-coarse:size-11"}>
+                {continueWorking ? "Continue" : <TerminalSquare size={15} aria-hidden="true" />}
               </Link>
             </div>
           </div>

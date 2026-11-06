@@ -5,7 +5,9 @@ import asyncio
 import inspect
 import os
 import socket
+import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 
 from acc.server.db import WRITE_INTENT
 
@@ -122,3 +124,18 @@ async def assert_no_task_leaks(before):
         for task in leaked:
             task.cancel()
         await asyncio.gather(*leaked, return_exceptions=True)
+
+
+def write_executable(path: Path, source: str, mode: int = 0o700) -> None:
+    """Publish a closed staging file instead of writing an executable in place."""
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}-')
+    staging = Path(temporary)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(source)
+            stream.flush()
+            os.fsync(stream.fileno())
+        staging.chmod(mode)
+        staging.replace(path)
+    finally:
+        staging.unlink(missing_ok=True)

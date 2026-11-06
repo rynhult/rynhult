@@ -13,8 +13,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 # These are imported modules, not programs. All other deploy/bin Python files
 # are checked, including installer-only tools without executable mode bits.
-MODULES = {'bin/acc_env.py', 'deploy/telemetry/app.py', 'deploy/containers/sandbox_policy.py',
-           'deploy/containers/session_runtime.py'}
+MODULES = {'bin/acc_env.py', 'deploy/telemetry/app.py', 'deploy/containers/sandbox_policy.py'}
 
 
 def python_programs():

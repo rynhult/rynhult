@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import tomllib
+from functools import lru_cache
 from pathlib import Path
 
 from . import transcripts
@@ -118,6 +119,23 @@ def _trust_acc_hooks(path: Path, entries: dict[str, str], exe: str) -> None:
         return  # Fail closed: hooks still need the person's review.
 
 
+@lru_cache(maxsize=32)
+def supports_inline(exe: str) -> bool:
+    """Probe the account's actual executable once per broker process; older CLIs fail safely."""
+    try:
+        result = run([exe, "--help"], timeout=5)
+        return result.returncode == 0 and "--no-alt-screen" in result.stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def supported_launch_args(exe: str, args: list[str]) -> list[str]:
+    """Resolve the server's inline request on the machine that will run Codex."""
+    if "--no-alt-screen" in args and not supports_inline(exe):
+        return [arg for arg in args if arg != "--no-alt-screen"]
+    return args
+
+
 def _toml_array(values: list[str]) -> str:
     return "[" + ", ".join(json.dumps(v) for v in values) + "]"
 
@@ -220,6 +238,8 @@ class Codex(Provider):
             args = ["resume", native_id]
         else:
             args = []
+        if self.option(inputs, "keep_scrollback"):
+            args += ["--no-alt-screen"]
         args += ["--sandbox", inputs.sandbox, "--ask-for-approval", inputs.approval]
         # ACC pins and updates Codex (acc-packages). Codex's own startup update prompt would take ACC's first
         # Enter as "Update now", run npm install -g as the agent account, fail, and exit before the session starts.
@@ -370,12 +390,14 @@ class Codex(Provider):
 
 
 PROVIDER = Codex(
-    id="codex", label="Codex", executable="codex", color="var(--fg)", tier="full",
+    id="codex", label="Codex", executable="codex", color="var(--text)", tier="full",
     install="npm @openai/codex (pinned by deploy/install.sh)", homepage="https://developers.openai.com/codex/cli",
     usage_url="https://chatgpt.com/codex/settings/usage", usage_key="codex.rate_limits", login="device", session_id="learned", start_verify="settle",
     supports=frozenset({"resume", "instructions", "needs_you", "effort", "models", "usage", "mcp", "skills", "endpoints"}),
     endpoint_styles=("openai",),
     options=(
+        Option("keep_scrollback", "Keep scrollback (inline mode)", kind="bool", default=True,
+               help="Preserve terminal history when supported by the installed Codex CLI; applies on next launch/resume."),
         # Words, not Codex's flags (UX review R6); the values stay Codex's own.
         Option("sandbox", "What it can change", choices=(
             ("workspace-write", "Can edit the project"), ("read-only", "Read only"), ("danger-full-access", "Full access (no sandbox) ⚠")),

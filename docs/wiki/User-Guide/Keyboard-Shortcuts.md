@@ -3,6 +3,7 @@
 | Keys | Action |
 |---|---|
 | <kbd>⌘K</kbd> / <kbd>Ctrl K</kbd> | Open **Jump to…** for pages, [projects](/User-Guide/Glossary#project), [sessions](/User-Guide/Glossary#session) and commands |
+| <kbd>⌘ Shift F</kbd> / <kbd>Ctrl Shift F</kbd> | In the [new layout](/User-Guide/New-Layout#find-a-project-file), open **Find project files**. Choose a project, then Tab to Filename; ↑/↓ move through results and Enter opens a file |
 | <kbd>C</kbd> | New session (outside fields, terminals and menu typeahead) |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | Move through and choose in **Jump to…** |
 | <kbd>Esc</kbd> | Close the top dialog, palette or menu and return to its opener |
@@ -15,6 +16,18 @@
 | <kbd>F6</kbd>, then <kbd>C</kbd> | In an expanded terminal, focus the slim bar then collapse. Esc stays with the program; native browser full screen uses its own exit key |
 | <kbd>⌘C</kbd> (Mac) / <kbd>Ctrl Shift C</kbd> (Windows/Linux) | Copy the terminal selection. Ctrl+C still goes to the program. See the platform comparison below |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | In **Changes**, with a file's diff focused: pick a line, then comment on it |
+
+In the [new layout's working columns](/User-Guide/New-Layout#arrange-your-working-views):
+
+| Focus | Keys and action |
+| --- | --- |
+| View tab | Left/Right, Home/End select tabs; Ctrl-Shift-Left/Right moves to a neighboring column |
+| Column divider | Left/Right resizes; Shift makes larger steps; Home/End reaches the usable limits |
+| Working terminal | F6 returns to its view tab; Tab remains terminal input |
+
+**Focus column**, **Move view to column**, **Fill working panel** and **Restore columns**
+also work with ordinary Tab and Enter. Commands wait for active text composition
+before changing placement.
 
 Terminal selection works on both platforms:
 

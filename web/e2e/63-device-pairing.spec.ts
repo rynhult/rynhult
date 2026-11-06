@@ -1,9 +1,10 @@
 import { environmentValue } from "../../src/acc/env.mjs";
-import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { expect, type BrowserContext, type Page } from './fixtures';
+import { test } from './shell-state';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, csrfHeaders, resetPairingThrottle, verifyAgain, wikiShotPath, expectAxeClean, freshStep, PASSWORD, loadSecret, totp } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 type PairingSettings = {
   pairing_enabled: boolean; machine_identities: boolean; public_hostname: string;

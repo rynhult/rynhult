@@ -1,3 +1,5 @@
+import { useUnsavedDraft } from '../lib/useUnsaved';
+import { draftField } from '../lib/unsaved';
 import { FirstCommit, type FirstCommitState } from "./FirstCommit";
 import { BriefDocuments, uploadDocuments } from "./BriefDocuments";
 import { desktopBuild } from "../lib/desktop";
@@ -20,23 +22,28 @@ export const projectSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-
  *  <your workspaces folder>/<slug>; trust for agents is part of the same step: on for an empty folder, off for a clone
  *  (decision 0008 follow-up), since trust lets agents run with the repository's own config and hooks. Owners with other
  *  machines choose where: the folder is then made there, through that machine's broker, under its account's root. */
-export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (project: Project) => void }) {
+export function NewProjectDialog({ open, onClose, onCreated, parentId }: { parentId?: string; open: boolean; onClose: () => void; onCreated?: (project: Project) => void }) {
+  const draftId = `new-project:${parentId ?? 'projects'}`;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [emptyImported, setEmptyImported] = useState<Project | null>(null);
+  const [emptyImported, setEmptyImported] = useState<Project | null>(() => draftField(draftId, "emptyImported", null));
   const instance = useInstance();
   const { owner } = useRole();
   const github = owner && !!instance.github;
-  const [documentFiles, setDocumentFiles] = useState<File[]>([]);
-  const [createdProject, setCreatedProject] = useState<Project | null>(null);
-  const [source, setSource] = useState<Source>("empty");
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [description, setDescription] = useState("");
-  const [trust, setTrust] = useState(true);
-  const [confirmGithub, setConfirmGithub] = useState(false);
-  const [host, setHost] = useState("local");
-  const [account, setAccount] = useState("");
+  const [documentFiles, setDocumentFiles] = useState<File[]>(() => draftField(draftId, "documentFiles", []));
+  const [createdProject, setCreatedProject] = useState<Project | null>(() => draftField(draftId, "createdProject", null));
+  const [source, setSource] = useState<Source>(() => draftField(draftId, "source", "empty"));
+  const [name, setName] = useState(() => draftField(draftId, "name", ""));
+  const [url, setUrl] = useState(() => draftField(draftId, "url", ""));
+  const [description, setDescription] = useState(() => draftField(draftId, "description", ""));
+  const [trust, setTrust] = useState(() => draftField(draftId, "trust", true));
+  const [confirmGithub, setConfirmGithub] = useState(() => draftField(draftId, "confirmGithub", false));
+  const [host, setHost] = useState(() => draftField(draftId, "host", "local"));
+  const [account, setAccount] = useState(() => draftField(draftId, "account", ""));
+  const clearUnsaved = useUnsavedDraft(draftId, 'new-project', 'New project',
+    !!name || !!url || !!description || !!documentFiles.length || !!createdProject || source !== 'empty' || !trust || confirmGithub || host !== 'local' || !!account,
+    { name, url, description, documentFiles, createdProject, emptyImported, source, trust, confirmGithub, host, account },
+    () => { setName(''); setUrl(''); setDescription(''); setDocumentFiles([]); setCreatedProject(null); setEmptyImported(null); setSource('empty'); setTrust(true); setConfirmGithub(false); setHost('local'); setAccount(''); }, parentId);
   const nodes = useNodes(open && owner);
   const machines = (nodes.data ?? []).filter((n) => n.status === "active");
   const accounts = host === "local" ? [] : (machines.find((n) => n.name === host)?.accounts ?? []);
@@ -63,6 +70,8 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
     },
   });
   function finish(project: Project) {
+      clearUnsaved();
+      setSource("empty"); setTrust(true); setHost("local"); setAccount("");
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setName(""); setUrl(""); setDescription(""); setConfirmGithub(false);
       setDocumentFiles([]); setCreatedProject(null);
@@ -92,7 +101,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
         <ErrorNote error={create.error} />
         {createdProject && <p className="text-xs text-muted">Project created. Retry the upload, or open its Brief page to choose files again.</p>}
         <Button variant="ghost" disabled={create.isPending} onClick={() => {
-          if (createdProject) { queryClient.invalidateQueries({ queryKey: ["projects"] }); onCreated?.(createdProject); setCreatedProject(null); setDocumentFiles([]); }
+          if (createdProject) { finish(createdProject); return; }
           onClose();
         }}>{createdProject ? "Open created project" : "Cancel"}</Button>
         <Button variant="primary" disabled={!ready || create.isPending} onClick={() => create.mutate()}>

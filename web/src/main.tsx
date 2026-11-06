@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -7,6 +7,11 @@ import { App } from "./App";
 import { ConfirmProvider } from "./components/confirm";
 import "./index.css";
 import { applyTheme, readTheme } from "./lib/theme";
+
+const PersonalThemeRuntime = lazy(() => import("./components/PersonalThemeRuntime"));
+const TerminalOwner = import.meta.env.VITE_P2_TERMINAL_HOST === '1'
+  ? lazy(() => import('./components/PersistentTerminals').then(module => ({default: module.PersistentTerminalProvider})))
+  : null;
 
 applyTheme(readTheme());
 
@@ -17,8 +22,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <Announcer />
+      <Suspense fallback={null}><PersonalThemeRuntime /></Suspense>
       <ConfirmProvider>
-        <RouterProvider router={router} />
+        <Suspense fallback={null}>{TerminalOwner ? <TerminalOwner><RouterProvider router={router}/></TerminalOwner> : <RouterProvider router={router}/>}</Suspense>
       </ConfirmProvider>
     </QueryClientProvider>
   </StrictMode>,

@@ -1,5 +1,5 @@
 /** Break-it 14: a careless person edits boundaries while the lead keeps changing the plan, and reloads mid-brief. */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './fixtures';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { expandTeamPanels, AUTH_FILE, expectAxeClean, gitProject, info } from './helpers';

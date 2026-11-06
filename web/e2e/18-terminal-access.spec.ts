@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, chooseLayout } from "./fixtures";
 import { AUTH_FILE, info, PASSWORD, totp, verifyAgain } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
@@ -19,6 +19,8 @@ test("X3/Q2: demotion closes other people's terminals immediately but preserves 
     expect(joined.ok()).toBe(true);
     const otherCsrf = (await other.cookies()).find((c) => c.name === "acc_csrf")!.value;
     const otherHeaders = { "X-ACC-CSRF": otherCsrf, Origin: info().origin };
+    // This invited person also exercises the classic terminal contract.
+    await chooseLayout(other, false);
     const project = await page.request.post("/api/projects", { headers,
       data: { slug: "terminal-access", name: "Terminal demo", workspace_path: info().workspace } });
     const pid = (await project.json()).id;
@@ -46,5 +48,8 @@ test("X3/Q2: demotion closes other people's terminals immediately but preserves 
     expect((await other.request.get(`/api/sessions/${theirsId}`)).status()).toBe(404);
     expect((await other.request.get(`/api/sessions/${ownId}`)).ok()).toBe(true);
     expect((await (await other.request.get("/api/auth/state")).json()).authenticated).toBe(true);
-  } finally { await other.close(); }
+  } finally {
+    try { await chooseLayout(other, true); }
+    finally { await other.close(); }
+  }
 });

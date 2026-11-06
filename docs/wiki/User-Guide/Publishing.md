@@ -125,3 +125,10 @@ slow service appears as a failed service. Interface suggestions still appear. De
 review suggestions before adding one, even when both services agree.
 
 Owners can copy **Publication ID** from each row when adopting a reviewed legacy DNS record in Settings. The server verifies that the selected applied publication exactly matches the remote record.
+
+### Publication stays a person decision
+
+Saved tool permissions, port reservations and main-push consent do not approve
+publication, even for private addresses. For example, **Demo Garden** still needs
+its own reviewed publication request for `garden.example.lan`. DNS, access changes
+and the protected publication helper keep their existing approval boundaries.

@@ -1,9 +1,9 @@
 import { environmentValue } from "../../src/acc/env.mjs";
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
-import { AUTH_FILE, info, totp } from './helpers';
+import { expect, test } from './fixtures';
+import { AUTH_FILE, csrfHeaders, info, totp } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['ui_shell', 'layouts'] });
 
 test('owner opts in, reviews group roles and archives a group', async ({ page }) => {
   await page.goto('/groups');
@@ -65,6 +65,7 @@ test('a maintainer manages existing people without gaining instance privileges, 
     expect(created.status()).toBe(201);
     const group = await created.json();
     const teammate = await guest.newPage();
+    expect((await teammate.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(teammate), data: { enabled: false } })).ok()).toBeTruthy();
     await teammate.goto('/groups');
     await expect(teammate.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Groups', exact: true })).toBeVisible();
     await expect(teammate.getByRole('button', { name: 'Create group', exact: true })).toHaveCount(0);

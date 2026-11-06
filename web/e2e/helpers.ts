@@ -1,12 +1,12 @@
 import { environmentValue } from "../../src/acc/env.mjs";
 import { createHmac, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import type AxeBuilder from "@axe-core/playwright";
 
-export const BASE = environmentValue("ACC_E2E_BASE") ?? "/tmp/acc-e2e";  // as in playwright.config.ts
+import { BASE } from './fixture-paths';
+export { BASE, AUTH_FILE } from './fixture-paths';
 export const PASSWORD = "e2e correct horse battery staple";
-export const AUTH_FILE = `${BASE}/auth.json`;
 
 export const info = () => JSON.parse(readFileSync(`${BASE}/info.json`, "utf8")) as
   { state: string; setup_token_path: string; run_dir: string; workspace: string; origin: string };
@@ -57,9 +57,17 @@ export function control(acc_id: string, command: string) {
   renameSync(`${path}.tmp`, path);
 }
 
+// These attachments are produced only by mobile specs, never by desktop captures.
+const mobileWikiImages = new Set([
+  "settings-dns-mobile.png", "settings-dns-google-mobile.png", "ha-standby-phone.png",
+]);
+
 export function wikiShotPath(testInfo: import("@playwright/test").TestInfo, name: string,
   update = environmentValue("ACC_UPDATE_WIKI_SCREENSHOTS") === "1") {
-  return update ? `../docs/wiki/.attachments/${name}` : testInfo.outputPath(name);
+  const desktop = testInfo.project.name === "desktop" || testInfo.project.name === "desktop-stateful";
+  const mobile = testInfo.project.name === "mobile" || testInfo.project.name === "mobile-stateful";
+  return update && (desktop || (mobile && mobileWikiImages.has(name)))
+    ? `../docs/wiki/.attachments/${name}` : testInfo.outputPath(name);
 }
 
 async function analyzeSettledAxe(page: Page, builder: AxeBuilder) {
@@ -111,7 +119,7 @@ export async function expectAxeClean(page: Page, scope?: string) {
 }
 
 /** A uniquely named git project with one commit, registered and trusted through the API. */
-export async function gitProject(page: Page, prefix: string) {
+export async function gitProject(page: Page, prefix: string, presentation?: { name: string; notes?: string }) {
   const { execFileSync } = await import("node:child_process");
   const { mkdirSync } = await import("node:fs");
   const slug = `${prefix.slice(0, 30)}-${randomUUID().replaceAll("-", "")}`;
@@ -123,13 +131,13 @@ export async function gitProject(page: Page, prefix: string) {
   git("add", ".");
   git("commit", "-qm", "Initial version");
   const headers = await csrfHeaders(page);
-  const project = await page.request.post("/api/projects", { headers, data: { slug, name: slug, workspace_path: folder } });
+  const project = await page.request.post("/api/projects", { headers, data: { slug, name: presentation?.name ?? slug, notes: presentation?.notes, workspace_path: folder } });
   if (!project.ok()) throw new Error(`project creation failed (${project.status()}): ${await project.text()}`);
   const id = (await project.json()).id as number;
   const trusted = await page.request.post(`/api/projects/${id}/trust`, { headers });
   if (!trusted.ok()) throw new Error(`project trust failed (${trusted.status()}): ${await trusted.text()}`);
   await page.goto("/sessions");
-  return { id, folder, headers, slug };
+  return { id, folder, headers, slug, name: presentation?.name ?? slug };
 }
 
 /** Wait for the creation transaction and its exact destination, not a generic
@@ -206,11 +214,11 @@ export async function resetTerminalThrottle(page: Page) {
 }
 
 /** Fresh verification (five minutes) with password and a new code: owner invites, resets of others, passkey changes. */
-export async function verifyAgain(page: Page) {
+export async function verifyAgain(page: Page, secret = loadSecret()) {
   test.slow();  // waiting for a fresh code step can take 30 s
   await freshStep(page);
   const verified = await page.request.post("/api/auth/passkeys/reauth", { headers: await csrfHeaders(page),
-    data: { password: PASSWORD, code: totp(loadSecret()) } });
+    data: { password: PASSWORD, code: totp(secret) } });
   if (!verified.ok()) throw new Error(`verification failed: ${await verified.text()}`);
 }
 
@@ -224,7 +232,7 @@ export async function reviewSecurityChanges(page: Page) {
     test.slow(); // A real authenticator step may need the next 30-second counter.
     await freshStep(page);
     await verify.getByLabel('Verification password').fill(PASSWORD);
-    await verify.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+    await verify.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
     await verify.getByRole('button', { name: 'Verify with password and authenticator', exact: true }).click();
   }
   await expect(review).toBeVisible();

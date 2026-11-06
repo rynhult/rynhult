@@ -586,10 +586,11 @@ class Service:
             return target
 
 
-    def add_local_target(self, repository, *, binary=Path('/usr/local/bin/restic')):
+    def add_local_target(self, repository, *, binary=Path('/usr/local/bin/restic'), prepared=False):
         self.initialize()
         repository = Path(repository)
-        if repository.exists():
+        if repository.exists() and not (prepared and repository.is_dir() and not repository.is_symlink()
+                                        and not any(repository.iterdir())):
             raise Refused('new target requires a fresh directory')
         # Never allow capture staging, secrets or source trees as repositories.
         if repository.is_relative_to(self.settings.data_dir.parent):
@@ -598,8 +599,8 @@ class Service:
             target_id = uuid.uuid4().hex
             password = self.root / 'keys' / target_id
             private_write(password, base64.b64encode(os.urandom(32)))
-            backend = LocalTarget(repository, password, binary)
             try:
+                backend = LocalTarget(repository, password, binary)
                 backend.command('init', '--repository-version', '2')
                 backend.command('check')
                 target = {'id': target_id, 'kind': 'local', 'repository': str(repository),
@@ -1337,6 +1338,8 @@ def main(argv=None):
     try:
         if args.command == 'add-local':
             from .server.config import Settings
+            from .server.local_backups import refuse_volatile
+            refuse_volatile(args.repository.parent)
             service = Service(Settings(data_dir=args.data))
             result = service.add_local_target(args.repository, binary=args.restic)
             # No passwords, kit or private paths in output.

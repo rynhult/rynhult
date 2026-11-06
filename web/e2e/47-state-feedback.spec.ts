@@ -1,6 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import { AUTH_FILE, expectAxeClean } from './helpers';
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 test('cached board sources independently disclose refresh failure and retry', async ({ page }) => {
   let fail = false;
   await page.route('**/api/board', r => fail ? r.fulfill({ status: 503, json: { detail: 'demo unavailable' } }) : r.continue());
@@ -31,7 +32,7 @@ test('settings index deep links to personal sign-in and verification expires', a
   await index.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
   await expect(page).toHaveURL(/#passkeys$/);
   await page.getByLabel('Verification password', { exact: true }).fill('demo password');
-  await page.getByLabel('Verification authenticator code').fill('123456');
+  await page.getByLabel('Verification authenticator code', { exact: true }).fill('123456');
   await page.getByRole('button', { name: 'Verify with password and authenticator' }).click();
   await expect(page.getByText('Verified for five minutes.')).toBeVisible();
   await page.clock.fastForward(301000);

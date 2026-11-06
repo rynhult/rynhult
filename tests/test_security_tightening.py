@@ -269,7 +269,7 @@ async def test_t8_archived_group_generation_is_not_unarchived_by_reconcile(api, 
     from acc.server import group_board
     monkeypatch.setattr(group_board, 'authorized', lambda *a, **k: False)
     session = SimpleNamespace(desired_state='archived', project=SimpleNamespace(group_id='gone'),
-        launch_spec=SimpleNamespace(files={}), runs=[], container=False, team_stop_pending=True,
+        launch_spec=SimpleNamespace(files={}), runs=[], container=False, provider="codex", team_stop_pending=True,
         multirun_stop_pending=False, last_error='stop not confirmed: pending')
     with api.app.state.db() as db:
         await api.app.state.supervisor._reconcile_workspace(db, session, None)

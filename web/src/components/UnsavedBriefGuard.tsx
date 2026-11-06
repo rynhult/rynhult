@@ -24,12 +24,6 @@ export function UnsavedBriefGuard({ children }: { children: ReactNode }) {
         !== `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`;
   });
   useEffect(() => {
-    if (!editors) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [editors]);
-  useEffect(() => {
     if (blocker.state !== 'blocked' || asking.current) return;
     asking.current = true;
     void confirm({ title: 'Leave with an unsaved project brief?',

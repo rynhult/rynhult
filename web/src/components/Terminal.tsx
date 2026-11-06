@@ -1,19 +1,22 @@
+import { useTerminalUpload } from './useTerminalUpload';
 import { lazyImport } from '../lib/lazyImport';
-type BindTextInput = typeof import('../lib/safariTerminalInput').bindSafariTextInput;
+import { TerminalTakeDialog } from './TerminalTakeDialog';
+import { createTerminalRuntime, type BindTextInput, type TerminalStatus } from './terminalRuntime';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
+import { createPortal } from "react-dom";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import clsx from "clsx";
-import { Keyboard, Lock, Maximize2, Minimize2, RotateCw, Unlock } from "lucide-react";
+import { Keyboard, Lock, Maximize2, Minimize2, RotateCw, TextSelect, Unlock } from "lucide-react";
 import { announce, Button, Dialog, Dot, Kbd } from "./ui";
 import { api, ApiError } from "../lib/api";
 
 import { useTerminalExpansion } from './terminalExpansion';
+import { PersistentTerminalSlot, persistentTerminalFlag } from './PersistentTerminals';
+import type { HostedTerminal } from './terminalHostLayer';
 import type { ComponentProps } from 'react';
 
-type Status = { kind: "connecting" } | { kind: "open"; write: boolean } | { kind: "closed"; reason: string };
+type Status = TerminalStatus;
 
 /** Phone key bar (UX review PH-1): the keys that finish or stop an answer come first and always fit a 390px screen; the
     rest sit behind "More keys". [label, bytes, accessible name] */
@@ -58,9 +61,14 @@ const keyClass = "min-h-11 min-w-11 shrink-0 rounded-md border border-line-stron
 /** The session's real terminal. `compact`: a tile in the grid (smaller text, no focus grab, no footer hint). */
 // Polling parents pass primitives; their status refreshes must never render the
 // imperative terminal subtree or disturb a browser's native composition editor.
-export const Terminal = memo(function Terminal({ sessionId, live, compact, name, tone, stateLabel, onExpansionChange }: { sessionId: string; live: boolean; compact?: boolean; name?: string; tone?: ComponentProps<typeof Dot>['tone']; stateLabel?: string; onExpansionChange?: (expanded: boolean) => void }) {
+export type TerminalProps = { sessionId: string; live: boolean; compact?: boolean; name?: string; tone?: ComponentProps<typeof Dot>['tone']; stateLabel?: string; onExpansionChange?: (expanded: boolean) => void; toolbarTarget?: HTMLElement | null };
+export const Terminal = memo(function Terminal(props: TerminalProps) {
+  return persistentTerminalFlag ? <PersistentTerminalSlot {...props}/> : <TerminalPresentation {...props}/>;
+});
+export const TerminalPresentation = memo(function TerminalPresentation({ sessionId, live, compact, name, tone, stateLabel, onExpansionChange, toolbarTarget, persistentResource, active = true, onRelease }: TerminalProps & { persistentResource?: HostedTerminal; active?: boolean; onRelease?: () => void }) {
   const expansion=useTerminalExpansion(sessionId,!!compact,!!name,onExpansionChange);
   const {expanded}=expansion;
+  useEffect(() => { if (!active && expanded) expansion.change(false); }, [active, expanded]);
   const expandedRef=useRef(expanded);
   expandedRef.current=expanded;
   const readerVisible=!compact||expanded;
@@ -84,6 +92,7 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
   const socket = useRef<WebSocket | null>(null);
   const term = useRef<XTerm | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
+  const upload = useTerminalUpload(sessionId, () => ({ socket: socket.current, write: status.kind === 'open' && status.write, insert: text => term.current?.input(text, true) }));
   const [screenReader, setScreenReader] = useState(readerPreference);
   const readerControl = useRef<HTMLInputElement>(null);
   const [output, setOutput] = useState<string | null>(null);
@@ -95,105 +104,29 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
   const [moreKeys, setMoreKeys] = useState(false);
   const [generation, setGeneration] = useState(0);
   const [take, setTake] = useState(false);
+  const [takeDialog, setTakeDialog] = useState(false);
+  const [takeReason, setTakeReason] = useState('');
   const touch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
   useEffect(() => {
     const mount = (bindSafariTextInput?: BindTextInput) => {
       if (!host.current) return;
-      const xterm = new XTerm({
-        fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
-        fontSize: touch || compact ? 12 : 13,
-        lineHeight: 1.15,
-        cursorBlink: true,
-        scrollback: 10000,
-        allowProposedApi: true,
-        macOptionClickForcesSelection: true,
-        screenReaderMode: (!compact || expandedRef.current) && readerPreference(),
-        theme: { background: "#0b0d10", foreground: "#e6e8eb", cursor: "#7aa2ff", selectionBackground: "#2b3a5a" },
+      const runtime = (persistentResource ? persistentResource.attach.bind(persistentResource) : createTerminalRuntime)({ host: host.current, sessionId, touch, compact,
+        expanded: expandedRef.current, screenReader: readerPreference(), take, takeReason,
+        bindSafariTextInput, onStatus: setStatus, onSelection: setSelection,
+        onClosed: reason => setStatus(s => s.kind === "closed" ? s : { kind: "closed", reason }),
+        transformInput(data) {
+          if (ctrlRef.current && data.length === 1) {
+            const code = data.toUpperCase().charCodeAt(0);
+            if (code >= 64 && code < 96) data = String.fromCharCode(code - 64);
+            setCtrl(false);
+          }
+          return data;
+        },
       });
-      const fit = new FitAddon();
-      xterm.loadAddon(fit);
-      xterm.loadAddon(new WebLinksAddon((_, uri) => window.open(uri, "_blank", "noopener")));
-      xterm.open(host.current);
-      for (const [name, value] of Object.entries({ autocomplete: 'off', autocorrect: 'off', spellcheck: 'false',
-        autocapitalize: 'off', writingsuggestions: 'false' })) xterm.textarea?.setAttribute(name, value);
-      const disposeTextInput = bindSafariTextInput?.(xterm, host.current);
-      if (!compact || expandedRef.current) xterm.textarea?.setAttribute("aria-describedby", `${expandedRef.current ? "expanded-leave" : "leave"}-${sessionId}`);
-      // Screen readers read the rows on demand; xterm's own assertive region would read the agent's stream aloud as it
-      // arrives. State changes are announced once through Rynhult's Announcer instead.
-      host.current.querySelector(".live-region")?.setAttribute("aria-live", "off");
-      fit.fit();
-      term.current = xterm;
-      const selected = xterm.onSelectionChange(() => {
-        const text = xterm.getSelection().split(/\r?\n/).map(line => line.trimEnd()).join('\n');
-        const bounds = host.current?.getBoundingClientRect();
-        const end = xterm.getSelectionPosition()?.end;
-        setSelection(text && bounds ? {text, x:bounds.left + (end?.x ?? 0) * bounds.width / xterm.cols,
-          y:bounds.top + Math.max(0, Math.min(xterm.rows - 1, (end?.y ?? 0) - xterm.buffer.active.viewportY)) * bounds.height / xterm.rows} : null);
-      });
-
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const params = new URLSearchParams({ mode: "write", rows: String(xterm.rows), cols: String(xterm.cols), ...(take ? { take: "1" } : {}) });
-      const ws = new WebSocket(`${proto}://${location.host}/api/sessions/${sessionId}/tty?${params}`);
-      ws.binaryType = "arraybuffer";
-      socket.current = ws;
-      setStatus({ kind: "connecting" });
-
-      const send = (data: string) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: "i", d: data }));
-      let sentSize = '';
-      const resize = () => {
-        const dims = fit.proposeDimensions();
-        if (!dims || !Number.isFinite(dims.rows) || !Number.isFinite(dims.cols)) return;
-        if (dims.rows !== xterm.rows || dims.cols !== xterm.cols) fit.fit();
-        const size = `${xterm.rows}:${xterm.cols}`;
-        // ResizeObserver may notify after surrounding status/layout updates even
-        // when character dimensions did not change. Keep the PTY/provider out
-        // of surrounding status updates that do not resize the actual editor.
-        if (ws.readyState === WebSocket.OPEN && size !== sentSize) {
-          ws.send(JSON.stringify({ t: "r", rows: xterm.rows, cols: xterm.cols }));
-          sentSize = size;
-        }
-      };
-      ws.onopen = resize;
-      ws.onmessage = (e) => {
-        if (typeof e.data === "string") {
-          const message = JSON.parse(e.data);
-          if (message.t === "mode") setStatus({ kind: "open", write: message.write });
-          if (message.t === "closed") setStatus({ kind: "closed", reason: message.reason });
-          return;
-        }
-        xterm.write(new Uint8Array(e.data));
-      };
-      ws.onclose = (e) => {
-        const reasons: Record<number, string> = {
-          4001: "Another window took control of this terminal.",
-          4401: "Your login expired.",
-          4403: "Terminal access denied.",
-          4404: "This session has no terminal right now.",
-        };
-        setStatus((s) => (s.kind === "closed" ? s : { kind: "closed", reason: reasons[e.code] ?? "Disconnected." }));
-      };
-      const input = xterm.onData((data) => {
-        if (ctrlRef.current && data.length === 1) {
-          const code = data.toUpperCase().charCodeAt(0);
-          if (code >= 64 && code < 96) data = String.fromCharCode(code - 64);
-          setCtrl(false);
-        }
-        send(data);
-      });
-      const observer = new ResizeObserver(() => resize());
-      observer.observe(host.current);
-      // A late lazy mount must not take focus back from a tab or another control.
-      if (!compact && !touch && document.activeElement === document.body) xterm.focus();
-      return () => {
-        outputRequest.current++;
-        observer.disconnect();
-        input.dispose();
-        selected.dispose();
-        disposeTextInput?.();
-        ws.close();
-        xterm.dispose();
-      };
+      term.current = runtime.xterm;
+      socket.current = runtime.socket;
+      return () => { outputRequest.current++; if (!persistentResource) runtime.dispose(); };
     };
     let cancelled = false;
     let dispose: (() => void) | undefined;
@@ -207,15 +140,16 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
       });
     } else dispose = mount();
     return () => { cancelled = true; dispose?.(); };
-  }, [sessionId, generation, take, touch, compact]);
+  }, [sessionId, generation, take, touch, compact, persistentResource]);
 
   useEffect(() => {
     if (!term.current) return;
-    term.current.options.screenReaderMode = readerVisible && screenReader;
+    if (persistentResource) persistentResource.setScreenReader(readerVisible && screenReader);
+    else term.current.options.screenReaderMode = active && readerVisible && screenReader;
     if (readerVisible) term.current.textarea?.setAttribute('aria-describedby', `${expanded?'expanded-leave':'leave'}-${sessionId}`);
     else term.current.textarea?.removeAttribute('aria-describedby');
     host.current?.querySelector(".live-region")?.setAttribute("aria-live", "off");
-  }, [screenReader, readerVisible, expanded, generation, sessionId, take, touch]);
+  }, [screenReader, readerVisible, expanded, generation, sessionId, take, touch, active, persistentResource]);
 
   useEffect(() => {
     if (selectionView === null) return;
@@ -339,6 +273,10 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
     }
   };
   const readOutput = async () => {
+    // The legacy capture endpoint is session-bound, not run-bound. Never mix
+    // its current tmux snapshot into a persistent host for an older incarnation.
+    if (persistentResource) return { text: recentOutput(term.current), limited: true,
+      note: 'Showing only output held in this browser for this run; older lines may be missing.' };
     try {
       const result = await api<{ text: string; truncated: boolean }>(`/api/sessions/${sessionId}/terminal-output`, { cache: "no-store" });
       return { text: result.text, limited: false, note: result.truncated ? "Showing the last 200,000 characters of the captured scrollback." : "Snapshot of the terminal’s retained scrollback and current screen." };
@@ -347,6 +285,15 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
       return { text: recentOutput(term.current), limited: true, note: `${why}. Showing only output held in this browser; older lines may be missing.` };
     }
   };
+  const outputOpen = output !== null;
+  useEffect(() => {
+    if (!outputOpen || persistentResource) return;
+    // Keep the hook aware of a person reading a static snapshot without replacing their selection.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void readOutput();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [outputOpen, sessionId, persistentResource]);
   const refreshOutput = async () => {
     const request = ++outputRequest.current;
     setOutputBusy(true);
@@ -377,21 +324,22 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
     }
   };
 
+  const readOnlyReason = status.kind !== "open" ? "" : persistentResource ? "observing this session" : status.reason ?? "";
   const announced = useRef("");
   useEffect(() => {
     if (compact) return;
-    const text = status.kind === "open" ? (status.write ? "" : "Terminal is read-only: another window has control.")
+    const text = status.kind === "open" ? (status.write ? status.reason ?? "" : `Terminal is read-only${readOnlyReason ? `: ${readOnlyReason}` : ""}.`)
       : status.kind === "closed" ? `Terminal closed. ${status.reason}` : "";
     if (text && text !== announced.current) announce(text);
     announced.current = text;
-  }, [status, compact]);
+  }, [status, compact, readOnlyReason]);
 
   const ctrlRef = useRef(ctrl);
   ctrlRef.current = ctrl;
   // The key bar sends without focusing the terminal: focusing its text input opens the phone's keyboard, which a tap
   // on ↑ or Esc never should. Its buttons also keep focus where it was (an open keyboard stays open).
   const sendKey = (data: string) => {
-    socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ t: "i", d: data }));
+    !persistentResource && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ t: "i", d: data }));
   };
   const keepFocus = { onPointerDown: (e: React.PointerEvent) => e.preventDefault(), onMouseDown: (e: React.MouseEvent) => e.preventDefault() };
   const reconnect = (takeControl: boolean) => {
@@ -399,6 +347,33 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
     setGeneration((g) => g + 1);
   };
 
+  const inTile = !!compact && !!toolbarTarget && !expanded;
+  const statusBar = (
+      <div data-terminal-status-bar={inTile ? "tile" : undefined} className={inTile ? "flex min-w-0 items-center gap-1 text-xs" : clsx("flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-3 py-1.5 text-xs",expanded&&status.kind==='open'&&status.write&&!status.reason&&"hidden")}>
+        <span className={clsx("flex min-w-0 items-center gap-1.5 text-muted",status.kind==="open"&&status.write&&status.reason&&"flex-1 basis-0")}>
+          {status.kind === "open" && (status.write
+            ? (!compact || status.reason) && <><Unlock size={13} className="shrink-0 text-ok" /> <span className="shrink-0 whitespace-nowrap">Read-write</span>{status.reason && <span data-terminal-notice className="min-w-0 truncate text-wait" title={status.reason}>· {status.reason}</span>}</>  /* a Grid tile stays quiet when all is well (GR-2) */
+            : <><Lock size={13} className="text-wait" /> <span className="min-w-0 truncate" title={readOnlyReason}>{readOnlyReason ? `Read-only · ${readOnlyReason}` : 'Read-only'}</span></>)}
+          {status.kind === "connecting" && "Connecting…"}
+          {status.kind === "closed" && <span className="text-wait">{status.reason}</span>}
+        </span>
+        <span className="flex items-center gap-1">
+          {/* In a tile header these are icon-only, so the session name keeps its room. */}
+          {!expanded&&(compact||!touch)&&<Button size="sm" title={selectTitle} aria-label={inTile ? "Select text" : undefined} aria-pressed={selectionView!==null} onClick={toggleSelection}>{inTile ? <TextSelect size={13} aria-hidden="true"/> : "Select text"}</Button>}
+          {name&&!expanded&&(compact||!touch)&&<Button data-expand-terminal size="sm" title="Expand terminal" aria-label="Expand terminal" aria-pressed={false} onClick={()=>expansion.change(true)}><Maximize2 size={13} aria-hidden="true"/>{!inTile && "Expand"}</Button>}
+          {persistentResource && onRelease && <Button size="sm" disabled={persistentResource.composing} onClick={() => {
+            if (persistentResource.composing) { announce('Finish composing before disconnecting this terminal.'); return; }
+            onRelease();
+          }}>Disconnect</Button>}
+          {!persistentResource && status.kind === "open" && !status.write && <Button size="sm" variant="secondary" onClick={() => setTakeDialog(true)}>Take control</Button>}
+          {!persistentResource && status.kind === "closed" && live && (
+            <Button size="sm" variant="secondary" onClick={() => reconnect(false)}><RotateCw size={13} /> Reconnect</Button>
+          )}
+          {!compact && <span className="inline-flex items-center gap-1 text-faint" id={`leave-${sessionId}`}><Kbd>{LEAVE_KEY}</Kbd> leaves the terminal</span>}
+          {!compact && <span className="hidden text-faint lg:inline">· Closing this view never stops the session.</span>}
+        </span>
+      </div>
+  );
   return (
     <div className="h-full min-h-0">
     <div ref={expansion.root} role={expanded?'dialog':undefined} aria-modal={expanded?true:undefined} aria-label={expanded?'Expanded terminal':undefined}
@@ -433,27 +408,12 @@ export const Terminal = memo(function Terminal({ sessionId, live, compact, name,
       </div>}
       {!compact && <a data-skip-terminal href={`#output-${sessionId}`} onClick={(e) => { e.preventDefault(); readerControl.current?.focus(); }}
         className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-10 focus:rounded-md focus:bg-panel focus:p-2 focus:text-accent focus:inline-flex focus:min-h-11 focus:items-center">Skip terminal</a>}
-      <div className={clsx("flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-3 py-1.5 text-xs",expanded&&status.kind==='open'&&status.write&&"hidden")}>
-        <span className="flex items-center gap-1.5 text-muted">
-          {status.kind === "open" && (status.write
-            ? !compact && <><Unlock size={13} className="text-ok" /> Read-write</>  /* a Grid tile stays quiet when all is well (GR-2) */
-            : <><Lock size={13} className="text-wait" /> Read-only · another window has control</>)}
-          {status.kind === "connecting" && "Connecting…"}
-          {status.kind === "closed" && <span className="text-wait">{status.reason}</span>}
-        </span>
-        <span className="flex items-center gap-1">
-          {!expanded&&(compact||!touch)&&<Button size="sm" title={selectTitle} aria-pressed={selectionView!==null} onClick={toggleSelection}>Select text</Button>}
-          {name&&!expanded&&(compact||!touch)&&<Button data-expand-terminal size="sm" aria-label="Expand terminal" aria-pressed={false} onClick={()=>expansion.change(true)}><Maximize2 size={13} aria-hidden="true"/>Expand</Button>}
-          {status.kind === "open" && !status.write && <Button size="sm" variant="secondary" onClick={() => reconnect(true)}>Take control</Button>}
-          {status.kind === "closed" && live && (
-            <Button size="sm" variant="secondary" onClick={() => reconnect(false)}><RotateCw size={13} /> Reconnect</Button>
-          )}
-          {!compact && <span className="inline-flex items-center gap-1 text-faint" id={`leave-${sessionId}`}><Kbd>{LEAVE_KEY}</Kbd> leaves the terminal</span>}
-          {!compact && <span className="hidden text-faint lg:inline">· Closing this view never stops the session.</span>}
-        </span>
-      </div>
+      {/* A Grid tile puts these controls in its own header row (one row less above each terminal). */}
+      {inTile ? createPortal(statusBar, toolbarTarget!) : statusBar}
+      <span role="status" aria-live="polite" className="text-xs" title="Uploaded paths are relative to the session folder. If you changed directory, return there or adjust the paths.">{upload.message}</span>
+      <TerminalTakeDialog open={takeDialog} onClose={() => setTakeDialog(false)} onTake={reason => { setTakeReason(reason); reconnect(true); }} />
       <div className="relative min-h-0 flex-1">
-      <div ref={host} onPointerDownCapture={beginSelectionDrag} onPointerMoveCapture={trackSelectionDrag}
+      <div ref={host} {...upload.handlers} onPointerDownCapture={beginSelectionDrag} onPointerMoveCapture={trackSelectionDrag}
         onPointerUpCapture={()=>{dragOrigin.current=null;}} onPointerCancelCapture={()=>{dragOrigin.current=null;}} className="h-full" style={selectionView!==null?{visibility:'hidden'}:undefined} aria-hidden={selectionView!==null?true:undefined} inert={selectionView!==null?true:undefined} onClick={() => { if(!term.current?.hasSelection()) term.current?.focus(); }}
         onKeyDownCapture={(event) => {
           // Capture before xterm: its textarea handler doesn't receive keys from accessibility rows.

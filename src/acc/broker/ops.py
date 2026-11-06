@@ -77,6 +77,12 @@ def list_sessions(config: BrokerConfig) -> list[dict]:
         # socket only. Re-read once; a child still exiting remains pending for reconcile.
         tmux(config, "run-shell", "true")
         sessions = _read_sessions(config)
+    from .claude_auth import refresh
+    for pane in sessions:
+        auth = refresh(config, pane['tmux_name'], cached=True)
+        pane['auth_mode'] = auth['auth_mode']
+        if auth['provider'] is not None:
+            pane['provider'] = auth['provider']
     return sessions
 
 
@@ -112,13 +118,13 @@ def _under_roots(config: BrokerConfig, path: str) -> Path:
                 return path
             candidate = Path(path)
             if config.allowed_folders and not any(candidate == root or root in candidate.parents for root in config.allowed_roots):
-                raise OpError("Choose a folder inside this account's workspace folders.")
+                raise OpError("Allow this folder in Security → Allowed folders.")
             return pin(config, path)
         except FolderError as error:
             raise OpError(str(error)) from None
     resolved = Path(path).resolve()
     if config.allowed_folders and not any(resolved == root or root in resolved.parents for root in config.allowed_roots):
-        raise OpError(f"{resolved} is outside this account's workspace folders. Choose a folder inside them.")
+        raise OpError("Allow this folder in Security → Allowed folders.")
     if not resolved.is_dir():
         raise OpError(f"{resolved} isn't a folder.")
     return resolved
@@ -272,6 +278,8 @@ def workspace_changes(config: BrokerConfig, path: str, base: str | None, detail:
     if not same_root and not _git_ok(cwd, "ls-files", "--cached", "-z", "--", ".") \
             and (ref == EMPTY_TREE or not _git_ok(cwd, "ls-tree", "--name-only", ref, "--", ".")):
         return {"git": False}  # an untracked scratch folder must not inherit a parent's checkout
+    from .session_git import diff_fingerprint
+    reviewed = diff_fingerprint(cwd) if detail else None
     files = []  # -z: names as they are (git C-quotes names with tabs, quotes or newlines otherwise)
     for record in _git_ok(cwd, "diff", "--relative", "--numstat", "--no-renames", "-z", ref, "--", ".").split("\0"):
         if not record:
@@ -308,7 +316,9 @@ def workspace_changes(config: BrokerConfig, path: str, base: str | None, detail:
         if len(diff) > MAX_DIFF:
             break
         diff += _git_ok(cwd, "diff", "--no-color", "--no-index", "--", "/dev/null", name, allowed=(0, 1))  # 1: differs
-    return {**out, "list": files[:MAX_FILES], "diff": diff[:MAX_DIFF], "truncated": len(diff) > MAX_DIFF}
+    if diff_fingerprint(cwd) != reviewed:
+        raise OpError("changes moved, review again")
+    return {**out, "fingerprint": reviewed, "list": files[:MAX_FILES], "diff": diff[:MAX_DIFF], "truncated": len(diff) > MAX_DIFF}
 
 
 BRANCH = re.compile(r"^acc/[a-z0-9][a-z0-9-]{0,80}(?:/work)?$")
@@ -316,6 +326,41 @@ WORKTREE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,90}$")
 
 
 SPOOL_READ = 512 * 1024
+
+
+def inbox_permissions(config, tmux_name, enabled=None):
+    if not isinstance(tmux_name, str) or not TMUX_NAME.fullmatch(tmux_name):
+        raise OpError("Invalid session terminal name.")
+    if enabled is not None:
+        if type(enabled) is not bool:
+            raise OpError("Invalid permission setting.")
+        tmux(config, "set-option", "-t", f"={tmux_name}:", "@acc-inbox-permissions",
+             "on" if enabled else "off", check=True)
+    value = tmux(config, "display-message", "-p", "-t", f"={tmux_name}:",
+                 "#{@acc-inbox-permissions}", check=True).stdout.strip()
+    return {"enabled": value != "off"}
+
+
+def permission_reply(config: BrokerConfig, acc_id: str, token: str, decision: str) -> dict:
+    """Deliver once to a live hook, never type into a terminal or save a rule."""
+    import socket
+    if not ACC_ID.fullmatch(acc_id) or not re.fullmatch(r"[0-9a-f]{32}", token) or decision not in ("allow", "deny"):
+        raise OpError("Invalid permission reply.")
+    try:
+        fd = _open_beneath(config.run_dir, (acc_id,))
+    except FileNotFoundError:
+        return {"answered": False}
+    try:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(3)
+            try:
+                connection.connect(f"/proc/self/fd/{fd}/permission-{token}.sock")
+                connection.sendall(decision.encode())
+                return {"answered": connection.recv(16) == b"answered"}
+            except OSError:
+                return {"answered": False}
+    finally:
+        os.close(fd)
 
 
 def read_spool(config: BrokerConfig, acc_id: str, offset: int) -> dict:
@@ -701,7 +746,8 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
             raise OpError("explanations don't run in containers")
     if helper:
         expected = config.run_dir / acc_id / "workspace"
-        if params["cwd"] != str(expected) or env:
+        from acc.providers.claude_auth import credential_env
+        if params["cwd"] != str(expected) or env != credential_env(env):
             raise OpError("explanations need an isolated run workspace and no project environment")
         expected.mkdir(mode=0o700, parents=True, exist_ok=True)
         cwd = expected
@@ -725,20 +771,64 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
     if workspace_key is not None:
         from .brief_references import seal
         bound_files['private-workspace.json'] = seal(acc_id, str(cwd), workspace_key)
-    _materialize_run(run_dir, {**files, **bound_files}, env)
+    _materialize_run(run_dir, {**files, **bound_files,
+        "permission-transport": "terminal" if container else "host"}, env)
 
+    executable = None
+    if not container:
+        executable = shutil.which(config.providers[provider])
+        if not executable:
+            raise OpError(f'{provider} CLI could not be resolved at launch.')
+        executable = os.path.abspath(executable)
+    from .claude_auth import refresh
+    config.auth_contexts[tmux_name] = dict(acc_id=acc_id, provider=provider, exe=executable, cwd=str(cwd),
+                                           env=dict(env), args=list(args), container=container)
+    if helper and provider == 'claude':
+        from .explain import arguments, isolated_home
+        home = run_dir / 'home'
+        # Prepare exactly the isolated context that the runner will use.
+        isolated_home(Path.home(), home, provider, config.hook_path, exe=executable, launch_env=env)
+        if env:
+            (home / '.claude/.credentials.json').unlink(missing_ok=True)
+        spec = json.loads(files['explanation.json'])
+        config.auth_contexts[tmux_name].update(
+            env={**env, 'HOME': str(home), 'XDG_CONFIG_HOME': str(home / '.config')},
+            args=arguments(provider, spec['model'], run_dir, spec.get('native_id')), inherit=False)
+    auth = refresh(config, tmux_name) if not container else {'provider': provider, 'auth_mode': 'unknown'}
+    if container and provider == 'claude' and params.get('automated'):
+        from .claude_auth import supplied_mode
+        auth['auth_mode'] = supplied_mode(env)
+    if provider == 'claude' and (params.get('automated') or helper):
+        from acc.providers.claude_auth import DOCS, MESSAGE, refusal
+        if refusal(provider, auth['auth_mode']):
+            raise OpError(f'{MESSAGE} {DOCS}')
+    personal_task = params.get('personal_task')
+    if personal_task is not None:
+        from acc.providers.claude_auth import refusal
+        if provider != 'claude' or not isinstance(personal_task, str) or len(personal_task) > 20000:
+            raise OpError('Invalid personal Claude launch task.')
+        if refusal(provider, auth['auth_mode']) and not container:
+            args = [*args, *providers.get(provider).prompt_args(personal_task)]
     if provider == 'codex' and not helper and not container:
+        from ..providers.codex import supported_launch_args
+        args = supported_launch_args(config.providers[provider], args)
         args = [*args, *_codex_team_git_args(config, cwd, args, files)]
     prepare_tmux(config)
     if helper:
         command = shlex.join(module_command("acc.broker.explain", str(run_dir),
-                                            config.providers[provider], config.hook_path))
+                                            executable, config.hook_path))
     elif not container:  # a container's home is its own (empty) one: nothing to set up in this account's
-        providers.get(provider).bootstrap(Path.home(), config.hook_path, exe=config.providers[provider])
-        command = shlex.join([config.providers[provider], *args])
+        providers.get(provider).bootstrap(Path.home(), config.hook_path, exe=executable)
+        command = shlex.join([executable, *args])
     env_file = run_dir / "session.env"
     if env and not container:
-        command = shlex.join(["sh", "-c", '. "$0" && exec "$@"', str(env_file), config.providers[provider], *args])
+        command = (shlex.join(["sh", "-c", '. "$0" && exec sh -c "$1"', str(env_file), command]) if helper else
+                   shlex.join(["sh", "-c", '. "$0" && exec "$@"', str(env_file), executable, *args]))
+    if provider == 'claude' and not container and not helper:
+        from .claude_auth import supplied_mode
+        if supplied_mode(env) == 'unknown':
+            from acc.providers.claude_auth import subscription_command
+            command = shlex.join(subscription_command(shlex.split(command)))
     guarded = " ".join(f"{name}={hashlib.sha256(files[name].encode()).hexdigest()}" for name in GUARD_FILES if name in files)
     session_env = dict(Environment({"ACC_RUN_DIR": str(run_dir), "ACC_SESSION_ID": acc_id, "ACC_GUARD_FILES": guarded}))
     launched = None
@@ -748,9 +838,15 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
         from . import container_integrations
         started = False
         try:
-            container_integrations.start(config, acc_id, container, provider, run_dir)
+            container_integrations.start(config, acc_id, container, provider, run_dir, env=env)
             started = True
             launched = containers.ask(config.containers_socket, "launch", acc_id, container)
+            auth = refresh(config, tmux_name)
+            if provider == 'claude' and params.get('automated'):
+                from acc.providers.claude_auth import DOCS, MESSAGE, refusal
+                if refusal(provider, auth['auth_mode']):
+                    containers.ask(config.containers_socket, 'stop', acc_id, container)
+                    raise containers.ContainerError(f'{MESSAGE} {DOCS}')
         except containers.ContainerError as error:
             if started:  # only this launch's gateway: a refused start never closes a running generation's
                 container_integrations.stop(config, acc_id, generation=container["generation"])
@@ -768,6 +864,8 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
             if sum(len(value.encode()) + 1 for value in [*new, command]) > TMUX_INLINE_BYTES:
                 raise OpError("The session's terminal paths are too long. Choose a shorter workspace path.")
         tmux(config, *new, command, check=True)
+        if provider == "codex" and not helper:
+            tmux(config, "set-option", "-t", tmux_name, "@acc-wheel", "on", check=True)
     except OpError:
         if container:
             stop_container(config, acc_id, container)
@@ -775,6 +873,11 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
     pane = tmux(config, "list-panes", "-t", f"={tmux_name}", "-F", "#{pane_pid}").stdout.strip().split("\n")[0]
     out = {"tmux_name": tmux_name, "pid": int(pane) if pane.isdigit() else None, "command": command,
            "head": git_baseline(cwd)}
+    out.update(auth)
+    if personal_task is not None:
+        prompt_args = providers.get(provider).prompt_args(personal_task)
+        out['personal_task_used'] = (args[-len(prompt_args):] == prompt_args if container
+                                     else refusal(provider, auth['auth_mode']))
     if launched:
         out["container"] = {"unit": launched.get("unit"), "state": launched.get("state")}
     return out
@@ -825,6 +928,9 @@ def clear_env(config: BrokerConfig, acc_id: str, files: list[str] | None = None)
         raise OpError("Rynhult sent an invalid session ID.")
     from . import container_integrations
     container_integrations.stop(config, acc_id)
+    for name, context in list(config.auth_contexts.items()):
+        if context.get('acc_id') == acc_id:
+            config.auth_contexts.pop(name, None)
     run_dir = config.run_dir / acc_id
     names = ["session.env"]
     for name in files or []:
@@ -855,10 +961,13 @@ def kill(config: BrokerConfig, tmux_name: str, container: dict | None = None, ac
     return {"killed": existed, "container": stop_container(config, acc_id, container)}
 
 
-def terminal_output(config: BrokerConfig, tmux_name: str) -> dict:
+def terminal_output(config: BrokerConfig, tmux_name: str, *, watching: bool = False) -> dict:
     """Bounded plain text of the pane and retained history, with wrapped rows joined."""
     if not TMUX_NAME.fullmatch(tmux_name):
         raise OpError("Rynhult sent an invalid session terminal name.")
+    # Only a person opening a snapshot counts as watching, not automation reading delivery acknowledgements.
+    if watching:
+        tmux(config, "set-option", "-t", f"={tmux_name}:", "@acc-terminal-snapshot", str(time.time()), check=True)
     result = tmux(config, "capture-pane", "-p", "-J", "-S", "-10000", "-t", f"={tmux_name}:")
     if result.returncode:
         raise OpError("Rynhult couldn't read the session's terminal. The session may have stopped.")
@@ -892,6 +1001,40 @@ def screen_prompt(config: BrokerConfig, tmux_name: str, provider: str) -> dict:
             "idle": spec.screen_idle(result.stdout)}
 
 
+def cancel_copy_mode(config: BrokerConfig, tmux_name: str) -> None:
+    """Leave copy mode and clear the shared wheel marker only after success."""
+    if not TMUX_NAME.fullmatch(tmux_name):
+        raise OpError("Invalid session terminal name.")
+    target = f"={tmux_name}:"
+    mode = tmux(config, "display-message", "-p", "-t", target, "#{pane_in_mode}", check=True)
+    if mode is None or mode.returncode:
+        raise OpError("Rynhult couldn't check terminal copy mode.")
+    if mode.stdout.strip() == "1":
+        tmux(config, "send-keys", "-X", "-t", target, "cancel", check=True)
+    tmux(config, "set-option", "-t", tmux_name, "@acc-scrolled", "off", check=True)
+
+
+def cancel_scrolled_codex(config: BrokerConfig, tmux_name: str, provider: str | None) -> None:
+    """Automation shares the pane's wheel state across broker processes."""
+    if provider != "codex":
+        return
+    for option in ("@acc-wheel", "@acc-scrolled"):
+        result = tmux(config, "show-options", "-v", "-t", tmux_name, option)
+        if result is None or result.returncode or result.stdout.strip() != "on":
+            return
+    cancel_copy_mode(config, tmux_name)
+
+
+def scroll_history(config: BrokerConfig, tmux_name: str, lines: int) -> None:
+    """Attachment-only operation; callers must hold writer authority."""
+    if not TMUX_NAME.fullmatch(tmux_name) or type(lines) is not int or not 1 <= abs(lines) <= 200:
+        raise OpError("Invalid terminal scroll request.")
+    tmux(config, "set-option", "-t", tmux_name, "@acc-scrolled", "on", check=True)
+    tmux(config, "copy-mode", "-e", "-t", f"={tmux_name}:", check=True)
+    tmux(config, "send-keys", "-X", "-t", f"={tmux_name}:", "-N", str(abs(lines)),
+         "scroll-up" if lines < 0 else "scroll-down", check=True)
+
+
 def interrupt(config: BrokerConfig, tmux_name: str, provider: str | None = None) -> dict:
     """Esc interrupts the current turn (OpenCode wants it twice, a moment apart: `interrupt_keys`). Besides send_text's
     message, the only key Rynhult ever sends."""
@@ -901,6 +1044,7 @@ def interrupt(config: BrokerConfig, tmux_name: str, provider: str | None = None)
     for i, key in enumerate(keys):
         if i:
             time.sleep(0.3)
+        cancel_scrolled_codex(config, tmux_name, provider)
         tmux(config, "send-keys", "-t", f"={tmux_name}:", key, check=True)  # pane target needs "session:"
     return {"sent": " ".join(keys)}
 
@@ -919,14 +1063,22 @@ def send_text(config: BrokerConfig, tmux_name: str, text: str, provider: str = "
         raise OpError(f"the message must be 1 to {MAX_TEXT} characters")
     if CONTROL.search(text):
         raise OpError("the message can't contain control characters")
+    from acc.providers.claude_auth import DOCS, MESSAGE, refusal
+
+    from .claude_auth import refresh
+    auth = refresh(config, tmux_name)
+    if refusal(auth['provider'], auth['auth_mode']) or refusal(provider, auth['auth_mode']):
+        raise OpError(f'{MESSAGE} {DOCS}')
     spec = _provider(provider)
     line = re.sub(r"[\t\n]", " ", text).strip()
+    cancel_scrolled_codex(config, tmux_name, provider)
     tmux(config, "send-keys", "-t", f"={tmux_name}:", "-l", "--", line, check=True)
     # Separate text insertion from submission for TUIs with paste-burst detection: Codex folds a fast burst into
     # "[Pasted Content …]" and treats an Enter inside the burst window as part of the paste, so it waits longer.
     settle = 1.0 if provider == "codex" else 0.2
     time.sleep(settle)
     for _ in range(3):
+        cancel_scrolled_codex(config, tmux_name, provider)
         tmux(config, "send-keys", "-t", f"={tmux_name}:", "Enter", check=True)
         time.sleep(max(0.3, settle))
         row = tmux(config, "display-message", "-p", "-t", f"={tmux_name}:", "#{cursor_y}", check=True).stdout.strip()
@@ -1831,14 +1983,14 @@ def prepare_private_workspace(config: BrokerConfig, path: str) -> dict:
 def workspace_identity(config: BrokerConfig, path: str) -> dict:
     """Identify a local workspace as its owning account, without granting path access.
 
-    Ordinary project registration remains declarative. Aliases below an account
-    workspace root get canonicalized; no existence or directory listing is returned.
+    Report root-policy eligibility without granting access or probing contents.
+    Aliases below a configured root are canonicalized; no directory listing is returned.
     """
     candidate = Path(path).resolve()
     for root in config.allowed_roots:
-        if root.resolve() in candidate.parents:
-            return {"path": str(candidate)}
-    return {"path": path}
+        if candidate == root.resolve() or root.resolve() in candidate.parents:
+            return {"path": str(candidate), "allowed": True}
+    return {"path": path, "allowed": not config.allowed_folders or candidate in config.allowed_roots}
 
 
 def delete_workspace(config: BrokerConfig, parent: str, name: str) -> dict:
@@ -2473,6 +2625,16 @@ def files(config: BrokerConfig, path: str, **params) -> dict:
         return operate(config, path, **params)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise OpError('That file or folder is missing, changed, or can\'t be opened. Reload the folder and try again.') from error
+
+
+
+def file_search(config: BrokerConfig, path: str, q: str, limit: int = 20) -> dict:
+    """Filename-only discovery, under the same authority as the Files browser."""
+    from .file_search import search
+    try:
+        return search(config, path, q, limit)
+    except OSError as error:
+        raise OpError("That folder is missing, changed, or cannot be searched. Reload and try again.") from error
 
 
 def _delete_git_pointer(path: Path) -> str:

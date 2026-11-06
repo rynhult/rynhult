@@ -1,3 +1,9 @@
+import { useWorkingView, workingId } from "../lib/workingView";
+import "../components/shell/ProjectPages.css";
+import { useNewShell } from "../lib/uiShell";
+import { RecentResults } from '../components/shell/RecentResults';
+import { ProjectSources, ProjectWorkingLocations } from '../components/SourceViews';
+import { ContinueWorking } from "../components/shell/ContinueWorking";
 import { FirstCommit } from "../components/FirstCommit";
 import { ProjectDeleteDialog } from "../components/ProjectDelete";
 import { GitIdentityCard } from "../components/GitIdentity";
@@ -14,9 +20,11 @@ import { ArrowLeft, BookOpen, CheckCircle2, CircleDot, ExternalLink, FolderGit2,
 import { api } from "../lib/api";
 import { ago, isLocalProject } from "../lib/format";
 import type { BackupView, ComposeReview, Container as RuntimeContainer, GithubSnapshot, Project } from "../lib/types";
-import { useInstance, useRole, useSessions } from "../lib/queries";
+import { useInstance, useProjects, useRole, useSessions } from "../lib/queries";
 import { SessionList } from "../components/SessionList";
-import { Badge, Button, Card, CardHeader, Empty, ErrorNote, IconButton, LoadingRows, Page, PageHeader, Skeleton, TabPanel, Tabs } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Empty, ErrorNote, IconButton, LoadingRows, Popover, Skeleton, QueryState } from "../components/ui";
+import { TabPanel, Tabs } from "../components/Tabs";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { useNewSession } from "../components/newSession";
 import { isLive } from "../components/session-bits";
 import { KnowledgePanel } from "../components/Knowledge";
@@ -114,50 +122,58 @@ function ProjectStatus({ project: p, owner }: { project: Project; owner: boolean
 
 /** The Overview's sections, as tabs nested under Overview/Files/Preview (UX follow-up to W7). Each is deep-linkable as
  *  #project-<id>; #project-settings, the old Project settings heading, opens Keys. */
-type Section = "brief" | "sessions" | "repository" | "knowledge" | "keys" | "backup" | "ports" | "stack" | "gates";
-function projectSections(p: Project, owner: boolean, orchestrator: boolean): { id: Section; label: string }[] {
-  return [{ id: "sessions", label: "Sessions" }, ...(!p.private_workspace ? [{ id: "repository" as const, label: "Issues and pull requests" }] : []),
+type Section = "results" | "sources" | "locations" | "brief" | "sessions" | "repository" | "knowledge" | "keys" | "backup" | "ports" | "stack" | "gates";
+function projectSections(p: Project, owner: boolean, orchestrator: boolean, shell: boolean): { id: Section; label: string }[] {
+  return [{ id: "sessions", label: "Sessions" }, ...(!p.private_workspace ? [{ id: "repository" as const, label: shell ? "Issues & pull requests" : "Issues and pull requests" }] : []),
     ...(!desktopBuild && orchestrator && p.import_mode === "managed" && !p.private_workspace ? [{ id: "gates" as const, label: "Gate queue" }] : []),
     ...(orchestrator ? [{ id: "brief" as const, label: "Project brief" }] : []), { id: "knowledge", label: "Knowledge" }, { id: "keys", label: "Keys" }, ...(!desktopBuild ? [{ id: "backup" as const, label: "Backup" }] : []),
-    ...(!desktopBuild && p.import_mode === "managed" ? [{ id: "ports" as const, label: "Ports" }, ...(owner ? [{ id: "stack" as const, label: "Runtime" }] : [])] : [])];
+    ...(!desktopBuild && p.import_mode === "managed" ? [{ id: "ports" as const, label: "Ports" }, ...(owner ? [{ id: "stack" as const, label: "Runtime" }] : [])] : []), ...(shell ? [{ id: "results" as const, label: "Results" }, { id: "locations" as const, label: "Working locations" }] : [])];
 }
 const sectionOf = (hash: string, sections: { id: Section }[]): Section => {
-  const wanted = hash === "#project-settings" ? "keys" : hash.replace(/^#project-/, "");
+  const wanted = hash === "#project-settings" ? "keys" : hash === "#project-sources" ? "locations" : hash.replace(/^#project-/, "");
   return sections.find((x) => x.id === wanted)?.id ?? "sessions";
 };
 
 export function ProjectPage() {
+  const working = useWorkingView();
+  const shell = useNewShell();
   const [deleting, setDeleting] = useState(false);
   const feature = useFeatures();
   const { id = "" } = useParams();
   const [search, setSearch] = useSearchParams();
   const { hash, key } = useLocation();
-  const tab = hash.startsWith("#project-") ? "overview" : search.get("tab") === "files" ? "files" : search.get("tab") === "preview" ? "preview" : "overview";
+  const tab = hash.startsWith("#project-") ? "overview" : shell && search.get("tab") === "changes" ? "changes" : search.get("tab") === "files" ? "files" : search.get("tab") === "preview" ? "preview" : "overview";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const project = useQuery({ queryKey: ["projects"], queryFn: () => api<Project[]>("/api/projects"), select: (all) => all.find((p) => String(p.id) === id) });
+  const project = useProjects(all => all.find(p => String(p.id) === id));
   const sessions = useSessions();
   const { owner } = useRole();
-  const { orchestrator } = useInstance();
+  const { orchestrator, host: instanceHost } = useInstance();
   const newSession = useNewSession();
   const isGithub = !!project.data?.repo && (!project.data.remote_url || /^(git@|https:\/\/|ssh:\/\/git@)github\.com[:/]/.test(project.data.remote_url));
-  const github = useQuery({ queryKey: ["github", id], queryFn: () => api<Snapshot>(`/api/projects/${id}/github`), refetchInterval: 60000, enabled: isGithub });
+  const github = useQuery({ queryKey: ["github", id], queryFn: () => api<Snapshot>(`/api/projects/${id}/github`), refetchInterval: 60000, enabled: isGithub && (!working || working.visible) });
   const refresh = useMutation({
     mutationFn: () => api<Snapshot>(`/api/projects/${id}/github?refresh=1`),
     onSuccess: (data) => queryClient.setQueryData(["github", id], data),
   });
   const p = project.data;
-  const sections = p ? projectSections(p, owner, !!orchestrator) : [];
-  const section = sectionOf(hash, sections);
+  const sections = p ? projectSections(p, owner, !!orchestrator, shell) : [];
+  const section = sectionOf(shell && !hash.startsWith("#project-") && search.get("section") ? `#project-${search.get("section")}` : hash, sections);
+  const topSection = shell && (section === "results" || section === "locations");
+  const view = topSection && tab === "overview" ? section : tab;
   useLayoutEffect(() => {
     // A link to a section (status line, bookmark, Back): show its tab and put focus on it, so Enter/arrows work next.
-    if (!hash.startsWith("#project-") || !p) return;
-    const tabButton = document.getElementById(`project-sections-tab-${section}`);
+    if (!hash.startsWith("#project-") || !p || working && !working.visible) return;
+    if (shell && (hash === '#project-sources' || hash === '#project-locations')) {
+      const target = document.getElementById(hash.slice(1));
+      target?.scrollIntoView({ block: 'nearest' }); target?.focus({ preventScroll: true }); return;
+    }
+    const tabButton = document.getElementById(`${workingId(topSection ? "project-tabs" : "project-sections", working)}-tab-${section}`);
     tabButton?.scrollIntoView({ block: "nearest" });
     // Focus with this committed selection. A deferred frame can steal focus from a later
     // arrow-key selection before its navigation commits, making the following arrow start at the wrong tab.
     tabButton?.focus({ preventScroll: true });
-  }, [hash, key, p?.id, owner, section]);
+  }, [hash, key, p?.id, owner, section, shell, topSection, working?.visible]);
   if (!p) return <Page>{project.isLoading ? <Skeleton className="h-40" /> : project.error
     ? <ErrorNote error={project.error} title="Couldn't load the projects." onRetry={project.refetch} />
     : <Card><Empty icon={FolderGit2} action={<Link to="/projects" className="inline-flex h-8 pointer-coarse:h-11 items-center gap-1.5 rounded-md border border-line-strong px-3 text-[13px] text-fg hover:bg-panel-2"><ArrowLeft size={14} aria-hidden="true" /> Back to projects</Link>}>
@@ -171,18 +187,28 @@ export function ProjectPage() {
   // Same rules as New session: only managed, trusted projects can launch.
   const canLaunch = p.import_mode === "managed" && p.trusted && !p.archived;
   const start = (name: string, initial_prompt: string) => newSession({ mode: "project", project_id: p.id, name, worktree: true, initial_prompt });
+  const repositoryFacts = (
+    !p.private_workspace && <>
+      <p className={mainRun && mainRun.conclusion !== "success" ? "text-bad" : undefined}>
+        {!isGithub ? "CI not available for this repository" : github.isError || g?.error ? "CI unavailable" : !g ? "Checking CI…" : !mainRun ? "No completed CI runs" : mainRun.conclusion === "success" ? "CI passing" : "CI failing"}
+        {mainRun && <> · {mainRun.name} · {ago(mainRun.created_at)}</>}
+      </p>
+      <p>{g?.pulls ? `${g.pulls.length} open pull request${g.pulls.length === 1 ? "" : "s"}` : "Pull requests not loaded"}</p>
+      <p>{g?.issues ? `${g.issues.length} open issue${g.issues.length === 1 ? "" : "s"}` : "Issues not loaded"}</p>
+    </>
+  );
   return (
-    <Page wide>
+    <Page wide className={shell ? "shell-project-page" : undefined}>
       {p.import_mode === "managed" && !p.archived && <FirstCommit key={p.id} projectId={p.id} />}
       <PageHeader title={p.name} description={p.notes}
         meta={<>
-          <span className="font-mono">{p.workspace_path}</span>{p.machine_offline && <Badge>Machine offline</Badge>}{p.private_workspace && <Badge>Development · local only</Badge>}
+          {!shell && <span className="font-mono">{p.workspace_path}</span>}{p.machine_offline && <Badge>Machine offline</Badge>}{p.private_workspace && <Badge>Development · local only</Badge>}
           {p.import_mode === "readonly" ? <Badge tone="wait">read-only</Badge> : !p.trusted && <Badge tone="wait">not trusted</Badge>}
         </>}
         actions={<>
-          {!p.private_workspace && !isLocalProject(p) && <Button variant="danger" onClick={() => setDeleting(true)}>Delete project</Button>}
+          {!p.private_workspace && !isLocalProject(p) && (shell ? <Popover label="Project actions" trigger={<span aria-hidden="true">…</span>}>{close => <Button variant="danger" onClick={() => { close(); setDeleting(true); }}>Delete project</Button>}</Popover> : <Button variant="danger" onClick={() => setDeleting(true)}>Delete project</Button>)}
           {/* Work starts here (UX review PJ-1); an untrusted project gets "Trust and launch" inside New session. */}
-          {p.import_mode === "managed" && !p.archived && <Button variant="primary" onClick={() => newSession({ mode: "project", project_id: p.id, ...(p.private_workspace && { worktree: true }) })}>
+          {(!shell || p.private_workspace) && p.import_mode === "managed" && !p.archived && <Button variant="primary" onClick={() => newSession({ mode: "project", project_id: p.id, ...(p.private_workspace && { worktree: true }) })}>
             <Plus size={14} aria-hidden="true" /> New session</Button>}
           <Link to={`/projects/${p.id}/wiki`} className="inline-flex h-8 pointer-coarse:h-11 items-center gap-1.5 rounded-md border border-line-strong bg-panel-2 px-3 text-[13px] font-medium hover:bg-panel-3">
             <BookOpen size={14} aria-hidden="true" /> Wiki
@@ -198,37 +224,31 @@ export function ProjectPage() {
         </>} />
 
       {deleting && <ProjectDeleteDialog project={p} onClose={() => setDeleting(false)} />}
-      <Tabs id="project-tabs" label="Project views" tabs={[{ id: "overview", label: "Overview" }, { id: "files", label: "Files" }, ...(feature("live_preview") ? [{ id: "preview", label: "Preview" }] : [])]} value={tab}
-        onChange={(value) => setSearch(value === "overview" ? {} : { tab: value }, { replace: true })} />
-      <TabPanel id="project-tabs" value={tab} className="space-y-6">
-      {p.machine_offline && tab !== "overview" ? <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card> : tab === "files" ? <Files kind="project" scopeKey={id} /> : tab === "preview" && feature("live_preview") ? <Preview projectId={p.id} projectName={p.name} folder={p.workspace_path} /> : <>
-      <section aria-label="Project summary" className="min-w-0 flex flex-wrap gap-x-5 gap-y-1 break-words text-[13px] text-muted [overflow-wrap:anywhere]">
+      <Tabs id="project-tabs" label="Project views" tabs={[{ id: "overview", label: "Overview" }, { id: "files", label: "Files" }, ...(shell ? [{ id: "changes", label: "Changes" }] : []), ...(feature("live_preview") ? [{ id: "preview", label: "Preview" }] : []), ...(shell ? [{ id: "results", label: "Recent results" }, { id: "locations", label: "Working locations" }] : [])]} value={view}
+        onChange={(value) => !shell ? setSearch(value === "overview" ? {} : { tab: value }, { replace: true }) : navigate({ search: value === "overview" ? "" : value === "results" || value === "locations" ? `?section=${value}` : `?tab=${value}`, hash: "" }, { replace: true })} />
+      <TabPanel id="project-tabs" value={view} className="space-y-6">
+      {tab === "changes" ? <Card className="space-y-2 p-4"><h2 className="font-semibold">Session changes</h2><p className="text-sm text-muted">Open a session's Changes view to review its worktree.</p><QueryState query={sessions}>{() => mine.length ? <ul>{mine.map(s => <li key={s.id}><Link className="block py-2 text-accent underline" to={`/sessions/${s.id}?tab=changes`}>{s.name}</Link></li>)}</ul> : <Empty>No sessions in this project yet.</Empty>}</QueryState></Card> : p.machine_offline && tab !== "overview" ? <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card> : tab === "files" ? <Files kind="project" scopeKey={id} /> : tab === "preview" && feature("live_preview") ? <Preview projectId={p.id} projectName={p.name} folder={p.workspace_path} /> : <>
+      {!shell && <section aria-label="Project summary" className="min-w-0 flex flex-wrap gap-x-5 gap-y-1 break-words text-[13px] text-muted [overflow-wrap:anywhere]">
         <p>{sessions.data ? `${live} live session${live === 1 ? "" : "s"} · ${mine.length} in this project` : sessions.isError ? "Sessions unavailable" : "Checking sessions…"}</p>
-        {!p.private_workspace && <>
-          <p className={mainRun && mainRun.conclusion !== "success" ? "text-bad" : undefined}>
-            {!isGithub ? "CI not available for this repository" : github.isError || g?.error ? "CI unavailable" : !g ? "Checking CI…" : !mainRun ? "No completed CI runs" : mainRun.conclusion === "success" ? "CI passing" : "CI failing"}
-            {mainRun && <> · {mainRun.name} · {ago(mainRun.created_at)}</>}
-          </p>
-          <p>{g?.pulls ? `${g.pulls.length} open pull request${g.pulls.length === 1 ? "" : "s"}` : "Pull requests not loaded"}</p>
-          <p>{g?.issues ? `${g.issues.length} open issue${g.issues.length === 1 ? "" : "s"}` : "Issues not loaded"}</p>
-        </>}
-      </section>
-      <ProjectStatus key={p.id} project={p} owner={owner} />
-      {isGithub && <ErrorNote error={github.error} title="Couldn't read GitHub status." onRetry={github.refetch} />}
-
-      <Tabs id="project-sections" label="Project sections" tabs={sections} value={section}
-        onChange={(value) => { navigate({ hash: `project-${value}` }, { replace: true }); }} />
-      {/* Every section stays mounted (only the chosen one shows): drafts survive switching, and the status line above
+        {repositoryFacts}
+      </section>}
+      {!shell && <ProjectStatus key={`status-${p.id}`} project={p} owner={owner} />}
+      {!shell && isGithub && <ErrorNote error={github.error} title="Couldn't read GitHub status." onRetry={github.refetch} />}
+      <div hidden={!!topSection}><Tabs id="project-sections" label="Project sections" tabs={sections.filter(s => s.id !== "results" && s.id !== "locations")} value={section}
+        onChange={(value) => { navigate({ search: shell ? `?section=${value}` : "", hash: shell ? "" : `project-${value}` }, { replace: true }); }} /></div>
+      {/* Every section stays mounted (only the chosen one shows): drafts survive switching, and the status summary
           keeps reading the cards' own queries. */}
-      <TabPanel key={p.id} id="project-sections" value={section} className="min-w-0 space-y-6">
+      <TabPanel key={p.id} id="project-sections" value={section} standalone={!!topSection} className="min-w-0 space-y-6">
+        {shell && <div hidden={section !== "results"}><RecentResults projectId={p.id} /></div>}
+        {shell && <div hidden={section !== "locations"}><div id="project-sources" tabIndex={-1}><ProjectSources projectId={p.id} /></div><div id="project-locations" tabIndex={-1}><ProjectWorkingLocations projectId={p.id} /></div></div>}
         <div id="project-brief" hidden={section !== "brief"}>{orchestrator && <ProjectBrief key={p.id} projectId={p.id} />}</div>
         <div id="project-sessions" hidden={section !== "sessions"} className="min-w-0 space-y-6">
-          <Card>
+          {shell ? <ContinueWorking key={`continue-${p.id}`} project={p} /> : <Card>
             <CardHeader title="Sessions" icon={TerminalSquare} subtitle="Running and stopped sessions in this project" />
             {sessions.error && <ErrorNote error={sessions.error} title="Couldn't read the sessions." onRetry={sessions.refetch} />}
             {!sessions.data ? <LoadingRows rows={2} /> : mine.length ? <SessionList sessions={mine} showProject={false} />
               : <Empty icon={TerminalSquare}>No sessions yet. Start one with New session.</Empty>}
-          </Card>
+          </Card>}
           {p.repo && g?.repo && (
             <Card>
               <CardHeader title="Actions" icon={PlayCircle} subtitle={`Latest workflow runs · checked ${ago(new Date((g.fetched_at ?? 0) * 1000).toISOString())}`} />
@@ -303,6 +323,13 @@ export function ProjectPage() {
             <div className="p-4">{p.machine_offline ? <p className="text-xs text-muted">Machine offline</p> : <Runtime project={p} />}</div>
           </Card>
         </div>}
+      {shell && <section aria-label="Project overview" className="shell-project-hero">
+        <p className="mt-3 text-[13px] text-muted">{sessions.data ? <>{mine.length} session{mine.length === 1 ? '' : 's'} · {live} live</> : sessions.isError ? 'Sessions unavailable' : 'Checking sessions…'} · {p.host === 'local' ? instanceHost : p.host}{p.machine_offline ? ' · offline' : ''}</p>
+        {(p.repo || p.remote_url) && <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-muted">{repositoryFacts}</div>}
+      </section>}
+      {shell && <ProjectStatus key={`status-${p.id}`} project={p} owner={owner} />}
+      {shell && isGithub && <ErrorNote error={github.error} title="Couldn't read GitHub status." onRetry={github.refetch} />}
+
       </TabPanel>
       </>}
       </TabPanel>

@@ -7,6 +7,8 @@ server. It does not need the future native iOS or Android apps, which come
 after v1, one platform at a time, in an order not chosen yet.
 See [platform scope](/User-Guide/Install#v10-platform-scope).
 
+When an owner has enabled LAN device pairing, the Inbox offers signed-in people **Connect your phone** under **Information**. Open it to follow this guide. Dismiss the notice to hide it across your browsers; it also disappears once you have a paired device or turn on notifications.
+
 **Before you start:** Rynhult is installed and you've signed in from a computer (see [Getting started](/User-Guide/Getting-Started)).
 
 ## 1. Reach Rynhult from the phone

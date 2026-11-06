@@ -171,7 +171,8 @@ def test_codex_gets_skills_mcp_and_instructions_through_overrides(catalog):
         args = argv(inputs, files, resume=resume)
         assert [args[i + 1] for i, a in enumerate(args) if a == "-c"] == ["check_for_update_on_startup=false", *overrides,
                                                                        "features.hooks=true"]
-        assert args[:2] == (["resume", SID] if resume else ["--sandbox", "workspace-write"])
+        launch = [a for a in args if a != "--no-alt-screen"]  # inline mode (keep_scrollback) is on by default
+        assert launch[:2] == (["resume", SID] if resume else ["--sandbox", "workspace-write"])
         assert compiler.session_environment(inputs, catalog, "/r", files) == {"TOOL_TOKEN": SECRET}  # recomputed for every start
 
 

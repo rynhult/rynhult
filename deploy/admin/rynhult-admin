@@ -1,0 +1,13 @@
+#!/bin/sh
+# Root-console command, installed root-owned; never add to a sudoers allowlist.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+[ "$(id -ru)" = 0 ] && [ "$(id -u)" = 0 ] || { echo 'requires root on the host' >&2; exit 1; }
+# Isolated mode excludes caller-controlled imports and Python environment settings.
+python=/srv/acc/app/.venv/bin/python
+if [ "${1:-}" = backup ]; then
+    shift
+    exec "$python" -I -m acc.admin_backups "$@"
+fi
+exec "$python" -I -m acc.owner_recovery "$@"

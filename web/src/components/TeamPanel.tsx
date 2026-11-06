@@ -1,3 +1,4 @@
+import { ClaudeAutomationNotice } from "./ClaudeAutomationNotice";
 import { TeamLifetime } from './TeamLifetime';
 import { ProjectGatesCard } from './Gates';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -12,7 +13,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, post } from '../lib/api';
 import type { SessionSummary } from '../lib/types';
 import { stamp, until } from '../lib/format';
-import { Button, Card, ErrorNote, QueryState, Tabs, TabPanel } from './ui';
+import { Button, Card, ErrorNote, QueryState } from './ui';
+import { Tabs, TabPanel } from './Tabs';
 import { Plan } from './Plan';
 import { SessionList } from './SessionList';
 import { SelectionReasons } from './SelectionReasons';
@@ -48,6 +50,7 @@ export function TeamPanel({ id, projectId }: { id: string; projectId: number }) 
   const gateSummary = gates.error ? 'Gate refresh failed; expand for details.' : gates.data ? gates.data.budget.enabled ? `${gates.data.running} host slots used · ${gates.data.jobs.filter(j => j.state === 'queued').length} queued shown` : 'Gate queue is off' : 'Loading gate status…';
   const SettingsPanel = orchestrator ? TabPanel : 'div';
   return <QueryState query={query}>{(team) => <div className="space-y-4">
+    {team.members.map(member => <ClaudeAutomationNotice key={member.id} refusal={member.auth?.automation_refusal} />)}
     <TeamLifetime id={id} expiresAt={team.expires_at} stopped={team.stopped} reason={team.stop_reason} available={team.resume_available} />
     {orchestrator && <Tabs id={`team-sections-${id}`} label="Team sections" tabs={tabs} value={section}
       onChange={value => navigate({ pathname: location.pathname, search: location.search, hash: `#${value}` }, { state: { teamTabNavigation: true } })} />}

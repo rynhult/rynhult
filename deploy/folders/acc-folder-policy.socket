@@ -6,7 +6,9 @@ ListenStream=/run/acc-folder-policy/helper.sock
 SocketMode=0660
 SocketUser=root
 SocketGroup=acc
-DirectoryMode=0750
+# Parent permits traversal after reboot; socket mode and worker peer UID
+# restrict connections to the main service. Agents cannot replace the socket.
+DirectoryMode=0755
 Accept=yes
 MaxConnections=4
 

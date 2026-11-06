@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean, routeDemoSessions, wikiShotPath } from "./helpers";
 import type { ProviderInfo } from "../src/lib/types";
 
@@ -88,7 +88,9 @@ for (const width of [1440, 390]) for (const theme of ["dark", "light"] as const)
     await page.keyboard.press("Enter");
     await expect(claude.getByText("alex@example.com", { exact: true })).toBeVisible();
     await unavailable.locator("summary").click();
-    await expect(unavailable.getByRole("link", { name: "Usage and billing" })).toBeVisible();
+    const copilotSettings = unavailable.getByRole("link", { name: "See GitHub settings", exact: true });
+    await expect(copilotSettings).toBeVisible();
+    await expect(copilotSettings).toHaveAttribute("href", "https://example.com/billing");
     await page.getByRole("group", { name: "Provider sections" }).getByRole("link", { name: "Available models" }).click();
     await expect(page.getByRole("searchbox", { name: "Filter models" })).toBeVisible();
     await page.getByRole("searchbox", { name: "Filter models" }).fill("example");

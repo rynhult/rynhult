@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { readFileSync } from "node:fs";
 import { AUTH_FILE, PASSWORD, expectScannableQr, info, saveSecret, shot, totp } from "./helpers";
 
@@ -41,6 +41,13 @@ test("first run: setup token, password and authenticator enrolment", async ({ pa
   await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByLabel("Code from your authenticator").fill(totp(secret));
   await page.getByRole("button", { name: "Finish setup" }).dblclick();
+  const recovery = page.getByRole('region', { name: 'Recovery codes', exact: true });
+  await expect(recovery).toBeVisible();
+  await expect(recovery.locator('pre')).toHaveText(/^(?:[a-f0-9]{32}\n){9}[a-f0-9]{32}$/);
+  // Focus can refresh auth elsewhere; enrollment must keep the one-time display.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(recovery).toBeVisible();
+  await page.getByRole('button', { name: 'I saved the codes', exact: true }).click();
   await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
   await page.context().storageState({ path: AUTH_FILE });
 });

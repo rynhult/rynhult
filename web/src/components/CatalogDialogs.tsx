@@ -5,7 +5,8 @@ import { AlertTriangle, ExternalLink, FileText, Info, ShieldAlert } from "lucide
 import { useState } from "react";
 import { ApiError, post } from "../lib/api";
 import type { Catalog, CatalogItem, CatalogProfile, ImportPreview, Provider } from "../lib/types";
-import { Badge, Button, Dialog, ErrorNote, Field, Input, Select, TabPanel, Tabs, Textarea, ToggleChipGroup } from "./ui";
+import { Badge, Button, Dialog, ErrorNote, Field, Input, Select, Textarea, ToggleChipGroup } from "./ui";
+import { TabPanel, Tabs } from "./Tabs";
 import { useConfirm } from "./confirm";
 import { useProviderRegistry } from "../lib/queries";
 

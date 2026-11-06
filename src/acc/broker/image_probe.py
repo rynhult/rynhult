@@ -267,6 +267,13 @@ def run(config, provider, model):
             scope.update(HOME=str(home),XDG_CONFIG_HOME=str(home/'.config'),CODEX_HOME=str(home/'.codex'),
                          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1',DISABLE_AUTOUPDATER='1',NO_OPEN_BROWSER='1')
             args,prompt=arguments(provider,model,image)
+            if provider == 'claude':
+                from acc.providers.claude_auth import CODE, refusal
+
+                from .claude_auth import probe
+                if refusal(provider, probe(executable, str(workspace), scope, args, inherit=False)):
+                    evidence.update(outcome='error', error_kind=CODE)
+                    return result
             diagnostic={}
             code,text=bounded([executable,*args],cwd=workspace,env=scope,stdin=None if provider=='copilot' else prompt,diagnostic=diagnostic)
             answer=None

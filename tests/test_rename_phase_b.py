@@ -125,6 +125,8 @@ def test_installer_alias_only_dryrun_is_unprivileged_and_readonly(tmp_path, role
                              '--alias-root', str(tmp_path)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert 'rynhult-agent-add' in result.stdout
+    if role == 'main':
+        assert 'folder mapping: nothing installed yet, skipped' in result.stdout
     assert snapshot(tmp_path) == before
     assert 'restart' not in result.stdout and 'enable --now' not in result.stdout
 
@@ -575,4 +577,26 @@ def test_merged_parent_does_not_allow_writable_canonical_directory(tmp_path):
     before = snapshot(tmp_path)
     with pytest.raises(ValueError, match='untrusted'):
         api()['reconcile'](tmp_path, 'main')
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize('root_option', ['--alias-root', '--alias-root='])
+def test_main_dryrun_unreadable_configuration_is_readonly(tmp_path, root_option):
+    if os.geteuid() == 0:
+        pytest.skip('real permission denial requires an unprivileged user')
+    path = tmp_path / 'etc/default/accd'
+    path.parent.mkdir(parents=True)
+    path.write_text('ACC_SERVICES_ACCOUNT=alex\n')
+    before = snapshot(tmp_path)
+    path.chmod(0)
+    root_args = ([root_option, str(tmp_path)] if root_option == '--alias-root'
+                 else [root_option + str(tmp_path)])
+    try:
+        result = subprocess.run(['bash', str(REPO / 'deploy/install.sh'), '--aliases-only', '--dry-run',
+                                 *root_args], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert f'folder mapping: skipped: needs root to read {path}' in result.stdout
+        assert path.stat().st_mode & 0o777 == 0
+    finally:
+        path.chmod(before['etc/default/accd'][0] & 0o777)
     assert snapshot(tmp_path) == before

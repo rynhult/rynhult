@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { Page, PageHeader } from "../components/ui";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { Wiki } from "../components/Wiki";
 import { useProjects } from "../lib/queries";
 import { workspaceName } from "../lib/format";

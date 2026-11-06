@@ -1,0 +1,143 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "results",
+ "cases": [
+  {
+   "name": "initialize",
+   "wire": {
+    "major": 1,
+    "minor": 0,
+    "features": [
+     "queue",
+     "terminal"
+    ]
+   }
+  },
+  {
+   "name": "session.attach",
+   "wire": {
+    "attachmentId": "att-1",
+    "snapshot": {
+     "sessionId": "s",
+     "runId": "r",
+     "historyEpoch": 1,
+     "watermark": 41,
+     "controlRevision": 3,
+     "configurationRevision": 2,
+     "capabilities": {
+      "text": "qualified",
+      "history": "unsupported"
+     },
+     "history": "unsupported",
+     "pendingDecisions": [],
+     "receipts": [
+      {
+       "operationId": "op-1",
+       "sessionId": "s",
+       "runId": "r",
+       "method": "control.claim",
+       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "actor": {
+        "kind": "person",
+        "principal": "person-1",
+        "channel": "chat"
+       },
+       "state": "queued",
+       "revision": 0
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "operation.register",
+   "wire": {
+    "operationId": "op-1",
+    "receipt": {
+     "operationId": "op-1",
+     "sessionId": "s",
+     "runId": "r",
+     "method": "control.claim",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "actor": {
+      "kind": "person",
+      "principal": "person-1",
+      "channel": "chat"
+     },
+     "state": "queued",
+     "revision": 0
+    },
+    "existing": false
+   }
+  },
+  {
+   "name": "operation.register repeated",
+   "wire": {
+    "operationId": "op-1",
+    "receipt": {
+     "operationId": "op-1",
+     "sessionId": "s",
+     "runId": "r",
+     "method": "control.claim",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "actor": {
+      "kind": "person",
+      "principal": "person-1",
+      "channel": "chat"
+     },
+     "state": "queued",
+     "revision": 0
+    },
+    "existing": true
+   }
+  },
+  {
+   "name": "control.claim",
+   "wire": {
+    "receipt": {
+     "operationId": "op-1",
+     "sessionId": "s",
+     "runId": "r",
+     "method": "control.claim",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "actor": {
+      "kind": "person",
+      "principal": "person-1",
+      "channel": "chat"
+     },
+     "state": "accepted",
+     "revision": 2
+    },
+    "controlRevision": 4,
+    "holder": {
+     "kind": "person",
+     "principal": "person-1",
+     "channel": "chat"
+    },
+    "inputGrant": "grant-1",
+    "inputEpoch": 7,
+    "geometryGrant": "geo-1"
+   }
+  },
+  {
+   "name": "control.release",
+   "wire": {
+    "receipt": {
+     "operationId": "op-1",
+     "sessionId": "s",
+     "runId": "r",
+     "method": "control.claim",
+     "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "actor": {
+      "kind": "person",
+      "principal": "person-1",
+      "channel": "chat"
+     },
+     "state": "accepted",
+     "revision": 2
+    },
+    "controlRevision": 5
+   }
+  }
+ ]
+}

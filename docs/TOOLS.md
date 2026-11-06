@@ -118,3 +118,13 @@ member/owner decisions and scoped settings, durable install/removal/result
 history, and node correlation/refusal/disconnect behavior. Playwright exercises
 Inbox approve/reject and the Tools list with artificial demo data. Tests never
 install software on the test machine.
+
+## Scoped approval foundation (0082)
+
+See [Delegated approvals](DELEGATED-APPROVALS.md) for the typed server consent
+model and exact-request batch API. Eligibility runs in shadow mode until broker
+execution is qualified; remembered consent does not currently auto-install tools.
+Existing successful team coordination carries L provenance; person-approved tool
+requests carry P provenance, normalized digests and real issuer attribution.
+Identical pending operations in one project/account/team share a card. Batches
+review at most 50 exact pending requests and retain independent execution results.

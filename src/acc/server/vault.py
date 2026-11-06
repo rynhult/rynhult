@@ -236,6 +236,22 @@ class Plan:
     held_back: list[VaultKey]  # given to the project, but not sent to another machine
     mcp_refs: dict[str, dict[str, VaultKey]] = field(default_factory=dict)  # mcp id -> {env name: key}
 
+    def claude_auth(self, provider: str | None, choice: str = 'subscription') -> Plan:
+        from acc.providers.claude_auth import AUTH_ENV
+        if choice not in ('subscription', 'api_key'):
+            raise VaultError('invalid Claude sign-in choice')
+        if provider != 'claude':
+            return self
+        auth_keys = [k for k in self.keys if k.variable in AUTH_ENV]
+        if choice == 'api_key':
+            if not auth_keys:
+                raise VaultError('Claude API sign-in requires an Anthropic credential grant')
+            return self
+        return dataclasses.replace(self, keys=[k for k in self.keys if k.variable not in AUTH_ENV],
+                                   held_back=[k for k in self.held_back if k.variable not in AUTH_ENV],
+                                   mcp_refs={m: {env: k for env, k in refs.items() if k.variable not in AUTH_ENV}
+                                             for m, refs in self.mcp_refs.items()})
+
     def public(self) -> dict:
         def row(k: VaultKey) -> dict:
             return {"id": k.id, "name": k.name, "variable": k.variable}
@@ -340,13 +356,14 @@ def context(plan_: Plan) -> str:
     return "\n".join(lines)
 
 
-def with_mcp_values(catalog: Catalog | None, values: dict[str, dict[str, str]]) -> Catalog | None:
+def with_mcp_values(catalog: Catalog | None, values: dict[str, dict[str, str | None]]) -> Catalog | None:
     if catalog is None or not values:
         return catalog
     mcps = dict(catalog.mcps)
     for mcp_id, env in values.items():
         item = mcps[mcp_id]
-        mcps[mcp_id] = Item(item.id, item.kind, {**item.meta, "env": {**(item.meta.get("env") or {}), **env}}, item.files)
+        merged = {**(item.meta.get("env") or {}), **env}
+        mcps[mcp_id] = Item(item.id, item.kind, {**item.meta, "env": {k: v for k, v in merged.items() if v is not None}}, item.files)
     return dataclasses.replace(catalog, mcps=mcps)
 
 
@@ -437,10 +454,13 @@ class Vault:
         return value
 
     def deliver(self, db: DbSession, project_id: int | None, username: str | None, remote: bool,
-                catalog: Catalog | None = None, mcps: tuple[str, ...] = ()) -> Delivery:
-        planned = plan(db, project_id, username, remote, catalog, mcps)
+                catalog: Catalog | None = None, mcps: tuple[str, ...] = (), *,
+                provider: str | None = None, claude_auth: str = 'subscription') -> Delivery:
+        original = plan(db, project_id, username, remote, catalog, mcps)
+        planned = original.claude_auth(provider, claude_auth)
         env = {k.variable: self.value(k) for k in planned.keys}
-        mcp_values = {m: {env_name: self.value(k) for env_name, k in refs.items()} for m, refs in planned.mcp_refs.items()}
+        mcp_values = {m: {env_name: self.value(k) if env_name in planned.mcp_refs.get(m, {}) else None
+                          for env_name, k in refs.items()} for m, refs in original.mcp_refs.items()}
         return Delivery(env, with_mcp_values(catalog, mcp_values), planned)
 
     def redactor(self, db: DbSession, key_ids) -> Redactor:

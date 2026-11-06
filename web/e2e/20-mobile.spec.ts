@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { randomUUID } from "node:crypto";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, routeDemoSessions, shot } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 let sessionId: string | undefined;
 test.afterEach(async ({ page }) => {
@@ -147,6 +148,8 @@ test("mobile: a broker outage shows a banner, but not during the first seconds o
 });
 
 test("mobile: axe on the session header and tabs", async ({ page }) => {
+  // Seven document navigations and full WCAG scans after a real process launch.
+  test.slow();
   const id = await liveSession(page);
   for (const tab of ["", "?tab=preview", "?tab=activity", "?tab=handoffs", "?tab=spec", "?tab=changes", "?tab=files"]) {
     await page.goto(`/sessions/${id}${tab}`);

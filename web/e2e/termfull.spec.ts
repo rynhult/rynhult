@@ -1,5 +1,5 @@
 import {writeFileSync} from 'node:fs';
-import {expect,test,type Page} from '@playwright/test';
+import {expect,test,type Page} from './fixtures';
 import {AUTH_FILE,control,info as serverInfo,csrfHeaders,sessionWithChanges,wikiShotPath,expectAxeClean} from './helpers';
 test.use({storageState:AUTH_FILE});
 function terminalRows(page:Page,id:string) {

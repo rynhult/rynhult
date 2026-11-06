@@ -284,8 +284,8 @@ async def test_codex_footer_survives_soft_wrapping_in_a_phone_pane(api, project,
 
 
 @pytest.mark.parametrize("fixture,working", [
-    ("claude-background-shell-screen.txt", True),
-    ("claude-background-tasks-screen.txt", True),
+    ("claude-background-shell-screen.txt", False),
+    ("claude-background-tasks-screen.txt", False),
     ("claude-background-agent-screen.txt", True),
     ("claude-idle-screen.txt", False),
 ])
@@ -301,13 +301,15 @@ def test_claude_background_work_screens(fixture, working):
 ])
 def test_claude_single_background_task(screen):
     from acc.providers import get
-    assert get("claude").screen_working(screen)
+    assert not get("claude").screen_working(screen)
+    assert get("claude").screen_idle(screen) in {"1 background shell", "1 background task"}
 
 
 @pytest.mark.parametrize("screen", [
     "⏵⏵ bypass permissions on · 0 shells, 0 monitors\n",
     "● general-purpose  Finished checking inputs\n",
     "The log says 1 shell still running\n❯\n",
+    "❯ explain esc to interrupt\n⏵⏵ auto mode on · 1 shell\n",
     "◯ general-purpose  Reading inputs\n" + "Old output\n" * 6 + "❯\n",
 ])
 def test_claude_non_working_output(screen):
@@ -315,11 +317,7 @@ def test_claude_non_working_output(screen):
     assert not get("claude").screen_working(screen)
 
 
-@pytest.mark.parametrize("fixture", [
-    "claude-background-shell-screen.txt",
-    "claude-background-tasks-screen.txt",
-    "claude-background-agent-screen.txt",
-])
+@pytest.mark.parametrize("fixture", ["claude-background-agent-screen.txt"])
 async def test_claude_background_work_ends_without_overriding_hooks(api, project, env, fixture):
     fixtures = Path(__file__).with_name("fixtures")
     session = await launch(api, project)
@@ -352,3 +350,40 @@ async def test_claude_background_work_ends_without_overriding_hooks(api, project
     assert foreground["status_source"] == "claude_hook"
     await reconcile_passes(api)
     assert (await get(api, session["id"]))["observed_state"] == "active"
+
+
+@pytest.mark.parametrize("mode", ["bypass permissions", "auto mode"])
+@pytest.mark.parametrize("draft", ["", "❯ Please inspect this unsent prompt\n"])
+def test_idle_shell_footer(mode, draft):
+    from acc.providers import get
+    provider = get("claude")
+    screen = f"{draft}⏵⏵ {mode} on · 1 shell\n"
+    assert not provider.screen_working(screen)
+    assert provider.screen_idle(screen) == "1 background shell"
+    assert provider.screen_working("✻ Thinking… (esc to interrupt)\n" + screen)
+
+
+async def test_idle_shell_recovers_old_screen_working(api, project, env):
+    from helpers import write_db
+
+    from acc.server.models import Session
+    session = await launch(api, project)
+    sid = session["id"]
+    await wait_for(state_is(api, sid, "idle"))
+    with write_db(api.app.state.db) as db:
+        row = db.get(Session, sid)
+        row.observed_state, row.status_source, row.activity = "active", "screen", "Working in background"
+        db.commit()
+    screen_file = env["run_dir"] / sid / "fake.screen"
+    screen_file.write_text("\x1b[2J\x1b[H❯ unsent request\n⏵⏵ auto mode on · 1 shell\n")
+    control(env, sid, "screen")
+    async def idle_shell():
+        row = await get(api, sid)
+        return row if row["observed_state"] == "idle" and row["activity"] == "1 background shell" else None
+    await wait_for(idle_shell)
+    screen_file.write_text("\x1b[2J\x1b[H❯\n⏵⏵ auto mode on\n")
+    control(env, sid, "screen")
+    async def cleared():
+        row = await get(api, sid)
+        return row if row["activity"] is None else None
+    await wait_for(cleared)

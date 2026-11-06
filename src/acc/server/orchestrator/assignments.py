@@ -102,16 +102,16 @@ def replaced(db, attempt):
     return None
 
 
-def require_resume(db, session):
+def require_resume(db, session, *, consume=True):
     """A person resumes a helper's current attempt only while it still owns its assignment. A stopped attempt is
     running again; a failed or replaced one stays closed, so its report can't move the assignment from under the
-    replacement."""
+    replacement. consume=False checks ownership without reviving the attempt."""
     attempt = current(db, session.id)
     if attempt is None:
         return
     if reason := replaced(db, attempt):
         raise LaunchRefused(f"This helper can't resume: {reason}. The lead starts or gives a new attempt instead.")
-    if attempt.state == 'cancelled':
+    if consume and attempt.state == 'cancelled':
         attempt.state = 'running'
         assignment = db.get(Assignment, attempt.assignment_id)
         if assignment.state == 'blocked':

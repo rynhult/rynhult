@@ -1,12 +1,14 @@
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useMachineLabel } from "../lib/machineLabel";
 import { Archive, Download, PackageCheck, RefreshCw, Trash2 } from "lucide-react";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import { useConfirm } from "./confirm";
 import { type InstallGuide, InstallSteps } from "./InstallSteps";
-import { Badge, Button, Card, CardHeader, ErrorNote, IconButton } from "./ui";
+import { Surface as Card, SurfaceHeader as CardHeader } from "./shell/PagePrimitives";
+import { Badge, Button, ErrorNote, IconButton } from "./ui";
 
 export interface PackageState {
   label?: string; method?: string; note?: string; installed?: string | null; latest?: string | null; checked_at?: number;
@@ -22,6 +24,8 @@ interface PackagesView { packages: Record<string, PackageState>; pending: { pack
 
 const NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", copilot: "GitHub Copilot CLI", antigravity: "Google Antigravity CLI", cursor: "Cursor CLI", opencode: "OpenCode", ollama: "Ollama", restic: "Restic" };
 const when = (epoch?: number) => (epoch ? ago(new Date(epoch * 1000).toISOString()) : "never");
+
+const sentence = (text?: string) => text && text.charAt(0).toUpperCase() + text.slice(1);
 
 /** `?machine=…` for another machine; nothing for this one. */
 export const onMachine = (machine?: string, joiner = "?") => (machine ? `${joiner}machine=${encodeURIComponent(machine)}` : "");
@@ -62,6 +66,7 @@ function helperMissing(view: PackagesView, machine?: string) {
  * `tile`: shown on that provider's sign-in tile (Providers), so without its name and as a block, not a list item. */
 function PackageRow({ name, p, view, machine, onResult, tile }: { name: string; p: PackageState; view: PackagesView; machine?: string; onResult: (error: unknown) => void; tile?: boolean }) {
   const confirm = useConfirm();
+  const where = useMachineLabel(machine);
   const act = usePackageAction(machine, onResult);
   const queryClient = useQueryClient();
   const busy = view.pending.some((q) => q.package === name) || !!p.running;
@@ -82,7 +87,7 @@ function PackageRow({ name, p, view, machine, onResult, tile }: { name: string; 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">{tile ? <span className="text-xs text-muted">Software</span> : <span className="font-medium text-fg">{label}</span>}
             {p.installed ? <Badge tone={behind && !manual ? "wait" : "ok"}>{p.installed}{behind && !manual ? ` → ${p.latest}` : ""}</Badge> : <Badge>not installed</Badge>}
-            {manual && p.installed && <Badge title={`Rynhult can't install or update ${label} on ${machine ?? "this machine"}`}>installed by hand</Badge>}
+            {manual && p.installed && <Badge title={`Rynhult can't install or update ${label} on ${where ?? "this machine"}`}>installed by hand</Badge>}
             {busy && <Badge tone="info">{p.running ?? "queued"}…</Badge>}</div>
           <p className="mt-0.5 text-xs text-faint">
             {p.last ? <span className={p.last.ok ? undefined : "text-bad"}>{p.last.action}: {p.last.detail} ({when(p.last.at)})</span> : p.note}
@@ -102,7 +107,7 @@ function PackageRow({ name, p, view, machine, onResult, tile }: { name: string; 
               <IconButton label={`Check ${label} for updates`} icon={RefreshCw} onClick={() => act.mutate({ name, action: "check" })} />
               {behind && <Button size="sm" disabled={busy} onClick={() => act.mutate({ name, action: "update" })}>Update</Button>}
               {p.method !== "script" && <IconButton label={`Remove ${label}`} icon={Trash2} onClick={async () => {
-                if (await confirm({ title: `Remove ${label}${machine ? ` from ${machine}` : ""}?`, body: "Sessions that use it can't start or resume until it's installed again. Logins stay in each agent account.", confirm: "Remove", danger: true }))
+                if (await confirm({ title: `Remove ${label}${where ? ` from ${where}` : ""}?`, body: "Sessions that use it can't start or resume until it's installed again. Logins stay in each agent account.", confirm: "Remove", danger: true }))
                   act.mutate({ name, action: "remove" });
               }} />}
             </>}
@@ -110,7 +115,7 @@ function PackageRow({ name, p, view, machine, onResult, tile }: { name: string; 
       {manual && !p.installed && p.guide && (
         <details className="group mt-2 rounded-md border border-line">
           <summary className="cursor-pointer rounded-md px-3 py-2 text-xs font-medium text-accent hover:bg-panel-2">
-            How to install {label} on {machine ?? "this machine"}</summary>
+            How to install {label} on {where ?? "this machine"}</summary>
           <div className="border-t border-line p-3"><InstallSteps guide={p.guide} machine={machine} onCheck={check} checking={busy} /></div>
         </details>
       )}
@@ -146,12 +151,13 @@ export function ProviderSoftware({ name, machine, account, tileOffersInstall }: 
  * a helper that's missing, a machine that hasn't reported, or a request it refused. */
 export function SoftwareStatus({ machine, account }: { machine?: string; account?: string }) {
   const view = usePackages(true, machine, account);
+  const name = useMachineLabel(machine);
   const refused = view.data?.refused;
   return <div className="space-y-1">
-    <p className="flex items-center gap-1.5 text-xs text-muted"><PackageCheck size={13} aria-hidden="true" />Agent software: {subtitle(view.data, machine)}</p>
-    {view.data && view.data.reported === false && <p className="text-xs text-wait">{machine} hasn't reported its agent software: update Rynhult there to manage it from here.</p>}
-    {view.data && view.data.reported !== false && !view.data.helper && <p className="text-xs text-wait">{helperMissing(view.data, machine)}</p>}
-    {refused && refused.at && Date.now() / 1000 - refused.at < 600 && <p role="alert" className="text-xs text-bad">{machine} refused a request: {refused.detail}</p>}
+    <p className="flex items-center gap-1.5 text-xs text-muted"><PackageCheck size={13} aria-hidden="true" />Agent software: {subtitle(view.data, name)}</p>
+    {view.data && view.data.reported === false && <p className="text-xs text-wait">{sentence(name)} hasn't reported its agent software: update Rynhult there to manage it from here.</p>}
+    {view.data && view.data.reported !== false && !view.data.helper && <p className="text-xs text-wait">{helperMissing(view.data, name)}</p>}
+    {refused && refused.at && Date.now() / 1000 - refused.at < 600 && <p role="alert" className="text-xs text-bad">{sentence(name)} refused a request: {refused.detail}</p>}
     <ErrorNote error={view.error} />
   </div>;
 }
@@ -160,6 +166,7 @@ export function SoftwareStatus({ machine, account }: { machine?: string; account
  * the provider CLIs moved onto their tiles. */
 export function OtherSoftwareCard({ machine, account, providers }: { machine?: string; account?: string; providers: string[] }) {
   const view = usePackages(true, machine, account);
+  const name = useMachineLabel(machine);
   const [errors, setErrors] = useState<Record<string, unknown>>({});
   const entries = view.data?.reported !== false ? Object.entries(view.data?.packages ?? {}).filter(([name]) => !providers.includes(name)) : [];
   if (!view.data || !entries.length) return null;
@@ -168,7 +175,7 @@ export function OtherSoftwareCard({ machine, account, providers }: { machine?: s
   const row = ([name, p]: [string, PackageState]) => <PackageRow key={name} name={name} p={p} view={view.data!} machine={machine}
     onResult={error => setErrors(previous => ({ ...previous, [name]: error }))} />;
   return <Card>
-    <CardHeader title={machine ? `Other software on ${machine}` : "Other software"} icon={PackageCheck}
+    <CardHeader title={name ? `Other software on ${name}` : "Other software"} icon={PackageCheck}
       subtitle="Not a provider sign-in: the local model server, and what Rynhult's backups use." />
     {Object.entries(errors).filter(([, error]) => error).map(([name, error]) => <div key={name} className="space-y-1 px-4 py-2">
       <p className="text-xs text-muted">{view.data?.packages[name]?.label ?? NAMES[name] ?? name}</p><ErrorNote error={error} /></div>)}

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 from acc.server.app import uvicorn_log_config
 
-SECRETS = ("state-SECRET-1", "code-SECRET-2", "invite-SECRET-3", "localinvite-SECRET-4", "ws-SECRET-5")
+SECRETS = ("state-SECRET-1", "code-SECRET-2", "invite-SECRET-3", "localinvite-SECRET-4", "ws-SECRET-5", "search-SECRET-6")
 
 
 async def test_access_and_error_logs_never_record_sign_in_secrets(capsys):
@@ -36,6 +36,9 @@ async def test_access_and_error_logs_never_record_sign_in_secrets(capsys):
             await client.get(f"/api/auth/oidc/callback?state={SECRETS[0]}&code={SECRETS[1]}")
             await client.get(f"/api/auth/oidc/start?invite={SECRETS[2]}")
             await client.get(f"/invite/{SECRETS[3]}")
+            for path in ('/api/projects/1/files/search', '/api/sessions/session/files/search', '/api/files/workspace/session/search'):
+                await client.get(path, params={'limit': 20, 'q': SECRETS[5]})
+                logging.getLogger('uvicorn.error').info('Search %s', path + '?q=' + SECRETS[5])
             await client.get("/api/health?probe=visible-ordinary-query")
         # uvicorn's WebSocket lines go to uvicorn.error with the path: the same rule applies there.
         logging.getLogger("uvicorn.error").info('%s - "WebSocket %s" %s', "127.0.0.1:1",

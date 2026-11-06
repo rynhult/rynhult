@@ -10,7 +10,7 @@ Steps (each one's result goes to DIR/result.json):
 2. tests/e2e_server.py started on that data (its own startup migration does the upgrade), signed in to as the
    synthetic owner, and asked for the seeded data through the API; then stopped by its PID;
 3. every 0066 column of every table compared before and after; rows only the new schema holds added;
-4. a downgrade to 0066, compared again.
+4. a downgrade to 0066, comparing legacy schema/data and retained Sources compatibility data separately.
 The PostgreSQL cluster is stopped and its folder (inside DIR) removed at the end. Never point this at real data.
 """
 from __future__ import annotations
@@ -164,10 +164,22 @@ def main() -> int:
         result['changed by the app while running'] = sorted(t for t in before if before[t] != after[t])
         result['integrity after upgrade'] = rehearsal.integrity(url)
         result['newer-schema rows'] = rehearsal.after_upgrade(url)
+        from acc.server.source_schema_v1 import TABLES
+        upgraded_schema = rehearsal.schema(url)
+        retained_schema = {name: upgraded_schema[name] for name in TABLES}
+        retained = rehearsal.snapshot(url, retained_schema)
         changed = set(result['changed by the app while running'])
         rehearsal.downgrade(url, rehearsal.BASE)
-        result['after downgrade'] = {'version': rehearsal.version(url), 'schema is BASE': rehearsal.schema(url) == base,
-                                     'integrity': rehearsal.integrity(url)}
+        downgraded = rehearsal.schema(url)
+        result['after downgrade'] = {
+            'version': rehearsal.version(url),
+            'legacy schema is BASE': {name: downgraded.get(name) for name in base} == base,
+            'retained compatibility tables': sorted(set(downgraded) - set(base)),
+            'retained compatibility unchanged': (
+                set(downgraded) - set(base) == set(TABLES)
+                and {name: downgraded.get(name) for name in TABLES} == retained_schema
+                and rehearsal.snapshot(url, retained_schema) == retained),
+            'integrity': rehearsal.integrity(url)}
         down = rehearsal.snapshot(url, base)
         result['after downgrade']['differences'] = {t: [len(before[t]), len(down[t])] for t in before
                                                     if before[t] != down[t] and t not in changed}
@@ -179,7 +191,8 @@ def main() -> int:
         (work / 'result.json').write_text(json.dumps(result, indent=2, sort_keys=True, default=str))
     print(json.dumps({k: v for k, v in result.items() if k not in ('unchanged after upgrade',)}, indent=2, default=str))
     ok = (result['e2e']['login'] == 200 and all(result['e2e']['checks'].values()) and
-          result['after downgrade']['version'] == rehearsal.BASE and result['after downgrade']['schema is BASE'])
+          result['after downgrade']['version'] == rehearsal.BASE and
+          result['after downgrade']['legacy schema is BASE'] and result['after downgrade']['retained compatibility unchanged'])
     return 0 if ok else 1
 
 

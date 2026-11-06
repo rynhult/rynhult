@@ -1,13 +1,22 @@
 import clsx from "clsx";
 import { ExternalLink, LayoutGrid, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { SessionSummary } from "../lib/types";
 import { useSessions } from "../lib/queries";
-import { Button, Dialog, Dot, Empty, ErrorNote, IconButton, LoadingRows, Page, PageHeader, StaleNote, Tabs, useDocumentTitle, useMedia } from "../components/ui";
+import { Button, Dialog, Dot, Empty, ErrorNote, IconButton, LoadingRows, StaleNote, useDocumentTitle, useMedia } from "../components/ui";
+import { Tabs } from "../components/Tabs";
 import { groupLive, isLive, NowDoing, ProviderBadge, sessionState, StateBadge } from "../components/session-bits";
 import { Terminal } from "../components/Terminal";
 import { expandedGridSession } from "../components/terminalExpansion";
+
+import { ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
+import { useNewShell } from '../lib/uiShell';
+
+function GridFrame({ children }: { children: ReactNode }) {
+  return useNewShell() ? <Page wide className="flex h-full min-h-0 flex-col">{children}</Page>
+    : <div className="flex h-full flex-col gap-3 px-4 pb-4 pt-5 md:px-8 md:pb-6">{children}</div>;
+}
 
 const MAX = 4;
 const STORE = "acc-grid";
@@ -19,6 +28,7 @@ function remembered(): string[] {
 /** Up to four live terminals side by side: watch several agents and answer whichever needs you. */
 export function Grid() {
   useDocumentTitle("Grid");
+  const Content = useNewShell() ? Fragment : Page;
   const sessions = useSessions();
   const [params, setParams] = useSearchParams();
   const [picking, setPicking] = useState(false);
@@ -47,20 +57,20 @@ export function Grid() {
   }, [sessions.data]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="flex h-full flex-col gap-3 px-4 pb-4 pt-5 md:px-8 md:pb-6">
+    <GridFrame>
       <PageHeader title="Grid" description={phone ? "Up to four live sessions, one at a time: switch between them above the terminal."
         : "Up to four live sessions side by side. Each tile is the real terminal: type into any of them."}
         actions={<Button size="sm" disabled={!sessions.data} onClick={() => setPicking(true)}><LayoutGrid size={14} aria-hidden="true" /> Choose sessions</Button>} />
       {sessions.data && sessions.error ? <StaleNote error={sessions.error} /> : null}
       {!sessions.data ? (  // not loaded yet, or failed: never "no live sessions" until the list has actually arrived
-        <Page>{sessions.error ? (
+        <Content>{sessions.error ? (
           <div className="flex flex-wrap items-center gap-2"><ErrorNote error={sessions.error} />
             <Button size="sm" disabled={sessions.isFetching} onClick={() => void sessions.refetch()}>{sessions.isFetching ? "Retrying…" : "Retry"}</Button></div>
-        ) : <LoadingRows />}</Page>
+        ) : <LoadingRows />}</Content>
       ) : !ids.length ? (
-        <Page><Empty icon={LayoutGrid} action={live.length ? <Button size="sm" onClick={() => setPicking(true)}><Plus size={14} /> Choose sessions</Button> : undefined}>
+        <Content><Empty icon={LayoutGrid} action={live.length ? <Button size="sm" onClick={() => setPicking(true)}><Plus size={14} /> Choose sessions</Button> : undefined}>
           {live.length ? "Pick up to four live sessions to watch together." : "No live sessions. Start one, then come back here."}
-        </Empty></Page>
+        </Empty></Content>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           {phone && <Tabs id="grid-tabs" label="Sessions in the grid" value={shown} onChange={setFocused}
@@ -71,31 +81,34 @@ export function Grid() {
             aria-labelledby={phone ? `grid-tabs-tab-${shown.replace(/[^A-Za-z0-9_-]+/g, "-")}` : undefined}
             className={clsx("grid min-h-0 flex-1 gap-3", phone || ids.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2",
               !phone && ids.length > 2 ? "lg:grid-rows-2" : "lg:grid-rows-1")}>
-            {(phone ? [shown] : ids).map((id) => <Tile onExpansionChange={expansionChanged} key={id} session={byId.get(id)!} onRemove={() => choose(ids.filter((x) => x !== id))} />)}
+            {(phone ? [shown] : ids).map((id) => <Tile phone={phone} onExpansionChange={expansionChanged} key={id} session={byId.get(id)!} onRemove={() => choose(ids.filter((x) => x !== id))} />)}
           </div>
         </div>
       )}
       <Picker open={picking} onClose={() => setPicking(false)} live={live} chosen={ids} onChoose={(next) => { choose(next); setPicking(false); }} />
-    </div>
+    </GridFrame>
   );
 }
 
-function Tile({ session: s, onRemove, onExpansionChange }: { session: SessionSummary; onRemove: () => void; onExpansionChange: (id: string, expanded: boolean) => void }) {
+function Tile({ session: s, phone, onRemove, onExpansionChange }: { session: SessionSummary; phone: boolean; onRemove: () => void; onExpansionChange: (id: string, expanded: boolean) => void }) {
   const expansionChanged = useCallback((expanded: boolean) => onExpansionChange(s.id, expanded), [s.id, onExpansionChange]);
+  // Desktop tiles carry Select text / Expand in this header; phones keep the terminal's own row (narrow header).
+  const [tools, setTools] = useState<HTMLSpanElement | null>(null);
   return (
     <section data-grid-session={s.id} aria-label={s.name} className="flex min-h-[18rem] min-w-0 flex-col gap-1.5">
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
-        <span className="min-w-0 flex-1 truncate font-medium" title={s.name}>{s.name}</span>
+        <span className="flex-1 truncate font-medium" style={{ minWidth: "min(10rem, 40%)" }} title={s.name}>{s.name}</span>
         <StateBadge session={s} />
         <span className="max-xl:hidden"><ProviderBadge provider={s.provider} /></span>
         <NowDoing session={s} className="min-w-0 max-w-[30%] truncate text-xs text-muted max-lg:hidden" />
-        <span className="ml-auto flex shrink-0 items-center">
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <span ref={setTools} className="flex items-center" data-grid-tile-tools />
           <Link to={`/sessions/${s.id}`} title="Open the session page" aria-label={`Open ${s.name}`}
             className="inline-grid size-7 place-items-center rounded-md text-muted hover:bg-panel-3 hover:text-fg"><ExternalLink size={14} /></Link>
           <IconButton icon={X} label={`Remove ${s.name} from the grid`} onClick={onRemove} />
         </span>
       </div>
-      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : <Terminal onExpansionChange={expansionChanged} sessionId={s.id} live compact name={s.name} tone={sessionState(s).tone} stateLabel={sessionState(s).label} />}</div>
+      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : <Terminal onExpansionChange={expansionChanged} sessionId={s.id} live compact name={s.name} tone={sessionState(s).tone} stateLabel={sessionState(s).label} toolbarTarget={phone ? null : tools} />}</div>
     </section>
   );
 }

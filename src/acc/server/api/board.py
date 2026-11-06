@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
 from ... import __version__, hostinfo
+from .. import host
 from ..machine_presence import planned_downtime
 from ..models import AttentionItem, Node, Observation, Project
 from ..node_host import alerts, light_from
@@ -24,6 +25,16 @@ LIGHT_STALE = 180  # seconds: a node's summary older than this is shown as old (
 def router(ctx: Context) -> APIRouter:
     api = APIRouter()
     db, supervisor = ctx.db, ctx.supervisor
+
+    @api.get("/api/readings/machine")
+    async def machine_readings(who=Depends(ctx.owner)):
+        """The owner's local header readings, without project or machine inventory reads."""
+        live = await asyncio.to_thread(host.live)
+        return {"label": ctx.settings.host_label, "connected": True, "light": {
+            "cpu_percent": live.get("cpu_percent"),
+            "memory_percent": (live.get("memory") or {}).get("percent"),
+            "collected_at": live.get("measured_at") or time.time(),
+        }}
 
     @api.get("/api/board")
     async def board(who=Depends(ctx.owner)):

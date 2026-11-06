@@ -1,3 +1,4 @@
+import { Surface as Card, SurfaceHeader as CardHeader } from './shell/PagePrimitives';
 import { Link } from 'react-router-dom';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -6,7 +7,23 @@ import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import type { ToolPin, ToolRequest } from "../lib/types";
 import { useConfirm } from "./confirm";
-import { Badge, Button, Card, CardHeader, Empty, ErrorNote, QueryState } from "./ui";
+import { Badge, Button, Empty, ErrorNote, QueryState } from "./ui";
+
+export function ToolDecision({ request }: { request: ToolRequest }) {
+  if (!request.decided_by) return null;
+  const decision = request.decision;
+  const actor = decision?.source === 'C' || decision?.source === 'L'
+    ? `Lead ${decision.lead_id ?? request.decided_by}`
+    : decision?.issuer ?? (request.decided_by === '@api' ? 'Owner via API' : request.decided_by);
+  const reasons: Record<string, string> = {
+    exact_person_batch: 'Reviewed exact requests together',
+    exact_person_decision: 'Reviewed this request',
+    exact_saved_consent: `Allowed by saved permission from ${decision?.issuer ?? 'the person'}`,
+  };
+  return <p className="mt-1 break-words text-xs text-muted">
+    Decided by {actor} · {reasons[decision?.reason ?? ''] ?? 'Previously recorded decision'}
+  </p>;
+}
 
 export function ToolActions({ request }: { request: ToolRequest }) {
   const cache = useQueryClient();
@@ -72,6 +89,7 @@ export function ToolsCard({ machine, account }: { machine?: string; account?: st
                 {requests.map((r) => <li key={r.id} className="break-words text-xs text-muted">
                   {r.operation} {r.name} <Badge tone={r.status === "failed" ? "bad" : "neutral"}>{r.status.replaceAll("_", " ")}</Badge>
                   {" "}{r.resolved_version ?? r.version ?? "latest"} · {ago(r.created_at)}
+                  <ToolDecision request={r} />
                   {r.detail && <p>{r.detail}</p>}
                 </li>)}
               </ul>

@@ -33,6 +33,7 @@ def test_claude_settings_only_contain_acc_hooks():
 def test_codex_args():
     inputs = LaunchInputs(provider="codex", model="gpt-6.1-sol", effort="high")
     assert build_args(inputs, run_dir="/r", tmux_name="t", native_id=None, resume=False) == [
+        "--no-alt-screen",  # keep_scrollback (inline mode) is on by default
         "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
         "-c", "check_for_update_on_startup=false",  # ACC owns Codex updates; its prompt would eat the first Enter
         "--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"',

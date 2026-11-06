@@ -1,9 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { randomUUID } from "node:crypto";
 import { AUTH_FILE, csrfHeaders, gitProject } from "./helpers";
+import { gotoLoadedPage, reloadLoadedPage } from "./loaded-page";
 import { initials } from "../src/lib/format";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 test("project initials tell similar names apart", () => {
   expect([initials("Demo API"), initials("Demo Web"), initials("handbook"), initials("x")]).toEqual(["DA", "DW", "HA", "X"]);
@@ -36,14 +38,14 @@ test('Git author settings persist and let a fresh project commit without identit
   });
   expect(created.ok(), await created.text()).toBe(true);
   const { id, workspace_path: folder } = await created.json();
-  await page.goto(`/projects/${id}#project-repository`);
+  await gotoLoadedPage(page, `/projects/${id}#project-repository`, ['ProjectPage'], [`/api/projects/${id}/git-identity`]);
   const name = page.getByRole('textbox', { name: 'Git author name', exact: true });
   await expect(name).not.toHaveValue('');
   await name.fill('Casey Example');
   await page.getByRole('textbox', { name: 'Git author email', exact: true }).fill('casey@example.com');
   await page.getByRole('button', { name: 'Save Git author' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Git author saved.' })).toBeVisible();
-  await page.reload();
+  await reloadLoadedPage(page, ['ProjectPage'], [`/api/projects/${id}/git-identity`]);
   await expect(name).toHaveValue('Casey Example');
   await expect(page.getByRole('textbox', { name: 'Git author email', exact: true })).toHaveValue('casey@example.com');
   const { execFileSync } = await import('node:child_process');
@@ -78,17 +80,25 @@ for (const width of [390, 1440]) test(`empty repository has an explicit local fi
   const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
   await dialog.getByRole('radio', { name: 'Clone repository' }).click();
   await dialog.getByRole('textbox', { name: 'Repository', exact: true }).fill('https://example.com/empty.git');
+  const inspected = page.waitForResponse(response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/first-commit`);
   await dialog.getByRole('button', { name: 'Clone and add', exact: true }).click();
+  expect((await inspected).ok()).toBe(true);
+  expect(await (await inspected).finished()).toBeNull();
   const imported = page.getByRole('dialog', { name: 'Project imported', exact: true });
   await expect(imported.getByRole('button', { name: 'Make the first commit', exact: true })).toBeVisible();
   await imported.getByRole('button', { name: 'Later — open project', exact: true }).click();
-  await page.goto(`/projects/${project.id}`);
+  await gotoLoadedPage(page, `/projects/${project.id}`, ['ProjectPage'], [`/api/projects/${project.id}/first-commit`]);
   const notice = page.getByRole('region', { name: 'First Git commit' });
   await expect(notice).toContainText('nothing is pushed');
+  const committed = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/first-commit`);
   await notice.getByRole('button', { name: 'Make the first commit', exact: true }).click();
+  expect((await committed).ok()).toBe(true);
+  expect(await (await committed).finished()).toBeNull();
   await expect(notice).toHaveCount(0);
   expect(readFileSync(`${folder}/README.md`, 'utf8')).toContain(`# ${name}`);
   expect(execFileSync('git', ['-C', folder, 'log', '-1', '--format=%s'], { encoding: 'utf8' }).trim()).toBe('Initialize project');
-  await page.reload();
+  await reloadLoadedPage(page, ['ProjectPage'], [`/api/projects/${project.id}/first-commit`]);
   await expect(notice).toHaveCount(0);
 });

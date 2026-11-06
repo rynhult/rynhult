@@ -1,3 +1,5 @@
+import { ProjectSources, ProjectWorkingLocations } from "../components/SourceViews";
+import { useNewShell } from "../lib/uiShell";
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users } from 'lucide-react';
 import { useState } from 'react';
@@ -7,7 +9,8 @@ import { useRole } from '../lib/queries';
 import { GroupBoard } from '../components/GroupBoard';
 import { GroupPublished } from '../components/GroupPublished';
 import { useConfirm } from '../components/confirm';
-import { Badge, Button, Card, Dialog, Empty, ErrorNote, Field, Input, Page, PageHeader, QueryState, Select } from '../components/ui';
+import { Badge, Button, Card, Dialog, Empty, ErrorNote, Field, Input, QueryState, Select } from '../components/ui';
+import { ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 
 type Group = { id: string; name: string; role: string; revision: number; archived: boolean; paused: boolean; remote_execution_available?: boolean };
 type Person = { id: number; username: string; role: string | null; provenance: string | null };
@@ -51,6 +54,8 @@ function GroupPeople({ group, owner, close }: { group: Group; owner: boolean; cl
 }
 
 function GroupProjects({ group, close }: { group: Group; close: () => void }) {
+  const shell = useNewShell();
+  const [sourceProject, setSourceProject] = useState<Project | null>(null);
   const cache = useQueryClient();
   const [published, setPublished] = useState<Project | null>(null);
   const manage = group.role === 'owner' || group.role === 'maintainer';
@@ -66,7 +71,7 @@ function GroupProjects({ group, close }: { group: Group; close: () => void }) {
   });
   return <Dialog open onClose={close} title={`${group.name} · Projects`} dismissible={false} description="Read explicitly published commits. Named project owners approve integration merges. Use the work board to launch reviewed source in your own private checkout.">
     <QueryState query={projects} isEmpty={items => !items.length} empty={<p className="text-sm text-muted">No group projects yet.</p>}>
-      {items => <ul className="space-y-2">{items.map(p => <li className="flex flex-wrap items-center justify-between gap-2 break-words" key={p.id}><span>{p.name}{p.workspace ? ' · Workspace' : ''} <Badge>{p.archived ? 'Archived' : 'Private checkouts'}</Badge></span>{!p.archived && <Button onClick={() => setPublished(p)}>Published Files &amp; Wiki</Button>}</li>)}</ul>}
+      {items => <ul className="space-y-2">{items.map(p => <li className="flex flex-wrap items-center justify-between gap-2 break-words" key={p.id}><span>{p.name}{p.workspace ? ' · Workspace' : ''} <Badge>{p.archived ? 'Archived' : 'Private checkouts'}</Badge></span>{shell && <Button onClick={() => setSourceProject(p)}>Sources and locations</Button>}{!p.archived && <Button onClick={() => setPublished(p)}>Published Files &amp; Wiki</Button>}</li>)}</ul>}
     </QueryState>
     {manage && !group.archived && <form className="mt-4 space-y-3" onSubmit={e => { e.preventDefault(); create.mutate(); }}>
       <Field label="Project kind"><Select value={workspace ? 'workspace' : 'project'} onChange={e => setWorkspace(e.target.value === 'workspace')}><option value="project">Project</option><option value="workspace">Development workspace</option></Select></Field>
@@ -78,6 +83,7 @@ function GroupProjects({ group, close }: { group: Group; close: () => void }) {
       <div aria-live="polite"><ErrorNote error={create.error} /></div>
       <Button type="submit" variant="primary" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create group project'}</Button>
     </form>}
+    {shell && sourceProject && <section aria-label={`${sourceProject.name} · Sources and locations`} className="space-y-4"><h3 className="font-semibold">{sourceProject.name}</h3><ProjectSources projectId={sourceProject.id} groupId={group.id} /><ProjectWorkingLocations projectId={sourceProject.id} groupId={group.id} /></section>}
     {published && <GroupPublished groupId={group.id} project={published} close={() => setPublished(null)} />}
   </Dialog>;
 }

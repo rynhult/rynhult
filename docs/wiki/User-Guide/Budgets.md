@@ -2,7 +2,7 @@
 
 Budgets are optional limits on your own plan usage. **Nobody has one until they set it**, and Rynhult never sets or applies one for you.
 
-They're under **Settings → Budgets**, one line per usage window Rynhult reads: Claude's 5-hour and 7-day windows, Codex's window, and Copilot's monthly AI credits. Each shows how much is used and when it resets, then **No budget** with **Set a budget**.
+They're under **Settings → Budgets**, one line per usage window Rynhult reads: Claude's 5-hour and 7-day windows and Codex's window. Copilot quota budgets are unavailable; check [GitHub settings](https://github.com/settings/copilot/features) for its usage. Each shows how much is used and when it resets, then **No budget** with **Set a budget**.
 
 ## Kinds
 - **Cap at N%.** Warn once the window passes N% (for example 80% of the 7-day window).

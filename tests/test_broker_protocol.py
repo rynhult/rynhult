@@ -113,3 +113,47 @@ async def test_terminal_refuses_invalid_attach_reply(tmp_path, reply):
         with pytest.raises(ConnectionError, match="malformed"):
             await bridge(Browser(), lambda: asyncio.open_unix_connection(str(path)), "s", "acc-s",
                          Writers(), want_write=True, take=False, rows=40, cols=120)
+
+
+async def test_search_is_not_replayed_after_reply_loss(tmp_path):
+    delivered = []
+    async def handle(reader, writer):
+        delivered.append(json.loads(await reader.readline()))
+        writer.close()
+        await writer.wait_closed()
+    path = tmp_path / 'search.sock'
+    server = await asyncio.start_unix_server(handle, str(path))
+    async with server:
+        client = BrokerClient(path)
+        try:
+            with pytest.raises(BrokerUnavailable):
+                await client.call('files_search', path='/unused', q='needle')
+            assert len(delivered) == 1
+        finally:
+            await client.close()
+
+
+async def test_read_busy_wire_reply_is_typed_and_not_retried(tmp_path):
+    from acc.server.broker_client import BrokerBusy
+
+    delivered = []
+
+    async def handle(reader, writer):
+        request = json.loads(await reader.readline())
+        delivered.append(request)
+        writer.write(json.dumps({'id': request['id'], 'ok': False,
+            'code': 'read_busy', 'error': 'private admission details'}).encode() + b'\n')
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    path = tmp_path / 'busy.sock'
+    server = await asyncio.start_unix_server(handle, str(path))
+    async with server:
+        client = BrokerClient(path)
+        try:
+            with pytest.raises(BrokerBusy, match='Retry shortly'):
+                await client.call('files_search')
+            assert len(delivered) == 1
+        finally:
+            await client.close()

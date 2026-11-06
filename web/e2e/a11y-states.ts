@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { AUTH_FILE, AXE_PAGES, expectAxeClean } from "./helpers";
 
 // WCAG 2.2 AA beyond the default view (roadmap status 2026-10-25, item 6): 27-ux-a11y scans every page as it first

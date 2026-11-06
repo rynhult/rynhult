@@ -1,10 +1,11 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes } from "lucide-react";
 import { api, post } from "../lib/api";
 import type { Project } from "../lib/types";
-import { Badge, Button, Card, CardHeader, Empty, ErrorNote, Input, LoadingRows, Note, QueryState } from "./ui";
+import { Badge, Button, Empty, ErrorNote, Input, LoadingRows, Note, QueryState } from "./ui";
 
 export type Limits = { cpus: number | null; memory_mib: number | null; pids: number | null; disk_gib: number | null; sessions: number | null };
 export interface ContainersView {

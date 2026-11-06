@@ -375,3 +375,14 @@ explicit project Unrestricted exception handling, confirmation/badge wording,
 migration/transition semantics and delivery gates. The existing-repos design is
 already approved and is not being reopened. **Stop after this document and its
 handoff; no code, migration, runtime switch or permission change before approval.**
+
+### Delegated-approval foundation (0082)
+
+The separate [delegated-approval model](../DELEGATED-APPROVALS.md) now records
+person-issued typed consent and shadow eligibility. It does not disable these
+Security checks, qualify an account-tool executor, change a provider permission
+mode or enable main finalization. Existing request decisions remain person-only;
+exact-request batches use the same current person/account checks and preserve
+per-item execution outcomes. A future qualified lead/consent execution path must
+intersect the current Security revision rather than interpreting a switch Off as
+new authority. Project-local dependency policy is unchanged.

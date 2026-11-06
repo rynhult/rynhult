@@ -1,3 +1,4 @@
+import { DraftSaveNote } from '../lib/useUnsaved';
 /** Orchestrator v2, slice 6: the team's plan and roadmap (src/acc/server/orchestrator/planning.py). Mounted on the Team
  *  tab above the working list; renders nothing while the server has orchestrator v2 off (the plan answers 404). The
  *  lead writes the plan; the person reads it, answers its questions on the working list and can edit it here. Each
@@ -205,7 +206,7 @@ function PlanEditor({ teamId, plan, onDone, onCancel }: {
   const dirty = Object.keys(changes()).length > 0 || reason.trim() !== '';
   useEffect(() => {
     // Kept for this tab while there is something to lose; a refresh or Back brings it back.
-    if (dirty || latest) saveDraft(storeKey, { origin, base, latest, idea, scope, phases, reason } satisfies PlanDraft);
+    if (dirty || latest) saveDraft(storeKey, { origin, base, latest, idea, scope, phases, reason } satisfies PlanDraft, onCancel);
     else clearDraft(storeKey);
   }, [storeKey, dirty, origin, base, latest, idea, scope, phases, reason]);
   const finish = (done: () => void) => { clearDraft(storeKey); done(); };
@@ -234,6 +235,7 @@ function PlanEditor({ teamId, plan, onDone, onCancel }: {
     const body = changes();
     if (Object.keys(body).length) save.mutate(body); else finish(onCancel);  // nothing changed: no empty version
   }}>
+    <DraftSaveNote id={storeKey} />
     {latest && <Note tone="wait" role="status">
       <p>The plan changed while you were editing: it is now version {latest.version}
         {latest.history[0] ? `, by ${actorWords(latest.history[0].actor)}` : ''}. Your edits are kept below.</p>

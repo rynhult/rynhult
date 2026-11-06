@@ -15,7 +15,7 @@ from acc.broker.server import Broker, serve
 from acc.server import broker_client
 from acc.server.app import create_app
 from acc.server.broker_client import BrokerClient, BrokerUnavailable
-from acc.server.models import Project
+from acc.server.models import API_PRINCIPAL, Project
 
 
 @pytest.fixture
@@ -57,12 +57,16 @@ async def world(env, tmp_path, monkeypatch, supervisor_threads):
 
 
 async def make_project(world, slug: str, account: str) -> dict:
-    api, env = world["api"], world["env"]
+    env = world["env"]
     (env["workspaces"] / slug).mkdir(exist_ok=True)
-    project = (await api.post("/api/projects", json={"slug": slug, "name": slug, "workspace_path": str(env["workspaces"] / slug)})).json()
-    with write_db(world["app"].state.db) as s:  # assigning accounts comes with multi-user; set it directly here
-        s.get(Project, project["id"]).account = account
+    # Choosing another account here comes with multi-user. Set it on the new row: an account
+    # changed afterwards no longer matches the reviewed location, and launches refuse that.
+    with write_db(world["app"].state.db) as s:
+        row = Project(slug=slug, name=slug, host="local", account=account, owner=API_PRINCIPAL,
+                      workspace_path=str(env["workspaces"] / slug))
+        s.add(row)
         s.commit()
+        project = {"id": row.id}
     trusted = await world["api"].post(f"/api/projects/{project['id']}/trust")
     assert trusted.status_code == 200, trusted.text
     return project
@@ -70,6 +74,16 @@ async def make_project(world, slug: str, account: str) -> dict:
 
 async def state(api, acc_id):
     return (await api.get(f"/api/sessions/{acc_id}")).json()
+
+
+async def test_account_changed_behind_the_reviewed_location_refuses_launch(world):
+    api = world["api"]
+    project = await make_project(world, "moved", "alpha")
+    with write_db(world["app"].state.db) as s:
+        s.get(Project, project["id"]).account = "beta"
+        s.commit()
+    refused = await api.post("/api/sessions", json={"project_id": project["id"], "provider": "claude", "name": "m"})
+    assert refused.status_code == 409 and "project location changed" in refused.json()["detail"]
 
 
 async def test_sessions_run_through_their_accounts_broker(world):

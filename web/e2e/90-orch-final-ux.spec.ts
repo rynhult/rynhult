@@ -1,10 +1,11 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from './fixtures';
+import { test } from './shell-state';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { expandTeamPanels, AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 async function lead(page: Page, briefMode?: 'prepare' | 'build') {
   const project = await gitProject(page, 'final-ux');

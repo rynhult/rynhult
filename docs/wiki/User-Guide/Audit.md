@@ -26,3 +26,15 @@ without copying their name or email into the log. Push subscription creation use
 `push.update`. Identical re-subscriptions add no event. Push events target the
 device's numeric id; update details say whether ownership or keys changed, without
 recording endpoints or keys. The change and its audit entry commit together.
+
+### Approval provenance
+
+Approval records distinguish the person issuing consent, the lead evaluating it
+and any later operation/result. A shadow eligibility match is not an approval
+or completed installation. Tool history shows the deciding person and reason;
+**Owner via API** means no named human identity was available. Revocation records
+new admission being denied; it does not claim previously dispatched work stopped.
+
+Binding a saved project permission to a team records the verified person as the
+actor and names the target lead separately. Team coordination records the actual
+acting session and whether it was the lead or a helper, alongside the root lead.

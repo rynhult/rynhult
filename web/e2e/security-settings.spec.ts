@@ -1,30 +1,83 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { gotoLoadedPage } from './loaded-page';
 import {execFileSync} from 'node:child_process';
 import {environmentValue} from '../../src/acc/env.mjs';
-import {expect,test} from '@playwright/test';
+import {expect,test} from './fixtures';
 import {AUTH_FILE,csrfHeaders,freshStep,gitProject,expectAxeClean,loadSecret,PASSWORD,totp,wikiShotPath,info} from './helpers';
 test.use({storageState:AUTH_FILE});
 test.setTimeout(90000);
+// This serial file shares its fixture owner's sign-in across repetitions.
+// Keep only the time of a successful real verification in the disposable run
+// directory, so a preview/apply journey cannot straddle the five-minute limit.
+const verificationFile=()=>`${info().run_dir}/.security-test-verified-at`;
+const recordVerification=()=>writeFileSync(verificationFile(),String(Date.now()));
+test.beforeEach(async ({page})=>{
+  page.on('response',response=>{
+    if(response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/auth/passkeys/reauth'&&response.ok())recordVerification();
+  });
+});
+test.afterEach(async ({page})=>{await page.unrouteAll({behavior:'wait'});});
+
+async function freshReviewVerification(page:import('@playwright/test').Page) {
+  const file=verificationFile();
+  const verified=existsSync(file)?Number(readFileSync(file,'utf8')):0;
+  // Leave two minutes for the existing 90s case; the server still enforces its
+  // real lifetime and every request is authenticated with a new one-use code.
+  if(verified&&Date.now()-verified<180_000)return;
+  await freshStep(page);
+  const response=await page.request.post('/api/auth/passkeys/reauth',{headers:await csrfHeaders(page),
+    data:{password:PASSWORD,code:totp(loadSecret())}});
+  expect(response.ok(),await response.text()).toBe(true);
+  recordVerification();
+}
+
+
+async function openDocument(page:import('@playwright/test').Page,url:string) {
+  const target=new URL(url,'http://fixture.example.lan');
+  const path=target.pathname;
+  const chunk=path==='/settings/security/folders'?'AllowedFolders':path==='/settings'?'Settings':
+    path==='/'?'Overview':path==='/sessions'?'Sessions':path.startsWith('/sessions/')?'SessionPage':
+    path.startsWith('/projects/')?'ProjectPage':undefined;
+  const data:string[]=[];
+  if(path==='/settings/security/folders')data.push('/api/security/folders');
+  else if(path==='/'||path==='/sessions')data.push('/api/sessions');
+  else if(path.startsWith('/projects/'))data.push('/api/projects');
+  else if(path.startsWith('/sessions/'))data.push(`/api/sessions/${path.split('/')[2]}`);
+  const needsPolicy=(path==='/settings'&&target.hash==='#security')||path==='/'||path==='/sessions'||path.startsWith('/projects/');
+  const scope=path.startsWith('/projects/')?'project':target.searchParams.get('security_scope');
+  const project=path.startsWith('/projects/')?path.split('/')[2]:target.searchParams.get('project_id');
+  const policy=needsPolicy?page.waitForResponse(response=>{
+    const candidate=new URL(response.url());
+    if(candidate.pathname!=='/api/security/effective'||response.request().method()!=='GET')return false;
+    // Session cards may correctly refuse reads for removed machines. Wait for
+    // this view's intended scope, never whichever policy request finishes first.
+    if(scope==='project')return candidate.searchParams.get('project_id')===project;
+    if(scope==='account')return candidate.searchParams.get('machine')===target.searchParams.get('machine')
+      &&candidate.searchParams.get('account')===target.searchParams.get('account');
+    return candidate.searchParams.size===0;
+  }).then(async response=>{expect(response.status()).toBe(200);expect(await response.finished()).toBeNull();}):Promise.resolve();
+  await Promise.all([gotoLoadedPage(page,url,chunk?[chunk]:[],data),policy]);
+}
+
+async function applyReview(page:import('@playwright/test').Page,review:import('@playwright/test').Locator,double=false,status=200) {
+  const applied=page.waitForResponse(response=>response.request().method()==='POST'
+    && /\/api\/security\/changes\/[^/]+\/apply$/.test(new URL(response.url()).pathname));
+  const button=review.getByRole('button',{name:'Apply Security changes',exact:true});
+  if(double)await button.dblclick();else await button.click();
+  expect((await applied).status()).toBe(status);
+  expect(await (await applied).finished()).toBeNull();
+}
 
 for(const theme of ['dark','light'] as const) test(`Security scope editor in ${theme}`,async({page},info)=>{
   await page.emulateMedia({colorScheme:theme});
-  await page.goto('/settings#security');
+  await openDocument(page,'/settings#security');
   const panel=page.locator('#security');
   await expect(panel.getByRole('heading',{name:'Security',exact:true})).toBeVisible();
   await expect(panel.getByRole('combobox',{name:'Security scope',exact:true})).toHaveValue('instance');
   const registry=await (await page.request.get('/api/security/scopes')).json();
   for(const row of registry.registry) await expect(panel.getByText(row.label,{exact:true})).toBeVisible();
   await panel.getByRole('combobox',{name:'Security mode',exact:true}).selectOption('unrestricted');
-  await panel.getByRole('button',{name:'Review changes',exact:true}).click();
-  const verify=page.getByRole('dialog',{name:'Verify your sign-in',exact:true});
-  const review=page.getByRole('dialog',{name:'Review Security changes',exact:true});
-  await expect(verify.or(review)).toBeVisible();
-  if(await verify.isVisible()) {
-    await freshStep(page);
-    await verify.getByLabel('Verification password').fill(PASSWORD);
-    await verify.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
-    await verify.getByRole('button',{name:'Verify with password and authenticator'}).click();
-  }
-  await expect(review).toBeVisible();
+  const review=await reviewChanges(page);
   await expect(review).toContainText('Authentication, owner approvals');
   await expect(review).toContainText('account folder check still on');
   for(const row of registry.registry) await expect(review.getByText(row.label,{exact:true})).toBeVisible();
@@ -38,16 +91,28 @@ for(const theme of ['dark','light'] as const) test(`Security scope editor in ${t
 
 
 async function reviewChanges(page:import('@playwright/test').Page,label='Review changes') {
+  await freshReviewVerification(page);
+  const waitPreview=()=>page.waitForResponse(response=>response.request().method()==='POST'
+    &&new URL(response.url()).pathname==='/api/security/changes/preview');
+  const pending=waitPreview();
   await page.locator('#security').getByRole('button',{name:label,exact:true}).click();
-  const review=page.getByRole('dialog',{name:'Review Security changes',exact:true});
-  const verify=page.getByRole('dialog',{name:'Verify your sign-in',exact:true});
-  await expect(review.or(verify)).toBeVisible();
-  if(await verify.isVisible()) {
+  const response=await pending;
+  expect([200,403]).toContain(response.status());
+  expect(await response.finished()).toBeNull();
+  if(response.status()===403) {
+    const verify=page.getByRole('dialog',{name:'Verify your sign-in',exact:true});
     await freshStep(page);
     await verify.getByLabel('Verification password').fill(PASSWORD);
-    await verify.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+    await verify.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
+    const verified=page.waitForResponse(response=>response.request().method()==='POST'
+      &&new URL(response.url()).pathname==='/api/auth/passkeys/reauth');
+    const preview=waitPreview();
     await verify.getByRole('button',{name:'Verify with password and authenticator',exact:true}).click();
+    expect((await verified).ok()).toBe(true);
+    expect((await preview).ok()).toBe(true);
+    expect(await (await preview).finished()).toBeNull();
   }
+  const review=page.getByRole('dialog',{name:'Review Security changes',exact:true});
   await expect(review).toBeVisible();return review;
 }
 async function saveScope(page:import('@playwright/test').Page,scope:unknown,overrides:Record<string,boolean>,preset='custom') {
@@ -62,12 +127,12 @@ async function saveScope(page:import('@playwright/test').Page,scope:unknown,over
 test('project changes are reviewed, apply once, and frozen sessions keep their own revision',async({page})=>{
   const project=await gitProject(page,'security-project');let sessionId:string|undefined;
   try {
-    await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+    await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
     const panel=page.locator('#security');
     await panel.getByRole('switch',{name:'Block force pushes',exact:true}).uncheck();
     const review=await reviewChanges(page);
     let applied=0;page.on('request',r=>{if(r.method()==='POST'&&/\/api\/security\/changes\/[^/]+\/apply$/.test(new URL(r.url()).pathname))applied++;});
-    await review.getByRole('button',{name:'Apply Security changes',exact:true}).dblclick();
+    await applyReview(page,review,true);
     await expect(review).toHaveCount(0);expect(applied).toBe(1);
     await expect(panel.getByRole('region',{name:'Effective Security status',exact:true})).toBeFocused();
     await expect(panel.getByText('Effective mode:',{exact:false})).toContainText('Custom');
@@ -83,7 +148,7 @@ test('project changes are reviewed, apply once, and frozen sessions keep their o
     expect(created.ok(),await created.text()).toBe(true);sessionId=(await created.json()).id;
     // Loosen a second control while the first session continues using its original record.
     await saveScope(page,{kind:'project',project_id:project.id},{force_push:false,secrets:false});
-    await page.goto(`/sessions/${sessionId}`);
+    await openDocument(page,`/sessions/${sessionId}`);
     await expect(page.getByRole('button',{name:/Custom security · 2 off/}).first()).toBeVisible();
     const frozen=page.getByRole('button',{name:/Custom security · 1 off.*This session.*frozen launch/}).first();
     await expect(frozen).toBeVisible();await frozen.click();
@@ -99,10 +164,10 @@ for(const width of [1440,390]) test(`tightening with a running weaker session at
   const project=await gitProject(page,'tighten');let sid:string|undefined;
   const panel=page.locator('#security');
   try {
-    await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+    await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
     await panel.getByRole('switch',{name:'Block force pushes',exact:true}).uncheck();
     let review=await reviewChanges(page);
-    await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+    await applyReview(page,review);
     await expect(review).toHaveCount(0);
     const made=await page.request.post('/api/sessions',{headers:project.headers,data:{project_id:project.id,provider:'claude',name:`Older settings ${width}`}});
     expect(made.ok(),await made.text()).toBe(true);sid=(await made.json()).id;
@@ -110,7 +175,7 @@ for(const width of [1440,390]) test(`tightening with a running weaker session at
     review=await reviewChanges(page);
     await expect(review).toContainText('1 running session keeps its older, looser settings');
     await expect(review.getByRole('link',{name:`Older settings ${width}`,exact:true})).toBeVisible();
-    await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+    await applyReview(page,review);
     await expect(review).toHaveCount(0);
     await expect(panel.getByText('Server policy saved.',{exact:false})).toBeVisible();
     await expect(panel.getByRole('button',{name:/Current protections On · 1 session on older settings/})).toBeVisible();
@@ -119,12 +184,12 @@ for(const width of [1440,390]) test(`tightening with a running weaker session at
     await expectAxeClean(page,'#security');
     await expect(old.getByRole('button',{name:'Stop',exact:true})).toBeVisible();
     await expect(old.getByRole('button',{name:'Start a new session',exact:true})).toBeVisible();
-    await page.goto(`/sessions/${sid}`);
+    await openDocument(page,`/sessions/${sid}`);
     const frozen=page.getByRole('button',{name:/older settings.*This session.*frozen launch/}).first();
     await frozen.click();
     await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText('Frozen launch revision');
     await page.keyboard.press('Escape');
-    await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+    await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
     await old.getByRole('button',{name:'Stop',exact:true}).click();
     const stop=page.getByRole('dialog',{name:`Stop Older settings ${width}?`,exact:true});
     await stop.getByRole('button',{name:'Cancel',exact:true}).click();
@@ -179,25 +244,25 @@ with DbSession(create_engine('sqlite:///'+sys.argv[1])) as db:
 for(const width of [1440,390]) test(`owner badge counts other accounts and confirmed machine-gone recovery at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900});
   const project=await gitProject(page,'global-older');
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   await page.locator('#security').getByRole('switch',{name:'Block credential-file and environment reads',exact:true}).uncheck();
   const review=await reviewChanges(page);
-  await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+  await applyReview(page,review);
   await expect(review).toHaveCount(0);
   const fixture=remoteOlderFixture(project.id);
   try {
     for(const path of ['/', '/sessions', `/projects/${project.id}`]) {
-      await page.goto(path);
+      await openDocument(page,path);
       const badge=page.getByRole('button',{name:/(Custom security|Current protections On).*1 session on older settings/}).filter({visible:true}).first();
       await expect(badge).toBeVisible();
       await expect(badge).toContainText(path.startsWith('/projects/')?'1 off':'Current protections On');
       await expect(badge).not.toContainText('1 sessions');
     }
-    await page.goto(`/sessions/${fixture.id}`);
+    await openDocument(page,`/sessions/${fixture.id}`);
     await expect(page.getByText('This session · older settings · frozen protections unavailable',{exact:true}).filter({visible:true}).first()).toBeVisible();
     const removed=await page.request.post(`/api/nodes/${fixture.machine}/remove`,{headers:project.headers});
     expect(removed.ok(),await removed.text()).toBe(true);
-    await page.goto('/settings#security');
+    await openDocument(page,'/settings#security');
     const panel=page.locator('#security');
     const row=panel.getByRole('listitem').filter({has:page.getByRole('link',{name:'Older remote generation',exact:true})});
     await expect(row).toBeVisible();
@@ -246,7 +311,7 @@ with Session(create_engine('sqlite:///'+sys.argv[1])) as db:
 test('undeliverable account Unrestricted refuses preview and keeps the draft',async({page})=>{
   const {scope,cleanup}=policyAccountFixture();
   try {
-    await page.goto(`/settings?security_scope=account&machine=${encodeURIComponent(scope.machine)}&account=${encodeURIComponent(scope.account)}#security`);
+    await openDocument(page,`/settings?security_scope=account&machine=${encodeURIComponent(scope.machine)}&account=${encodeURIComponent(scope.account)}#security`);
     const panel=page.locator('#security');
     await panel.getByRole('combobox',{name:'Security mode',exact:true}).selectOption('unrestricted');
     await panel.getByRole('button',{name:'Review changes',exact:true}).click();
@@ -255,7 +320,7 @@ test('undeliverable account Unrestricted refuses preview and keeps the draft',as
     if(await verification.isVisible()) {
       await freshStep(page);
       await verification.getByLabel('Verification password').fill(PASSWORD);
-      await verification.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+      await verification.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
       await verification.getByRole('button',{name:'Verify with password and authenticator',exact:true}).click();
     }
     await expect(panel.getByRole('alert')).toContainText('cannot be turned Off');
@@ -267,12 +332,12 @@ test('undeliverable account Unrestricted refuses preview and keeps the draft',as
 
 test('a stale reviewed policy cannot overwrite a newer tab and the draft is kept',async({page})=>{
   const project=await gitProject(page,'security-stale');
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   const panel=page.locator('#security');
   await panel.getByRole('switch',{name:'Block force pushes',exact:true}).uncheck();
   const review=await reviewChanges(page);
   await saveScope(page,{kind:'project',project_id:project.id},{secrets:false});
-  await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+  await applyReview(page,review,false,409);
   await expect(review.getByRole('alert')).toContainText('changed');
   await review.getByRole('button',{name:'Cancel',exact:true}).click();
   await expect(panel.getByRole('switch',{name:'Block force pushes',exact:true})).not.toBeChecked();
@@ -288,7 +353,7 @@ test('member Security view is read-only and never requests owner scopes or accou
   await page.route('**/api/security/scopes',route=>{forbidden++;return route.fulfill({status:403,json:{detail:'owner only'}});});
   await page.route('**/api/nodes',route=>{forbidden++;return route.fulfill({status:403,json:{detail:'owner only'}});});
   await page.route('**/api/users',route=>{forbidden++;return route.fulfill({status:403,json:{detail:'owner only'}});});
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   const panel=page.locator('#security');
   await expect(panel.getByText('An owner manages these settings.',{exact:false})).toBeVisible();
   await expect(panel.getByRole('heading',{name:'Effective protections'})).toBeVisible();
@@ -304,7 +369,7 @@ test('demotion does not reuse the owner project selector cache',async({page})=>{
     const mine=list.find((p:{id:number})=>p.id===project.id);
     await route.fulfill({response,json:member?[mine]:[mine,{...mine,id:99991,name:'Private owner repository',account:'private-agent'}]});
   });
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   await expect(page.locator('#security').getByRole('option',{name:/Private owner repository/})).toHaveCount(1);
   member=true;
   await expect(page.locator('#security').getByText('An owner manages these settings.',{exact:false})).toBeVisible({timeout:15000});
@@ -330,7 +395,7 @@ test('acknowledged policy fixtures keep current and frozen Unrestricted badges d
         switches:Object.fromEntries(Object.keys(guard.security.switches).map(id=>[id,false]))};
       await route.fulfill({response,json:{...data,launch_spec:{...data.launch_spec,files:{...data.launch_spec.files,'guardrails.json':JSON.stringify(guard)}}}});
     });
-    await page.goto(`/sessions/${session.id}`);
+    await openDocument(page,`/sessions/${session.id}`);
     const frozen=page.getByRole('button',{name:/Unrestricted.*This session.*frozen launch/}).filter({visible:true});
     await expect(frozen).toBeVisible();await frozen.click();
     await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText('Frozen launch revision 77');
@@ -344,7 +409,7 @@ test('acknowledged policy fixtures keep current and frozen Unrestricted badges d
 
 test('expired review refuses apply without discarding its unsaved choices',async({page})=>{
   const project=await gitProject(page,'security-expiry');
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   const panel=page.locator('#security');
   await panel.getByRole('switch',{name:'Block force pushes',exact:true}).uncheck();
   const review=await reviewChanges(page);
@@ -360,7 +425,7 @@ test('expired review refuses apply without discarding its unsaved choices',async
 test('SS-1 old Tool approvals cannot save unreviewed policy',async({page})=>{
   let writes=0;
   page.on('request',r=>{if(r.method()==='PUT'&&new URL(r.url()).pathname==='/api/tools/policy')writes++;});
-  await page.goto('/settings#tool-approvals');
+  await openDocument(page,'/settings#tool-approvals');
   const panel=page.locator('#tool-approvals');
   await expect(panel.getByRole('heading',{name:'Tool approvals',exact:true})).toBeVisible();
   await expect(panel.getByRole('checkbox')).toHaveCount(0);
@@ -379,7 +444,7 @@ test('SS-3 re-enabled folder protection is visibly pending even with every switc
       switches:Object.fromEntries(Object.keys(data.switches).map(id=>[id,true])),mode:'custom',policy_mode:'default',enforcement:{allowed_folders:'pending'}}});
     else await route.fulfill({response,json:data});
   });
-  await page.goto(`/settings?security_scope=account&machine=local&account=${encodeURIComponent(details.account)}#security`);
+  await openDocument(page,`/settings?security_scope=account&machine=local&account=${encodeURIComponent(details.account)}#security`);
   const panel=page.locator('#security');
   const pendingBadge=panel.getByRole('button',{name:/Folder protection pending/});
   await expect(pendingBadge).toBeVisible();
@@ -401,7 +466,7 @@ test('SS-4 a shared account displays variation without inventing an Off value',a
       varying_switches:['tool_install_check'],mode:'custom'}});
     else await route.fulfill({response,json:data});
   });
-  await page.goto(`/settings?security_scope=account&machine=local&account=${encodeURIComponent(details.account)}#security`);
+  await openDocument(page,`/settings?security_scope=account&machine=local&account=${encodeURIComponent(details.account)}#security`);
   const panel=page.locator('#security');
   const row=panel.getByRole('listitem').filter({has:page.getByText('Ask before account-wide tool changes',{exact:true})});
   await expect(row).toContainText('Effective now: Varies by person');
@@ -416,7 +481,7 @@ test('SS-5 audit distinguishes refusal conflict and failed apply from successful
     {id:902,actor:'alex',action:'security.policy.conflict',ts:'2026-10-31T00:01:00Z',detail:{reason:'expired'}},
     {id:903,actor:'alex',action:'security.policy.failed',ts:'2026-10-31T00:02:00Z',detail:{reason:'internal_failure'}},
   ]}}));
-  await page.goto('/settings#security');
+  await openDocument(page,'/settings#security');
   const audit=page.locator('#security section').filter({has:page.getByRole('heading',{name:'Recent Security audit',exact:true})});
   await expect(audit).toContainText('Request refused');
   await expect(audit).toContainText('Policy conflict');
@@ -426,7 +491,7 @@ test('SS-5 audit distinguishes refusal conflict and failed apply from successful
 
 test('SS-2 dangerous launch confirmation cannot override provider prompts On',async({page})=>{
   const project=await gitProject(page,'security-provider');
-  await page.goto(`/projects/${project.id}`);
+  await openDocument(page,`/projects/${project.id}`);
   await page.getByRole('main').getByRole('button',{name:'New session',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'New session',exact:true});
   await dialog.getByRole('button',{name:/^Advanced/}).click();
@@ -439,7 +504,7 @@ test('SS-2 dangerous launch confirmation cannot override provider prompts On',as
 
 for(const state of ['applied','pending'] as const) test(`folder switch result is reported immediately: ${state}`,async({page})=>{
   const project=await gitProject(page,`folder-result-${state}`);
-  await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+  await openDocument(page,`/settings?security_scope=project&project_id=${project.id}#security`);
   const panel=page.locator('#security');
   await panel.getByRole('switch',{name:'Block force pushes',exact:true}).uncheck();
   await page.route('**/api/security/changes/*/apply',async route=>{
@@ -449,7 +514,7 @@ for(const state of ['applied','pending'] as const) test(`folder switch result is
   });
   const review=await reviewChanges(page);
   await expect(review).toContainText('Folder reloads affect running sessions: Off widens');
-  await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+  await applyReview(page,review);
   await expect(panel.getByRole('status').filter({hasText:'Folder policy:'})).toContainText(state==='applied'?'acknowledged by the target':'pending target acknowledgement');
   await expect(panel.getByRole('link',{name:'Review or retry in Allowed folders',exact:true})).toBeVisible();
 });
@@ -487,7 +552,7 @@ for(const width of [1440,390]) test(`X3 confirms unchanged recovery after a refu
     pending=false;
     await route.fulfill({response});
   });
-  await page.goto('/settings/security/folders');
+  await openDocument(page,'/settings/security/folders');
   await page.getByRole('button',{name:'Preview folders',exact:true}).click();
   await expect(page.getByRole('alert')).toContainText('target refused');
   await page.getByRole('link',{name:'Open Security to restore this setting',exact:true}).click();
@@ -495,7 +560,7 @@ for(const width of [1440,390]) test(`X3 confirms unchanged recovery after a refu
   await expect(panel.getByRole('button',{name:'Review acknowledged folder policy',exact:true})).toBeVisible();
   const review=await reviewChanges(page,'Review acknowledged folder policy');
   await expect(review).toContainText('acknowledged');
-  await review.getByRole('button',{name:'Apply Security changes',exact:true}).click();
+  await applyReview(page,review);
   await expect(review).toHaveCount(0);
   await expect(panel.getByText('Server policy saved.',{exact:false})).toBeVisible();
   await expect(panel.getByRole('button',{name:'Review acknowledged folder policy',exact:true})).toHaveCount(0);

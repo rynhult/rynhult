@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean, wikiShotPath } from "./helpers";
 
 /* Host details for every machine: the Machine picker shows a connected node's details, reported over its link

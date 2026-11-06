@@ -4,6 +4,7 @@ import hashlib
 import json
 import ssl
 import tarfile
+from pathlib import Path
 
 import pytest
 from test_auth import live  # noqa: F401 (fixture)
@@ -459,7 +460,14 @@ def test_helper_entry_rejects_injected_requests_under_temporary_root(tmp_path, m
     monkeypatch.setenv("ACC_UPDATE_SOURCE", str(source))
     monkeypatch.setenv("ACC_DATA", str(tmp_path / "data"))
     monkeypatch.setenv("ACC_UPDATE_GROUP", "")
-    monkeypatch.setattr(update_helper.subprocess, "run", lambda *a, **kw: pytest.fail("ran a privileged command"))
+    original_run = update_helper.subprocess.run
+
+    def run(args, **kwargs):
+        if args[0] == "git":
+            return original_run(args, **kwargs)
+        pytest.fail("ran a privileged command")
+
+    monkeypatch.setattr(update_helper.subprocess, "run", run)
     for body in (
         {"action": "update", "version": "0.13.0", "url": "https://example.com/evil"},
         {"action": "update", "version": "0.13.0"},
@@ -1040,3 +1048,154 @@ async def test_helper_failure_detail_reaches_machine_view_over_node_link(api, en
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("kind,blocked", [
+    ("tagged-clean", False), ("tagged-dirty", True), ("untagged", True),
+    ("past-tag", True), ("untracked", True), ("nonrelease-tag", True),
+])
+async def test_checkout_release_eligibility(api, tmp_path, monkeypatch, kind, blocked):
+    import dataclasses
+    import subprocess
+
+    from acc import update_helper, updates
+
+    source = tmp_path / "checkout"
+    source.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (source / "tracked").write_text("initial")
+    git("add", ".")
+    git("commit", "-m", "initial")
+    if kind != "untagged":
+        git("tag", "other" if kind == "nonrelease-tag" else "v1.0.0")
+    if kind in ("tagged-dirty", "past-tag"):
+        (source / "tracked").write_text("changed")
+    if kind == "past-tag":
+        git("commit", "-am", "next")
+    if kind == "untracked":
+        (source / "extra").write_text("local work")
+    assert updates.checkout_blocks_update(source) is blocked
+    service = api.app.state.ctx.updates
+    service.settings = dataclasses.replace(service.settings, update_source=source)
+    assert service.state()["blocked"] == (updates.GIT_MESSAGE if blocked else None)
+    # Model the documented root-owned installation without requiring root tests.
+    import os
+
+    original_lstat = Path.lstat
+
+    def root_owned(path, *args, **kwargs):
+        metadata = original_lstat(path, *args, **kwargs)
+        if path in (source, source / ".git"):
+            fields = list(metadata)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", root_owned)
+    job = update_helper.Transaction(tmp_path / "updates", source, tmp_path / "data", "99.0.0", {})
+    steps = []
+    job.backup = lambda: steps.append("backup")
+    job.download = lambda: (_ for _ in ()).throw(ValueError("stop before installation"))
+    job._apply()
+    assert bool(steps) is not blocked
+
+
+async def test_default_update_repository_is_official(api):
+    service = api.app.state.ctx.updates
+    assert service.defaults()["repository"] == "rynhult/rynhult"
+    assert service.authorized_repository() == "rynhult/rynhult"
+
+
+@pytest.mark.parametrize("authorized", [None, "custom/releases"])
+def test_helper_repository_default_and_admin_override(tmp_path, monkeypatch, authorized):
+    from acc import update_helper
+
+    root = tmp_path / "updates"
+    (root / "requests").mkdir(parents=True)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nversion="1.0.0"\n')
+    monkeypatch.setenv("ACC_UPDATE_ROOT", str(root))
+    monkeypatch.setenv("ACC_UPDATE_SOURCE", str(source))
+    monkeypatch.setenv("ACC_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("ACC_UPDATE_GROUP", "")
+    monkeypatch.setenv("ACC_UPDATE_MODE", "main")
+    monkeypatch.setenv("ACC_SOURCE_URL", "https://github.com/legacy/source")
+    monkeypatch.delenv("ACC_UPDATE_REPOSITORY", raising=False)
+    if authorized is not None:
+        monkeypatch.setenv("ACC_UPDATE_REPOSITORY", authorized)
+    seen = []
+
+    def apply(job):
+        seen.append(job.config["repository"])
+        return {"ok": True}
+
+    monkeypatch.setattr(update_helper.Transaction, "apply", apply)
+    (root / "requests" / ("a" * 32 + ".json")).write_text(
+        json.dumps({"action": "update", "version": "2.0.0"})
+    )
+    assert update_helper.main() == 0
+    assert seen == [authorized or "rynhult/rynhult"]
+
+
+@pytest.mark.parametrize("unsafe", ["source-owner", "git-owner", "source-link", "git-link", "git-file", "unreadable"])
+def test_helper_refuses_unsafe_checkout_before_git(tmp_path, monkeypatch, unsafe):
+    import stat
+    from types import SimpleNamespace
+
+    from acc import update_helper, updates
+
+    source = tmp_path / "checkout"
+    source.mkdir()
+    (source / ".git").mkdir()
+    original_lstat = Path.lstat
+
+    def metadata(path, *args, **kwargs):
+        if path not in (source, source / ".git"):
+            return original_lstat(path, *args, **kwargs)
+        if unsafe == "unreadable":
+            raise PermissionError("unreadable")
+        prefix = "source" if path == source else "git"
+        mode = stat.S_IFDIR
+        if unsafe == prefix + "-link":
+            mode = stat.S_IFLNK
+        elif unsafe == prefix + "-file":
+            mode = stat.S_IFREG
+        return SimpleNamespace(st_uid=1000 if unsafe == prefix + "-owner" else 0, st_mode=mode)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(updates.subprocess, "run", lambda *a, **kw: pytest.fail("git ran before refusal"))
+    job = update_helper.Transaction(tmp_path / "updates", source, tmp_path / "data", "99.0.0", {})
+    job.backup = lambda: pytest.fail("backup ran before refusal")
+    result = job._apply()
+    assert result["ok"] is False
+    assert result["detail"] == updates.GIT_MESSAGE
+
+
+def test_root_checkout_git_flags(tmp_path, monkeypatch):
+    import stat
+    from types import SimpleNamespace
+
+    from acc import updates
+
+    source = tmp_path / "checkout"
+    source.mkdir()
+    (source / ".git").mkdir()
+    monkeypatch.setattr(Path, "lstat", lambda *a, **kw: SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert argv[:9] == ["git", "-c", f"safe.directory={source}", "-c", "core.fsmonitor=false",
+                            "-c", "core.hooksPath=/dev/null", "-C", str(source)]
+        return SimpleNamespace(stdout="v1.0.0" if argv[9] == "tag" else "")
+
+    monkeypatch.setattr(updates.subprocess, "run", run)
+    assert updates.checkout_blocks_update(source, require_root_owned=True) is False
+    assert [argv[9] for argv in calls] == ["tag", "status"]

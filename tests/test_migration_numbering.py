@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/next_migration_number.py"
 VERSIONS = Path("src/acc/server/migrations/versions")
 # Intentionally skipped numbers need a nonempty explanation here.
-# The entries below are permanently skipped (coordinator
+# Entries below are permanently skipped (coordinator
 # registry, 2026-10-26: 0067 mobile, 0068 remote-access backup forwarder, 0069-0072 orchestrator v2, next free 0073);
 # they were reserved once and their work took other numbers or none, so they stay unused for good.
 DOCUMENTED_GAPS: dict[int, str] = {
@@ -220,7 +220,7 @@ def test_graph_guard_accepts_an_explicitly_documented_gap(repository):
 def test_integrated_orchestrator_lanes_have_one_ordered_head():
     from acc.server.db import alembic_config
     script = ScriptDirectory.from_config(alembic_config('sqlite://'))
-    assert script.get_heads() == ['0081']
+    assert script.get_heads() == ['0087']
     assert [(script.get_revision(revision).revision, script.get_revision(revision).down_revision)
-            for revision in ('0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081')] == [
-                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077'), ('0079', '0078'), ('0080', '0079'), ('0081', '0080')]
+            for revision in ('0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081', '0082', '0083', '0084', '0085', '0086', '0087')] == [
+                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077'), ('0079', '0078'), ('0080', '0079'), ('0081', '0080'), ('0082', '0081'), ('0083', '0082'), ('0084', '0083'), ('0085', '0084'), ('0086', '0085'), ('0087', '0086')]

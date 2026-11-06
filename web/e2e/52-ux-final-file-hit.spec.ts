@@ -1,4 +1,4 @@
-import {expect,test} from '@playwright/test';
+import {expect,test} from './fixtures';
 import {AUTH_FILE,gitProject,expectAxeClean} from './helpers';
 test.use({storageState:AUTH_FILE});
 test('Files metadata clicks the one semantic row button and preserves its readable name',async({page})=>{

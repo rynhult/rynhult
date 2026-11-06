@@ -1,6 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import {AUTH_FILE,expectAxeClean,wikiShotPath} from './helpers';
-test.use({storageState:AUTH_FILE});
+test.use({storageState: AUTH_FILE, shellLayout: 'standard'});
 test('Guide copy controls and Settings section index screenshots use artificial metadata',async({page},testInfo)=>{
  await page.route('**/api/wiki/guide/**/page?**',async r=>{const response=await r.fetch();const data=await response.json();await r.fulfill({response,json:{...data,author:'Alex Example',commit:'abc12345',committed_at:'2026-10-23T12:00:00Z'}});});
  await page.goto('/guide/User-Guide/Install');await expect(page.locator('article').getByRole('button',{name:'Copy code'}).first()).toBeVisible();

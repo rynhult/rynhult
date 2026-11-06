@@ -1,8 +1,9 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { CopyBlock } from "./InstallSteps";
 import { useQuery } from "@tanstack/react-query";
 import { Download, ShieldCheck } from "lucide-react";
 import { api } from "../lib/api";
-import { Badge, Card, CardHeader, ErrorNote, Meta, Skeleton } from "./ui";
+import { Badge, ErrorNote, Meta, Skeleton } from "./ui";
 
 interface CertificateInfo {
   kind: "public" | "caddy" | "file" | "unverified"; primary: string; file?: string; subject?: string; issuer?: string;

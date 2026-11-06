@@ -10,7 +10,7 @@ import { Button, Card, ErrorNote, Field, IconButton, Input, Select, Skeleton } f
 export type DiffReference = { path: string; side: "old" | "new"; start: number; end: number };
 type Walkthrough = {
   status: "missing" | "running" | "ready" | "error"; revision: string; helper_id?: string;
-  provider?: string; model?: string; created_at?: string; error?: string;
+  provider?: string; provider_note?: string; model?: string; created_at?: string; error?: string;
   input_summarised?: boolean; diff_truncated?: boolean;
   steps: { title: string; summary: string; references: DiffReference[] }[];
 };
@@ -71,6 +71,7 @@ export function Explanation({ session, revision, onClose, onReference, onRefresh
               {data.provider} · {data.model} · {data.created_at && new Date(data.created_at).toLocaleString()}
               {" · "}<Link className="text-accent underline hover:decoration-2" to={`/sessions/${data.helper_id}`}>Helper session</Link>
             </p>}
+            {data.provider_note && <p className="text-xs text-muted">{data.provider_note}</p>}
             {(data.input_summarised || data.diff_truncated) && <p className="text-xs text-wait">
               {data.input_summarised ? "Large diff: generated from per-file summaries and excerpts. " : ""}
               {data.diff_truncated ? "The source diff was truncated; this walkthrough is incomplete." : ""}
@@ -97,7 +98,7 @@ export function Explanation({ session, revision, onClose, onReference, onRefresh
             </>}
             {(data.status === "missing" || data.status === "error" || regenerate) && <form
               className="space-y-3" onSubmit={e => { e.preventDefault(); launch.mutate(); }}>
-              <p className="text-xs text-muted">Runs one read-only helper as your signed-in agent account. Uses your plan and launch budgets. No edits or network tools.</p>
+              <p className="text-xs text-muted">Runs one read-only helper as your signed-in agent account. Uses your plan and launch budgets. Claude needs a vault API key or configured cloud credentials; otherwise the helper uses signed-in Codex when available. No edits or network tools.</p>
               <Field label="Explanation agent">
                 <Select value={chosen} onChange={e => {
                   setProvider(e.target.value);

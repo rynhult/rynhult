@@ -49,6 +49,24 @@ def test_browse_read_status_and_conflicting_atomic_save(folder):
     assert (root / 'new.md').read_text() == '# Updated\n'
 
 
+def test_registry_file_identity_fences_replaced_checkout_even_with_identical_content(folder):
+    _, root = folder
+    (root / 'notes.txt').write_text('same bytes')
+    opened = call(folder, 'read', 'notes.txt')
+    assert opened['workspace_revision']
+    root.rename(root.with_name('previous-project'))
+    root.mkdir()
+    (root / 'notes.txt').write_text('same bytes')
+    with pytest.raises(ops.OpError, match='folder changed'):
+        call(folder, 'write', 'notes.txt', content='must not land', revision=opened['revision'],
+             workspace_revision=opened['workspace_revision'])
+    assert (root / 'notes.txt').read_text() == 'same bytes'
+    fresh = call(folder, 'read', 'notes.txt')
+    saved = call(folder, 'write', 'notes.txt', content='explicit fresh save', revision=fresh['revision'],
+                 workspace_revision=fresh['workspace_revision'])
+    assert saved['workspace_revision'] == fresh['workspace_revision']
+
+
 @pytest.mark.parametrize('rel', ['../outside', '/etc/passwd', 'sub/../../outside', '.git/config', 'a\\b', 'a/../b'])
 def test_bad_paths_refused(folder, rel):
     with pytest.raises(ops.OpError):

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './fixtures';
 import { AUTH_FILE, csrfHeaders, expectScannableQr, resetPairingThrottle, verifyAgain } from './helpers';
 
 // Break-it pass 10 (docs/reviews/2026-10-27-break-it-10.md): phone pairing and remote access settings, used carelessly

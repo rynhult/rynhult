@@ -948,6 +948,35 @@ async def test_evaluation_status_is_owner_audited_without_public_poll_writes(ha_
             assert response.json()['automatic_failover'] is False
         assert len(evaluations()) == 1
         assert evaluations()[0]['promotion_wired'] is False
+
+
+@pytest.mark.asyncio
+async def test_busy_database_delays_the_evaluation_audit_not_the_status(ha_apps, monkeypatch):
+    import httpx
+    from sqlalchemy import select
+    from sqlalchemy.exc import OperationalError
+
+    from acc.server.models import AuditLog
+
+    app = ha_apps[0]
+    authority = app.state.ha.authority
+    def evaluations():
+        with authority.control.connect() as db:
+            return db.execute(select(AuditLog.id).where(AuditLog.action == 'ha.automatic_evaluation')).scalars().all()
+    def busy():
+        raise OperationalError('INSERT INTO audit_log', {}, Exception('database is locked'))
+    headers = {'Authorization': 'Bearer example-owner-token'}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://acc', headers=headers) as client:
+        with monkeypatch.context() as patch:
+            patch.setattr(authority.control, 'begin', busy)
+            response = await client.get('/api/ha/status')
+            assert response.status_code == 200
+            assert response.json()['role'] == 'standby'
+            assert response.json()['automatic_evaluation']['reason'] == 'disabled'
+        assert evaluations() == []
+        for _ in range(2):
+            assert (await client.get('/api/ha/status')).status_code == 200
+        assert len(evaluations()) == 1  # recorded on the next read, and still only once
         assert authority.status()['epoch'] == 0
 
 

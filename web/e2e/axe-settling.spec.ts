@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { expectAxeClean } from "./helpers";
 
 test("axe waits for theme transitions instead of sampling intermediate colours", async ({ page }) => {

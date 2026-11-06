@@ -1,9 +1,26 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test as base, type Page } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { environmentValue } from '../../src/acc/env.mjs';
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, wikiShotPath } from './helpers';
+import { gotoLoadedPage } from './loaded-page';
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped, wikiShotPath } from './helpers';
 
 // The working list on the Team tab, including conflicts through the fixture server's real API.
+const test = base.extend<{ lead: string; ownedLeads: string[] }>({
+  ownedLeads: [async ({ page }, use) => {
+    const leads: string[] = [];
+    await use(leads);
+    for (const lead of leads) {
+      expect((await page.request.post(`/api/sessions/${lead}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+      await waitForTeamStopped(page, lead);
+    }
+  }, { timeout: 45_000 }],
+  lead: [async ({ page, ownedLeads }, use) => {
+    const lead = await teamLead(page);
+    ownedLeads.push(lead);
+    await waitForSessionState(page, lead, 'idle', 'claude_hook');
+    await use(lead);
+  }, { timeout: 45_000 }],
+});
 test.use({ storageState: AUTH_FILE });
 
 function fixtureSql(sql: string, args: unknown[]) {
@@ -20,163 +37,174 @@ async function teamLead(page: Page) {
   return (await created.json()).id as string;
 }
 
-test('the working list stays hidden while orchestrator v2 is off', async ({ page }) => {
-  const lead = await teamLead(page);
+test('the working list stays hidden while orchestrator v2 is off', async ({ page, lead }) => {
   const live = await page.request.get(`/api/teams/${lead}/worklist`);
   test.skip(live.status() !== 404, 'this server runs with orchestrator v2 on');
-  await page.goto(`/sessions/${lead}?tab=team#worklist`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
   await expect(page.getByText('Team limits', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Working list' })).toHaveCount(0);
 });
 
-for (const state of ['open', 'done'] as const) test(`an answer survives a same-card conflict while the card becomes ${state} and resends once`, async ({ page }, ti) => {
-  const lead = await teamLead(page);
+for (const state of ['open', 'done'] as const) test(`an answer survives a same-card conflict while the card becomes ${state} and resends once`, async ({ page, lead }, ti) => {
   const headers = await csrfHeaders(page);
   const root = `/api/teams/${lead}/worklist`;
-  try {
-    const created = await page.request.post(`${root}/items`, { headers, data: { kind: 'question', title: 'Which booking details are public?' } });
-    expect(created.ok(), await created.text()).toBeTruthy();
-    const original = await created.json();
-    const url = `${root}/items/${original.id}`;
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
-    const card = page.getByRole('listitem', { name: original.title, exact: true });
-    await card.getByRole('textbox', { name: `Answer "${original.title}"`, exact: true }).fill('Only the available times; keep guest names private.');
-    let raced = false;
-    await page.route(`**${url}`, async route => {
-      if (!raced && route.request().method() === 'PATCH') {
-        raced = true;
-        const changed = await page.request.patch(url, { headers, data: {
-          revision: original.revision, title: 'Which booking details can guests see?',
-          steps: 'Consider the calendar and confirmation screen.', state,
-        } });
-        expect(changed.ok(), await changed.text()).toBeTruthy();
-      }
-      await route.continue();
-    });
-    await card.getByRole('button', { name: 'Answer', exact: true }).click();
-    const latest = page.getByRole('listitem', { name: 'Which booking details can guests see?', exact: true });
-    const review = latest.getByRole('alert');
-    await expect(review).toContainText('This card changed');
-    await expect(review).toContainText(original.title);
-    await expect(review).toContainText('Consider the calendar and confirmation screen.');
-    const reply = latest.getByRole('textbox', { name: /Answer "/ });
-    await expect(reply).toHaveValue('Only the available times; keep guest names private.');
-    await expectAxeClean(page);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-    if (state === 'open') await latest.screenshot({ path: wikiShotPath(ti, /390|phone|mobile/.test(ti.project.name) ? 'worklist-conflict-phone.png' : 'worklist-conflict.png') });
-    const saved = page.waitForResponse(r => new URL(r.url()).pathname === url && r.request().method() === 'PATCH');
-    await latest.getByRole('button', { name: 'Resend answer', exact: true }).click();
-    expect((await saved).ok()).toBeTruthy();
-    await expect(latest).toContainText('Answer from alex');
-    const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
-    expect(stored.answer).toBe('Only the available times; keep guest names private.');
-    expect(stored.state).toBe('answered');
-    await expect(page.getByRole('alert').filter({ hasText: 'This card changed' })).toHaveCount(0);
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  const created = await page.request.post(`${root}/items`, { headers, data: { kind: 'question', title: 'Which booking details are public?' } });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const original = await created.json();
+  const url = `${root}/items/${original.id}`;
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
+  const card = page.getByRole('listitem', { name: original.title, exact: true });
+  await card.getByRole('textbox', { name: `Answer "${original.title}"`, exact: true }).fill('Only the available times; keep guest names private.');
+  let raced = false;
+  await page.route(`**${url}`, async route => {
+    if (!raced && route.request().method() === 'PATCH') {
+      raced = true;
+      const changed = await page.request.patch(url, { headers, data: {
+        revision: original.revision, title: 'Which booking details can guests see?',
+        steps: 'Consider the calendar and confirmation screen.', state,
+      } });
+      expect(changed.ok(), await changed.text()).toBeTruthy();
+    }
+    await route.continue();
+  });
+  await card.getByRole('button', { name: 'Answer', exact: true }).click();
+  const latest = page.getByRole('listitem', { name: 'Which booking details can guests see?', exact: true });
+  const review = latest.getByRole('alert');
+  await expect(review).toContainText('This card changed');
+  await expect(review).toContainText(original.title);
+  await expect(review).toContainText('Consider the calendar and confirmation screen.');
+  const reply = latest.getByRole('textbox', { name: /Answer "/ });
+  await expect(reply).toHaveValue('Only the available times; keep guest names private.');
+  await expectAxeClean(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  if (state === 'open') await latest.screenshot({ path: wikiShotPath(ti, /390|phone|mobile/.test(ti.project.name) ? 'worklist-conflict-phone.png' : 'worklist-conflict.png') });
+  const saved = page.waitForResponse(r => new URL(r.url()).pathname === url && r.request().method() === 'PATCH');
+  await latest.getByRole('button', { name: 'Resend answer', exact: true }).click();
+  expect((await saved).ok()).toBeTruthy();
+  await expect(latest).toContainText('Answer from alex');
+  const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
+  expect(stored.answer).toBe('Only the available times; keep guest names private.');
+  expect(stored.state).toBe('answered');
+  await expect(page.getByRole('alert').filter({ hasText: 'This card changed' })).toHaveCount(0);
 });
 
-test('a lead decision sends its own revision, not the much newer list revision', async ({ page }) => {
-  const lead = await teamLead(page);
+test('a lead decision sends its own revision, not the much newer list revision', async ({ page, lead }) => {
   const headers = await csrfHeaders(page);
   const root = `/api/teams/${lead}/worklist`;
-  try {
-    const created = await page.request.post(`${root}/items`, { headers, data: {
-      kind: 'decision', title: 'Keep bookings private?',
-      options: [{ id: 'private', label: 'Keep names private' }, { id: 'public', label: 'Publish names' }],
-    } });
-    expect(created.ok(), await created.text()).toBeTruthy();
-    const original = await created.json();
-    fixtureSql("UPDATE work_item SET source='lead', owner_edited=0 WHERE id=?", [original.id]);
-    fixtureSql('UPDATE orchestration_run SET revision=75 WHERE team_id=?', [lead]);
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
-    const card = page.getByRole('listitem', { name: original.title, exact: true });
-    await expect(card).toContainText('Written by the team lead (an agent)');
-    const sent = page.waitForRequest(r => new URL(r.url()).pathname === `${root}/items/${original.id}` && r.method() === 'PATCH');
-    await card.getByRole('button', { name: 'Keep names private', exact: true }).click();
-    expect((await sent).postDataJSON()).toEqual({ answer: 'private', revision: 1 });
-    await expect(card).toContainText('Answer from alex');
-    const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
-    expect(stored.answer).toBe('private');
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  const created = await page.request.post(`${root}/items`, { headers, data: {
+    kind: 'decision', title: 'Keep bookings private?',
+    options: [{ id: 'private', label: 'Keep names private' }, { id: 'public', label: 'Publish names' }],
+  } });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const original = await created.json();
+  fixtureSql("UPDATE work_item SET source='lead', owner_edited=0 WHERE id=?", [original.id]);
+  fixtureSql('UPDATE orchestration_run SET revision=75 WHERE team_id=?', [lead]);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
+  const card = page.getByRole('listitem', { name: original.title, exact: true });
+  await expect(card).toContainText('Written by the team lead (an agent)');
+  const sent = page.waitForRequest(r => new URL(r.url()).pathname === `${root}/items/${original.id}` && r.method() === 'PATCH');
+  await card.getByRole('button', { name: 'Keep names private', exact: true }).click();
+  expect((await sent).postDataJSON()).toEqual({ answer: 'private', revision: 1 });
+  await expect(card).toContainText('Answer from alex');
+  const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
+  expect(stored.answer).toBe('private');
 });
 
-test('a removed decision option stays visible but cannot be resent as a different choice', async ({ page }) => {
-  const lead = await teamLead(page);
+test('a removed decision option stays visible but cannot be resent as a different choice', async ({ page, lead }) => {
   const headers = await csrfHeaders(page);
   const root = `/api/teams/${lead}/worklist`;
-  try {
-    const response = await page.request.post(`${root}/items`, { headers, data: {
-      kind: 'decision', title: 'What can guests see?',
-      options: [{ id: 'public', label: 'Names and times' }, { id: 'private', label: 'Times only' }],
-    } });
-    expect(response.ok(), await response.text()).toBeTruthy();
-    const original = await response.json();
-    const url = `${root}/items/${original.id}`;
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
-    const card = page.getByRole('listitem', { name: original.title, exact: true });
-    let raced = false;
-    await page.route(`**${url}`, async route => {
-      if (!raced && route.request().method() === 'PATCH') {
-        raced = true;
-        const changed = await page.request.patch(url, { headers, data: {
-          revision: original.revision, options: [{ id: 'private', label: 'Times only' }, { id: 'later', label: 'Decide later' }],
-        } });
-        expect(changed.ok(), await changed.text()).toBeTruthy();
-      }
-      await route.continue();
-    });
-    await card.getByRole('button', { name: 'Names and times', exact: true }).click();
-    await expect(card.getByRole('alert')).toContainText('This card changed');
-    await expect(card).toContainText('Your previous choice: Names and times.');
-    await expect(card.getByRole('button', { name: 'Resend decision', exact: true })).toBeDisabled();
-    await card.getByRole('button', { name: 'Times only', exact: true }).click();
-    await expect(card).toContainText('Answer from alex');
-    expect((await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id).answer).toBe('private');
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  const response = await page.request.post(`${root}/items`, { headers, data: {
+    kind: 'decision', title: 'What can guests see?',
+    options: [{ id: 'public', label: 'Names and times' }, { id: 'private', label: 'Times only' }],
+  } });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const original = await response.json();
+  const url = `${root}/items/${original.id}`;
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
+  const card = page.getByRole('listitem', { name: original.title, exact: true });
+  let raced = false;
+  await page.route(`**${url}`, async route => {
+    if (!raced && route.request().method() === 'PATCH') {
+      raced = true;
+      const changed = await page.request.patch(url, { headers, data: {
+        revision: original.revision, options: [{ id: 'private', label: 'Times only' }, { id: 'later', label: 'Decide later' }],
+      } });
+      expect(changed.ok(), await changed.text()).toBeTruthy();
+    }
+    await route.continue();
+  });
+  const refused = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === url);
+  const changedList = page.waitForResponse(async response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === root && response.status() === 200
+    && (await response.json()).items.some((item: { id: number; options?: { id: string }[] }) =>
+      item.id === original.id && item.options?.some(option => option.id === 'later')));
+  await card.getByRole('button', { name: 'Names and times', exact: true }).click();
+  expect((await refused).status()).toBe(409);
+  expect(await (await changedList).finished()).toBeNull();
+  await expect(card.getByRole('alert')).toContainText('This card changed');
+  await expect(card).toContainText('Your previous choice: Names and times.');
+  await expect(card.getByRole('button', { name: 'Resend decision', exact: true })).toBeDisabled();
+  const answered = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === url);
+  const answeredList = page.waitForResponse(async response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === root && response.status() === 200
+    && (await response.json()).items.some((item: { id: number; answer?: string }) =>
+      item.id === original.id && item.answer === 'private'));
+  await card.getByRole('button', { name: 'Times only', exact: true }).click();
+  expect((await answered).ok()).toBe(true);
+  expect(await (await answeredList).finished()).toBeNull();
+  await expect(card).toContainText('Answer from alex');
+  expect((await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id).answer).toBe('private');
 });
 
-for (const state of ['open', 'done'] as const) test(`blocking-link conflict keeps the edit when the card becomes ${state} and retries with its reviewed revision`, async ({ page }) => {
-  const lead = await teamLead(page);
+for (const state of ['open', 'done'] as const) test(`blocking-link conflict keeps the edit when the card becomes ${state} and retries with its reviewed revision`, async ({ page, lead }) => {
   const headers = await csrfHeaders(page);
   const root = `/api/teams/${lead}/worklist`;
-  try {
-    expect((await page.request.patch(`/api/teams/${lead}/plan`, { headers, data: {
-      version: 0, requirements: [{ text: 'Keep guest names private' }],
-    } })).ok()).toBeTruthy();
-    const response = await page.request.post(`${root}/items`, { headers, data: { kind: 'question', title: 'Approve the booking flow?' } });
-    expect(response.ok(), await response.text()).toBeTruthy();
-    const original = await response.json();
-    const url = `${root}/items/${original.id}`;
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
-    const card = page.getByRole('listitem', { name: original.title, exact: true });
-    if (page.viewportSize()!.width < 640) {
-      await card.getByRole('button', { name: `More actions for "${original.title}"`, exact: true }).click();
-      await card.getByRole('menuitem', { name: 'Edit blocking links', exact: true }).click();
-    } else await card.getByRole('button', { name: 'Edit blocking links', exact: true }).click();
-    await card.getByRole('textbox', { name: /Blocking links for/ }).fill('R-1');
-    let raced = false;
-    await page.route(`**${url}`, async route => {
-      if (!raced && route.request().method() === 'PATCH') {
-        raced = true;
-        expect((await page.request.patch(url, { headers, data: {
-          revision: original.revision, steps: 'Check the confirmation screen too.', state,
-        } })).ok()).toBeTruthy();
-      }
-      await route.continue();
-    });
-    await card.getByRole('button', { name: 'Save blocking links', exact: true }).click();
-    await expect(card.getByRole('alert')).toContainText('Check the confirmation screen too.');
-    await expect(card.getByRole('textbox', { name: /Blocking links for/ })).toHaveValue('R-1');
-    await card.getByRole('button', { name: 'Resend blocking links', exact: true }).click();
-    await expect(card.getByRole('button', { name: 'Resend blocking links', exact: true })).toHaveCount(0);
-    const saved = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
-    expect(saved.blocks).toEqual(['R-1']);
-    expect(saved.steps).toBe('Check the confirmation screen too.');
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  expect((await page.request.patch(`/api/teams/${lead}/plan`, { headers, data: {
+    version: 0, requirements: [{ text: 'Keep guest names private' }],
+  } })).ok()).toBeTruthy();
+  const response = await page.request.post(`${root}/items`, { headers, data: { kind: 'question', title: 'Approve the booking flow?' } });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const original = await response.json();
+  const url = `${root}/items/${original.id}`;
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
+  const card = page.getByRole('listitem', { name: original.title, exact: true });
+  if (page.viewportSize()!.width < 640) {
+    await card.getByRole('button', { name: `More actions for "${original.title}"`, exact: true }).click();
+    await card.getByRole('menuitem', { name: 'Edit blocking links', exact: true }).click();
+  } else await card.getByRole('button', { name: 'Edit blocking links', exact: true }).click();
+  await card.getByRole('textbox', { name: /Blocking links for/ }).fill('R-1');
+  let raced = false;
+  await page.route(`**${url}`, async route => {
+    if (!raced && route.request().method() === 'PATCH') {
+      raced = true;
+      expect((await page.request.patch(url, { headers, data: {
+        revision: original.revision, steps: 'Check the confirmation screen too.', state,
+      } })).ok()).toBeTruthy();
+    }
+    await route.continue();
+  });
+  await card.getByRole('button', { name: 'Save blocking links', exact: true }).click();
+  await expect(card.getByRole('alert')).toContainText('Check the confirmation screen too.');
+  await expect(card.getByRole('textbox', { name: /Blocking links for/ })).toHaveValue('R-1');
+  const refreshed = page.waitForResponse(async response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === root && response.status() === 200
+    && (await response.json()).items.some((item: { id: number; blocks?: string[] }) =>
+      item.id === original.id && item.blocks?.includes('R-1')));
+  const resent = page.waitForResponse(response => new URL(response.url()).pathname === url
+    && response.request().method() === 'PATCH');
+  await card.getByRole('button', { name: 'Resend blocking links', exact: true }).click();
+  expect((await resent).ok()).toBe(true);
+  expect(await (await resent).finished()).toBeNull();
+  expect(await (await refreshed).finished()).toBeNull();
+  await expect(card.getByRole('button', { name: 'Resend blocking links', exact: true })).toHaveCount(0);
+  const saved = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
+  expect(saved.blocks).toEqual(['R-1']);
+  expect(saved.steps).toBe('Check the confirmation screen too.');
 });
 
-test('person reads NOW, answers a decision, edits, reorders and sees a conflict', async ({ page }, testInfo) => {
-  const lead = await teamLead(page);
+test('person reads NOW, answers a decision, edits, reorders and sees a conflict', async ({ page, lead }, testInfo) => {
   const at = new Date().toISOString();
   const item = (id: number, position: number, kind: string, title: string, extra: object = {}) => ({
     id, position, kind, title, steps: '', options: null, recommendation: null, state: 'open', answer: null, answered_by: null,
@@ -217,7 +245,7 @@ test('person reads NOW, answers a decision, edits, reorders and sees a conflict'
     return route.fulfill({ json: target });
   });
 
-  await page.goto(`/sessions/${lead}?tab=team#worklist`);
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
   const card = page.getByRole('heading', { name: 'Working list' }).locator('xpath=ancestor::section[1]');
   await expect(card.getByText('Building the importer; waiting on the database choice.')).toBeVisible();
   const yours = page.getByRole('region', { name: 'What the lead needs from you' });
@@ -262,42 +290,39 @@ test('person reads NOW, answers a decision, edits, reorders and sees a conflict'
 });
 
 // The tabs merge adds free-text decision answers to the same 409 recovery path.
-test('a custom decision answer survives a card closing during save and resends against its current revision', async ({ page }) => {
-  const lead = await teamLead(page);
+test('a custom decision answer survives a card closing during save and resends against its current revision', async ({ page, lead }) => {
   const headers = await csrfHeaders(page);
   const root = `/api/teams/${lead}/worklist`;
-  try {
-    const response = await page.request.post(`${root}/items`, { headers, data: {
-      kind: 'decision', title: 'Choose the archive', options: [{ id: 'local', label: 'Local' }, { id: 'remote', label: 'Remote' }],
-    } });
-    expect(response.ok(), await response.text()).toBeTruthy();
-    const original = await response.json();
-    const url = `${root}/items/${original.id}`;
-    await page.goto(`/sessions/${lead}?tab=team#worklist`);
-    const card = page.getByRole('listitem', { name: original.title, exact: true });
-    await card.getByRole('button', { name: 'Change', exact: true }).click();
-    await card.getByRole('textbox', { name: 'Different answer', exact: true }).fill('Use a separate encrypted archive');
-    let raced = false;
-    let currentRevision = 0;
-    await page.route(`**${url}`, async route => {
-      if (!raced && route.request().method() === 'PATCH') {
-        raced = true;
-        const changed = await page.request.patch(url, { headers, data: { revision: original.revision, answer: 'local', state: 'done' } });
-        expect(changed.ok(), await changed.text()).toBeTruthy();
-        currentRevision = (await changed.json()).revision;
-      }
-      await route.continue();
-    });
-    await card.getByRole('button', { name: 'Save answer', exact: true }).click();
-    await expect(card.getByRole('alert')).toContainText('This card changed');
-    await expect(card.getByRole('textbox', { name: 'Different answer', exact: true })).toHaveValue('Use a separate encrypted archive');
-    const sent = page.waitForRequest(r => new URL(r.url()).pathname === url && r.method() === 'PATCH');
-    await card.getByRole('button', { name: 'Resend decision', exact: true }).click();
-    expect((await sent).postDataJSON()).toEqual({ answer_text: 'Use a separate encrypted archive', revision: currentRevision });
-    await expect(card).toContainText('Use a separate encrypted archive');
-    await expect(card.getByRole('alert')).toHaveCount(0);
-    const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
-    expect(stored.state).toBe('answered');
-    expect(stored.options.find((o: { id: string }) => o.id === stored.answer).label).toBe('Use a separate encrypted archive');
-  } finally { await page.request.post(`/api/sessions/${lead}/team/stop`, { headers }); }
+  const response = await page.request.post(`${root}/items`, { headers, data: {
+    kind: 'decision', title: 'Choose the archive', options: [{ id: 'local', label: 'Local' }, { id: 'remote', label: 'Remote' }],
+  } });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const original = await response.json();
+  const url = `${root}/items/${original.id}`;
+  await gotoLoadedPage(page, `/sessions/${lead}?tab=team#worklist`, ['SessionPage', 'TeamPanel'], [`/api/sessions/${lead}/team`, `/api/teams/${lead}/worklist`]);
+  const card = page.getByRole('listitem', { name: original.title, exact: true });
+  await card.getByRole('button', { name: 'Change', exact: true }).click();
+  await card.getByRole('textbox', { name: 'Different answer', exact: true }).fill('Use a separate encrypted archive');
+  let raced = false;
+  let currentRevision = 0;
+  await page.route(`**${url}`, async route => {
+    if (!raced && route.request().method() === 'PATCH') {
+      raced = true;
+      const changed = await page.request.patch(url, { headers, data: { revision: original.revision, answer: 'local', state: 'done' } });
+      expect(changed.ok(), await changed.text()).toBeTruthy();
+      currentRevision = (await changed.json()).revision;
+    }
+    await route.continue();
+  });
+  await card.getByRole('button', { name: 'Save answer', exact: true }).click();
+  await expect(card.getByRole('alert')).toContainText('This card changed');
+  await expect(card.getByRole('textbox', { name: 'Different answer', exact: true })).toHaveValue('Use a separate encrypted archive');
+  const sent = page.waitForRequest(r => new URL(r.url()).pathname === url && r.method() === 'PATCH');
+  await card.getByRole('button', { name: 'Resend decision', exact: true }).click();
+  expect((await sent).postDataJSON()).toEqual({ answer_text: 'Use a separate encrypted archive', revision: currentRevision });
+  await expect(card).toContainText('Use a separate encrypted archive');
+  await expect(card.getByRole('alert')).toHaveCount(0);
+  const stored = (await (await page.request.get(root)).json()).items.find((i: { id: number }) => i.id === original.id);
+  expect(stored.state).toBe('answered');
+  expect(stored.options.find((o: { id: string }) => o.id === stored.answer).label).toBe('Use a separate encrypted archive');
 });

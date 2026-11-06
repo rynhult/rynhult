@@ -1,7 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { test } from './shell-state';
+import { expect } from '@playwright/test';
 import { AUTH_FILE, expectAxeClean } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ shellLayout: 'standard', storageState: AUTH_FILE });
 for (const width of [1440, 390]) test.describe(`${width}px Settings`, () => {
   test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, hasTouch: width === 390, isMobile: width === 390 });
   for (const theme of ['dark', 'light'] as const) {
@@ -12,7 +13,7 @@ for (const width of [1440, 390]) test.describe(`${width}px Settings`, () => {
       for (let tab = 0; tab < 120 && !await chooser.evaluate(el => el === document.activeElement); tab++)
         await page.keyboard.press('Tab');
       await expect(chooser).toBeFocused();
-      for (const section of ['password', 'sign-ins']) {
+      for (const section of ['sign-in-security', 'password', 'sign-ins']) {
         await page.keyboard.press('ArrowDown');
         await expect(chooser).toHaveValue(section);
         await expect(chooser).toBeFocused();

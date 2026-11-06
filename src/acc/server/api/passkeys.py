@@ -94,10 +94,12 @@ def router(ctx: Context):
         return user
 
     def enrollment_until(s, request, user):
-        """When this company sign-in's window to add a passkey closes, or None: only a company-only member's sign-in
-        that proved MFA, for five minutes, while the owner allows it (decision 0061)."""
+        """End of a guarded recovery window, or an allowed company MFA enrollment window (decision 0061)."""
         session_hash = getattr(request.state, 'session_hash', None)
         record = s.get(AuthSession, session_hash) if session_hash else None
+        recovery_end = passkeys.recovery_enrollment_until(s, session_hash, user)
+        if recovery_end is not None:
+            return recovery_end
         provider = s.get(OIDCProvider, 1) if ctx.settings.organizations_enabled else None
         if (user is None or record is None or record.user_id != user.id or record.method != 'oidc' or
                 not user.company_only or user.role == 'owner' or record.passkey_enroll_until is None or
@@ -107,9 +109,11 @@ def router(ctx: Context):
         return record.passkey_enroll_until
 
     def may_register(s, request, who):
-        """Verified again recently, or inside a company-only member's enrollment window. Returns (user, window)."""
+        """Allow recent verification or scoped enrollment; return (user, consume_enrollment_window)."""
         human(who)
         user = s.get(User, who.user_id)
+        if passkeys.recovery_enrollment_until(s, request.state.session_hash, user) is not None:
+            return user, True
         try:
             passkeys.recently_verified(s, request.state.session_hash, user)
             return user, False
@@ -191,6 +195,33 @@ def router(ctx: Context):
         finally:
             WRITE_INTENT.reset(intent)
 
+    @api.post('/recovery-reauth')
+    def recovery_reauth(body: ReauthIn, request: Request, who=Depends(ctx.principal)):
+        human(who)
+        limit(request)
+        key = 'user:' + who.username.lower()
+        locked = ctx.throttle.blocked(key)
+        ctx.throttle.fail(key)
+        stored = password_snapshot(user_id=who.user_id)
+        password_ok = auth.password_ok(stored.password_hash if stored else None, body.password)
+        with ctx.db() as s:
+            user = s.scalar(select(User).where(User.id == who.user_id).with_for_update())
+            record = s.get(AuthSession, request.state.session_hash)
+            if (not password_ok or user is None or user.company_only or
+                    user.password_hash != stored.password_hash or user.totp_secret != stored.totp_secret or
+                    record is None or record.user_id != user.id or record.method != 'recovery' or
+                    not auth.consume_recovery_code(s, user, body.code)):
+                audit(s, who.username, 'failed', request)
+                s.commit()
+                raise HTTPException(429 if locked else 401, 'Recovery verification failed. Use your password and a different unused recovery code.')
+            record.method = 'recovery_enroll'
+            record.passkey_enroll_until = auth.now() + timedelta(minutes=passkeys.REAUTH_MINUTES)
+            audit(s, who.username, 'recovery_enrollment_verified', request)
+            s.commit()
+        ctx.throttle.reset(key)
+        ctx.throttle.reset('ip:' + ctx.client_key(request))
+        return {'ok': True}
+
     @api.post('/reauth')
     def reauth(body: ReauthIn, request: Request, who=Depends(ctx.principal)):
         human(who)
@@ -216,6 +247,8 @@ def router(ctx: Context):
             user.totp_last_step = step
             record = s.get(AuthSession, request.state.session_hash)
             record.reauthenticated_at, record.passkey_verified = auth.now(), False
+            if record.method in ("recovery", "recovery_enroll"):
+                record.method = None
             audit(s, who.username, 'reauth', request)
             s.commit()
         ctx.throttle.reset('user:' + who.username.lower())
@@ -273,7 +306,9 @@ def router(ctx: Context):
                              public_key=bytes_to_base64url(verified.credential_public_key), rp_id=rp,
                              name=name, sign_count=verified.sign_count)
             s.add(record)
-            audit(s, who.username, 'registered', request, {'via': 'company_mfa'} if window else None)
+            audit(s, who.username, 'registered', request,
+                  {'via': 'recovery' if s.get(AuthSession, request.state.session_hash).method == 'recovery_enroll'
+                   else 'company_mfa'} if window else None)
             s.commit()
             ctx.throttle.reset('ip:' + ctx.client_key(request))
             return {'id': record.id}
@@ -358,6 +393,8 @@ def router(ctx: Context):
                 record = s.get(AuthSession, auth.digest(token))
                 ctx.set_login_cookies(response, token, csrf)
             record.reauthenticated_at, record.passkey_verified = auth.now(), True
+            if record.method in ("recovery", "recovery_enroll"):
+                record.method = None
             audit(s, user.username, 'verified' if who else 'login', request)
             s.commit()
         ctx.throttle.reset('ip:' + ctx.client_key(request))
@@ -403,6 +440,23 @@ def router(ctx: Context):
             audit(s, who.username, 'removed', request)
             s.commit()
         return {'ok': True}
+
+    @api.post('/recovery-codes')
+    def recovery_codes(request: Request, response: Response, who=Depends(ctx.principal)):
+        with ctx.db() as s:
+            human(who)
+            user = s.get(User, who.user_id)
+            if passkeys.recovery_enrollment_until(s, request.state.session_hash, user) is None:
+                user = recent(s, request, who)
+            elif s.execute(update(AuthSession).where(
+                    AuthSession.token_hash == request.state.session_hash, AuthSession.passkey_enroll_until > auth.now())
+                    .values(passkey_enroll_until=None)).rowcount != 1:
+                raise HTTPException(403, 'Recovery enrollment window has ended. Verify your sign-in again.')
+            codes = auth.generate_recovery_codes(s, user)
+            s.add(AuditLog(actor=who.username, action='auth.recovery_codes_created', target=who.username))
+            s.commit()
+        response.headers['Cache-Control'] = 'no-store'
+        return {'codes': codes}
 
     @api.post('/recovery-code')
     def recovery_code(request: Request, response: Response, who=Depends(ctx.principal)):

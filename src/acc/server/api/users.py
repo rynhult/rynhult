@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from .. import auth, budgets, containers, group_authority, passkeys, vault
 from ..broker_client import BrokerError
@@ -28,6 +28,7 @@ from ..models import (
     Project,
     PublishRequest,
     PushSubscription,
+    RecoveryCode,
     RetiredUser,
     Session,
     User,
@@ -179,8 +180,22 @@ def router(ctx: Context) -> APIRouter:
             user = s.get(User, user_id)
             if user is None:
                 raise HTTPException(404, "Person not found.")
-            if user.id != who.user_id:  # your own reset stays open: the sole owner's way back after recovery
+            if user.id != who.user_id:
                 verified(s, who, request, "user.reset_refused", user.username)
+            else:
+                session_hash = getattr(request.state, 'session_hash', None)
+                record = s.get(AuthSession, session_hash) if session_hash else None
+                if (record and record.method in ('recovery', 'recovery_enroll')
+                        and passkeys.recovery_enrollment_until(s, session_hash, user) is None):
+                    s.add(AuditLog(actor=who.username, action='user.reset_refused', target=user.username,
+                                   detail={'reason': 'recovery_verification_required'}))
+                    s.commit()
+                    raise HTTPException(403, 'Verify your password and a second unused recovery code in Settings → '
+                                        'Passkeys before resetting your own sign-in, or verify with your authenticator '
+                                        'or passkey.')
+            s.execute(select(User.id).where(User.id == user.id).with_for_update())
+            s.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
+            user.recovery_hash = None
             out = issue(s, who, user.role, user.account, user.id)
             s.add(AuditLog(actor=who.username, action="user.reset_link", target=user.username, detail={"invite": out["id"]}))
             s.commit()

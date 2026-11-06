@@ -1,5 +1,6 @@
 import pytest
 from test_remote_spool import sup  # noqa: F401
+from test_session_tools import api_auth  # noqa: F401
 
 from acc.server import automation
 
@@ -220,7 +221,7 @@ def test_cli_printed_local_reset(monkeypatch):
     assert automation.limit_signal('codex', "You've hit your usage limit. Try again in 2 hours")['reset'] == 1792681200
 
 
-def test_submit_separates_input_bursts(tmp_path, monkeypatch):
+def test_submit_separates_input_bursts(tmp_path, monkeypatch, api_auth):  # noqa: F811
     from test_session_tools import FakePane, broker_config
 
     from acc.broker import ops
@@ -228,7 +229,8 @@ def test_submit_separates_input_bursts(tmp_path, monkeypatch):
     pane = FakePane()
 
     def tmux(*args, **kwargs):
-        calls.append(args[1:])
+        if args[-1] != '#{pane_in_mode}':  # copy-mode probes run before each input burst
+            calls.append(args[1:])
         return pane.tmux(*args, **kwargs)
 
     monkeypatch.setattr(ops, 'tmux', tmux)
@@ -315,6 +317,8 @@ async def test_crash_after_claim_is_not_replayed(api, project, monkeypatch):
     async def broker_call(method, **kwargs):
         if method == 'automation_screen':
             return {'limit': {'reset': 1}, 'prompt': None}
+        if method == 'session_auth':
+            return {'provider': 'claude', 'auth_mode': 'api_key'}
         if method == 'send_text':
             sent.append(kwargs['text'])
             raise RuntimeError('simulate process death after durable claim')
@@ -466,3 +470,113 @@ async def test_reconcile_refreshes_sessions_after_broker_list_commits(sup, caplo
         row = db.get(Session, 'list-race')
         assert row.name == 'Concurrent edit'
         assert row.last_output_at.timestamp() == 123
+
+
+async def test_plain_terminal_input_never_waits_for_supervisor_or_writes(sup):  # noqa: F811
+    import asyncio
+
+    from sqlalchemy import event
+    from test_remote_spool import add_session
+
+    add_session(sup, 'local', 'plain-input')
+    statements = []
+    engine = sup.db.kw['bind']
+
+    def executed(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    event.listen(engine, 'before_cursor_execute', executed)
+    try:
+        async with sup._lock:
+            await asyncio.wait_for(sup.cancel_automation('plain-input'), .2)
+        assert statements == []
+    finally:
+        event.remove(engine, 'before_cursor_execute', executed)
+
+
+async def test_cancel_index_survives_restart_and_later_configuration(sup):  # noqa: F811
+    import asyncio
+
+    from helpers import write_db
+    from test_remote_spool import add_session
+
+    from acc.server.models import Session
+    from acc.server.supervisor import Supervisor
+
+    add_session(sup, 'local', 'indexed-goal')
+    with write_db(sup.db) as db:
+        row = db.get(Session, 'indexed-goal')
+        row.automation = {'goal': {'status': 'running', 'text': 'work'}}
+        db.commit()
+    restarted = Supervisor(sup.settings, sup.db, sup.broker)
+    # Prove the startup seed before any listener-visible write (IL-4).
+    await restarted.cancel_automation('indexed-goal')
+    with sup.db() as db:
+        assert db.get(Session, 'indexed-goal').automation['goal']['status'] == 'person typed'
+    for supervisor in (sup, restarted):
+        with write_db(sup.db) as db:
+            row = db.get(Session, 'indexed-goal')
+            row.automation = {'goal': {'status': 'running', 'text': 'work'}}
+            db.commit()
+        async with supervisor._lock:
+            task = asyncio.create_task(supervisor.cancel_automation('indexed-goal'))
+            await asyncio.sleep(0)
+            assert not task.done()
+        await task
+        with sup.db() as db:
+            assert db.get(Session, 'indexed-goal').automation['goal']['status'] == 'person typed'
+
+
+async def test_reused_supervisor_reloads_other_mains_automation_before_loop(sup, monkeypatch):  # noqa: F811
+    import asyncio
+
+    from helpers import write_db
+    from sqlalchemy.orm import sessionmaker
+    from test_remote_spool import add_session
+
+    from acc.server.models import Session
+
+    add_session(sup, 'local', 'promoted-goal')
+    other_main = sessionmaker(bind=sup.db.kw['bind'], expire_on_commit=False)
+    # Separate factory: standby's ORM listener cannot observe this commit.
+    with write_db(other_main) as db:
+        db.get(Session, 'promoted-goal').automation = {'goal': {'status': 'running', 'text': 'work'}}
+        db.commit()
+
+    async def first_loop(*_args):
+        await sup.cancel_automation('promoted-goal')
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(sup, '_loop', first_loop)
+    with pytest.raises(asyncio.CancelledError):
+        await sup.run()
+    with sup.db() as db:
+        assert db.get(Session, 'promoted-goal').automation['goal']['status'] == 'person typed'
+
+
+async def test_promotion_before_worker_start_cannot_use_stale_index(sup, monkeypatch):  # noqa: F811
+    from helpers import write_db
+    from sqlalchemy.orm import sessionmaker
+    from test_remote_spool import add_session
+
+    from acc.server.ha import Authority
+    from acc.server.models import Session
+    from acc.server.supervisor import Supervisor
+
+    add_session(sup, 'local', 'epoch-goal')
+    authority = Authority(sup.db.kw['bind'], 'input-test')
+    monkeypatch.setattr(sup.broker, 'authority', authority)
+    standby = Supervisor(sup.settings, sup.db, sup.broker)
+    other_main = sessionmaker(bind=sup.db.kw['bind'], expire_on_commit=False)
+    with write_db(other_main) as db:
+        db.get(Session, 'epoch-goal').automation = {'goal': {'status': 'running', 'text': 'work'}}
+        db.commit()
+    try:
+        authority.promote(expected_epoch=0)
+        # The worker hasn't run yet: epoch mismatch must force the locked path.
+        await standby.cancel_automation('epoch-goal')
+        with sup.db() as db:
+            assert db.get(Session, 'epoch-goal').automation['goal']['status'] == 'person typed'
+    finally:
+        authority.release()
+        authority.control.dispose()

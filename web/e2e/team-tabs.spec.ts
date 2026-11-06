@@ -1,6 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, test as base, type Page } from './fixtures';
+import { gotoLoadedPage, reloadLoadedPage } from './loaded-page';
 import { AUTH_FILE, expandTeamPanels, csrfHeaders, gitProject, expectAxeClean, wikiShotPath, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
-test.use({ storageState: AUTH_FILE, serviceWorkers: 'block' });
 let id = '';
 async function team(action: string, args: object = {}) {
   const reply = await teamRequest(id, action, args);
@@ -8,37 +8,65 @@ async function team(action: string, args: object = {}) {
   return reply.result;
 }
 
-test.beforeEach(async ({ page }) => {
-  id = '';
-  const project = await gitProject(page, 'team-tabs');
-  const reference = await page.request.post(`/api/project-brief-references/${project.id}`, { headers: project.headers, data: { caption: 'Archive layout notes', guidance: 'Keep the restore preview separate from writing files.', url: 'https://example.com/archive-notes' } });
-  expect(reference.ok(), await reference.text()).toBeTruthy();
-  const brief = await page.request.post(`/api/projects/${project.id}/brief`, { headers: project.headers, data: { version: 0, references: [(await reference.json()).reference_id], fields: { product: 'A private archive for a small team', people_problem: 'Morgan and the workshop team need to recover their notes.', run_mode: 'prepare' } } });
-  expect(brief.ok(), await brief.text()).toBeTruthy();
-  const made = await page.request.post('/api/sessions', { headers: project.headers, data: {
-    project_id: project.id, provider: 'claude', name: 'Morgan lead', worktree: true,
-    orchestrator: { brief_version: 1, run_mode: 'prepare', agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 2, total: 4, depth: 1, hours: 2 },
-  } });
-  expect(made.status()).toBe(201); id = (await made.json()).id;
-  await waitForSessionState(page, id, 'idle', 'claude_hook');
-  const current = await (await page.request.get(`/api/teams/${id}/plan`)).json();
-  const plan = await page.request.patch(`/api/teams/${id}/plan`, { headers: project.headers, data: { version: current.version,
-    idea: 'Keep workshop notes in one private archive.', scope: { in: ['Local archive', 'Restore preview'], out: ['Public sharing'], parked: [] },
-    phases: [{ key: 'archive', title: 'Save the workshop notes' }, { key: 'restore', title: 'Preview a restore', depends_on: ['archive'] }],
-    constraints: [{ text: 'Keep all notes private.' }], requirements: [{ text: 'Preview a restore before writing files.' }],
-  } });
-  expect(plan.ok(), await plan.text()).toBeTruthy();
-  await team('now', { text: 'Reviewing the archive plan; waiting for your recovery expectations.' });
-  await team('worklist_add', { kind: 'task', title: 'Check the restore preview flow' });
-  await team('brief');
-  await team('brief_interpret', { brief_version: 1, text: 'Start with a private archive and a restore preview. Confirm recovery expectations before building.',
-    references: { 'REF-1': { status: 'unreadable', note: 'Synthetic link; no remote content fetched in this test.' } } });
+// Real lead, plan/spool setup and confirmed shutdown have their own bounded
+// resource phases; the UI body keeps its ordinary deadline.
+const test = base.extend<{ ownedTeam: void }>({
+  ownedTeam: [async ({ page }, use) => {
+    try {
+      id = '';
+      const project = await gitProject(page, 'team-tabs');
+      const reference = await page.request.post(`/api/project-brief-references/${project.id}`, { headers: project.headers, data: { caption: 'Archive layout notes', guidance: 'Keep the restore preview separate from writing files.', url: 'https://example.com/archive-notes' } });
+      expect(reference.ok(), await reference.text()).toBeTruthy();
+      const brief = await page.request.post(`/api/projects/${project.id}/brief`, { headers: project.headers, data: { version: 0, references: [(await reference.json()).reference_id], fields: { product: 'A private archive for a small team', people_problem: 'Morgan and the workshop team need to recover their notes.', run_mode: 'prepare' } } });
+      expect(brief.ok(), await brief.text()).toBeTruthy();
+      const made = await page.request.post('/api/sessions', { headers: project.headers, data: {
+        project_id: project.id, provider: 'claude', name: 'Morgan lead', worktree: true,
+        orchestrator: { brief_version: 1, run_mode: 'prepare', agents: [{ agent: 'claude', profile: null }], machines: ['local'], at_once: 2, total: 4, depth: 1, hours: 2 },
+      } });
+      expect(made.status()).toBe(201); id = (await made.json()).id;
+      await waitForSessionState(page, id, 'idle', 'claude_hook');
+      const current = await (await page.request.get(`/api/teams/${id}/plan`)).json();
+      const plan = await page.request.patch(`/api/teams/${id}/plan`, { headers: project.headers, data: { version: current.version,
+        idea: 'Keep workshop notes in one private archive.', scope: { in: ['Local archive', 'Restore preview'], out: ['Public sharing'], parked: [] },
+        phases: [{ key: 'archive', title: 'Save the workshop notes' }, { key: 'restore', title: 'Preview a restore', depends_on: ['archive'] }],
+        constraints: [{ text: 'Keep all notes private.' }], requirements: [{ text: 'Preview a restore before writing files.' }],
+      } });
+      expect(plan.ok(), await plan.text()).toBeTruthy();
+      await team('now', { text: 'Reviewing the archive plan; waiting for your recovery expectations.' });
+      await team('worklist_add', { kind: 'task', title: 'Check the restore preview flow' });
+      await team('brief');
+      await team('brief_interpret', { brief_version: 1, text: 'Start with a private archive and a restore preview. Confirm recovery expectations before building.',
+        references: { 'REF-1': { status: 'unreadable', note: 'Synthetic link; no remote content fetched in this test.' } } });
+      await use();
+    } finally {
+      if (id) {
+        expect((await page.request.post(`/api/sessions/${id}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
+        await waitForTeamStopped(page, id);
+      }
+    }
+  }, { auto: true, timeout: 90_000 }],
 });
-test.afterEach(async ({ page }) => {
-  if (!id) return;
-  expect((await page.request.post(`/api/sessions/${id}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
-  await waitForTeamStopped(page, id);
-});
+test.use({ storageState: AUTH_FILE, serviceWorkers: 'block' });
+
+async function openTeam(page: Page, url: string) {
+  const current = new URL(page.url());
+  const target = new URL(url, current);
+  // goto with only a new fragment is a same-document navigation: React reuses
+  // the loaded route and its Team query, so no second chunk download occurs.
+  if (current.pathname === target.pathname && current.search === target.search
+    && current.hash !== target.hash) {
+    await page.goto(url);
+    return;
+  }
+  const data = [`/api/sessions/${id}/team`];
+  if (new URL(url, 'http://fixture.example.lan').hash === '#worklist') data.push(`/api/teams/${id}/worklist`);
+  await gotoLoadedPage(page, url, ['SessionPage', 'TeamPanel'], data);
+}
+async function reloadTeam(page: Page) {
+  const data = [`/api/sessions/${id}/team`];
+  if (new URL(page.url()).hash === '#worklist') data.push(`/api/teams/${id}/worklist`);
+  await reloadLoadedPage(page, ['SessionPage', 'TeamPanel'], data);
+}
 
 for (const kind of ['recommended', 'no-recommendation', 'change', 'identical-change'] as const) {
   test(`decision options answer in one tap: ${kind}`, async ({ page }, ti) => {
@@ -64,7 +92,7 @@ for (const kind of ['recommended', 'no-recommendation', 'change', 'identical-cha
           : { default: { option: 'local' } }) });
       answer = kind === 'recommended' ? 'local' : 'team';
     }
-    await page.goto(`/sessions/${id}?tab=team#worklist`);
+    await openTeam(page, `/sessions/${id}?tab=team#worklist`);
     const card = page.getByRole('listitem', { name: title, exact: true });
     await expect(card).toBeVisible();
     await expect(card.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
@@ -114,7 +142,7 @@ for (const kind of ['recommended', 'no-recommendation', 'change', 'identical-cha
 }
 
 test('Team tabs support deep links, keyboard navigation and phone layout', async ({ page }, info) => {
-  await page.goto(`/sessions/${id}?tab=team#overview`);
+  await openTeam(page, `/sessions/${id}?tab=team#overview`);
   const tabs = page.getByRole('tablist', { name: 'Team sections' });
   await expect(tabs.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('heading', { name: 'Plan', exact: true })).toBeVisible();
@@ -143,7 +171,7 @@ test('Team tabs support deep links, keyboard navigation and phone layout', async
   if (!info.project.name.endsWith('phone')) await page.setViewportSize({ width: 1440, height: 2200 });
   await page.screenshot({ path: wikiShotPath(info, `orchestrator-team-settings${info.project.name.endsWith('phone') ? '-phone' : ''}.png`), fullPage: true });
   await page.setViewportSize(viewport);
-  await page.goto(`/sessions/${id}?tab=team#worklist`);
+  await openTeam(page, `/sessions/${id}?tab=team#worklist`);
   await expect(tabs.getByRole('tab', { name: 'Working list', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expectAxeClean(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -160,19 +188,19 @@ test('decision options, Change and Discuss preserve card revision and open discu
     expect(response.status()).toBe(201); return response.json();
   };
   const first = await add('Choose a store');
-  await page.goto(`/sessions/${id}?tab=team#worklist`);
+  await openTeam(page, `/sessions/${id}?tab=team#worklist`);
   const card = page.getByRole('listitem', { name: 'Choose a store', exact: true });
   await card.getByRole('button', { name: 'Local storage Recommended', exact: true }).click();
   await expect(card).toContainText('Answer from');
   const second = await add('Choose an archive');
-  await page.reload();
+  await reloadTeam(page);
   const change = page.getByRole('listitem', { name: 'Choose an archive', exact: true });
   await change.getByRole('button', { name: 'Change', exact: true }).click();
   await change.getByRole('textbox', { name: 'Different answer', exact: true }).fill('Use an independent archive');
   await change.getByRole('button', { name: 'Save answer', exact: true }).click();
   await expect(change).toContainText('Use an independent archive');
   const third = await add('Choose a recovery plan');
-  await page.reload();
+  await reloadTeam(page);
   const discuss = page.getByRole('listitem', { name: 'Choose a recovery plan', exact: true });
   await discuss.getByRole('button', { name: 'Discuss', exact: true }).click();
   await discuss.getByRole('textbox', { name: 'Message to lead', exact: true }).fill('What happens if the machine is offline?');
@@ -198,7 +226,7 @@ test('the retained team keeps limits accessible when orchestration controls are 
     body.instance.orchestrator = false;
     await route.fulfill({ response, json: body });
   });
-  await page.goto(`/sessions/${id}?tab=team#settings`);
+  await openTeam(page, `/sessions/${id}?tab=team#settings`);
   await expect(page.getByRole('heading', { name: 'Team limits', exact: true })).toBeVisible();
   await expect(page.getByRole('tablist', { name: 'Team sections' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stop team', exact: true })).toBeVisible();
@@ -206,7 +234,7 @@ test('the retained team keeps limits accessible when orchestration controls are 
 });
 
 test('Overview and Settings panels collapse, persist per viewer, and expand through deep links', async ({ page }, ti) => {
-  await page.goto(`/sessions/${id}?tab=team`);
+  await openTeam(page, `/sessions/${id}?tab=team`);
   for (const title of ['Project brief', 'Plan']) {
     await expect(page.getByRole('button', { name: title, exact: true })).toHaveAttribute('aria-expanded', 'false');
   }
@@ -215,16 +243,16 @@ test('Overview and Settings panels collapse, persist per viewer, and expand thro
   await page.keyboard.press('Enter');
   await expect(plan).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByRole('region', { name: 'Idea', exact: true })).toBeVisible();
-  await page.reload();
+  await reloadTeam(page);
   await expect(plan).toHaveAttribute('aria-expanded', 'true');
   await page.route('**/api/auth/state', async route => {
     const response = await route.fetch();
     await route.fulfill({ response, json: { ...(await response.json()), username: 'Taylor Example' } });
   });
-  await page.reload();
+  await reloadTeam(page);
   await expect(plan).toHaveAttribute('aria-expanded', 'false');
   await page.unroute('**/api/auth/state');
-  await page.reload();
+  await reloadTeam(page);
   await expect(plan).toHaveAttribute('aria-expanded', 'true');
   await plan.press('Space');
   await expect(plan).toHaveAttribute('aria-expanded', 'false');
@@ -239,7 +267,7 @@ test('Overview and Settings panels collapse, persist per viewer, and expand thro
     ['gate-queue', 'Gate queue'], ['reservations', 'Number reservations'], ['team-limits', 'Team limits'],
     ['team-members', 'Team members'], ['decision-log', 'Decision log'], ['selection-reasons', 'Selection reasons'],
     ['brief', 'Project brief'], ['plan', 'Plan']]) {
-    await page.goto(`/sessions/${id}?tab=team#${anchor}`);
+    await openTeam(page, `/sessions/${id}?tab=team#${anchor}`);
     const toggle = page.getByRole('button', { name: title, exact: true });
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(toggle, JSON.stringify(await page.evaluate(() => ({
@@ -247,7 +275,7 @@ test('Overview and Settings panels collapse, persist per viewer, and expand thro
       label: document.activeElement?.getAttribute('aria-label'), focused: document.hasFocus(),
     })))).toBeFocused();
   }
-  await page.goto(`/sessions/${id}?tab=team#overview`);
+  await openTeam(page, `/sessions/${id}?tab=team#overview`);
   await expect(page.getByRole('button', { name: 'Project brief', exact: true })).toHaveAttribute('aria-expanded', 'true');
   await expect(plan).toHaveAttribute('aria-expanded', 'true');
   await page.getByRole('button', { name: 'Project brief', exact: true }).click();
@@ -259,7 +287,7 @@ test('Overview and Settings panels collapse, persist per viewer, and expand thro
 test('answered decisions have their own section below open cards and can be reopened', async ({ page }) => {
   const answered = await team('worklist_add', { kind: 'decision', title: 'Keep a restore preview?', options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], recommendation: { option: 'yes', reason: 'Avoid surprises.' } });
   await team('worklist_add', { kind: 'question', title: 'How many notes need recovery?' });
-  await page.goto(`/sessions/${id}?tab=team#worklist`);
+  await openTeam(page, `/sessions/${id}?tab=team#worklist`);
   const row = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Keep a restore preview?', exact: true }) });
   await row.getByRole('button', { name: 'Yes Recommended', exact: true }).click();
   const section = page.getByRole('region', { name: 'Answered', exact: true });
@@ -287,7 +315,7 @@ test('collapsing a panel preserves its draft through polling when preference sto
       return write.call(this, key, value);
     };
   });
-  await page.goto(`/sessions/${id}?tab=team`);
+  await openTeam(page, `/sessions/${id}?tab=team`);
   const toggle = page.getByRole('button', { name: 'Plan', exact: true });
   await toggle.click();
   await page.getByRole('button', { name: 'Edit plan', exact: true }).click();
@@ -303,7 +331,7 @@ test('collapsing a panel preserves its draft through polling when preference sto
 
 test('unknown inherited-object fragments fall back to Overview', async ({ page }) => {
   for (const anchor of ['constructor', 'toString', '__proto__']) {
-    await page.goto(`/sessions/${id}?tab=team#${anchor}`);
+    await openTeam(page, `/sessions/${id}?tab=team#${anchor}`);
     await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-expanded', 'false');
   }

@@ -1,7 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
+import { gotoLoadedPage } from './loaded-page';
+import { expect, test, type Page } from './fixtures';
 import { AUTH_FILE, demoSessions, expectAxeClean } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
+// Polling can start another real auth-state proxy read just before assertions
+// finish. Drain those handlers before Playwright disposes their request context.
+test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'wait' }); });
 const project = { id: 91, name: 'Demo API', slug: 'demo-api', account: 'alex-agent', host: 'local',
   workspace_path: '/srv/acc-demo/demo-api', repo: 'example-org/demo-api', remote_url: 'https://github.com/example-org/demo-api',
   import_mode: 'managed', trusted: true, archived: false, notes: null, compose_autostart: false,
@@ -41,7 +45,7 @@ for (const width of [390, 1440]) for (const theme of ['dark', 'light'] as const)
     await page.emulateMedia({ colorScheme: theme });
     await page.addInitScript(t => localStorage.setItem('acc-theme', t), theme);
     await fixture(page);
-    await page.goto('/projects/91');
+    await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
     await expect(page.getByRole('region', { name: 'Project summary', exact: true })).toContainText('CI failing');
     await expect(sectionTab(page, 'Sessions')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
@@ -63,7 +67,7 @@ for (const width of [390, 1440]) for (const theme of ['dark', 'light'] as const)
     await expect(page.getByRole('button', { name: '+ Dev port', exact: true })).toBeVisible();
     await expect(page).toHaveURL(/#project-ports$/);
     // A link to a section (a bookmark, the status line) opens that tab and puts focus on it, even from Files.
-    await page.goto('/projects/91?tab=files#project-ports');
+    await gotoLoadedPage(page, '/projects/91?tab=files#project-ports', ['ProjectPage'], ['/api/projects']);
     await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(sectionTab(page, 'Ports')).toHaveAttribute('aria-selected', 'true');
     await expect(sectionTab(page, 'Ports')).toBeFocused();
@@ -71,7 +75,7 @@ for (const width of [390, 1440]) for (const theme of ['dark', 'light'] as const)
     await page.reload();
     await expect(sectionTab(page, 'Ports')).toHaveAttribute('aria-selected', 'true');
     await expect(sectionTab(page, 'Ports')).toBeFocused();
-    await page.goto('/projects/91#project-settings');  // the old Project settings heading opens Keys
+    await gotoLoadedPage(page, '/projects/91#project-settings', ['ProjectPage'], ['/api/projects']);  // the old Project settings heading opens Keys
     await expect(sectionTab(page, 'Keys')).toHaveAttribute('aria-selected', 'true');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     for (const name of ['Files', 'Preview']) await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
@@ -86,7 +90,7 @@ test('Project warnings stay visible while their sections are on other tabs', asy
   await fixture(page, { containers: true, compose_autostart: true });
   await page.route('**/api/projects/91/backup', r => r.fulfill({ json: { ...backup, error: 'Example backup failed', last_at: null } }));
   await page.route('**/api/projects/91/runtime', r => r.fulfill({ json: { containers: [], note: 'Example runtime unavailable', compose: { approved: false, digest: 'changed' } } }));
-  await page.goto('/projects/91');
+  await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
   const attention = page.getByRole('region', { name: 'Project status', exact: true });
   for (const text of ['Example backup failed', 'Example runtime unavailable', 'Autostart', 'Containers are off']) await expect(attention).toContainText(text);
   for (const section of ['backup', 'stack']) await expect(page.locator(`#project-${section}`)).toBeHidden();
@@ -102,7 +106,7 @@ test('Project configuration unavailable is never an empty or healthy result', as
   await fixture(page);
   let recovered = false;
   for (const path of ['backup', 'runtime', 'keys']) await page.route(`**/api/projects/91/${path}`, r => path === 'backup' && recovered ? r.fulfill({ json: backup }) : r.fulfill({ status: 503, json: { detail: 'Example unavailable' } }));
-  await page.goto('/projects/91');
+  await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
   const attention = page.getByRole('region', { name: 'Project status', exact: true });
   await expect(attention.getByRole('alert')).toHaveCount(3);
   await expect(attention).toContainText("Couldn't read");
@@ -115,8 +119,8 @@ test('Project configuration unavailable is never an empty or healthy result', as
 
 test('Readonly and offline projects retain scope and safe launch boundaries', async ({ page }) => {
   await fixture(page, { import_mode: 'readonly', trusted: false, machine_offline: true });
-  await page.goto('/projects/91');
-  await expect(page.getByRole('button', { name: 'New session', exact: true })).toHaveCount(0);
+  await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
+  await expect(page.getByRole('main').getByRole('button', { name: 'New session', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Review pull request/ })).toHaveCount(0);
   for (const section of ['ports', 'stack']) await expect(page.locator(`#project-${section}`)).toHaveCount(0);
   await expect(page.getByText('Machine offline', { exact: true }).first()).toBeVisible();
@@ -135,7 +139,7 @@ test('Project settings retain key drafts and send grants only for this project',
     given = true;
     return r.fulfill({ json: {} });
   });
-  await page.goto('/projects/91#project-keys');
+  await gotoLoadedPage(page, '/projects/91#project-keys', ['ProjectPage'], ['/api/projects']);
   const keys = page.locator('#project-keys');
   await page.getByRole('combobox', { name: 'Key to give', exact: true }).selectOption('demo-key');
   await sectionTab(page, 'Ports').click();  // another tab and back: the draft is kept
@@ -155,7 +159,7 @@ test('Members do not acquire runtime controls or owner runtime queries', async (
   });
   let calls = 0;
   await page.route('**/api/projects/91/runtime', r => { calls++; return r.fulfill({ json: { containers: [] } }); });
-  await page.goto('/projects/91');
+  await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
   await expect(page.getByRole('heading', { name: 'Demo API', exact: true })).toBeVisible();
   await expect(page.locator('#project-stack')).toHaveCount(0);
   await expect(page.getByRole('checkbox', { name: 'Autostart', exact: true })).toHaveCount(0);
@@ -167,7 +171,7 @@ for (const enabled of [false, true]) test(`Empty backup and stopped runtime rema
   await fixture(page);
   await page.route('**/api/projects/91/backup', r => r.fulfill({ json: { ...backup, enabled, repo: null } }));
   await page.route('**/api/projects/91/runtime', r => r.fulfill({ json: { containers: [] } }));
-  await page.goto('/projects/91');
+  await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
   const attention = page.getByRole('region', { name: 'Project status', exact: true });
   await expect(attention).toContainText(enabled ? 'No branches recorded' : 'Backup off. No copy recorded');
   await expect(attention).toContainText('Stack not running');
@@ -187,7 +191,7 @@ test('Runtime still requires compose review and the exact project digest', async
     return r.fulfill({ json: { containers: [{ Service: 'web', Name: 'demo-web', State: 'running', Status: 'Up' }],
       compose: { approved: enabled, digest, diff: '--- /dev/null\n+++ now/compose.yaml\n+services:\n+  web:\n+    image: nginx\n' } } });
   });
-  await page.goto('/projects/91#project-stack');
+  await gotoLoadedPage(page, '/projects/91#project-stack', ['ProjectPage'], ['/api/projects']);
   await page.getByRole('checkbox', { name: 'Autostart', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: "Approve Demo API's compose files?", exact: true });
   await expect(dialog.getByRole('region', { name: 'Compose approval', exact: true })).toContainText('image: nginx');
@@ -201,7 +205,7 @@ test('Runtime still requires compose review and the exact project digest', async
 test('Changing projects with the same section hash opens the new project section tab', async ({ page }) => {
   await fixture(page);
   await page.route('**/api/projects', r => r.fulfill({ json: [project, { ...project, id: 92, name: 'Demo Web', slug: 'demo-web' }] }));
-  await page.goto('/projects/91#project-keys');
+  await gotoLoadedPage(page, '/projects/91#project-keys', ['ProjectPage'], ['/api/projects']);
   await expect(sectionTab(page, 'Keys')).toHaveAttribute('aria-selected', 'true');
   // A history transition keeps the ProjectPage component mounted, unlike a reload.
   await page.evaluate(() => {
@@ -218,7 +222,7 @@ for (const theme of ['dark', 'light'] as const) test(`Repeated project tab selec
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: theme });
   await fixture(page);
-  await page.goto('/projects/91#project-sessions');
+  await gotoLoadedPage(page, '/projects/91#project-sessions', ['ProjectPage'], ['/api/projects']);
   await expect(sectionTab(page, 'Sessions')).toBeFocused();
   await sectionTab(page, 'Sessions').click(); // same hash: must not poison the next navigation
   const backupLink = page.getByRole('region', { name: 'Project status' }).getByRole('link', { name: 'Backup', exact: true }).first();
@@ -248,7 +252,7 @@ for (const width of [390, 1440]) test(`Git author is editable in Repository at $
     if (route.request().method() === 'PUT') identity = { supported: true, ...route.request().postDataJSON() };
     await route.fulfill({ json: identity });
   });
-  await page.goto('/projects/91#project-repository');
+  await gotoLoadedPage(page, '/projects/91#project-repository', ['ProjectPage'], ['/api/projects']);
   const name = page.getByRole('textbox', { name: 'Git author name', exact: true });
   await expect(name).toHaveValue('Casey Example');
   await name.fill('Project author');

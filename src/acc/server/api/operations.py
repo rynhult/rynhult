@@ -29,6 +29,8 @@ class ImageCheck(BaseModel):
 def router(ctx: Context) -> APIRouter:
     db, supervisor, refused = ctx.db, ctx.supervisor, ctx.refused
     api = APIRouter()
+    from . import github_token
+    api.include_router(github_token.router(ctx))
 
     @api.get("/api/host")
     async def host_view(machine: str | None = None, who=Depends(ctx.principal)):
@@ -118,8 +120,25 @@ def router(ctx: Context) -> APIRouter:
             installed = await ctx.broker.call("installed_providers", account=account, host=host)
         except BrokerError:
             installed = {}
+        from ...providers.claude_auth import detail, refusal
         from ..teams import default_team_agents
-        return {"providers": [p.public(installed=bool(installed.get(p.id)) if installed else None)
+        try:
+            auth = await ctx.broker.call('claude_auth', account=account, host=host)
+        except BrokerError:
+            auth = {}
+        from .. import vault
+        if project_id is not None:
+            with db() as s:
+                ctx.project_for(s, who, project_id)
+                try:
+                    keys = vault.plan(s, project_id, who.username, host != "local")
+                except vault.VaultError:
+                    keys = None
+                # Names only: never decrypt a key to render a launch notice.
+                if keys and any(k.variable == 'ANTHROPIC_API_KEY' for k in keys.keys):
+                    auth = {'auth_mode': 'api_key'}
+        return {"providers": [{**p.public(installed=bool(installed.get(p.id)) if installed else None),
+                              'automation_refusal': detail(project_id) if refusal(p.id, auth.get('auth_mode')) else None}
                               for p in registry.PROVIDERS.values()],
                 "team_agents": await default_team_agents(ctx.broker, account, host, installed=installed)}
 
@@ -171,7 +190,7 @@ def router(ctx: Context) -> APIRouter:
             value=evidence.get(field)
             if isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value):
                 safe_evidence[field]=value
-        if evidence.get('error_kind') in ('sign-in required','unsupported arguments','CLI error'):
+        if evidence.get('error_kind') in ('sign-in required','unsupported arguments','CLI error','claude_subscription_automation'):
             safe_evidence['error_kind']=evidence['error_kind']
         if type(evidence.get('exit_code')) is int and -255<=evidence['exit_code']<=255:
             safe_evidence['exit_code']=evidence['exit_code']
@@ -206,6 +225,9 @@ def router(ctx: Context) -> APIRouter:
                 resolve_check(s, body.project_id, account, machine, body.provider, body.model)
             s.add(AuditLog(actor=who.username,action='image.check.finished',target=machine,detail=result))
             s.commit()
+        if result['evidence'].get('error_kind') == 'claude_subscription_automation':
+            from ...providers.claude_auth import detail
+            raise HTTPException(409, detail())
         return result
 
     @api.get("/api/models")

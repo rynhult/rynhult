@@ -222,9 +222,14 @@ async def test_registered_external_folder_kept_without_reading_it(api, env):
     path = env['home'] / 'external-folder'
     path.mkdir()
     (path / 'keep.txt').write_text('external')
-    created = await api.post('/api/projects', json={'slug': 'external', 'name': 'External', 'workspace_path': str(path)})
-    assert created.status_code == 201, created.text
-    p = created.json()
+    # Legacy registrations outside allowed roots must remain safe to unregister.
+    from acc.server.models import Project
+    with api.app.state.db() as db:
+        legacy = Project(slug='external', name='External', workspace_path=str(path),
+                         account=env['settings'].default_account)
+        db.add(legacy)
+        db.commit()
+        p = {'id': legacy.id}
     response = await api.post(f'/api/projects/{p["id"]}/delete', json={'confirm': 'external'})
     assert response.status_code == 200, response.text
     assert (path / 'keep.txt').read_text() == 'external'

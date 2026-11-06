@@ -84,6 +84,32 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
+class PersonalLayout(Base):
+    """Presentation only; an owner has no special access to another person's rows."""
+    __tablename__ = 'personal_layout'
+    owner: Mapped[str] = mapped_column(ForeignKey('user.username', ondelete='CASCADE'), primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey('project.id', ondelete='CASCADE'), primary_key=True)
+    device: Mapped[str] = mapped_column(String(16), primary_key=True)
+    viewport: Mapped[str] = mapped_column(String(16), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    layout: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+
+
+class LayoutFileRef(Base):
+    """A person's own opaque name for a file view. Layouts hold `id`; only this row holds the path."""
+    __tablename__ = 'layout_file_ref'
+    __table_args__ = (UniqueConstraint('owner', 'project_id', 'location', 'target', 'path_hash', name='uq_layout_file_ref'),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner: Mapped[str] = mapped_column(ForeignKey('user.username', ondelete='CASCADE'))
+    project_id: Mapped[int] = mapped_column(ForeignKey('project.id', ondelete='CASCADE'))
+    location: Mapped[str] = mapped_column(String(16))  # project, session or workspace
+    target: Mapped[str] = mapped_column(String(64))  # the project or session id Files resolves
+    folder: Mapped[str] = mapped_column(String(255), default='', server_default='')  # a workspace route's folder
+    path: Mapped[str] = mapped_column(String(2048))
+    path_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class LaunchSpec(Base):
     """Immutable launch inputs plus the files compiled from them. Resume reuses it verbatim."""
     __tablename__ = "launch_spec"
@@ -137,6 +163,9 @@ class Session(Base):
     # A project session in its own git worktree (<root>/.worktrees/<slug>-<id>) on its own branch: parallel agents
     # on one project don't touch each other's files.
     worktree: Mapped[str | None] = mapped_column(Text)
+    # Set through ORM instances: Supervisor's before_flush listener indexes
+    # automation for terminal cancellation. Core/raw writers must invalidate or
+    # refresh that index before admitting input (offline restore clears automation).
     automation: Mapped[dict | None] = mapped_column(JSON)
 
     multirun_id: Mapped[str | None] = mapped_column(String(32), index=True)
@@ -166,6 +195,8 @@ class Session(Base):
     changes_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     transcript_stamp: Mapped[str | None] = mapped_column(String(64))  # its conversation file when last indexed
     indexed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    # The approved billing choice is immutable across every relaunch.
+    claude_auth: Mapped[str] = mapped_column(String(16), default="subscription", server_default="subscription")
     # Ids of the vault keys it was given (never values): what redaction replaces in what it produces.
     vault_keys: Mapped[list | None] = mapped_column(JSON)
     issue_source: Mapped[dict | None] = mapped_column(JSON)
@@ -297,6 +328,15 @@ class User(Base):
     company_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
+class RecoveryCode(Base):
+    """High-entropy offline codes; only an independently salted digest is persisted."""
+    __tablename__ = "recovery_code"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    salt: Mapped[str] = mapped_column(String(32))
+    code_hash: Mapped[str] = mapped_column(String(64))
+
+
 class RetiredUser(Base):
     """A removed person's username, kept for good: ownership compares usernames, so a name is never given to anyone
     else (prerelease reviews X1/D9/Q1). Their projects, sessions and keys were given to the owner who removed them, or
@@ -336,7 +376,7 @@ class AuthSession(Base):
 
     reauthenticated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     passkey_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    method: Mapped[str | None] = mapped_column(String(16))  # "oidc": company sign-in; None: local credentials
+    method: Mapped[str | None] = mapped_column(String(16))  # oidc: company; recovery/recovery_enroll: limited recovery; None: local
     # A company sign-in without proven MFA while passkeys are required: usable only for a passkey check until
     # passkey_verified (auth.lookup_session).
     step_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
@@ -411,6 +451,7 @@ class ToolRequest(Base):
     reason: Mapped[str] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(24), default="pending_approval")
     decided_by: Mapped[str | None] = mapped_column(String(64))
+    decision: Mapped[dict | None] = mapped_column(JSON)
     detail: Mapped[str | None] = mapped_column(Text)
     resolved_version: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
@@ -971,3 +1012,56 @@ class SecurityFolderPolicy(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_by: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class ApprovalConsent(Base):
+    """Person-issued exact authority. No execution tokens are written to agent files."""
+    __tablename__ = 'approval_consent'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    __table_args__ = (UniqueConstraint('parent_id', 'team_id', name='approval_child_team'),)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey('approval_consent.id'))
+    issuer: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey('project.id'))
+    team_id: Mapped[str] = mapped_column(ForeignKey('team.id'))
+    action: Mapped[str] = mapped_column(String(32))
+    constraints: Mapped[dict] = mapped_column(JSON)
+    authority: Mapped[dict] = mapped_column(JSON)
+    duration: Mapped[str] = mapped_column(String(16))
+    request_digest: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(16), default='active')
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    remaining: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    verification_ref: Mapped[str | None] = mapped_column(String(64))
+
+
+class ApprovalOperation(Base):
+    """Single-use admission claim; outcome is separate from authorization."""
+    __tablename__ = 'approval_operation'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    request_id: Mapped[str] = mapped_column(ForeignKey('tool_request.id'), unique=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    consent_id: Mapped[str] = mapped_column(ForeignKey('approval_consent.id'))
+    consent_revision: Mapped[int] = mapped_column(Integer)
+    lead_id: Mapped[str] = mapped_column(ForeignKey('session.id'))
+    state: Mapped[str] = mapped_column(String(16), default='queued')
+    reason: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class ApprovalBatch(Base):
+    __tablename__ = 'approval_batch'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[list] = mapped_column(JSON)
+    security_revision: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+# Source identity sidecars share this metadata, including create_all/transfer users.
+from . import source_models as _source_models  # noqa: E402,F401

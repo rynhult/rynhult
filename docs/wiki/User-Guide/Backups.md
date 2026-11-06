@@ -6,7 +6,7 @@ PostgreSQL database backups and restore drills, plus separate file and secret ba
 schedules before switching databases. See [Getting Started](/User-Guide/Getting-Started#optional-postgresql-for-an-owner-managed-installation).
 
 
-Owners use **Host → Backups** to capture Rynhult's control state and keep an offline recovery kit. You can choose an enrolled Linux machine, S3-compatible storage or an administrator-provisioned local directory.
+Owners use **Host → Backups** to capture Rynhult's control state and keep an offline recovery kit. You can choose an enrolled Linux machine, S3-compatible storage or a folder or USB disk on this server.
 NFS/SMB qualification follows later. Members cannot see backup targets, export kits, start captures or prune.
 
 New targets start with scheduled backups **off**, daily captures and weekly full restore verification. The independent S3 retention
@@ -79,23 +79,60 @@ It does not constrain target root or receiver-account compromise, and is not a t
 independent offline/immutable copy. Only the main encrypts/decrypts; the target never receives the repository key.
 The separate transport token grants ciphertext access only. Root commands contain its verifier, not either key.
 
-For an administrator-provisioned local directory:
+### Back up to a folder or USB disk
 
-Ask your local administrator to install Rynhult's pinned restic with `acc-packages` and provision a fresh directory
-outside the installation tree. Use the same filesystem account as Rynhult for repository provisioning. The administrator
-must approve the directory and ensure its permissions and capacity; the dashboard never accepts a destination path.
+In **Host → Backups**, select **Back up to a folder or USB disk**. Mount the disk first,
+then enter an existing absolute folder outside the installation tree and system or hidden home paths.
+Select **Show console command**, copy it and run it once in the server's root console:
+`sudo rynhult-admin backup add-folder -- /mnt/recovery`.
+Install pinned Restic through **Host → Packages → Restic** first.
 
-For example, after the administrator prepares `/mnt/recovery` for the Rynhult service account:
+The console validates the real host path, refuses symlinks, parent traversal, temporary paths
+(`/tmp`, `/var/tmp`, `/dev/shm`, `/run`) and tmpfs/ramfs storage. It creates a fresh encrypted
+repository using the existing add-local provisioning flow as the service account, grants accd
+write access to just that repository using a systemd drop-in, reloads systemd and **restarts accd**
+to apply the sandbox change. No privileged HTTP helper is added.
+The first capture is queued for accd's worker; the console waits up to five minutes and prints the target and job result (possibly still queued or running).
+Follow **Host → Backups → Details → Last job** for completion or errors. A queued job is not a successful backup.
+Export a new recovery kit. Scheduling remains off until you explicitly enable it after saving the kit.
+
+Paths on the filesystem containing `/srv/acc/data` require **I understand this is the same disk**,
+which adds `--same-disk` to the command. The check compares filesystem device IDs only:
+bind mounts can alias the installation tree, and separate filesystems can share physical hardware.
+Inspect the mount source yourself; a same-disk copy does not protect against disk loss.
+Make the mount persistent before setup. Use an ASCII path without `.` or `..` segments;
+repeated and trailing slashes are normalized. The folder and all its parents must be
+owned by root and must not be writable by group or other, including sticky folders.
+Only the fresh repository child is acc-owned; acc must not be able to rename that child.
+The repository grant uses systemd's optional-path prefix: an unplugged disk does not prevent
+accd from starting, but backup jobs require the disk mounted at its original location.
+Root reads the root-only service configuration from `/etc/default/accd` once and passes
+only the data directory and database URL to the service-account steps through their environment. On setup failure it removes
+the new grant, target registration, key and partial repository, then reloads and restarts accd.
+The service account empties the failed repository; root then removes the empty directory
+only after rechecking its identity and its root-owned parent. Existing audit and job
+history remains after rollback.
+If rollback reports an error, inspect the drop-in and storage before retrying.
+
+The read-only **Local backup on this disk** entry shows the independent install-time
+`acc-backup.timer`, its last run result and next run, and size from the existing read-only host collector (size refreshes every 15 minutes).
+Update the installed collector to obtain these observations; older collectors show unavailable.
+Missing timer observations show unknown;
+they do not prove a successful backup. This same-disk copy does **not** protect against disk loss.
+It is separate from encrypted restic targets and uses the manual recovery procedure in
+[Operations](/Internal/Operations), rather than the recovery kit command.
+
+Administrators can still provision an encrypted local target from trusted matching source:
 
 ```sh
-# Administrator, through Rynhult's fixed package helper:
 sudo /usr/local/sbin/acc-packages --install restic
-# Rynhult service account, from trusted matching Rynhult source/virtualenv:
 python -m acc.backup_server add-local --data /srv/acc/data --repository /mnt/recovery/example-acc
 ```
 
-This downloads the official pinned binary and checks its committed SHA-256. It does not install a system package.
-A new target starts with its schedule disabled. Its defaults are daily capture and weekly full restore verification.
+Run `add-local` as the Rynhult service account. Its repository path must be fresh and persistent;
+temporary and tmpfs/ramfs locations are refused. This lower-level command does not change
+accd’s sandbox: an administrator must separately grant the repository with `ReadWritePaths=`
+and restart accd. Prefer `rynhult-admin backup add-folder`, which handles that setup.
 
 ## Save the kit and make a backup
 
@@ -126,6 +163,8 @@ COMPLIANCE retention can earn **protected · verified 30-day Object Lock**; see 
 Protection needs an independent immutable or offline copy with a 30-day lock; Rynhult does not enforce that window.
 
 ## Test recovery every quarter
+
+**Host → Backups → Details → List backups → Restore this snapshot manually** shows the exact offline restore command with that target, backup and full snapshot ID. Export the ciphertext repository and use the saved kit on an isolated replacement; the dashboard does not execute this command. Follow the fencing and quarantine steps below.
 
 For an online check, open **Host → Backups → Details → List backups** and select **Test restore** beside an
 explicit generation. Each row shows the backup ID, its time and the start of its snapshot ID. The queued job checks
@@ -682,8 +721,13 @@ Setup scans entries as `acc-backup`, records the storage device and filesystem
 ID in `/etc/acc/backup-target.json`, and installs a pre-start guard. Each receiver
 start checks ownership, mode, identity, filesystem-root use and readability.
 **Check setup** also checks the bound directory before opening the repository.
-A mount replacement, wrong permissions or unreadable folder fails closed with
-a disk-check message. Inspect `journalctl -u acc-backup-receiver.service` on the
+The same-disk check records the device and filesystem ID, not the directory inode.
+A bind mount of a different directory on that same filesystem can pass this check;
+the guard cannot prove that the original directory is still mounted. Have the
+administrator verify the bind-mount source after storage changes.
+
+A mount replacement that changes the recorded identity, wrong permissions or an
+unreadable folder fails closed with a disk-check message. Inspect `journalctl -u acc-backup-receiver.service` on the
 target and fix the mount. After a reviewed volume change, or for a binding made
 before disk checks (which now fails closed), record the disk as root and restart
 the receiver; don't hand-edit identity values:

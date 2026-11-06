@@ -2,18 +2,19 @@
   "name": "rynhult-web",
   "private": true,
   "license": "MIT",
-  "version": "0.15.0-rc.3",
+  "version": "0.15.0-rc.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
+    "test:e2e-isolation": "node --experimental-strip-types --test scripts/e2e-isolation.test.mjs",
     "test:workspace-names": "node --experimental-strip-types --test scripts/workspace-names.test.mjs",
     "test:terminal": "node --test scripts/xterm-composition.test.mjs",
     "test:contrast": "node --test scripts/theme-contrast.test.mjs",
     "test:payload": "node --test scripts/check-bundle-size.test.mjs",
     "report:payload": "node scripts/check-bundle-size.mjs --report",
-    "screenshots:wiki": "ACC_UPDATE_WIKI_SCREENSHOTS=1 playwright test --project=desktop"
+    "screenshots:wiki": "ACC_UPDATE_WIKI_SCREENSHOTS=1 playwright test --project=view-registry --project=desktop-stateful --project=mobile-stateful --project=terminal-chromium --project=desktop --project=mobile --workers=1"
   },
   "dependencies": {
     "@codemirror/language": "^6.13.1",

@@ -1,0 +1,439 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "selector",
+ "cases": [
+  {
+   "name": "L3 only changes the view",
+   "state": {
+    "shared_live": true,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": false,
+    "blockers": [
+     "active_turn"
+    ],
+    "switch_state": "owned",
+    "idle_verified": false
+   },
+   "expect": {
+    "action": "view_only",
+    "reason": null
+   }
+  },
+  {
+   "name": "selecting the owner never switches",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "terminal",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "active_turn"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "view_only",
+    "reason": null
+   }
+  },
+  {
+   "name": "idle L1 switches on one selection",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "switch",
+    "reason": null
+   }
+  },
+  {
+   "name": "unqualified direction stays readable",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": false,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "view_only",
+    "reason": "direction_unqualified"
+   }
+  },
+  {
+   "name": "observer reads the other view",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": false,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "view_only",
+    "reason": "not_controller"
+   }
+  },
+  {
+   "name": "repeat click shares the pending switch",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "draining",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "pending",
+    "reason": null
+   }
+  },
+  {
+   "name": "recovery needs its own action",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "recovery_required",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "recovery_required"
+   }
+  },
+  {
+   "name": "busy: active_turn",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "active_turn"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "active_turn"
+   }
+  },
+  {
+   "name": "busy: background_tool",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "background_tool"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "background_tool"
+   }
+  },
+  {
+   "name": "busy: pending_decision",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "pending_decision"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "pending_decision"
+   }
+  },
+  {
+   "name": "busy: login_or_trust_prompt",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "login_or_trust_prompt"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "login_or_trust_prompt"
+   }
+  },
+  {
+   "name": "busy: terminal_draft",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "terminal_draft"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "terminal_draft"
+   }
+  },
+  {
+   "name": "busy: queued_send",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "queued_send"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "queued_send"
+   }
+  },
+  {
+   "name": "busy: uncertain_operation",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "uncertain_operation"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "uncertain_operation"
+   }
+  },
+  {
+   "name": "unknown blocker is not idle",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "quiet_screen"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "unknown_state"
+   }
+  },
+  {
+   "name": "no blockers is not idle",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": false
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "unknown_state"
+   }
+  },
+  {
+   "name": "blocker reported ahead of unverified idle",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "active_turn"
+    ],
+    "switch_state": "owned",
+    "idle_verified": false
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "active_turn"
+   }
+  },
+  {
+   "name": "several blockers report the first in order",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [
+     "terminal_draft",
+     "active_turn"
+    ],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "active_turn"
+   }
+  },
+  {
+   "name": "unknown owner",
+   "state": {
+    "shared_live": false,
+    "owner": "unknown",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "unknown_state"
+   }
+  },
+  {
+   "name": "unknown target",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "rm -rf",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "unknown_state"
+   }
+  },
+  {
+   "name": "unknown target on a shared session",
+   "state": {
+    "shared_live": true,
+    "owner": "terminal",
+    "target": "rm -rf",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "owned",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "refused",
+    "reason": "unknown_state"
+   }
+  },
+  {
+   "name": "pending while prepared",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "prepared",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "pending",
+    "reason": null
+   }
+  },
+  {
+   "name": "pending while starting",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "starting",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "pending",
+    "reason": null
+   }
+  },
+  {
+   "name": "pending while stopping",
+   "state": {
+    "shared_live": false,
+    "owner": "terminal",
+    "target": "chat",
+    "direction_qualified": true,
+    "may_control": true,
+    "blockers": [],
+    "switch_state": "stopping",
+    "idle_verified": true
+   },
+   "expect": {
+    "action": "pending",
+    "reason": null
+   }
+  }
+ ]
+}

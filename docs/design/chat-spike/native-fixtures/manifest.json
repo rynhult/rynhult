@@ -1,0 +1,46 @@
+{
+  "provenance": "Native CLI output against fake loopback model; not synthetic transcript records. Projection only; paths sanitized, sensitive context/usage bodies excluded. Two identical prompts and replies across resume.",
+  "providers": {
+    "claude": {
+      "version": "2.1.308",
+      "mode": "print",
+      "turns": 2,
+      "source_pattern": ".claude/projects/-tmp-rynhult-chat-fixture-claude-workspace/597e157d-c122-41cc-9bd2-f82d4822be95.jsonl",
+      "raw_sha256": "dcf8ef93817e324d78f77d7448049d377ddf7369beb980ab8859989595375c57",
+      "raw_records": 28,
+      "projected_records": 4,
+      "raw_types": [
+        "api-request",
+        "api-request-blob",
+        "api-request-shape",
+        "assistant",
+        "atis-latch",
+        "attachment",
+        "cost-state",
+        "last-prompt",
+        "mode",
+        "queue-operation",
+        "user"
+      ],
+      "fixture_sha256": "372930a17f99741a09397e4f6ca41a2edc273fbb4132a694e49be24672510b22"
+    },
+    "codex": {
+      "version": "0.163.0",
+      "mode": "exec",
+      "turns": 2,
+      "source_pattern": ".codex/sessions/2026/11/01/rollout-2026-11-01T13-59-09-01a198b1-c345-7c90-b0e8-a1c32e761b2b.jsonl",
+      "raw_sha256": "7835bd4bca3e11bb3eaab3d62ad3fab124acf3e3d3c31108af799ff1a491f86b",
+      "raw_records": 25,
+      "projected_records": 12,
+      "raw_types": [
+        "event_msg",
+        "response_item",
+        "session_meta",
+        "token_usage_record",
+        "turn_context",
+        "world_state"
+      ],
+      "fixture_sha256": "794d734e54389fb2efbc674646c868632ac4d9fd805acfba7d075da60e2f23b1"
+    }
+  }
+}

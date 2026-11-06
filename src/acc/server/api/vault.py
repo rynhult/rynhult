@@ -16,6 +16,7 @@ from .context import Context, Principal
 
 
 class KeyIn(BaseModel):
+    project_id: int | None = None
     name: str = Field(min_length=1, max_length=80)
     variable: str = Field(min_length=1, max_length=64)
     value: str = Field(min_length=1, max_length=vault.MAX_VALUE)
@@ -109,11 +110,15 @@ def router(ctx: Context) -> APIRouter:
     @api.post("/api/vault/keys", status_code=201)
     def add_key(body: KeyIn, who=Depends(ctx.principal)):
         with db() as s:
+            project = ctx.project_for(s, who, body.project_id) if body.project_id is not None else None
             try:
                 key = vault.create_key(s, store(), name=body.name, variable=body.variable, value=body.value, owner=who.username,
                                  shared=body.shared, remote=body.remote, note=body.note)
             except vault.VaultError as error:
                 raise refused(error)
+            if project is not None:
+                s.add(VaultGrant(key_id=key.id, project_id=project.id, given_by=who.username))
+                audit(s, who, "vault.give", key, project=project.slug)
             audit(s, who, "vault.add", key, variable=key.variable, shared=key.shared, remote=key.remote)
             s.commit()
             return key_out(s, key, who)

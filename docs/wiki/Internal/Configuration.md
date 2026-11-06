@@ -373,3 +373,21 @@ One main process owns the effective snapshot, shared by API and background worke
 transactions. HA promotion reloads it before starting workers. Derived Settings retain dataclasses.replace
 compatibility. Orchestrator routers remain registered for hot enable; the shared request boundary, dynamic tool
 registry and per-slice checks refuse access while Off, including explicit deployment slice opt-outs.
+
+## Personal setup levels
+
+`GET /api/preferences/setup-level` and `PUT /api/preferences/setup-level` require a
+signed-in person; installation API tokens are refused. Browser writes use the
+existing CSRF/Origin checks. The Setting key is `setup_level.<username>` (immutable,
+retired names are reserved). Its version-1 value contains `level` (integer 0–6 or
+null), `dismissed` (boolean) and `version`. No migration or environment flag is
+needed. Unknown versions/levels fall back to the complete current layout.
+
+Missing preferences preserve current navigation and offer a dismissible setup
+card. Null means **Current layout · not yet chosen**. Choices only filter the new
+shell's rail and Tools after existing navigation authorization/feature filtering.
+More tools and direct routes remain available. The standard layout retains its
+existing navigation. Policy, grants, provider modes, team profiles, running
+sessions and feature switches are never written by this endpoint. Security
+recommendations link to the existing owner preview/apply flow. See
+[Setup levels](/User-Guide/Setup-Levels).

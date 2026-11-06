@@ -63,6 +63,15 @@ def test_truncated_hunk_cannot_link_to_lines_not_displayed():
     assert validate(walkthrough(), changes)["steps"][0]["references"] == []
 
 
+def test_revision_ignores_response_metadata_but_tracks_full_content_fingerprint():
+    from acc.server.explanations import revision
+    changes = {**DIFF, "fingerprint": "first"}
+    expected = revision(changes)
+    for allowed in (True, False):
+        assert revision({**changes, "revision": expected, "git_actions_allowed": allowed}) == expected
+    assert revision({**changes, "fingerprint": "second"}) != expected
+
+
 def test_header_like_content_is_still_a_displayed_diff_line():
     from acc.server.explanations import validate
     changes = {**DIFF, "diff": DIFF["diff"].replace("-two", "--- a/app.py").replace("+TWO", "+++ b/app.py")}
@@ -79,7 +88,7 @@ async def test_explanation_input_redacts_source_keys(api, project, env):
     session = await launch(api, project)
     (env["workspaces"] / "demo/app.py").write_text(f"one\n{CANARY}\n")
     response = await api.post(f"/api/sessions/{session['id']}/explanation",
-                              json={"provider": "claude", "model": "sonnet"})
+                              json={"provider": "codex", "model": "test"})
     assert response.status_code == 200, response.text
     with api.app.state.db() as db:
         helper = db.get(Session, response.json()["helper_id"])
@@ -117,7 +126,11 @@ async def test_explicit_launch_deduplicates_caches_and_stops(api, project, env):
     path = f"/api/sessions/{session['id']}/explanation"
     initial = await explanation(api, session["id"])
     assert initial["status"] == "missing"
-    replies = await asyncio.gather(*(api.post(path, json={"provider": "claude", "model": "sonnet"})
+    changes = await api.get(f"/api/sessions/{session['id']}/changes")
+    assert changes.status_code == 200, changes.text
+    assert initial["revision"] == changes.json()["revision"]
+    request = {"provider": "codex", "model": "test", "revision": changes.json()["revision"]}
+    replies = await asyncio.gather(*(api.post(path, json=request)
                                      for _ in range(2)))
     assert all(r.status_code == 200 for r in replies), [r.text for r in replies]
     assert replies[0].json()["helper_id"] == replies[1].json()["helper_id"]
@@ -128,7 +141,7 @@ async def test_explicit_launch_deduplicates_caches_and_stops(api, project, env):
         return value if value["status"] == "ready" else None
     result = await wait_for(ready)
     helper_id = result["helper_id"]
-    assert result["provider"] == "claude" and result["model"] == "sonnet"
+    assert result["provider"] == "codex" and result["model"] == "test"
     assert result["steps"][0]["references"][0]["path"] == "app.py"
     artifacts = await api.get(f"/api/sessions/{helper_id}/artifacts")
     assert artifacts.status_code == 200, artifacts.text
@@ -144,12 +157,12 @@ async def test_explicit_launch_deduplicates_caches_and_stops(api, project, env):
         assert helper.launch_spec.inputs["mcps"] == []
         assert json.loads(helper.launch_spec.files["guardrails.json"])["explanation_only"]
         assert len(list(db.scalars(select(Session).where(Session.id != session["id"])))) == 1
-    cached = (await api.post(path, json={"provider": "claude", "model": "sonnet"})).json()
+    cached = (await api.post(path, json={"provider": "codex", "model": "test"})).json()
     assert cached["helper_id"] == helper_id
     (env["workspaces"] / "demo" / "app.py").write_text("one\nTHREE\n")
     changed = await explanation(api, session["id"])
     assert changed["status"] == "missing" and changed["revision"] != result["revision"]
-    regenerated = (await api.post(path, json={"provider": "claude", "model": "sonnet", "regenerate": True})).json()
+    regenerated = (await api.post(path, json={"provider": "codex", "model": "test", "regenerate": True})).json()
     assert regenerated["helper_id"] != helper_id
 
 
@@ -179,12 +192,20 @@ async def test_permissions_and_requester_account(api, project, env, member_accou
     async with browser(api) as member:
         assert (await join(member, invite.json()["link"], "alex")).status_code == 200
         assert (await member.get(path)).status_code == 404
-        assert (await member.post(path, json={"provider": "claude", "model": "sonnet"},
+        assert (await member.post(path, json={"provider": "codex", "model": "test"},
                                   headers=csrf(member))).status_code == 404
         with write_db(api.app.state.db) as db:
             db.get(Session, session["id"]).owner = "alex"
             db.commit()
-        response = await member.post(path, json={"provider": "claude", "model": "sonnet"}, headers=csrf(member))
+        changes = await member.get(f"/api/sessions/{session['id']}/changes")
+        assert changes.status_code == 200, changes.text
+        assert changes.json()["git_actions_allowed"] is False
+        assert (await member.get(f"/api/projects/{project['id']}")).status_code == 404
+        for action in ("commit", "push"):
+            denied = await member.post(f"/api/sessions/{session['id']}/git/{action}",
+                                       json={"message": "No project authority"}, headers=csrf(member))
+            assert denied.status_code == 404, denied.text
+        response = await member.post(path, json={"provider": "codex", "model": "test"}, headers=csrf(member))
         assert response.status_code == 200, response.text
         with api.app.state.db() as db:
             helper = db.get(Session, response.json()["helper_id"])
@@ -195,7 +216,7 @@ async def test_permissions_and_requester_account(api, project, env, member_accou
 async def test_regenerate_failed_output_and_no_helper_resume(api, project, env):
     session = await source(api, project, env)
     path = f"/api/sessions/{session['id']}/explanation"
-    response = await api.post(path, json={"provider": "claude", "model": "sonnet"})
+    response = await api.post(path, json={"provider": "codex", "model": "test"})
     helper_id = response.json()["helper_id"]
     await api.app.state.supervisor.stop(helper_id, "@api")
     async def failed():
@@ -203,7 +224,7 @@ async def test_regenerate_failed_output_and_no_helper_resume(api, project, env):
         return value if value["status"] == "error" else None
     await wait_for(failed)
     assert (await api.post(f"/api/sessions/{helper_id}/resume")).status_code == 409
-    regenerated = await api.post(path, json={"provider": "claude", "model": "sonnet", "regenerate": True})
+    regenerated = await api.post(path, json={"provider": "codex", "model": "test", "regenerate": True})
     assert regenerated.status_code == 200 and regenerated.json()["helper_id"] != helper_id
 
 
@@ -211,7 +232,7 @@ async def test_signed_out_agent_and_stale_diff_do_not_launch(api, project, env):
     session = await source(api, project, env)
     path = f"/api/sessions/{session['id']}/explanation"
     assert (await api.post(path, json={"provider": "cursor", "model": "test"})).status_code == 422
-    assert (await api.post(path, json={"provider": "claude", "model": "sonnet", "revision": "old"})).status_code == 409
+    assert (await api.post(path, json={"provider": "codex", "model": "test", "revision": "old"})).status_code == 409
     with api.app.state.db() as db:
         assert len(list(db.scalars(select(Session)))) == 1
 
@@ -233,7 +254,7 @@ def test_isolated_cli_home_keeps_auth_but_not_tools_or_instructions(tmp_path):
 async def test_malformed_agent_output_is_a_visible_error(api, project, env):
     session = await source(api, project, env)
     response = await api.post(f"/api/sessions/{session['id']}/explanation",
-                              json={"provider": "claude", "model": "fake-invalid-json"})
+                              json={"provider": "codex", "model": "fake-invalid-json"})
     assert response.status_code == 200, response.text
     async def failed():
         value = await explanation(api, session["id"])
@@ -244,6 +265,7 @@ async def test_malformed_agent_output_is_a_visible_error(api, project, env):
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "copilot", "antigravity", "cursor"])
+@pytest.mark.claude_launch_auth
 async def test_each_signed_in_native_adapter_completes(api, project, env, provider):
     session = await source(api, project, env)
     if provider == "copilot":
@@ -257,6 +279,10 @@ async def test_each_signed_in_native_adapter_completes(api, project, env, provid
         (env["home"] / ".cursor").mkdir(exist_ok=True)
         (env["home"] / ".cursor/fake-auth").write_text("ok")
     response = await api.post(f"/api/sessions/{session['id']}/explanation", json={"provider": provider, "model": "test"})
+    if provider == "claude":
+        assert response.status_code == 200, response.text
+        assert 'Using Codex' in response.json()['provider_note']
+        provider = 'codex'
     assert response.status_code == 200, response.text
     async def ready():
         value = await explanation(api, session["id"])
@@ -266,6 +292,7 @@ async def test_each_signed_in_native_adapter_completes(api, project, env, provid
 
 
 def test_stopping_runner_also_stops_the_native_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'synthetic-runner-key')
     monkeypatch.setenv("HOME", str(tmp_path / "original"))
     run_dir = tmp_path / "run"
     (run_dir / "workspace").mkdir(parents=True)
@@ -273,7 +300,8 @@ def test_stopping_runner_also_stops_the_native_cli(tmp_path, monkeypatch):
     (run_dir / "explanation.json").write_text(json.dumps({"provider": "claude", "model": "test",
                                                         "native_id": "00000000-0000-0000-0000-000000000001"}))
     cli = tmp_path / "cli"
-    cli.write_text(f"#!{sys.executable}\nimport os,time\nfrom pathlib import Path\n"
+    cli.write_text(f"#!{sys.executable}\nimport os,time,sys,json\nfrom pathlib import Path\n"
+                   "if sys.argv[-2:] == ['auth', 'status']:\n print(json.dumps({'loggedIn': True, 'authMethod': 'api_key'})); sys.exit(0)\n"
                    "Path('native.pid').write_text(str(os.getpid()))\ntime.sleep(30)\n")
     cli.chmod(0o700)
     root = Path(__file__).resolve().parents[1]
@@ -308,7 +336,7 @@ def test_runner_enforces_wall_time_and_output_limits(tmp_path, monkeypatch, beha
     monkeypatch.setenv("HOME", str(tmp_path / "original"))
     (tmp_path / "workspace").mkdir()
     (tmp_path / "prompt.txt").write_text("explain")
-    (tmp_path / "explanation.json").write_text(json.dumps({"provider": "claude", "model": "test",
+    (tmp_path / "explanation.json").write_text(json.dumps({"provider": "codex", "model": "test",
                                                          "native_id": "00000000-0000-0000-0000-000000000001"}))
     cli = tmp_path / "cli"
     cli.write_text(f"#!{sys.executable}\nimport time\n" + (
@@ -328,7 +356,7 @@ def test_runner_never_exposes_partial_completion_status(env, tmp_path, monkeypat
     (run_dir / "workspace").mkdir(parents=True)
     (run_dir / "prompt.txt").write_text("explain")
     (run_dir / "explanation.json").write_text(json.dumps({
-        "provider": "claude", "model": "test",
+        "provider": "codex", "model": "test",
         "native_id": "00000000-0000-0000-0000-000000000001"}))
     cli = tmp_path / "cli"
     cli.write_text(f"#!{sys.executable}\nprint({walkthrough()!r})\n")
@@ -364,3 +392,135 @@ def test_lent_sign_ins_are_removed_after_the_run(tmp_path):
     (home / ".copilot/config.json").write_text('{"authTokens": "secret"}')
     explain.run(run_dir, "/bin/false", "/bin/true")
     assert not (home / ".copilot/config.json").exists()
+
+
+@pytest.mark.claude_launch_auth
+async def test_claude_helper_without_key_or_codex_keeps_refusal(api, project, env, monkeypatch):
+    session = await source(api, project, env)
+    supervisor = api.app.state.supervisor
+    original = supervisor.broker.call
+    async def call(operation, **kwargs):
+        if operation == 'auth_health':
+            return {'claude': {'logged_in': True}, 'codex': {'logged_in': False}, 'checked_at': time.time()}
+        return await original(operation, **kwargs)
+    monkeypatch.setattr(supervisor.broker, 'call', call)
+    response = await api.post(f"/api/sessions/{session['id']}/explanation", json={'provider': 'claude', 'model': 'test'})
+    assert response.status_code == 409
+    assert response.json()['detail']['code'] == 'claude_subscription_automation'
+    with supervisor.db() as db:
+        assert len(list(db.scalars(select(Session)))) == 1
+
+
+@pytest.mark.claude_launch_auth
+@pytest.mark.parametrize('explicit', [False, True])
+async def test_claude_helper_uses_only_granted_launch_credentials(api, project, env, explicit):
+    from test_vault import CANARY, add
+    session = await source(api, project, env)
+    key = await add(api, 'Claude helper', 'ANTHROPIC_API_KEY')
+    await api.post(f"/api/vault/keys/{key['id']}/give", json={'project_id': project['id']})
+    response = await api.post(f"/api/sessions/{session['id']}/explanation", json={'provider': 'claude', 'model': 'test', **({'claude_auth': 'api_key'} if explicit else {})})
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value['provider'] == 'claude'
+    assert CANARY not in json.dumps(value)
+    with api.app.state.db() as db:
+        helper = db.get(Session, value['helper_id'])
+        assert helper.vault_keys == [key['id']]
+        assert CANARY not in json.dumps(helper.launch_spec.files)
+        assert db.get(Observation, 'claude.auth:' + helper.id).value['mode'] == 'api_key'
+    async def ready():
+        value = await explanation(api, session['id'])
+        assert value['status'] != 'error', value
+        return value if value['status'] == 'ready' else None
+    assert (await wait_for(ready))['provider'] == 'claude'
+    run = env['broker'].run_dir / value['helper_id']
+    assert not any(CANARY.encode() in p.read_bytes() for p in (run / 'workspace').rglob('*') if p.is_file())
+
+
+def test_claude_runner_rejects_change_to_another_allowed_auth_mode(tmp_path, monkeypatch):
+    from acc.broker import claude_auth, explain
+    monkeypatch.setenv('HOME', str(tmp_path / 'original'))
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'synthetic-runner-key')
+    monkeypatch.setattr(claude_auth, 'probe', lambda *a, **kw: 'cloud')
+    monkeypatch.setattr(explain.subprocess, 'Popen', lambda *a, **kw: pytest.fail('auth changed before prompt'))
+    (tmp_path / 'workspace').mkdir()
+    (tmp_path / 'explanation.json').write_text(json.dumps({'provider': 'claude', 'model': 'test',
+                                                        'native_id': '00000000-0000-0000-0000-000000000001'}))
+    assert explain.run(tmp_path, '/bin/false', '/example/bin/acc-hook') == 1
+    status = json.loads((tmp_path / 'explanation-status.json').read_text())
+    assert 'Claude sessions' in status['error'] and 'synthetic-runner-key' not in json.dumps(status)
+
+
+@pytest.mark.claude_launch_auth
+async def test_codex_fallback_launch_receives_no_cloud_credentials(api, project, env, monkeypatch):
+    from test_vault import add
+
+    session = await source(api, project, env)
+    key = await add(api, 'Unused cloud credential', 'AWS_ACCESS_KEY_ID')
+    await api.post(f"/api/vault/keys/{key['id']}/give", json={'project_id': project['id']})
+    supervisor = api.app.state.supervisor
+    original = supervisor.broker.call
+    launches = []
+
+    async def call(operation, **kwargs):
+        if operation == 'auth_health':
+            return {'codex': {'logged_in': True}}
+        if operation == 'launch':
+            assert kwargs['env'] == {}
+            launches.append(kwargs['provider'])
+        return await original(operation, **kwargs)
+
+    monkeypatch.setattr(supervisor.broker, 'call', call)
+    response = await api.post(f"/api/sessions/{session['id']}/explanation", json={'provider': 'claude', 'model': 'test'})
+    assert response.status_code == 200, response.text
+    assert response.json()['provider'] == 'codex'
+    assert launches == ['codex']
+    with supervisor.db() as db:
+        assert db.get(Session, response.json()['helper_id']).vault_keys == []
+
+
+@pytest.mark.claude_launch_auth
+@pytest.mark.parametrize('variable', ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_ACCESS_KEY_ID'])
+async def test_explanation_agents_checks_metadata_without_decryption(api, project, env, monkeypatch, variable):
+    from test_vault import add
+
+    session = await source(api, project, env)
+    key = await add(api, 'Helper credential', variable)
+    await api.post(f"/api/vault/keys/{key['id']}/give", json={'project_id': project['id']})
+    supervisor = api.app.state.supervisor
+
+    def deliver(*args, **kwargs):
+        pytest.fail('agent listing must not decrypt credentials')
+
+    async def call(operation, **kwargs):
+        assert operation == 'auth_health'
+        return {'copilot': {'logged_in': True}}
+
+    monkeypatch.setattr(supervisor.vault, 'deliver', deliver)
+    monkeypatch.setattr(supervisor.broker, 'call', call)
+    response = await api.get(f"/api/sessions/{session['id']}/explanation/agents")
+    assert response.status_code == 200, response.text
+    agents = {agent['id'] for agent in response.json()['agents']}
+    assert 'copilot' in agents
+    assert ('claude' in agents) == (variable != 'AWS_ACCESS_KEY_ID')
+
+
+async def test_explanation_agents_vault_error_only_removes_claude(api, project, env, monkeypatch):
+    from acc.server import vault
+    from acc.server.vault import VaultError
+
+    session = await source(api, project, env)
+    supervisor = api.app.state.supervisor
+
+    def plan(*args, **kwargs):
+        raise VaultError('synthetic planning failure')
+
+    async def call(operation, **kwargs):
+        assert operation == 'auth_health'
+        return {provider: {'logged_in': True} for provider in ('claude', 'codex', 'copilot')}
+
+    monkeypatch.setattr(vault, 'plan', plan)
+    monkeypatch.setattr(supervisor.broker, 'call', call)
+    response = await api.get(f"/api/sessions/{session['id']}/explanation/agents")
+    assert response.status_code == 200, response.text
+    assert {agent['id'] for agent in response.json()['agents']} == {'codex', 'copilot'}

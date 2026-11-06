@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean } from "./helpers";
 
 // UX declutter wave 5 (D05): access devices and notification devices stay separate registries, each pointing to the

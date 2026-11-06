@@ -31,6 +31,18 @@ You are signed in. Later sign-ins use your username, password and a fresh code, 
 
 ![Rynhult sign-in with the brand taglines, passkey button, and password and authenticator fields](/.attachments/login.png)
 
+## Choose what you see
+
+The [new layout](/User-Guide/New-Layout) is the only layout for everyone signed in.
+Classic is retired, including previously saved classic choices.
+
+Overview offers a compact **Choose what you see** prompt linking to
+**Settings → Setup level**. Choose a level there, or select **Dismiss** on the
+prompt to keep your current navigation. Dismissal follows your sign-in across
+browsers. Saving a level changes presentation only; Security and agent readiness
+are reviewed separately.
+See [Setup levels](/User-Guide/Setup-Levels).
+
 ## The layout
 The angular R mark identifies Rynhult on the sign-in screen, in the sidebar and in your installed app icon. Its ink follows the light or dark surface. The dark theme uses charcoal and slate surfaces with frost and periwinkle accents; the light theme uses snow and blue-grey surfaces with a deeper periwinkle accent. Amber still means attention, red means failure, and green means healthy.
 

@@ -50,12 +50,6 @@ def reading(kind, value, observed_at, *, now, max_age_seconds):
         rows = [(value.get(key), field) for key in ('five_hour', 'seven_day')]
     elif kind == 'codex':
         rows = [(value.get(key), 'used_percent') for key in ('primary', 'secondary')]
-    elif kind == 'copilot':
-        credits = value.get('credits')
-        if not isinstance(credits, dict) or credits.get('unlimited'):
-            return unknown
-        left = number(credits.get('percent_remaining'))
-        rows = [({'used': 100-left, 'resets_at': value.get('resets_at')}, 'used')] if left is not None else []
     else:
         return unknown
     used = []

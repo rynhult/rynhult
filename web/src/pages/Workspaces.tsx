@@ -7,7 +7,8 @@ import { ArrowRight, BookOpen, FileText, FlaskConical, FolderGit2, MoreHorizonta
 import { api, post } from "../lib/api";
 import { ago, workspaceName } from "../lib/format";
 import type { ObservedState, Provider, Project } from "../lib/types";
-import { Badge, Button, Card, Dialog, Dot, Empty, ErrorNote, Field, Input, Page, PageHeader, Popover, QueryState, Skeleton, Select } from "../components/ui";
+import { Badge, Button, Card, Dialog, Dot, Empty, ErrorNote, Field, Input, Popover, QueryState, Skeleton, Select } from "../components/ui";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { sessionState } from "../components/session-bits";
 import { useNewSession } from "../components/newSession";
 import { useConfirm } from "../components/confirm";

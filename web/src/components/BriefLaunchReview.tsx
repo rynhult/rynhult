@@ -1,3 +1,4 @@
+import { DraftSaveNote } from '../lib/useUnsaved';
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { post } from "../lib/api";
@@ -43,7 +44,7 @@ export function BriefLaunchReview({ choice, grant, ensureTrusted, onGrant, onLau
     },
   });
   useEffect(() => { if (decision.error) feedback.current?.focus(); }, [decision.error]);
-  return <section className="min-w-0 space-y-4" aria-labelledby="ns-brief-choice">
+  return <section className="min-w-0 space-y-4" aria-labelledby="ns-brief-choice"><DraftSaveNote id={`brief:${projectId}`} />
     <h3 ref={heading} id="ns-brief-choice" tabIndex={-1} className="font-medium focus-visible:outline-2 focus-visible:outline-accent">
       {saved ? `Brief version ${saved.version} is saved and selected for this team.`
         : `Save this brief as version ${nextVersion} and pin it to the team?`}

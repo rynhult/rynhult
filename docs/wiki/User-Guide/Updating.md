@@ -23,9 +23,9 @@ Installations still on 0.15.0-rc.1 predate the channel: upgrade them once by han
 
 ![Illustrative update controls on 0.15.0-rc.1, with an example future stable release](/.attachments/updates-settings.png)
 
-2. If updates are off, enter the GitHub **owner/repository**, such as `example/acc`, in **GitHub repository** and
-   select **Save update settings**. Leave it empty to turn checks off. The initial repository comes from the
-   installation's source URL when it points to GitHub.
+2. **GitHub repository** defaults to the official `rynhult/rynhult`; no administrator edit is needed.
+   Leave it empty and select **Save update settings** to turn checks off. A different repository needs
+   administrator authorization as described below.
 3. When **Update available** appears, select **Back up and update**, read the confirmation and confirm. Rynhult first
    backs up the database and secrets. A failed backup stops the update. Downloaded source must pass its release-signature, checksum
    and archive safety checks before installation starts.
@@ -37,6 +37,45 @@ A newer release creates one owner [Inbox](/User-Guide/Glossary#inbox) item per v
 available. The build identifies the actual source, so machines with the same version can still need an update.
 
 Source archives used for releases, installation and additional-machine downloads exclude host inventory, private handoffs, reviews, qualification material, rename/rollout inventories and private operational documents. They contain the public application source for that build. Keep private operational records in your own backups.
+
+## rc.3 → rc.4
+
+Use this procedure once rc.4 is published. Read the
+rc.4 release notes (`docs/release-notes/0.15.0-rc.4.md`), including the Claude
+sign-in change and migrations 0085–0087. Keep a second administrator shell open
+and arrange a quiet period: pause schedules and teams and finish or stop work.
+
+1. **Back up.** Follow [Upgrade from rc.1, backup step](/User-Guide/Upgrade-from-rc1#2-back-up-before-changing-anything)
+   for the existing backup service, matching secrets and private host configuration.
+   Check that capture succeeded and retain an off-machine copy. Back up project
+   workspaces separately. PostgreSQL needs an independently tested backup and
+   schema recovery plan; do not use the SQLite bundle transaction below.
+2. **Upgrade.** In **Settings → Updates**, choose **Release candidates**, save and
+   select **Check now**. Confirm the offered version is **0.15.0-rc.4** and its
+   signature is verified, then select **Back up and update** and confirm. A failed
+   backup or signature check stops installation. RC installation is manual even
+   when automatic stable updates are enabled. Modified or untagged git installs
+   follow [Troubleshooting](#troubleshooting); do not discard local work.
+3. **Verify.** Reopen Settings → Updates and check **0.15.0-rc.4**, the published
+   build and the successful transaction result. Check service health using the
+   [main verification commands](/User-Guide/Upgrade-from-rc1#4-check-the-main-before-proceeding).
+   Check projects, Inbox, layout saving and backup targets. Generate offline
+   sign-in recovery codes in **Settings → Account → Security → Sign-in recovery codes**;
+   migration 0086 does not enroll existing accounts. Review Claude sign-in choices
+   and schedules: 0087 preserves existing credential-backed sessions and applicable
+   schedules as API-key launches; new sessions default to subscription. Then sync
+   Linux/WSL nodes with **Host → Machines → Update**, use the existing Mac installer
+   route, and confirm matching version/build before deliberately resuming work.
+4. **Rollback.** Failed installation or health checks attempt automatic source and
+   database rollback; inspect the reported result. To undo a successful bundle
+   update, use its retained rollback ID and the existing
+   [bundle rollback procedure](/User-Guide/Upgrade-from-rc1#roll-back-a-bundle-main)
+   with the verified rc.4 staging kit in place of rc.2. Keep the backup and prior
+   source. Stop new work first: restoring the earlier database loses later database
+   changes. Manual/git recovery follows [Troubleshooting](#troubleshooting): restore
+   the pre-upgrade database and matching secrets before running old code. Never run
+   rc.3 against the migrated database. Workspaces, host configuration and node
+   updates are not reverted by the main transaction; recover them separately.
 
 ## Release signatures
 
@@ -100,10 +139,14 @@ Host shows the helper's failure detail or a cleanup warning; a cleanup warning d
 
 ## Troubleshooting
 
-- **Git checkout:** the main update button is replaced with “This Rynhult runs from a git checkout: update it with git
-  pull and deploy/install.sh”. Update the checkout and run its installer as before.
+- **Git checkout:** a clean checkout with HEAD exactly at a release tag (`v*`) can use the normal release updater.
+  Modified files, untracked files, commits after a tag and untagged checkouts keep the “This Rynhult runs from a git
+  checkout: update it with git pull and deploy/install.sh” message. Save local work and update manually.
+  The root helper also requires the checkout directory and its `.git` directory to be owned by root;
+  symlinks and Git metadata files are refused.
+  Release updates replace the checkout with verified release source; subsequent updates use that source installation.
 - **Repository needs authorization:** an administrator sets `ACC_UPDATE_REPOSITORY=example/acc` in root-owned
-  `/etc/default/accd` and restarts accd. The default authorizes the repository derived from `ACC_SOURCE_URL`. An
+  `/etc/default/accd` and restarts accd. The default authorizes `rynhult/rynhult`. An
   Rynhult preference can never redirect the root installer to another code source by itself.
 - **Private repository:** the administrator puts the optional GitHub token in `data/secrets/update_token`, readable
   by the Rynhult service and root, with mode 0600. The token is never displayed by the dashboard or included in audit.
@@ -196,13 +239,20 @@ An administrator can install just the Linux/WSL command and unit aliases from a
 reviewed checkout. On the main, first inspect the read-only plan:
 
 ```sh
-bash deploy/install.sh --dry-run
+sudo bash deploy/install.sh --dry-run
 ```
 
-This plans **phase B aliases only**, using the components already installed. It
-is not a simulation of dependency installation or a complete software update.
-After phase B has been applied, Linux/WSL dry-runs need sudo to read its
-root-private journal. They remain read-only. After checking the plan, an
+This plans phase B aliases and validates the installed folder mapping against
+`/etc/default/accd`, optional `/etc/default/acc-backup`, broker settings, and any
+existing folder associations. Run it with sudo to read root-private settings and
+the alias journal. It remains read-only and does not simulate dependency
+installation or a complete software update. A backup mirror inside the human owner’s home is permitted; a mirror inside an
+agent’s home is refused. Agents cannot allow an owner’s mirror, its descendants,
+or a parent folder containing it. Installation and dry run refuse protected and
+mirror paths containing `.`, `..`, empty components (including repeated or trailing
+slashes), or a symlink in any existing component; the error names the setting to fix.
+A home equal to or inside a protected folder
+is refused. After checking the plan, an
 administrator deploys the aliases with:
 
 ```sh
@@ -250,3 +300,12 @@ In **Settings → Updates**, choose **Release channel: Stable** or **Release can
 RC updates use the same backup, checksum, archive validation and rollback path as stable updates, and always require a verified signature. **Update without signature** is never available for a pre-release. **Install updates automatically** installs stable releases only; choose **Back up and update** yourself for an RC.
 
 A machine's **Update** action syncs its Linux/WSL node to this main's exact installed version and build, including RCs, using its enrolled main and trust. It never selects a newer GitHub release independently. Macs continue to use the installer or recovery command shown on Host.
+
+### Scoped-approval database changes
+
+The scoped-approval foundation adds migration 0082 without creating permissions
+from older requests or settings. Keep the pre-upgrade backup. Once consent,
+operation, batch-preview or per-request decision records exist, downgrade is refused so an older
+server cannot ignore that authority or discard its audit evidence. Stop and fence
+affected work, then restore the consistent pre-upgrade backup or forward-repair.
+Never replace a saved permission with a global Security switch set to Off.

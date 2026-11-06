@@ -54,7 +54,8 @@ def test_explanation_pane_does_not_import_from_workspace(env, monkeypatch, plant
                                            '123\n' if args[0] == 'list-panes' else '', '')
 
     monkeypatch.setattr(ops, 'tmux', tmux)
-    result = ops.launch(config, {'acc_id': acc_id, 'tmux_name': 'acc-sweep', 'provider': 'claude',
+    # Claude explanation helpers are refused before launch (subscription guard); Codex exercises the wrapper.
+    result = ops.launch(config, {'acc_id': acc_id, 'tmux_name': 'acc-sweep', 'provider': 'codex',
                                 'args': [], 'cwd': str(workspace), 'files': {'explanation.json': '{}'}, 'env': {}})
     # Missing spec fields deliberately stop the real wrapper before any provider/auth/hook execution.
     child = subprocess.run(shlex.split(result['command']), cwd=workspace, env=child_env,
@@ -78,7 +79,8 @@ async def test_pty_attach_child_ignores_cwd_and_import_environment(env, monkeypa
             monkeypatch.delenv(key)
     for key, value in child_env.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(ops, 'tmux', lambda *args: subprocess.CompletedProcess([], 0, '', ''))
+    # Attach pins the window first; the stand-in answers that typed geometry read.
+    monkeypatch.setattr(ops, 'tmux', lambda *args, **kwargs: subprocess.CompletedProcess([], 0, '40 120\n', ''))
     reader = asyncio.StreamReader()
 
     class Writer:

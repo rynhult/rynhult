@@ -1,12 +1,14 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardPaste, KeyRound, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import { ENV_VARIABLE_GROUPS, ENV_VARIABLE_PATTERN, ENV_VARIABLES } from "../lib/envVariables";
 import { useConfirm } from "./confirm";
-import { Badge, Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, IconButton, Input, QueryState, Segmented, Select, Textarea } from "./ui";
+import { Badge, Button, Dialog, Empty, ErrorNote, Field, IconButton, Input, QueryState, Segmented, Select, Textarea } from "./ui";
 
 /* The key vault (docs/VAULT.md). Values are write-only: Rynhult never sends one back, so nothing here can show one. */
 
@@ -22,6 +24,7 @@ const invalidate = (queryClient: ReturnType<typeof useQueryClient>) => {
   queryClient.invalidateQueries({ queryKey: ["vault"] });
   queryClient.invalidateQueries({ queryKey: ["project-keys"] });
   queryClient.invalidateQueries({ queryKey: ["preview"] });
+  queryClient.invalidateQueries({ queryKey: ["provider-registry"] });
 };
 
 const SHARING = [{ id: "private", label: "Private" }, { id: "shared", label: "Shared" }] as const;
@@ -85,13 +88,15 @@ function VariableField({ value, onChange, stored, hint }: {
   );
 }
 
-function AddKeyDialog({ open, onClose, stored }: { open: boolean; onClose: () => void; stored: readonly VaultKey[] }) {
+function AddKeyDialog({ open, onClose, stored, projectId, claudeApi = false }: { open: boolean; onClose: () => void; stored: readonly VaultKey[]; projectId?: number; claudeApi?: boolean }) {
   const queryClient = useQueryClient();
-  const blank = { name: "", variable: "", value: "", note: "", shared: false, remote: false };
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api<{ id: number; name: string }[]>("/api/projects"), enabled: !!projectId });
+  const project = projects.data?.find(p => p.id === projectId);
+  const blank = { name: claudeApi ? "Claude API" : "", variable: claudeApi ? "ANTHROPIC_API_KEY" : "", value: "", note: "", shared: false, remote: false };
   const [f, setF] = useState(blank);
   const close = () => { setF(blank); onClose(); };
   const add = useMutation({
-    mutationFn: () => post<VaultKey>("/api/vault/keys", { ...f, note: f.note || null }),
+    mutationFn: () => post<VaultKey>("/api/vault/keys", { ...f, note: f.note || null, project_id: projectId }),
     onSuccess: () => { invalidate(queryClient); close(); },
   });
   const badVariable = !!f.variable && !ENV_VARIABLE_PATTERN.test(f.variable);
@@ -99,9 +104,12 @@ function AddKeyDialog({ open, onClose, stored }: { open: boolean; onClose: () =>
     <Dialog open={open} onClose={close} title="Add a key" dismissible={false}
       description="Stored encrypted. After you add it, nobody can read it back, you included; you can replace it."
       footer={<><ErrorNote error={add.error} /><Button variant="ghost" onClick={close}>Cancel</Button>
-        <Button variant="primary" disabled={!f.name.trim() || !f.variable || badVariable || !f.value.trim() || add.isPending}
+        <Button variant="primary" disabled={!!projectId && !project || !f.name.trim() || !f.variable || badVariable || !f.value.trim() || add.isPending}
           onClick={() => add.mutate()}>{add.isPending ? "Adding…" : "Add key"}</Button></>}>
       <div className="space-y-3">
+        {claudeApi && <p>This switches the project’s Claude usage to API billing.{projectId ? ` The key will be given to ${project?.name ?? "the selected project (loading…)"} when added.` : " Give the key to your project after adding it."}</p>}
+        {projectId && <ErrorNote error={projects.error} />}
+        {projectId && projects.data && !project && <p>For group projects, ask a group administrator to configure a Claude API key through the group key settings.</p>}
         <Field label="Name" hint="Shown everywhere, e.g. OpenAI (work)">
           <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={80} /></Field>
         <VariableField value={f.variable} onChange={(variable) => setF({ ...f, variable })} stored={stored} />
@@ -232,10 +240,17 @@ const usedLine = (k: VaultKey) => [
 
 /** Settings → Keys: your keys and the ones others share. */
 export function KeysCard() {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const claudeApi = params.get("claude_api") === "1";
+  const requestedProject = Number(params.get("project_id"));
+  const projectId = Number.isSafeInteger(requestedProject) && requestedProject > 0 ? requestedProject : undefined;
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const keys = useQuery({ queryKey: ["vault"], queryFn: () => api<VaultKey[]>("/api/vault/keys") });
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(claudeApi);
+  useEffect(() => { if (claudeApi) setAdding(true); }, [claudeApi, projectId]);
   const [pasting, setPasting] = useState(false);
   const [editing, setEditing] = useState<VaultKey | null>(null);
   const [replacing, setReplacing] = useState<VaultKey | null>(null);
@@ -273,7 +288,14 @@ export function KeysCard() {
         )}
       </QueryState>
       {remove.error ? <div className="px-4 pb-3"><ErrorNote error={remove.error} /></div> : null}
-      {adding && <AddKeyDialog open onClose={() => setAdding(false)} stored={keys.data ?? []} />}
+      {adding && <AddKeyDialog open claudeApi={claudeApi} projectId={claudeApi ? projectId : undefined} onClose={() => {
+        setAdding(false);
+        if (claudeApi) {
+          const next = new URLSearchParams(params);
+          next.delete("claude_api"); next.delete("project_id");
+          navigate({ search: next.toString(), hash: location.hash }, { replace: true });
+        }
+      }} stored={keys.data ?? []} />}
       <PasteEnvDialog open={pasting} onClose={() => setPasting(false)} />
       {editing && <EditKeyDialog key={editing.id} vaultKey={editing} onClose={() => setEditing(null)} stored={keys.data ?? []} />}
       {replacing && <ReplaceDialog key={replacing.id} vaultKey={replacing} onClose={() => setReplacing(null)} />}

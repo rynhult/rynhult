@@ -591,7 +591,7 @@ def complete_start(db,selection_id,session_id=None):
 
 
 TEAM_FIELDS = {'select': {'assignment','pin'}, 'selection_status': {'selection'},
-               'start': {'assignment','attempt','selection','name','task','kind','fresh','machine','agent','profile'}}
+               'start': {'assignment','attempt','selection','name','task','kind','fresh','machine','agent','profile','claude_auth'}}
 TEAM_ACTIONS = {'select':select_action,'selection_status':status_action}
 
 ON_STATE: list = []

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean } from "./helpers";
 
 /* UX review 2, beta item 2: no raw server errors on default paths. */

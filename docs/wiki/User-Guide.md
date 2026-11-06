@@ -19,6 +19,8 @@ See [platform scope and native-app order](/User-Guide/Install#v10-platform-scope
 | [Install on Windows](/User-Guide/Install-Windows) | Rynhult Setup for Windows 11: the main Rynhult or an additional machine |
 | [Install on a Mac](/User-Guide/Install-macOS) | Rynhult Setup for macOS: an additional machine |
 | [Getting started](/User-Guide/Getting-Started) | First sign-in, the Get started list, the layout, your first session |
+| [Setup levels](/User-Guide/Setup-Levels) | Personal navigation, skippable setup and separate team/Security recommendations |
+| [New layout](/User-Guide/New-Layout) | Optional Preview shell, browsing without leaving work, Continue and next-reload opt-in |
 | [Glossary](/User-Guide/Glossary) | The words Rynhult uses, in plain language |
 | [Host and providers](/User-Guide/Host-and-Providers) | Signing your agents in (Providers), machine health and plan usage |
 | [Connect an agent](/User-Guide/Connect-an-Agent) | Installing and signing in an agent CLI where Rynhult can't install it: step by step per system |
@@ -26,6 +28,7 @@ See [platform scope and native-app order](/User-Guide/Install#v10-platform-scope
 | [Project brief](/User-Guide/Project-Brief) | Reusable project scope, private captioned references and versioned team intake |
 | [New session](/User-Guide/New-Session) | Starting a session: the task, the agent, and everything under Advanced |
 | [Sessions](/User-Guide/Sessions) | Watching, typing into, stopping and resuming sessions |
+| [Chat](/User-Guide/Chat) | Reading supported session conversations beside the terminal |
 | [Overview](/User-Guide/Overview) | The home screen: what needs you and what is running |
 | [Inbox](/User-Guide/Inbox) | Everything that needs your attention |
 
@@ -74,6 +77,7 @@ See [platform scope and native-app order](/User-Guide/Install#v10-platform-scope
 
 | Page | What it covers |
 |---|---|
+| [Themes](/User-Guide/Themes) | Choose the theme for your account |
 | [Settings](/User-Guide/Settings) | Your preferences and owner installation controls |
 | [Admin features](/User-Guide/Admin-Features) | Owner controls for optional features and Previews |
 | [People and sign-in](/User-Guide/People-and-Sign-in) | Your sign-ins and password; inviting people (owners) |
@@ -120,3 +124,12 @@ before adding aliases from a reviewed checkout.
 
 The public site is rynhult.dev, documentation is rynhult.dev/docs/ (docs.rynhult.dev redirects there), and contact details are in the repository README and security policy. The telemetry collector at
 telemetry.rynhult.dev runs as a pre-release staging service; telemetry remains opt-in.
+
+## Pasting images and files into a session
+
+Paste an image or drag files onto a terminal you control. Rynhult uploads them
+into the session's `.rynhult/uploads/` folder and inserts paths relative to the
+session folder without pressing Enter. If you changed directory, return to the
+session folder or adjust the paths before using them. Add your instructions, then press Enter yourself. See
+[session file paste and drop](/User-Guide/Sessions#pasting-images-and-files-into-a-session)
+for limits and read-only behavior.

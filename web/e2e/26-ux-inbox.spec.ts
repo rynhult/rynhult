@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { AUTH_FILE, expectAxeClean, shot, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
@@ -132,3 +132,41 @@ test("inbox: members never get the stop action for a held session", async ({ pag
   await expect(page.getByRole("main").getByText("A restored session is still running on build-box")).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop on that machine" })).toHaveCount(0);
 });
+
+test("Claude permission decisions are explicit and one-shot", async ({ page }) => {
+  const at = now();
+  const token = "a".repeat(32);
+  const decisions: unknown[] = [];
+  await page.route("**/api/attention*", route => route.fulfill({ json: [{ ...base,
+    id: 101, kind: "needs_input", severity: "warn", title: "Review permission", source: "claude_hook",
+    session_id: "s-review", detail: "Bash: git status", permission_id: token, permission_can_approve: true, permission_input: '{"command":"git status"}', created_at: at, updated_at: at,
+  }] }));
+  await page.route("**/api/attention/101/permission", route => {
+    decisions.push(route.request().postDataJSON());
+    return route.fulfill({ json: { answered: true } });
+  });
+  await page.goto("/inbox");
+  const main = page.getByRole("main");
+  await expect(main.getByText("Bash: git status", { exact: true })).toBeVisible();
+  await expect(main.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
+  expect(decisions).toEqual([]);
+  await main.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(main.getByText("Approved", { exact: true })).toBeVisible();
+  await expect(main.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  expect(decisions).toEqual([{ token, decision: "allow" }]);
+});
+
+for (const expired of [false, true]) {
+  test(`permission input unavailable, expired=${expired}`, async ({ page }) => {
+    await page.route("**/api/attention*", route => route.fulfill({ json: [{ ...base,
+      id: 101, kind: "needs_input", severity: "warn", title: "Review permission", source: "claude_hook",
+      session_id: "s-review", permission_id: "a".repeat(32), permission_can_approve: false,
+      permission_reason: "Complete tool input exceeds the 8 kB display limit. Answer in terminal to approve.",
+      permission_expires_at: expired ? "2020-01-01T00:00:00Z" : new Date(Date.now() + 50000).toISOString(), created_at: now(), updated_at: now(),
+    }] }));
+    await page.goto("/inbox");
+    await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+    if (expired) await expect(page.getByText("This request expired. Answer in the terminal.")).toBeVisible();
+    else await expect(page.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
+  });
+}

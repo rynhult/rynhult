@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { AUTH_FILE, expectAxeClean, routeDemoSessions } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 // UX review SL-1 and NAV-1 (owner decision 0008, Q1): what needs you comes first, and the counts agree.
 test("sessions list: the session that needs you is first, under the same headings as the Overview", async ({ page }) => {

@@ -332,6 +332,7 @@ async def test_no_route_returns_a_value(people, env, caplog):
 
 # ---------------------------------------------------------------------- delivery
 
+@pytest.mark.claude_launch_auth  # asserts the exact vault-delivered environment
 @pytest.mark.parametrize('host', ['local', 'remote'])
 async def test_resume_rechecks_cached_vault_authority_after_broker_wait(env, backend_url, host):
     from sqlalchemy import create_engine, update
@@ -843,3 +844,37 @@ async def test_precompat_key_cannot_override_new_session_guards(api, project):
     response = await api.post('/api/sessions/preview', json={'project_id': project['id'], 'provider': 'claude', 'name': 'safe'})
     assert response.status_code == 422, response.text
     assert 'RYNHULT_GUARD_FILES' in response.text and CANARY not in response.text
+
+
+async def test_claude_key_way_out_is_atomic_scoped_and_secret_free(people, caplog, monkeypatch):
+    from acc.broker import claude_auth as broker_auth
+    monkeypatch.setattr(broker_auth, "account", lambda config: {"auth_mode": "subscription"})
+    alice, bob = people['alice'], people['bob']
+    pa, pb = people['projects']['alice']['id'], people['projects']['bob']['id']
+    caplog.set_level(logging.DEBUG)
+    denied = await call(alice, '/api/vault/keys', {
+        'name': 'Claude denied', 'variable': 'ANTHROPIC_API_KEY', 'value': CANARY, 'project_id': pb})
+    assert denied.status_code == 404
+    assert not (await alice.get('/api/vault/keys')).json()
+    key = await add(alice, 'Claude API', 'ANTHROPIC_API_KEY', member=True, project_id=pa)
+    assert [p['id'] for p in key['projects']] == [pa]
+    def no_decrypt(*args, **kwargs):
+        raise AssertionError('Registry must not decrypt credentials')
+    monkeypatch.setattr(vault.Cipher, 'open', no_decrypt)
+    async def claude(client, project_id):
+        response = await client.get('/api/providers/registry', params={'project_id': project_id})
+        assert response.status_code == 200
+        assert CANARY not in response.text
+        return next(p for p in response.json()['providers'] if p['id'] == 'claude')
+    assert (await claude(alice, pa))['automation_refusal'] is None
+    warning = (await claude(bob, pb))['automation_refusal']
+    assert warning and f'project_id={pb}' in warning['keys'] and 'API billing' in warning['message']
+    # A server-only grant must not suppress the launch warning.
+    from acc.server.models import VaultGrant
+    with write_db(people['owner'].app.state.db) as db:
+        db.get(VaultGrant, (key['id'], pa)).server_only = True
+        db.commit()
+    assert (await claude(alice, pa))['automation_refusal'] is not None
+    assert CANARY not in json.dumps(key)
+    assert CANARY not in (await people['owner'].get('/api/audit')).text
+    assert CANARY not in caplog.text

@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useState,type ReactNode} from 'react';
 import {Link,useLocation} from 'react-router-dom';
 import {useProjects,useRole,useSessions} from '../lib/queries';
 import {SECURITY_COPY,scopeName,securityLink,useSecurityPolicy,type SecurityPolicy,type SecurityScope} from '../lib/security';
@@ -26,6 +26,17 @@ export function AlwaysEnforced() {
   </section>;
 }
 
+/** Presentation copy shared by the full badge and the compact shell shield. */
+export function securityBadgeWords(policy:SecurityPolicy,frozen=false,older=false) {
+  const off=Object.values(policy.switches).filter(enabled=>enabled===false).length;
+  const pending=policy.enforcement?.allowed_folders==='pending';
+  const varies=policy.varying_switches?.length;
+  const count=policy.older_sessions?.length??0;
+  const unrestricted=policy.mode==='unrestricted'&&!pending;
+  const base=unrestricted?'Unrestricted':!off&&pending?'Folder protection pending':!off&&varies?'Security varies by person':!off?(frozen?'Frozen protections On':'Current protections On'):`Custom security · ${off} off${varies?' · varies by person':''}`;
+  return `${base}${pending&&off?' · folders pending':''}${count?` · ${count} ${count===1?'session':'sessions'} on older settings`:''}${older?' · older settings':''}`;
+}
+
 export function SecurityBadge({policy,label,frozen=false,older=false}: {policy?:SecurityPolicy;label?:string;frozen?:boolean;older?:boolean}) {
   const [open,setOpen]=useState(false);
   const owner=useRole().owner;
@@ -35,9 +46,7 @@ export function SecurityBadge({policy,label,frozen=false,older=false}: {policy?:
   const varies=policy.varying_switches?.length;
   const olderCount=policy.older_sessions?.length??0;
   if(!off.length&&!pending&&!varies&&!older&&!olderCount)return null;
-  const unrestricted=policy.mode==='unrestricted'&&!pending;
-  const base=unrestricted?'Unrestricted':!off.length&&pending?'Folder protection pending':!off.length&&varies?'Security varies by person':!off.length?(frozen?'Frozen protections On':'Current protections On'):`Custom security · ${off.length} off${varies?' · varies by person':''}`;
-  const words=`${base}${pending&&off.length?' · folders pending':''}${olderCount?` · ${olderCount} ${olderCount===1?'session':'sessions'} on older settings`:''}${older?' · older settings':''}`;
+  const words=securityBadgeWords(policy,frozen,older);
   const scope=label??scopeName(policy.scope);
   return <>
     <button type="button" onClick={()=>setOpen(true)} className="flex min-h-8 min-w-0 max-w-full items-center text-left pointer-coarse:min-h-11" aria-label={`${words} · ${scope}${frozen?' · frozen launch':''}`}>
@@ -58,8 +67,10 @@ export function SecurityBadge({policy,label,frozen=false,older=false}: {policy?:
   </>;
 }
 
+export type CurrentSecurityStatus = {policy?:SecurityPolicy;label:string;scope:SecurityScope;notices:string[];loading:boolean;unavailable:boolean;offline:boolean};
+
 /** Current execution account, separate from the frozen session badge. Members never query account policy. */
-export function CurrentSecurityBadge() {
+export function CurrentSecurityBadge({render}:{render?:(status:CurrentSecurityStatus)=>ReactNode}={}) {
   const role=useRole(), location=useLocation();
   const projects=useProjects(), sessions=useSessions();
   const [,section,id]=location.pathname.split('/');
@@ -79,6 +90,15 @@ export function CurrentSecurityBadge() {
   const selected=projectRelaxed?projectPolicy.data:accountPolicy.data;
   const policy=selected??instancePolicy.data;
   const combined=policy?{...policy,older_sessions:instancePolicy.data?.older_sessions??[]}:undefined;
+  if(render) return render({policy:combined,label:projectRelaxed?`${project!.name} project`:scope?scopeName(scope):'Instance defaults',
+    scope:selected?.scope??scope??{kind:'instance'},
+    loading:!instancePolicy.data||!!scope&&!accountPolicy.data||!!project&&!projectPolicy.data,
+    unavailable:!!(instancePolicy.error||accountPolicy.error||projectPolicy.error),
+    offline:!!(session?.machine_offline||project?.machine_offline),
+    notices:[
+      ...(instancePolicy.error||!instancePolicy.data?[`Older-session inventory ${instancePolicy.error?'unavailable':'loading'}${instancePolicy.data?' · last known count shown':''}.`]:[]),
+      ...(accountPolicy.error||projectPolicy.error?[`Security state unavailable${policy?' · last known policy shown':''}.`]:[]),
+    ]});
   return <div className="min-w-0 space-y-1"><SecurityBadge policy={combined} label={projectRelaxed?`${project!.name} project`:scope?scopeName(scope):'Instance defaults'}/>
     {(instancePolicy.error||!instancePolicy.data)&&<span className="text-xs text-wait">Older-session inventory {instancePolicy.error?'unavailable':'loading'}{instancePolicy.data?' · last known count shown':''}.</span>}
     {(accountPolicy.error||projectPolicy.error)&&<span className="text-xs text-wait">Security state unavailable{policy?' · last known policy shown':''}.</span>}

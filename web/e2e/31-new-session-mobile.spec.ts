@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean } from "./helpers";
 
 /* UX review 2, R2 and WP7 on a phone: no sideways scrolling with a long project path, and the task in the first screen. */

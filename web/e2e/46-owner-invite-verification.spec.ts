@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import { AUTH_FILE, PASSWORD, csrfHeaders, freshStep, loadSecret, totp } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 test('inviting an owner asks for fresh verification first, whatever the passkey policy', async ({ page }) => {
   test.slow();
@@ -25,7 +26,7 @@ test('inviting an owner asks for fresh verification first, whatever the passkey 
   await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
   await freshStep(page);
   await page.getByLabel('Verification password', { exact: true }).fill(PASSWORD);
-  await page.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+  await page.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
   await page.getByRole('button', { name: 'Verify with password and authenticator' }).click();
   await expect(page.getByText('Verified for five minutes.')).toBeVisible();
   await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('people');

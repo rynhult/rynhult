@@ -1,14 +1,17 @@
+import { DraftSaveNote } from '../lib/useUnsaved';
+import { useNewShell } from "../lib/uiShell";
+import { ProjectDirectory } from "../components/shell/ProjectDirectory";
 import { ProjectDeleteDialog } from "../components/ProjectDelete";
 import { CollectionTable, CollectionView, useCollectionView } from "../components/CollectionView";
 import { desktopBuild } from "../lib/desktop";
 import { useSingleMutation as useMutation } from "../lib/mutations";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearDraft, loadDraft, saveDraft } from "../lib/drafts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Archive as ArchiveIcon, ArrowRight, FolderGit2, FolderPlus, MoreHorizontal, Plus, ShieldCheck } from "lucide-react";
 import { useConfirm } from "../components/confirm";
-import { isLive } from "../components/session-bits";
+import { liveSessionsByProject } from "../components/session-bits";
 import { useNewSession } from "../components/newSession";
 import { needsYou } from "../lib/order";
 import { lineClass } from "../components/Changes";
@@ -30,7 +33,7 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
   const blank = { slug: "", name: "", workspace_path: "", repo: "", import_mode: "managed", host: "local", account: "" };
   const storeKey = `import-folder:${username ?? 'current'}`;
   const [form, setForm] = useState(() => loadDraft<typeof blank>(storeKey) ?? blank);
-  useEffect(() => { saveDraft(storeKey, form); }, [storeKey, form]);
+  useEffect(() => { if (JSON.stringify(form) !== JSON.stringify(blank)) saveDraft(storeKey, form, () => setForm(blank)); else clearDraft(storeKey); }, [storeKey, form]);
   const nodes = useNodes(open && owner);
   const slug = form.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const machineAccounts = form.host === "local" ? [] : ((nodes.data ?? []).find((n) => n.name === form.host)?.accounts ?? []);
@@ -43,7 +46,7 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
   });
   return (
     <Dialog open={open} onClose={onClose} title="Register a folder" description="A folder that already exists. Rynhult doesn't create or move it." dismissible={false}>
-      <div className="space-y-4">
+      <div className="space-y-4"><DraftSaveNote id={storeKey} />
         <p className="text-sm text-muted">Use where it is: no move, clone, Git initialization, commit or identity changes. Unregistering leaves the original folder intact.</p>
         {owner ? <Link to={`/settings/security/folders?machine=${encodeURIComponent(form.host)}&account=${encodeURIComponent(form.account || machineAccounts[0] || instance.agent_user)}`}>Allowed folders in Security</Link>
           : <p className="text-sm text-muted">Ask an owner to allow this folder if the agent account cannot use it.</p>}
@@ -79,7 +82,7 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Select>
           </Field>
         </div>
-        <ErrorNote error={create.error} />
+        <ErrorNote error={create.error} action={<Link to="/settings/security/folders">Open Allowed folders in Security</Link>} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" disabled={!form.name.trim() || !slug || create.isPending} onClick={() => create.mutate()}>Register</Button>
@@ -111,7 +114,7 @@ function TrustButton({ project }: { project: Project }) {
               <li>~{agent_user}/.codex/config.toml → [projects."path"] trust_level = "trusted"</li>
             </ul>
           </details>
-          <ErrorNote error={trust.error} />
+          <ErrorNote error={trust.error} action={<Link to="/settings/security/folders">Open Allowed folders in Security</Link>} />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button variant="primary" disabled={trust.isPending} onClick={() => trust.mutate()}>Trust this workspace</Button>
@@ -162,13 +165,28 @@ function ApproveCompose({ project, review, open, onClose }: { project: Project; 
 }
 
 /** Container status for a project's compose stack, plus the autostart switch. */
-export function Runtime({ project, part = "all" }: { project: Project; part?: "all" | "status" | "autostart" }) {
+export function Runtime({ project, part = "all", onlyInView = false }: {
+  project: Project; part?: "all" | "status" | "autostart"; onlyInView?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [reviewing, setReviewing] = useState(false);
+  const element = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(!onlyInView);
+  useEffect(() => {
+    if (!onlyInView || !element.current) return;
+    if (typeof IntersectionObserver === "undefined") { setInView(true); return; }
+    const observer = new IntersectionObserver(entries => setInView(entries.some(entry => entry.isIntersecting)));
+    // A visible row loads even when its controls need horizontal scrolling, so
+    // keyboard users can reach an enabled Autostart control as before.
+    observer.observe(element.current.closest("tr, section") ?? element.current);
+    return () => observer.disconnect();
+  }, [onlyInView]);
   const runtime = useQuery({
     queryKey: ["runtime", project.id],
     queryFn: () => api<{ containers: Container[]; note?: string; not_started?: boolean; compose?: ComposeReview }>(`/api/projects/${project.id}/runtime`),
     refetchInterval: 15000,
+    refetchIntervalInBackground: false,
+    enabled: !onlyInView || inView,
   });
   const review = runtime.data?.compose;
   const turnOff = useMutation({
@@ -195,7 +213,7 @@ export function Runtime({ project, part = "all" }: { project: Project; part?: "a
     else setReviewing(true);
   };
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-xs">
+    <div ref={element} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-xs">
       {part !== "autostart" && <span className="inline-flex items-center gap-2 text-muted" title={unknown || notStarted ? runtime.data?.note ?? String(runtime.error) : containers.map((c) => `${c.Service}: ${c.Status}`).join("\n")}>
         <Dot tone={tone} /> {label}
       </span>}
@@ -220,7 +238,7 @@ export function Runtime({ project, part = "all" }: { project: Project; part?: "a
   );
 }
 
-export function Projects() {
+function LegacyProjects() {
   const { view, toggle } = useCollectionView("projects");
   const { host } = useInstance();
   const [deleting, setDeleting] = useState<Project | null>(null);
@@ -236,6 +254,7 @@ export function Projects() {
   const confirm = useConfirm();
   const projects = useProjects();
   const sessions = useSessions();
+  const sessionsByProject = liveSessionsByProject(sessions.data ?? []);
   const newSession = useNewSession();
   const archive = useMutation({
     mutationFn: (id: number) => post(`/api/projects/${id}/archive`),
@@ -260,7 +279,7 @@ export function Projects() {
       </div>
     </div>
   );
-  const liveFor = (p: Project) => (sessions.data ?? []).filter(session => session.project_id === p.id && isLive(session));
+  const liveFor = (p: Project) => sessionsByProject.get(p.id) ?? [];
   const runtimeAvailable = (p: Project) => !p.machine_offline && p.import_mode === "managed" && !p.archived;
   const visible = (projects.data ?? []).filter((p) => !isLocalProject(p) && !p.private_workspace && (showArchived || !p.archived)  // local: see Workspaces
     && (!query || `${p.name} ${p.slug} ${p.repo ?? ""}`.toLowerCase().includes(query.toLowerCase())));
@@ -295,14 +314,14 @@ export function Projects() {
             <span>{liveFor(p).length ? `${liveFor(p).length} live` : "No live sessions"}</span>
             {needsYou(liveFor(p)).length > 0 && <p className="text-wait">{needsYou(liveFor(p)).length} needs you</p>}
           </div> },
-          { key: "runtime", label: "Containers / compose", render: p => runtimeAvailable(p) ? <Runtime project={p} part="status" /> : p.machine_offline ? "Machine offline" : p.archived ? "Archived" : "Read-only" },
-          { key: "autostart", label: "Autostart", sortValue: p => Number(p.compose_autostart), render: p => runtimeAvailable(p) ? <Runtime project={p} part="autostart" /> : "Not available" },
+          { key: "runtime", label: "Containers / compose", render: p => runtimeAvailable(p) ? <Runtime project={p} part="status" onlyInView /> : p.machine_offline ? "Machine offline" : p.archived ? "Archived" : "Read-only" },
+          { key: "autostart", label: "Autostart", sortValue: p => Number(p.compose_autostart), render: p => runtimeAvailable(p) ? <Runtime project={p} part="autostart" onlyInView /> : "Not available" },
           { key: "actions", label: "Actions", render: p => actions(p) },
         ]} />
       ) : (
         <CollectionView view={view}>
           {visible.map((p) => {
-            const live = (sessions.data ?? []).filter((s) => s.project_id === p.id && isLive(s));
+            const live = liveFor(p);
             const waiting = needsYou(live).length;
             return (
               <Card key={p.id} className={clsx("flex min-w-0 flex-col", p.archived && "opacity-80")}>
@@ -330,7 +349,7 @@ export function Projects() {
                 </div>}
                 <div className="mt-auto space-y-3 px-4 pb-3 pt-4">
                   {p.machine_offline && <p className="text-xs text-muted">Machine offline</p>}
-                  {!p.machine_offline && p.import_mode === "managed" && !p.archived && <Runtime project={p} />}
+                  {!p.machine_offline && p.import_mode === "managed" && !p.archived && <Runtime project={p} onlyInView />}
                 </div>
                 {actions(p)}
               </Card>
@@ -347,4 +366,37 @@ export function Projects() {
       <NewProjectDialog open={creating} onClose={() => setCreating(false)} onCreated={(made) => navigate(`/projects/${made.id}`)} />
     </Page>
   );
+}
+
+
+export function Projects() {
+  const shell = useNewShell();
+  return shell ? <ShellProjects /> : <LegacyProjects />;
+}
+function ShellProjects() {
+  const [deleting, setDeleting] = useState<Project | null>(null);
+  const client = useQueryClient();
+  const confirm = useConfirm();
+  const archive = useMutation({ mutationFn: (id: number) => post(`/api/projects/${id}/archive`),
+    onSettled: () => Promise.all([client.invalidateQueries({ queryKey: ["projects"] }), client.invalidateQueries({ queryKey: ["source-directory"] })]) });
+  const [creating, setCreating] = useState(false);
+  const [manualAdding, setAdding] = useState(false);
+  const [search, setSearch] = useSearchParams();
+  const navigate = useNavigate();
+  const adding = manualAdding || search.get('import') === 'existing';
+  const closeImport = () => { setAdding(false); const next = new URLSearchParams(search); next.delete('import'); setSearch(next, { replace: true }); };
+  return <>
+    <ProjectDirectory onCreate={() => setCreating(true)} onRegister={() => setAdding(true)} actions={p =>
+      <Popover menu label={`Project actions for ${p.name}`} trigger={<MoreHorizontal size={16} aria-hidden="true" />}>{close => <>
+        {!p.archived && <Button role="menuitem" tabIndex={-1} size="sm" variant="ghost" disabled={archive.isPending} onClick={async () => {
+          close();
+          if (await confirm({ title: `Archive ${p.name}?`, body: "It leaves the launch lists. Its workspace, containers and repository are left exactly as they are.", confirm: "Archive", danger: true })) archive.mutate(p.id);
+        }}>Archive</Button>}
+        <Button role="menuitem" tabIndex={-1} size="sm" variant="ghost" onClick={() => { close(); setDeleting(p); }}>Delete</Button>
+      </>}</Popover>} />
+    <ErrorNote error={archive.error} />
+    {deleting && <ProjectDeleteDialog project={deleting} onClose={() => setDeleting(null)} />}
+    <NewProject open={adding} onClose={closeImport} />
+    <NewProjectDialog open={creating} onClose={() => setCreating(false)} onCreated={made => navigate(`/projects/${made.id}`)} />
+  </>;
 }

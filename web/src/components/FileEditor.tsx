@@ -1,16 +1,20 @@
 import { useEffect, useRef } from "react";
 import { basicSetup } from "codemirror";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting, LanguageDescription } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { languages } from "@codemirror/language-data";
+import { announce } from "./ui";
 import { lazyImport } from "../lib/lazyImport";
 
 /** CodeMirror and language grammars ship with Rynhult; language chunks load from this origin. */
-export default function FileEditor({ path, value, readOnly, onChange }: {
-  path: string; value: string; readOnly?: boolean; onChange: (value: string) => void;
+export default function FileEditor({ path, value, readOnly, maxLength, onChange }: {
+  path: string; value: string; readOnly?: boolean; maxLength?: number; onChange: (value: string) => void;
 }) {
+  const editor = useRef<EditorView | null>(null);
+  const readonly = useRef(new Compartment());
+  const latestReadOnly = useRef(readOnly); latestReadOnly.current = readOnly;
   const host = useRef<HTMLDivElement>(null);
   const change = useRef(onChange);
   change.current = onChange;
@@ -36,7 +40,11 @@ export default function FileEditor({ path, value, readOnly, onChange }: {
           { tag: tags.link, color: "var(--accent)", textDecoration: "underline" },
           { tag: tags.invalid, color: "var(--bad)" },
         ])),
-        EditorState.readOnly.of(!!readOnly), EditorView.editable.of(!readOnly),
+        readonly.current.of([EditorState.readOnly.of(!!latestReadOnly.current), EditorView.editable.of(!latestReadOnly.current)]),
+        EditorState.transactionFilter.of(transaction => {
+          if (maxLength !== undefined && transaction.newDoc.length > maxLength) { announce('File draft limit reached (1 Mi characters).'); return []; }
+          return transaction;
+        }),
         EditorView.contentAttributes.of({ "aria-label": "File content", role: "textbox", "aria-multiline": "true" }),
         EditorView.updateListener.of((u) => { if (u.docChanged) change.current(u.state.doc.toString()); }),
         EditorView.theme({
@@ -49,9 +57,11 @@ export default function FileEditor({ path, value, readOnly, onChange }: {
           "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--accent) 25%, transparent) !important" },
         }),
       ] }) });
+      editor.current = view;
     }
     void mount();
-    return () => { cancelled = true; view?.destroy(); };
-  }, [path, readOnly]);
+    return () => { cancelled = true; editor.current = null; view?.destroy(); };
+  }, [path, maxLength]);
+  useEffect(() => { editor.current?.dispatch({ effects: readonly.current.reconfigure([EditorState.readOnly.of(!!readOnly), EditorView.editable.of(!readOnly)]) }); }, [readOnly]);
   return <div className="min-w-0 overflow-hidden rounded-md border border-line-input" ref={host} />;
 }

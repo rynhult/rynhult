@@ -200,12 +200,73 @@ def commit(root, rel, data, mode, message, name, email):
     return {'commit': sha, **({'commit_warning': warning} if warning else {})}
 
 
-def operate(config, path, action='list', rel='', content='', revision=None, destination='', message=None, name=None, email=None, data='', overwrite='refuse'):
+def folder_identity(root_fd, parent_fd):
+    """Pinned directory identity survives atomic file saves, but not checkout replacement."""
+    root, parent = os.fstat(root_fd), os.fstat(parent_fd)
+    return hashlib.sha256(f'{root.st_dev}:{root.st_ino}:{parent.st_dev}:{parent.st_ino}'.encode()).hexdigest()
+
+
+def operate(config, path, action='list', rel='', content='', revision=None, destination='', message=None, name=None, email=None, data='', overwrite='refuse', workspace_revision=None):
     with workspace(config, path) as (root, root_fd):
-        return _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite)
+        identity = None
+        if action in ('read', 'write'):
+            with parent(config, root, root_fd, rel) as (fd, _):
+                identity = folder_identity(root_fd, fd)
+            if workspace_revision is not None and workspace_revision != identity:
+                raise OpError('The folder changed. Reopen this file before saving to this checkout.')
+        result = _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite, identity)
+        return {**result, 'workspace_revision': identity} if identity else result
 
 
-def _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite):
+def _operate(config, root, root_fd, action, rel, content, revision, destination, message, name, email, data, overwrite, workspace_revision=None):
+    if action == 'terminal-upload':
+        # Treat the supplied path only as a display name. All placement is broker-owned.
+        original = rel.replace('\\', '/').rsplit('/', 1)[-1]
+        name = re.sub(r'[^A-Za-z0-9._-]', '-', original)[:120].strip('.-') or 'file'
+        rel = '.rynhult/uploads/' + time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(6) + '-' + name
+        for components in (['.rynhult'], ['.rynhult', 'uploads']):
+            with_fd = _open_dir(root_fd, components[:-1])
+            try:
+                try:
+                    os.mkdir(components[-1], mode=0o755, dir_fd=with_fd)
+                except FileExistsError:
+                    pass
+            finally:
+                os.close(with_fd)
+        # Only the workspace's own repository may receive the local exclude.
+        # Linked worktrees must point back here; an arbitrary .git file is not authority.
+        metadata = None
+        try:
+            top = Path(git(root_fd, 'rev-parse', '--show-toplevel'))
+            if top == root:
+                git_dir = Path(git(root_fd, 'rev-parse', '--absolute-git-dir'))
+                if (root / '.git').is_dir() or (
+                    (git_dir / 'gitdir').read_text().strip() == str(root / '.git')
+                ):
+                    metadata = git(root_fd, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+        except (OpError, OSError):
+            pass  # Plain folders and redirected Git metadata need no exclude update.
+        if metadata:
+            meta_fd = _walk_dirs(list(Path(metadata).parts[1:]))
+            try:
+                try:
+                    os.mkdir('info', dir_fd=meta_fd)
+                except FileExistsError:
+                    pass
+                info_fd = _open_dir(meta_fd, ['info'])
+                try:
+                    out = os.open('exclude', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644, dir_fd=info_fd)
+                    with os.fdopen(out, 'r+b') as stream:
+                        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                            raise OpError('Git exclude must be a regular file.')
+                        fcntl.flock(stream, fcntl.LOCK_EX)
+                        if b'/.rynhult/uploads/' not in stream.read().splitlines():
+                            stream.write(b'\n/.rynhult/uploads/\n')
+                finally:
+                    os.close(info_fd)
+            finally:
+                os.close(meta_fd)
+        action, overwrite = 'upload', 'refuse'
     components = parts(rel, directory=action == 'list')
     if protected(config, root, rel):
         raise OpError('This file or folder is protected (keys, passwords or Git\'s own files), so it can\'t be opened here.')
@@ -239,6 +300,8 @@ def _operate(config, root, root_fd, action, rel, content, revision, destination,
         finally:
             os.close(fd)
     with parent(config, root, root_fd, rel) as (fd, leaf):
+        if workspace_revision is not None and folder_identity(root_fd, fd) != workspace_revision:
+            raise OpError('The folder changed. Reopen this file before saving to this checkout.')
         # Lock the directory descriptor: no lockfile can be redirected by an agent.
         fcntl.flock(fd, fcntl.LOCK_EX)
         if action == 'upload':

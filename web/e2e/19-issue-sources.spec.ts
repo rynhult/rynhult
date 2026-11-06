@@ -1,6 +1,6 @@
 import { openAdvanced, wikiShotPath } from "./helpers";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./fixtures";
 import { AUTH_FILE, csrfHeaders, gitProject } from "./helpers";
 import { randomUUID } from "node:crypto";
 
@@ -34,6 +34,9 @@ const openIssues = (page: import("@playwright/test").Page) =>
   page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues and pull requests", exact: true }).click();
 
 test("connect sources with vault keys, filter lists and launch from GitLab and Linear", async ({ page }, testInfo) => {
+  // Two real provider launches, connection/filter journeys, desktop/phone captures and axe.
+  // Follow-up traces reach the final phone view but exhaust the whole-case 45s.
+  test.slow();
   const project = await gitProject(page, "issue-demo");
   const { headers } = project;
   const key = await page.request.post("/api/vault/keys", { headers, data: {
@@ -109,6 +112,9 @@ test("source errors explain fixes rather than showing an empty list", async ({ p
 });
 
 test("owner confirms a self-hosted server and connects Forgejo pull requests", async ({ page }, testInfo) => {
+  // Vault grant, self-hosted authority confirmation and a real process launch.
+  // Under load the launch click alone took 9s after the preceding UI workflow.
+  test.slow();
   const project = await gitProject(page, "forge-demo");
   const { headers } = project;
   const base = `https://forge.example.lan/${project.slug}`;

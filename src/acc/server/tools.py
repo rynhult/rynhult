@@ -53,8 +53,9 @@ class Tools:
     def _role(db, username: str) -> str | None:
         return "owner" if username == API_PRINCIPAL else db.scalar(select(User.role).where(User.username == username))
 
-    def _valid_person(self, db, r):
-        role = self._role(db, r.owner)
+    @staticmethod
+    def validate_person(db, r):
+        role = Tools._role(db, r.owner)
         user = db.scalar(select(User).where(User.username == r.owner))
         if role is None or role == "member" and (
                 r.manager in tooling.SYSTEM or user.account != r.account):
@@ -63,6 +64,8 @@ class Tools:
             session = db.get(Session, r.session_id)
             if session is None or session.owner != r.owner or session.run_as != r.account or session.host != r.host:
                 raise ToolRefused("the session's person, account or machine changed; ask again")
+
+    _valid_person = validate_person
 
     def _new(self, db, *, owner, account, host, manager, name, version, operation, reason,
              session_id=None, project_id=None) -> str:
@@ -77,11 +80,24 @@ class Tools:
                         manager=manager, name=name, version=version, operation=operation, reason=reason,
                         session_id=session_id, project_id=project_id)
         self._valid_person(db, r)
-        duplicate = db.scalar(select(ToolRequest.id).where(
+        duplicate = db.scalar(select(ToolRequest).where(
             ToolRequest.host == host, ToolRequest.account == account if manager not in tooling.SYSTEM else True,
             ToolRequest.manager == manager,
             ToolRequest.name == name, ToolRequest.status.in_(("pending_approval", "approved", "applying"))))
         if duplicate:
+            from .approvals import tool_payload
+            # Exact operations share an identity only within one explicit team.
+            # Workers may have different sessions/reasons; solo requests and
+            # changed coordinates must never inherit another request's approval.
+            candidate = tool_payload(r)
+            candidate['id'] = duplicate.id
+            original = tool_payload(duplicate)
+            other = db.get(Session, duplicate.session_id) if duplicate.session_id else None
+            session = db.get(Session, session_id) if session_id else None
+            same_team = (session is not None and other is not None and session.team_id is not None
+                         and other.team_id is not None and session.team_id == other.team_id)
+            if same_team and all(candidate[k] == original[k] for k in candidate if k not in ('session_id', 'reason')):
+                return duplicate.id
             raise ToolRefused("this tool already has a change waiting")
         db.add(r)
         db.flush()
@@ -91,6 +107,13 @@ class Tools:
                              title=f"Tool request: {operation} {name}", detail=detail)
         db.add(AuditLog(actor=owner, action="tool.request", target=r.id, detail={
             "manager": manager, "name": name, "version": version, "operation": operation, "host": host, "account": account}))
+        if session_id:
+            from .approvals import audit, digest, evaluate_tool, tool_payload
+            caller = db.get(Session, session_id)
+            if caller.team_id:
+                result = evaluate_tool(db, r, caller.team_id)
+                audit(db, 'system', 'shadow', r.id, result | {
+                    'digest': digest(tool_payload(r)), 'executed': False})
         return r.id
 
     def request_session(self, session_id: str, *, manager, name, version=None, action="install", reason) -> str:
@@ -114,11 +137,14 @@ class Tools:
             db.commit()
             return rid
 
-    def can_see(self, db, r, actor: str) -> bool:
-        if self._role(db, actor) == "owner":
+    @staticmethod
+    def can_see_actor(db, r, actor: str) -> bool:
+        if Tools._role(db, actor) == "owner":
             return True
         user = db.scalar(select(User).where(User.username == actor))
         return bool(user and r.owner == actor and r.account == user.account and r.manager not in tooling.SYSTEM)
+
+    can_see = can_see_actor
 
     def decide(self, rid: str, actor: str, approve: bool):
         with self.db() as db:
@@ -132,28 +158,35 @@ class Tools:
                                  ToolRequest.status == "pending_approval").values(status=status, decided_by=actor))
             if not claimed.rowcount:
                 raise ToolRefused("request is no longer pending")
+            from .approvals import digest, tool_payload
+            r.decision = {'source': 'P', 'reason': 'exact_person_decision',
+                          'issuer': 'Owner via API' if actor == API_PRINCIPAL else actor,
+                          'digest': digest(tool_payload(r))}
             attention.resolve(db, f"tool:{rid}")
-            db.add(AuditLog(actor=actor, action="tool.approve" if approve else "tool.reject", target=rid))
+            db.add(AuditLog(actor=actor, action="tool.approve" if approve else "tool.reject", target=rid, detail=r.decision))
             host = r.host
             db.commit()
         if approve:
-            if host != "local" and self.brokers.hub is not None:
-                task = self.brokers.hub.start(host, self.execute(rid), f"tool:{rid}", report=True)
-            else:
-                task = self.local_tasks.start(self.execute(rid), f"tool:{rid}")
-            self.tasks.add(task)
-            def completed(done):
-                self.tasks.discard(done)
-                if done.cancelled():
-                    try:
-                        with self.db() as db:
-                            row = db.get(ToolRequest, rid)
-                            interrupted = row and row.status in ("approved", "applying")
-                        if interrupted:
-                            self._result(rid, {"ok": False, "detail": "Machine work was interrupted; inspect the machine before retrying"})
-                    except Exception:
-                        log.exception("tool %s: could not record interruption", rid)
-            task.add_done_callback(completed)
+            self.schedule(rid, host)
+
+    def schedule(self, rid, host):
+        if host != "local" and self.brokers.hub is not None:
+            task = self.brokers.hub.start(host, self.execute(rid), f"tool:{rid}", report=True)
+        else:
+            task = self.local_tasks.start(self.execute(rid), f"tool:{rid}")
+        self.tasks.add(task)
+        def completed(done):
+            self.tasks.discard(done)
+            if done.cancelled():
+                try:
+                    with self.db() as db:
+                        row = db.get(ToolRequest, rid)
+                        interrupted = row and row.status in ("approved", "applying")
+                    if interrupted:
+                        self._result(rid, {"ok": False, "detail": "Machine work was interrupted; inspect the machine before retrying"})
+                except Exception:
+                    log.exception("tool %s: could not record interruption", rid)
+        task.add_done_callback(completed)
 
     async def execute(self, rid: str):
         refusal = None
@@ -166,6 +199,11 @@ class Tools:
             request = db.get(ToolRequest, rid)
             try:
                 self._valid_person(db, request)
+                from .approvals import digest, tool_payload
+                if request.decision and request.decision.get('digest') != digest(tool_payload(request)):
+                    raise ToolRefused('the approved request payload changed; ask again')
+                if request.decision and request.decision.get('source') != 'P':
+                    raise ToolRefused('delegated execution requires a qualified executor; ask the person')
             except ToolRefused as error:
                 refusal = str(error)
             db.expunge(request)

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { byRecent, groupInbox, groupSessions, needsYou } from "../src/lib/order";
 import { publishFactsLine, publishWarnings } from "../src/lib/publish";
 import { auditWords, eventWords, foldAudit, settingWords, sourceWords } from "../src/lib/words";

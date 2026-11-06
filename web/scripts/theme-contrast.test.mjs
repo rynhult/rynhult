@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+  + readFileSync(new URL('../src/shell-palette.css', import.meta.url), 'utf8');
 const tokens = selector => Object.fromEntries([...css.match(new RegExp(`${selector} \\{([^}]+)}`))[1].matchAll(/--([\w-]+):\s*(#[\da-f]{6})/gi)].map(([, k, v]) => [k, v]));
 const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
 const luminance = color => color.map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0);
@@ -51,4 +52,16 @@ test('installed-app splash and browser chrome match the dark app surface', () =>
   const dark = tokens(':root');
   assert.equal(manifest.background_color.toLowerCase(), dark.bg);
   assert.equal(manifest.theme_color.toLowerCase(), dark.bg);
+});
+
+test('built-in selection has an opaque readable pair; terminal selection is readable and visible', () => {
+  const selection = css.match(/::selection\s*\{([^}]+)\}/)[1];
+  assert.match(selection, /background:\s*var\(--accent\)/);
+  assert.match(selection, /color:\s*var\(--accent-ink\)/);
+  const terminal = readFileSync(new URL('../src/components/terminalRuntime.ts', import.meta.url), 'utf8');
+  const background = terminal.match(/theme: \{ background: "(#[a-f0-9]+)"/)[1];
+  const foreground = terminal.match(/foreground: "(#[a-f0-9]+)"/)[1];
+  const highlight = terminal.match(/selectionBackground: "(#[a-f0-9]+)"/)[1];
+  assert.ok(ratio(rgb(highlight),rgb(background)) >= 3, 'selection boundary must be visible');
+  assert.ok(ratio(rgb(foreground),rgb(highlight)) >= 4.5, 'selected terminal text must be readable');
 });

@@ -47,6 +47,9 @@ class BrokerConfig:
     folder_homes: tuple[str, ...] = ()
     folder_protected: tuple[str, ...] = ()
 
+    # Private launch context, never included in broker responses.
+    auth_contexts: dict = field(default_factory=dict, compare=False, repr=False)
+
     @property
     def statusline_path(self) -> str:
         """Installed next to acc-hook everywhere (/srv/acc/bin, a node's prefix, the Mac's ACC folder)."""

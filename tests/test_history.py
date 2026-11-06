@@ -84,6 +84,40 @@ async def test_index_waits_for_a_writer_without_blocking_the_event_loop(sup, mes
             assert session.automation["assistant_marker"] == {"seq": 0, "text": "GOAL: done"}
 
 
+@pytest.mark.parametrize("changed_field", ["activity_at", "status_at"])
+async def test_history_backoff_retries_only_after_new_activity(sup, changed_field):  # noqa: F811
+    from acc.server.models import LaunchSpec, Project, Session
+    from acc.server.supervisor_common import now
+
+    with write_db(sup.db) as db:
+        db.add(Session(id="startup", native_id="native", provider="claude", run_as="agent",
+                       name="Startup", tmux_name="acc-startup",
+                       project=Project(slug="startup", name="Startup", workspace_path="/w/startup", account="agent"),
+                       launch_spec=LaunchSpec(provider="claude", inputs={}, files={}, digest="x")))
+        db.commit()
+
+    class Transcripts:
+        calls = 0
+
+        async def call(self, method, **params):
+            assert method == "transcript_messages"
+            self.calls += 1
+            return {"found": self.calls > 1, "messages": [], "stamp": "ready"}
+
+    sup.broker = Transcripts()
+    await sup.index_transcripts()
+    await sup.index_transcripts()
+    assert sup.broker.calls == 1  # Missing files still back off without fresh evidence.
+    with write_db(sup.db) as db:
+        setattr(db.get(Session, "startup"), changed_field, now())
+        db.commit()
+    await sup.index_transcripts()
+    assert sup.broker.calls == 2
+    with sup.db() as db:
+        assert db.get(Session, "startup").transcript_stamp == "ready"
+    assert "startup" not in sup._history_retry
+
+
 async def test_failed_index_replacement_rolls_back_messages_and_stamp(sup):  # noqa: F811
     from sqlalchemy import text
     from sqlalchemy.exc import StatementError

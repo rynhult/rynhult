@@ -3,6 +3,8 @@ Deploying
 Install-Windows
 Install-macOS
 Getting-Started
+Setup-Levels
+New-Layout
 Glossary
 Host-and-Providers
 Connect-an-Agent
@@ -10,6 +12,7 @@ Projects
 Project-Brief
 New-Session
 Sessions
+Chat
 Overview
 Inbox
 Connect-Your-Phone
@@ -35,6 +38,7 @@ Features
 Troubleshooting
 FAQ
 Settings
+Themes
 Admin-Features
 People-and-Sign-in
 Updating

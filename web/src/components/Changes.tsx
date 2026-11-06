@@ -2,7 +2,7 @@ import { useFeatures } from "./Feature";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, FileDiff, MessageSquarePlus, Send, X } from "lucide-react";
 import { api, post } from "../lib/api";
 import { diffHeaderPath } from "../lib/gitpath";
@@ -123,6 +123,32 @@ export function ComparisonBase({ data }: { data: Pick<SessionChanges, "base" | "
     : <>since <span className="font-mono">{data.base}</span>, where the session started</>;
 }
 
+function GitActions({ session, fingerprint }: { session: SessionDetail; fingerprint?: string }) {
+  const client = useQueryClient();
+  const [message, setMessage] = useState("");
+  const run = useMutation({
+    mutationFn: (action: "commit" | "push") => post<{ output: string; ok?: boolean }>(`/api/sessions/${session.id}/git/${action}`, { message, fingerprint }),
+    onSuccess: (_, action) => {
+      if (action === "commit") setMessage("");
+      void client.invalidateQueries({ queryKey: ["changes", session.id] });
+      void client.invalidateQueries({ queryKey: ["pull", session.id] });
+    },
+  });
+  return <Card className="space-y-3 p-3">
+    <label className="block text-sm">Commit message
+      <Textarea value={message} maxLength={2000} rows={3} onChange={e => setMessage(e.target.value)} />
+    </label>
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={run.isPending || !message.trim()} onClick={() => run.mutate("commit")}>Commit all</Button>
+      <Button disabled={run.isPending} onClick={() => run.mutate("push")}>Push branch</Button>
+    </div>
+    <p className="text-xs text-muted">Commit all includes tracked and untracked changes, respecting .gitignore. Push uses the agent account’s Git credentials.</p>
+    {run.isPending && <p role="status">Working…</p>}
+    <ErrorNote error={run.error} />
+    {run.data && <pre role="status" className="whitespace-pre-wrap text-xs">{run.data.ok === false ? "Push failed. " : ""}{run.data.output}</pre>}
+  </Card>;
+}
+
 export function Changes({ session }: { session: SessionDetail }) {
   const working = ["active", "waiting_input"].includes(session.observed_state);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -165,12 +191,13 @@ export function Changes({ session }: { session: SessionDetail }) {
   const data = query.data;
   if (!data) return <Skeleton className="h-40" />;
   if (!data.git) return <Empty icon={FileDiff}>This workspace isn't a git repository, so Rynhult can't show its changes.</Empty>;
-  if (!data.files) return <Empty icon={FileDiff}>{data.comparison_ref
+  if (!data.files) return <>{data.git_actions_allowed && <GitActions session={session} fingerprint={data.fingerprint} />}<Empty icon={FileDiff}>{data.comparison_ref
     ? `No changes against the current branch's merge-base with ${data.comparison_ref}.`
-    : data.since_launch ? "No changes since this session started." : "No uncommitted changes."}</Empty>;
+    : data.since_launch ? "No changes since this session started." : "No uncommitted changes."}</Empty></>;
   const diffs = new Map(splitDiff(data.diff).map((f) => [f.path, f.lines]));
   return (
     <div className="space-y-3 overflow-y-auto">
+      {data.git_actions_allowed && <GitActions session={session} fingerprint={data.fingerprint} />}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
         <ChangeCount changes={data} className="text-[13px]" />
         <span><ComparisonBase data={data} /></span>

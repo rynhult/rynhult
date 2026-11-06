@@ -187,3 +187,158 @@ async def test_upload_body_limit_is_scoped_to_upload_route(api, project):
     for path, declared in [(base + '/upload', 25 << 20), (base, 5 << 20), (base + '/upload-extra', 5 << 20)]:
         response = await api.post(path, content=b'{}', headers={'Content-Length': str(declared), 'Content-Type': 'application/json'})
         assert response.status_code == 413
+
+
+def test_terminal_upload_chooses_safe_unique_paths_and_git_exclude(folder):
+    import subprocess
+    _, root = folder
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    first = call(folder, 'terminal-upload', '../../bad name;echo.png', data=base64.b64encode(b'image').decode())
+    second = call(folder, 'terminal-upload', '../../bad name;echo.png', data=base64.b64encode(b'image').decode())
+    assert first['path'].startswith('.rynhult/uploads/')
+    assert first['path'].endswith('-bad-name-echo.png')
+    assert first['path'] != second['path']
+    assert (root / first['path']).read_bytes() == b'image'
+    assert (root / '.git/info/exclude').read_text().count('/.rynhult/uploads/') == 1
+    assert not (root / '.gitignore').exists()
+    assert subprocess.run(['git', '-C', str(root), 'check-ignore', first['path']], capture_output=True).returncode == 0
+
+
+def test_terminal_upload_refuses_redirected_folder(folder, tmp_path):
+    from acc.broker.ops import OpError
+    _, root = folder
+    (root / '.rynhult').symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises((OpError, OSError)):
+        call(folder, 'terminal-upload', 'image.png', data=base64.b64encode(b'image').decode())
+
+
+async def test_terminal_upload_requires_own_writable_connection(api, project):
+    url = "/api/files/session/not-owned/upload"
+    assert (await api.post(url, json={**batch('image.png'), 'terminal_upload': 'observer'})).status_code == 404
+    created = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Upload observer'})
+    assert created.status_code == 201, created.text
+    url = f"/api/files/session/{created.json()['id']}/upload"
+    response = await api.post(url, json={**batch('image.png'), 'terminal_upload': 'observer'})
+    assert response.status_code == 403 and 'Read-only' in response.text
+
+
+def test_terminal_upload_in_linked_worktree_uses_effective_exclude(folder):
+    import subprocess
+    _, root = folder
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'initial'], check=True)
+    linked = root.parent / 'linked'
+    subprocess.run(['git', '-C', str(root), 'worktree', 'add', '-qb', 'upload', str(linked)], check=True, capture_output=True)
+    result = call((folder[0], linked), 'terminal-upload', 'paste.png', data=base64.b64encode(b'image').decode())
+    assert (linked / result['path']).read_bytes() == b'image'
+    assert not (root / '.rynhult').exists()
+    assert subprocess.run(['git', '-C', str(linked), 'check-ignore', result['path']], capture_output=True).returncode == 0
+
+
+@pytest.mark.parametrize('name', ['line\nfeed.png', 'carriage\rreturn', 'esc\x1b.png', '`touch`', '$(touch)', '日本語-é.png'])
+def test_terminal_upload_sanitizes_shell_and_unicode_names(folder, name):
+    import re
+    result = call(folder, 'terminal-upload', name, data=base64.b64encode(b'image').decode())
+    assert re.fullmatch(r'\.rynhult/uploads/[A-Za-z0-9._-]+', result['path'])
+    assert (folder[1] / result['path']).read_bytes() == b'image'
+
+
+def test_terminal_upload_preserves_exclude_and_matches_whole_lines(folder):
+    import subprocess
+    _, root = folder
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    exclude = root / '.git/info/exclude'
+    existing = b'# /.rynhult/uploads/\n!/.rynhult/uploads/\nother/.rynhult/uploads/\nkeep-me'
+    exclude.write_bytes(existing)
+    for _ in range(2):
+        call(folder, 'terminal-upload', 'image', data='aGk=')
+    assert exclude.read_bytes() == existing + b'\n/.rynhult/uploads/\n'
+
+
+def test_terminal_upload_refuses_symlinked_exclude(folder, tmp_path):
+    import subprocess
+
+    from acc.broker.ops import OpError
+    _, root = folder
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    outside = tmp_path / 'exclude'
+    outside.write_bytes(b'keep-me\n')
+    exclude = root / '.git/info/exclude'
+    exclude.unlink()
+    exclude.symlink_to(outside)
+    with pytest.raises((OpError, OSError)):
+        call(folder, 'terminal-upload', 'image', data='aGk=')
+    assert outside.read_bytes() == b'keep-me\n'
+    assert not list((root / '.rynhult/uploads').iterdir())
+
+
+@pytest.mark.parametrize('redirect', [False, True])
+def test_terminal_upload_does_not_edit_another_repository(folder, redirect):
+    import subprocess
+    _, root = folder
+    other = root.parent
+    subprocess.run(['git', 'init', '-q', str(other)], check=True)
+    exclude = other / '.git/info/exclude'
+    existing = exclude.read_bytes()
+    if redirect:
+        (root / '.git').write_text(f'gitdir: {other / ".git"}\n')
+    result = call(folder, 'terminal-upload', 'image', data='aGk=')
+    assert (root / result['path']).read_bytes() == b'hi'
+    assert exclude.read_bytes() == existing
+
+
+@pytest.mark.parametrize('mode', ['success', 'actor', 'delivery', 'missing-id', 'observer', 'epoch', 'writer'])
+async def test_terminal_upload_api_writer_authority(api, project, monkeypatch, mode):
+    from types import SimpleNamespace
+
+    from acc.broker import files
+
+    created = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Upload authority'})
+    assert created.status_code == 201, created.text
+    sid = created.json()['id']
+    writers = api.app.state.ctx.writers
+    writer = object() if mode == 'delivery' else type('Writer', (), {'query_params': {} if mode == 'missing-id' else {'upload_id': 'mine'}})()
+    writers.by_session[sid] = writer
+    writers.controllers[writer] = SimpleNamespace(actor='another-person' if mode == 'actor' else '@api')
+    original = files.operate
+    calls = []
+    def operate(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs.get('action') == 'terminal-upload':
+            calls.append(result)
+            if mode == 'epoch':
+                writers.epochs[sid] = writers.epoch(sid) + 1
+            elif mode == 'writer':
+                writers.by_session[sid] = object()
+        return result
+    monkeypatch.setattr(files, 'operate', operate)
+    try:
+        response = await api.post(f'/api/files/session/{sid}/upload', json={
+            'files': [*batch('one.png')['files'], *batch('two.png')['files']],
+            'terminal_upload': 'observer' if mode == 'observer' else 'mine'})
+        if mode in ('actor', 'delivery', 'missing-id', 'observer'):
+            assert response.status_code == 403, response.text
+            assert not calls
+        else:
+            assert response.status_code == 200, response.text
+            rows = response.json()['files']
+            assert rows[0]['path'].startswith('.rynhult/uploads/')
+            if mode in ('epoch', 'writer'):
+                assert 'control changed' in rows[1]['error']
+                assert len(calls) == 1
+            else:
+                assert rows[1]['path'].startswith('.rynhult/uploads/')
+                assert len(calls) == 2
+    finally:
+        writers.by_session.pop(sid, None)
+        writers.controllers.pop(writer, None)
+
+
+async def test_terminal_upload_api_batch_and_location_validation(api, project):
+    created = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Upload limits'})
+    assert created.status_code == 201
+    sid = created.json()['id']
+    for kind, key, count in [('session', sid, 11), ('session', sid, 0), ('project', project['id'], 1), ('workspace', sid, 1)]:
+        response = await api.post(f'/api/files/{kind}/{key}/upload', json={
+            'terminal_upload': 'mine', 'files': batch('image.png')['files'] * count})
+        assert response.status_code == 422, response.text

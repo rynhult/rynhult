@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { AUTH_FILE, info, fileRow, wikiShotPath } from "./helpers";
 

@@ -1,3 +1,4 @@
+import { ClaudeAutomationNotice, type AutomationRefusal } from "./ClaudeAutomationNotice";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -26,9 +27,10 @@ export function AutomationFields({ provider, value, onChange, disabled = false }
 }
 /** Goal state and editing live in Setup, keeping automation controls off the terminal. */
 export function SessionAutomation({ session, disabledReason, editing, onEditing }: {
-  disabledReason?: string; session: { id: string; provider: string; automation?: Automation };
+  disabledReason?: string; session: { id: string; provider: string; automation?: Automation; auth?: { automation_refusal?: AutomationRefusal | null } };
   editing: boolean; onEditing: (open: boolean) => void;
 }) {
+  disabledReason = session.auth?.automation_refusal?.message ?? disabledReason;
   const [draft, setDraft] = useState<Automation | null>(null);
   const latest = useRef(draft);
   latest.current = draft;
@@ -49,6 +51,7 @@ export function SessionAutomation({ session, disabledReason, editing, onEditing 
   return <>
     <section id="automation" aria-label="Session automation"><Card className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 text-xs md:px-4 md:py-2.5 md:text-[13px]">
       <h2 className="font-medium text-fg">Goal &amp; auto-resume</h2>
+      <ClaudeAutomationNotice refusal={session.auth?.automation_refusal} />
       {!shown && <span className="text-muted">No goal or auto-resume set.</span>}
       {state.autoresume && !state.waiting && <span className="text-muted">Resumes when the plan limit resets</span>}
       {state.waiting && <span role="status" className="text-muted">Waiting for the limit to reset at {new Date(state.waiting.reset * 1000).toLocaleString()}</span>}

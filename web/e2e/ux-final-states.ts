@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, expectAxeClean, demoSessions, wikiShotPath } from './helpers';
 
 export function finalStateTests() {
@@ -122,7 +122,7 @@ test('unverified passkey changes guide verification and server expiry clears it'
  await page.goto('/settings#passkeys');
  await page.getByRole('button',{name:'Save passkey policy'}).click();expect(changes).toBe(0);
  await expect(page.getByRole('heading',{name:'1. Verify your sign-in'}).locator('..')).toBeFocused();
- await page.getByLabel('Verification password',{exact:true}).fill('example password');await page.getByLabel('Verification authenticator code').fill('123456');
+ await page.getByLabel('Verification password',{exact:true}).fill('example password');await page.getByLabel('Verification authenticator code', { exact: true }).fill('123456');
  await page.getByRole('button',{name:'Verify with password and authenticator'}).click();await expect(page.getByText('Verified for five minutes.')).toBeVisible();
  await page.getByRole('button',{name:'Save passkey policy'}).click();await expect(page.getByText('Verification expired. Verify again to make changes.')).toBeVisible();expect(changes).toBe(1);
 });

@@ -1,6 +1,7 @@
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Files } from "../components/Files";
-import { Page, PageHeader, TabPanel, Tabs } from "../components/ui";
+import { TabPanel, Tabs } from "../components/Tabs";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 import { workspaceName } from "../lib/format";
 
 export function WorkspaceFiles() {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { expectAxeClean } from './helpers';
 
 test('axe checks settled theme colors rather than an in-flight crossfade', async ({ page }) => {

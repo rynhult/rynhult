@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError
 from ... import __version__
 from .. import admin_features, auth, passkeys
 from ..db import WRITE_INTENT
-from ..models import AuditLog, AuthSession, Invite, OIDCProvider, Passkey, PasskeyChallenge, User
+from ..models import AuditLog, AuthSession, Invite, OIDCProvider, Passkey, PasskeyChallenge, RecoveryCode, User
 from ..orchestrator.switch import enabled as orchestrator_enabled
 from .context import Context
 from .schemas import InviteBeginIn, InviteCompleteIn, LoginIn, PasswordIn, SetupBeginIn, SetupCompleteIn
@@ -108,6 +108,10 @@ def router(ctx: Context) -> APIRouter:
     def setup_complete(body: SetupCompleteIn, request: Request, response: Response):
         if not origin_ok(request.headers.get("origin")):
             raise HTTPException(403, "This request came from a page at a different address. Open Rynhult at its own address, reload the page and try again.")
+        key = f"ip:{client_key(request)}"
+        if throttle.blocked(key):
+            raise HTTPException(429, "Too many attempts. Wait 10 minutes, then try again.")
+        throttle.fail(key)
         with db() as s:
             expected = auth.ensure_setup_token(s, settings.setup_token_path)
             if expected is None or not secrets.compare_digest(body.setup_token.strip(), expected):
@@ -127,12 +131,16 @@ def router(ctx: Context) -> APIRouter:
             s.add(user)
             s.flush()
             session_token, csrf = ctx.create_login_session(s, user, request, verified=True)
+            codes = auth.generate_recovery_codes(s, user)
+            s.add(AuditLog(actor=user.username, action="auth.recovery_codes_created", target=user.username))
             s.add(AuditLog(actor=user.username, action="auth.setup", target=user.username))
             s.commit()
             auth.ensure_setup_token(s, settings.setup_token_path)  # deletes the token file
+        throttle.reset(key)
         pending_setup.clear()
         set_login_cookies(response, session_token, csrf)
-        return {"ok": True, "username": body.username.strip()}
+        response.headers["Cache-Control"] = "no-store"
+        return {"ok": True, "username": body.username.strip(), "recovery_codes": codes}
 
     @api.post("/api/auth/login")
     def login(body: LoginIn, request: Request, response: Response):
@@ -160,21 +168,30 @@ def router(ctx: Context) -> APIRouter:
         password_ok = auth.password_ok(stored[1] if stored else None, body.password)
         step = auth.totp_ok(stored[2], body.code, stored[3]) if password_ok else None
         with db() as s:
-            user = s.get(User, stored[0]) if step is not None else None
-            if user is None or (user.totp_last_step is not None and step <= user.totp_last_step):  # replayed meanwhile
+            user = s.scalar(select(User).where(User.id == stored[0]).with_for_update()) if password_ok else None
+            # Refuse credentials changed while password verification ran.
+            if user and (user.password_hash != stored[1] or user.totp_secret != stored[2] or user.company_only):
+                user = None
+            recovered = bool(user and auth.consume_recovery_code(s, user, body.code))
+            if user is None or (not recovered and (step is None or (user.totp_last_step is not None and step <= user.totp_last_step))):  # replayed meanwhile
                 s.add(AuditLog(actor=name[:64], action="auth.login_failed", target=key))
                 s.commit()
                 if locked:
                     raise HTTPException(429, "Too many attempts. Wait 10 minutes, then try again.")
                 raise HTTPException(401, "That sign-in didn't work. Check the username, password and code.")
-            if passkeys.required(s, user):
+            if not recovered and passkeys.required(s, user):
                 s.add(AuditLog(actor=user.username, action="auth.login_failed", target=key, detail={"reason": "passkey_required"}))
                 s.commit()
                 raise HTTPException(403, "A passkey is required. Use a passkey or your offline recovery code.")
             for k in keys:
                 throttle.reset(k)
-            user.totp_last_step = step
-            session_token, csrf = ctx.create_login_session(s, user, request, verified=True)
+            if recovered:
+                s.add(AuditLog(actor=user.username, action="auth.recovery_code_used", target=key))
+            else:
+                user.totp_last_step = step
+            session_token, csrf = ctx.create_login_session(s, user, request, verified=not recovered)
+            if recovered:
+                s.get(AuthSession, auth.digest(session_token)).method = "recovery"
             s.add(AuditLog(actor=user.username, action="auth.login", target=key))
             s.commit()
         set_login_cookies(response, session_token, csrf)
@@ -214,7 +231,7 @@ def router(ctx: Context) -> APIRouter:
     pending_invites: dict[str, tuple[str, float]] = {}  # invite token hash -> (authenticator secret, issued at)
 
     def open_invite(s, token: str) -> Invite:
-        invite = s.scalar(select(Invite).where(Invite.token_hash == auth.digest(token.strip())))
+        invite = s.scalar(select(Invite).where(Invite.token_hash == auth.digest(token.strip())).with_for_update())
         if invite is None or invite.used_at is not None or invite.expires_at < auth.now():
             raise HTTPException(410, "This link has expired or was already used. Ask an owner for a new one.")
         return invite
@@ -243,11 +260,15 @@ def router(ctx: Context) -> APIRouter:
     async def invite_complete(body: InviteCompleteIn, request: Request, response: Response):
         if not origin_ok(request.headers.get("origin")):
             raise HTTPException(403, "This request came from a page at a different address. Open Rynhult at its own address, reload the page and try again.")
+        key = f"ip:{client_key(request)}"
+        if throttle.blocked(key):
+            raise HTTPException(429, "Too many attempts. Wait 10 minutes, then try again.")
+        throttle.fail(key)
         with db() as s:
             invite = open_invite(s, body.token)
             reset_user = s.get(User, invite.user_id) if invite.user_id else None
             role = reset_user.role if reset_user else invite.role
-            if passkeys.policy(s)['owners' if role == 'owner' else 'members'] == 'require':
+            if invite.created_by != '@root-console' and passkeys.policy(s)['owners' if role == 'owner' else 'members'] == 'require':
                 raise HTTPException(409, "Passkeys are required for this role. Ask an owner to set it to Allow in Settings → Passkeys before you join or reset your sign-in.")
             secret, issued = pending_invites.get(invite.token_hash, (None, 0))
             if secret is None or time.time() - issued > 900:
@@ -263,6 +284,7 @@ def router(ctx: Context) -> APIRouter:
                 s.execute(delete(Passkey).where(Passkey.user_id == user.id))
                 s.execute(delete(PasskeyChallenge).where(PasskeyChallenge.user_id == user.id))
                 user.passkey_handle, user.recovery_hash = None, None
+                s.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
                 # A password and authenticator of their own: no longer a member only company sign-in lets in (so
                 # removing their company sign-in later keeps them, and passkeys they add sign in like anyone's).
                 user.company_only = False
@@ -285,16 +307,20 @@ def router(ctx: Context) -> APIRouter:
             user.password_hash, user.totp_secret, user.totp_last_step = auth.hash_password(body.password), secret, step
             invite.used_at = auth.now()
             s.flush()
+            codes = auth.generate_recovery_codes(s, user)
+            s.add(AuditLog(actor=user.username, action="auth.recovery_codes_created", target=user.username))
             session_token, csrf = ctx.create_login_session(s, user, request, verified=True)
             s.add(AuditLog(actor=user.username, action=action, target=user.username,
                            detail={"role": user.role, "account": user.account, "invite": invite.id}))
             s.commit()
             username = user.username
+        throttle.reset(key)
         pending_invites.pop(invite.token_hash, None)
         for session_hash in old:
             await ctx.close_terminals(session_hash)
         set_login_cookies(response, session_token, csrf)
-        return {"ok": True, "username": username}
+        response.headers["Cache-Control"] = "no-store"
+        return {"ok": True, "username": username, "recovery_codes": codes}
 
     # ------------------------------------------------------------ your own sign-ins and password
 

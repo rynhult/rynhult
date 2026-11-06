@@ -233,3 +233,35 @@ async def test_remote_fact_lookup_rechecks_the_launch_account_and_machine(api, p
             await sup._start(db, row, reason='launch')
     assert lookups == [('local', account)]
     assert not launches
+
+
+async def test_frozen_location_still_stops_a_launch_when_it_changes_during_the_remote_lookup(api, project, env, monkeypatch):
+    from helpers import pause_supervisor, write_db
+    from test_team import lead
+
+    from acc.server.models import Session
+
+    await pause_supervisor(api)
+    made = await lead(api, project, env)
+    sup = api.app.state.supervisor
+    original = sup.broker.call
+    launches = []
+
+    async def call(method, **params):
+        if method == 'git_refs':
+            with write_db(sup.db) as fresh:
+                fresh.get(Session, made['id']).workdir = '/elsewhere'
+                fresh.commit()
+            return {'git': True, 'has_remote': True}
+        if method == 'launch':
+            launches.append(params)
+            return {'pid': 123, 'command': ['fixture-only; not executed']}
+        return await original(method, **params)
+
+    monkeypatch.setattr(sup.broker, 'call', call)
+    with sup.db() as db:
+        await sup._start(db, db.get(Session, made['id']), reason='launch')
+        db.commit()
+    assert not launches
+    with sup.db() as db:
+        assert 'recorded location changed' in db.get(Session, made['id']).last_error

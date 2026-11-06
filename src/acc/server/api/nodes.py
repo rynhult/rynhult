@@ -531,7 +531,9 @@ def router(ctx: Context) -> APIRouter:
             return await inventory(ctx, who, project_id)
         if not who.is_owner:
             raise HTTPException(403, "Only an owner can do this. Ask an owner.")
-        authority = ctx.edge.authority()  # refresh/audit before the listing's read transaction
+        # Refresh may wait for writer admission while another loop task owns a
+        # read snapshot. Keep the loop free to finish and release that snapshot.
+        authority = await asyncio.to_thread(ctx.edge.authority)
         with db() as s:
             result = [out(n, authority) for n in s.scalars(select(Node).where(Node.status != "revoked").order_by(Node.name))]
             s.commit()

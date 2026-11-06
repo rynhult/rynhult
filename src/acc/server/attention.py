@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session as DbSession
 
 from .. import providers
-from .models import AttentionItem, Observation, Session, User
+from .models import AttentionItem, Device, Observation, PushSubscription, Session, Setting, User
 
 LOGIN_WARN_DAYS = 7
 LOGIN_CRITICAL_DAYS = 2
@@ -123,13 +123,44 @@ def evaluate_auth(db: DbSession, health: dict, agent_user: str = "the agent user
             resolve(db, key)
 
 
+def sync_phone_prompt(db: DbSession, username: str, user_id: int | None) -> None:
+    """One personal hint, with the existing banner preference honored on every device."""
+    # Tokens and synthetic principals cannot pair devices, even when their name
+    # happens to match a registered person. Never create onboarding for them.
+    if user_id is None or db.scalar(select(User.id).where(
+            User.id == user_id, User.username == username)) is None:
+        return
+    key = f"phone_setup:{username}"
+    item = db.scalar(select(AttentionItem).where(AttentionItem.dedupe_key == key))
+    preference = db.get(Setting, f"phone_banner.{username}")
+    connected = db.scalar(select(Device.id).where(
+        Device.person == username, Device.kind.in_(["browser", "native"]),
+        Device.status == "active", Device.expires_at > now()).limit(1)) is not None
+    connected = connected or db.scalar(select(PushSubscription.id).where(
+        PushSubscription.username == username).limit(1)) is not None
+    if connected or (preference and preference.value.get("dismissed")):
+        if item and item.resolved_at is None:
+            item.resolved_at = now()
+        return
+    remote = db.get(Setting, "remote_access")
+    pairing_enabled = bool(remote and remote.value.get("pairing_enabled"))
+    if not pairing_enabled:
+        if item and item.resolved_at is None:
+            item.resolved_at = now()
+        return
+    if item is None:
+        raise_item(db, key, kind="phone_setup", severity="info", source="phone setup", owner=username,
+                   title="Connect your phone",
+                   detail="Use Rynhult from your phone, with notifications when a session needs you.")
+
+
 # A positive list keeps new decision kinds out of bulk dismissal by default.
 _BULK_NOTICES = frozenset({
     "state", "guardrail_blocked", "crash_recovered", "stop_failure", "auth",
     "publish_failed", "tool_failed", "spool_parse_error", "ci_failed", "linear_comment",
     "launch_failed", "schedule_failed", "git_identity_warning", "worktree_kept",
     "worktree_removed", "remote_spool_full", "budget", "update", "compose", "host",
-    "backup", "git_backup_kept",
+    "backup", "git_backup_kept", "phone_setup",
 })
 
 

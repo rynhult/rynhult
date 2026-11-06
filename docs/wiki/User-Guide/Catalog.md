@@ -112,3 +112,7 @@ overrides. Use **Profiles** on the item to include it again; restoring content n
 - Release verification failed: nothing was applied. Check the selected repository and its release assets.
 - GitHub check limited: wait one minute before trying **Latest release** again. Failed checks count too.
 - Catalog changed or preview expired: select **Preview** again before restoring.
+
+### Community themes
+
+**Themes** contains declarative appearance packages. Owners review and install local packages; each signed-in person separately previews and applies an approved version to their own account. Installation never applies it automatically. See [Community themes](/User-Guide/Themes) for validation limits, reset and built-in recovery. Themes do not change executable catalog tools or profiles.

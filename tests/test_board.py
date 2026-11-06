@@ -69,3 +69,33 @@ async def test_a_full_node_raises_its_alerts_on_the_board(api, env, live):  # no
 
 async def test_the_board_is_for_owners(api, env, member):  # noqa: F811
     assert (await member.get("/api/board")).status_code == 403
+
+
+async def test_machine_readings_are_only_the_local_header_values(api, env, monkeypatch):
+    """The header must not fetch project, remote-machine or host inventory to show CPU/memory."""
+    from acc.server import host
+
+    live_values = {"cpu_percent": 17.5, "memory": {"percent": 42.0}, "measured_at": 1800000000.0}
+    monkeypatch.setattr(host, "live", lambda: live_values)
+    inventory_reads = []
+
+    def full_host_view():
+        inventory_reads.append(True)
+        return {"snapshot": {"containers": [{"name": "private-stack"}]}, "live": live_values}
+
+    monkeypatch.setattr(api.app.state.supervisor, "host_view", full_host_view)
+    response = await api.get("/api/readings/machine")
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "label": env["settings"].host_label, "connected": True,
+        "light": {"cpu_percent": 17.5, "memory_percent": 42.0, "collected_at": 1800000000.0},
+    }
+    assert inventory_reads == []
+
+
+async def test_machine_readings_refuse_members_and_anonymous_browsers(api, env, member):  # noqa: F811
+    from test_users import browser
+
+    assert (await member.get("/api/readings/machine")).status_code == 403
+    async with browser(api) as anonymous:
+        assert (await anonymous.get("/api/readings/machine")).status_code == 401

@@ -5,10 +5,12 @@ Mixed into acc.server.supervisor.Supervisor; methods use its state (self.db, sel
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import selectinload
 
@@ -46,6 +48,11 @@ def kill_params(session: Session, settings) -> dict:
         params.update(acc_id=session.id, container={"generation": session.container_generation,
                                                     "policy_id": settings.containers_policy})
     return params
+
+
+def stale_snapshot(error: OperationalError) -> bool:
+    """SQLite refused a write because another connection committed since this snapshot began."""
+    return getattr(error.orig, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY_SNAPSHOT
 
 
 class ReconcileMixin:
@@ -124,6 +131,10 @@ class ReconcileMixin:
                                 continue  # concurrent stop/resume/routing change must be reconsidered next pass
                         await self._reconcile_one(db, session, pane, spool_pending=pending)
                         db.commit()
+                    except OperationalError as error:
+                        db.rollback()
+                        if not (stale_snapshot(error) and await self._retry_stop(acc_id, key, pane)):
+                            log.exception("reconcile failed for session %s", acc_id)
                     except BrokerUnavailable:
                         if key[0] == "local":
                             raise
@@ -131,6 +142,25 @@ class ReconcileMixin:
                     except Exception:
                         db.rollback()
                         log.exception("reconcile failed for session %s", acc_id)
+
+    async def _retry_stop(self, acc_id: str, key: tuple[str, str], pane: dict | None) -> bool:
+        """Confirm a stop whose write lost to a concurrent commit, once, on a fresh snapshot.
+
+        The first attempt's snapshot spans broker IO (kill); any commit meanwhile makes its
+        flag-clearing UPDATE fail with SQLITE_BUSY_SNAPSHOT. Only stopped sessions are retried:
+        their broker side effect (kill) is marked done on the pane and is not repeated.
+        """
+        try:
+            with self.db() as db:
+                session = db.get(Session, acc_id)
+                if (session is None or session.management != "acc" or session.desired_state == "running"
+                        or (host_of(session), session.run_as) != key):
+                    return session is None or session.desired_state == "running"  # nothing left to confirm
+                await self._reconcile_one(db, session, pane)
+                db.commit()
+                return True
+        except OperationalError:
+            return False
 
     def _replacement_held(self, db: DbSession) -> list[tuple[str, str, str, str]]:
         """Restored remote sessions an activated replacement holds: (id, host, account, tmux name)."""
@@ -215,6 +245,9 @@ class ReconcileMixin:
             session.desired_state = 'stopped'
             self._set_state(db, session, 'stopped', 'supervisor')
         run = self._open_run(session)
+        if session.provider == 'claude':
+            from . import claude_auth
+            claude_auth.store(db, session, (pane or {}).get('auth_mode', 'unknown'))
         if pane and pane.get("last_output"):
             session.last_output_at = datetime.fromtimestamp(pane["last_output"], timezone.utc)
 
@@ -222,6 +255,7 @@ class ReconcileMixin:
             if pane and not pane["dead"]:
                 await self.broker.call("kill", account=session.run_as, host=host_of(session),
                                        **kill_params(session, self.settings))
+                pane["dead"] = True  # killed: a stale-snapshot retry (_retry_stop) must not kill again
             if session.container:
                 containers.revoke_grant(self.settings, session.id)
             if session.team_stop_pending:
@@ -363,10 +397,24 @@ class ReconcileMixin:
             session.automation = state
         db.commit()  # durable claim before side effect: ambiguous delivery is never retried
         if command:
+            from . import claude_auth
+            await claude_auth.refresh(self, db, session)
+            try:
+                claude_auth.require(db, session)
+            except claude_auth.AutomationRefused:
+                automation.cancel(db, session, 'Claude subscription automation refused')
+                session.automation = {**session.automation, 'notice': claude_auth.MESSAGE}
+                db.commit()
+                return
             try:
                 await self.broker.call("send_text", account=session.run_as, host=session.host,
                                        tmux_name=session.tmux_name, text=command['text'], provider=session.provider)
-            except BrokerError:
+            except BrokerError as error:
+                if claude_auth.MESSAGE in str(error):
+                    automation.cancel(db, session, 'Claude subscription automation refused')
+                    session.automation = {**session.automation, 'notice': claude_auth.MESSAGE}
+                    db.commit()
+                    return
                 session.automation = {**session.automation, "dispatch": {**session.automation['dispatch'],
                                       "status": "delivery uncertain; inspect the terminal"}}
                 automation.cancel(db, session, 'delivery uncertain')
@@ -444,12 +492,18 @@ class ReconcileMixin:
             # Only undo our own background state; foreground work and input waits still belong to hooks.
             session.activity, session.activity_at = None, now()
             self._set_state(db, session, "idle", "screen")
-        if prompt is None and not working and (error := screen.get("idle")) is not None:
+        if (prompt is None and not working
+                and not (provider.id == "claude" and session.observed_state == "active"
+                         and session.status_source != "screen")
+                and (error := screen.get("idle")) is not None):
             error = self.vault.redactor(db, session.vault_keys).text(error)[:200]
             if session.activity != error:
                 session.activity, session.activity_at = error, now()
             if session.observed_state != "idle":
                 self._set_state(db, session, "idle", "screen")
+        if (provider.id == "claude" and session.observed_state == "idle"
+                and not screen.get("idle") and session.activity and " background " in session.activity):
+            session.activity, session.activity_at = None, now()
         return working
 
     async def _check_changes(self, db: DbSession, session: Session) -> None:
@@ -549,7 +603,7 @@ class ReconcileMixin:
                                 "cwd": session.cwd, "problem": problem}))
         self._recovery_needed(db, session, message)
 
-    async def _start(self, db: DbSession, session: Session, reason: str) -> None:
+    async def _start(self, db: DbSession, session: Session, reason: str, personal_task: str | None = None) -> None:
         resume = reason != "launch"
         host, account = host_of(session), session.run_as
         home = str(self.settings.account_home(account))
@@ -590,6 +644,11 @@ class ReconcileMixin:
             return
         if (host_of(session), session.run_as) != (host, account):
             raise CompileError("The session's machine or account changed while it was starting. Resume it to try again.")
+        # After authority and the live target checks: a frozen location never outranks a revocation.
+        from .sources import session_problem
+        if problem := session_problem(db, session):
+            self._recovery_needed(db, session, problem)
+            return
         if session.project.group_id and session.host != 'local':
             source = group_remote.source_placement(db, session)
             if not source or not group_remote.connected(self.broker, db, source):
@@ -609,7 +668,7 @@ class ReconcileMixin:
             publish_zones=self.settings.publish_zones or ((self.settings.wildcard_zone,) if self.settings.wildcard_zone else ()), has_remote=has_remote))
         try:
             delivery = self.vault.deliver(db, session.project_id, session.owner, host_of(session) != "local",
-                                          self.catalog, inputs.mcps)
+                                          self.catalog, inputs.mcps, provider=session.provider, claude_auth=session.claude_auth)
             files = providers.get(inputs.provider).add_context(files, vault.context(delivery.plan))
             catalog = delivery.catalog
         except vault.VaultError as error:
@@ -627,10 +686,17 @@ class ReconcileMixin:
         used_ids, used_names = (used.ids, [k.name if k.shared else k.id for k in used.keys]) if used else ([], [])
         held_names = [k.name if k.shared else k.id for k in used.held_back] if used else []
         extra = resume_skills_override(inputs, files, self.catalog, home, self.codex_plugins(account)) if resume else []
+        from ..broker.claude_auth import supplied_mode
+        if personal_task is not None and session.container and supplied_mode(delivery.env if delivery else {}) == 'unknown':
+            # Without supplied credentials the person's prompt belongs in the immutable container grant.
+            from dataclasses import replace
+            inputs = replace(inputs, initial_prompt=personal_task)
         args = build_args(inputs, run_dir=run_dir, tmux_name=session.tmux_name, native_id=session.native_id, resume=resume,
                           files=files, extra_overrides=extra)
         launch = {"acc_id": session.id, "tmux_name": session.tmux_name, "provider": session.provider, "args": args,
                   "cwd": session.cwd, "files": files}
+        if personal_task is not None:
+            launch["personal_task"] = personal_task
         if session.run_dir and session.run_as != "root":
             launch["run_dir"] = run_dir  # the broker refuses if its own folder for the session is elsewhere (Q4)
         if session.container:
@@ -663,6 +729,11 @@ class ReconcileMixin:
             environment = session_environment(inputs, catalog, run_dir, files, endpoint_key, native_id=session.native_id)
             delivery.check_env(environment)
             materialized = materialize(launch["files"], catalog, inputs.provider)
+            from .models import ScheduleRun
+            scheduled = db.scalar(select(ScheduleRun).where(ScheduleRun.session_id == session.id))
+            automated = bool(session.team_id or scheduled or session.automation and (
+                session.automation.get('pending_configuration') or session.automation.get('autoresume')
+                or session.automation.get('goal')))
             if session.container:
                 # Final synchronous barrier: queued/restored sessions, resumes and retries all pass here.
                 # Existing live panes never come through here. No await between this check and dispatch.
@@ -675,7 +746,7 @@ class ReconcileMixin:
                     raise CompileError(f"container launch requires a qualified local host: {qualified['reason']}")
                 try:
                     containers.write_grant(self.settings, session, launch["container"]["generation"], args,
-                                           materialized, container_limits)
+                                           materialized, container_limits, automated=automated)
                 except (OSError, ValueError) as error:
                     raise CompileError(f"Rynhult couldn't prepare the session's container ({error}).") from None
             from .security_settings import Conflict, check_generation
@@ -685,8 +756,28 @@ class ReconcileMixin:
                 raise CompileError(str(error)) from None
             db.commit()
             result = await self.broker.call("launch", account=account, host=host_of(session),
-                                            **{**launch, "files": materialized}, env={**environment, **delivery.env})
+                                            **{**launch, "files": materialized, "automated": automated}, env={**environment, **delivery.env})
         except (BrokerError, CompileError, vault.VaultError) as error:
+            from . import claude_auth
+            if claude_auth.MESSAGE in str(error):
+                session.desired_state = 'stopped'
+                if (session.automation or {}).get('pending_configuration'):
+                    session.automation = None
+                session.last_error = str(error)
+                self._set_state(db, session, 'stopped', 'supervisor')
+                claude_auth.store(db, session, 'unknown')
+                from .models import ScheduleRun
+                scheduled = db.scalar(select(ScheduleRun).where(ScheduleRun.session_id == session.id))
+                if scheduled:
+                    from .models import Schedule
+                    from .schedules import audit
+                    scheduled.status, scheduled.reason = 'skipped', str(error)
+                    schedule = db.get(Schedule, scheduled.schedule_id)
+                    audit(db, schedule, 'skip', {'run_id': scheduled.id, 'reason': str(error)})
+                    attention.raise_item(db, f'schedule:{scheduled.id}', owner=schedule.owner, kind='schedule_failed',
+                                         title=f"Schedule skipped: {schedule.launch['name']}", detail=str(error),
+                                         source='schedules', session_id=session.id)
+                return
             problem = copilot_settings.refused_problem(str(error)) if isinstance(error, BrokerError) else None
             if problem:
                 self._copilot_hooks_refused(db, session, reason, problem)
@@ -730,6 +821,11 @@ class ReconcileMixin:
                             detail={"reason": reason, "keys": used_names, "held_back": held_names,
                                     "mcp": sorted(used.mcp_refs)}))
         session.remote_url = None  # re-read from the new process; M1 showed it is usually unchanged
+        if session.provider == 'claude':
+            from . import claude_auth
+            claude_auth.store(db, session, result.get('auth_mode', 'unknown'))
+            if personal_task is not None and result.get('personal_task_used') is True:
+                session.launch_spec.inputs = {**session.launch_spec.inputs, 'initial_prompt': personal_task}
         if session.base_commit is None and result.get("head"):
             session.base_commit = result["head"]  # retained for older node brokers
         started_run = SessionRun(session=session, reason=reason, pid=result.get("pid"))

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,7 +20,32 @@ VERSION = re.compile(
 )
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 BUILD = re.compile(r"[0-9a-f]{64}")
+DEFAULT_REPOSITORY = "rynhult/rynhult"
 GIT_MESSAGE = "This Rynhult runs from a git checkout: update it with git pull and deploy/install.sh"
+
+
+def checkout_blocks_update(source: Path, *, require_root_owned: bool = False) -> bool:
+    """Only clean checkouts at an exact v* tag may use release replacement."""
+    if not (source / ".git").exists() and not (source / ".git").is_symlink():
+        return False
+    try:
+        if require_root_owned:
+            for path in (source, source / ".git"):
+                metadata = path.lstat()
+                if metadata.st_uid != 0 or not stat.S_ISDIR(metadata.st_mode):
+                    return True
+
+        def git(*args):
+            return subprocess.run(
+                ["git", "-c", f"safe.directory={source}", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null", "-C", str(source), *args], check=True, capture_output=True,
+                text=True, timeout=10,
+            ).stdout.strip()
+
+        tags = git("tag", "--points-at", "HEAD", "--list", "v*")
+        return not tags or bool(git("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"))
+    except (OSError, subprocess.SubprocessError):
+        return True
 
 
 SOURCE_ERRORS = {

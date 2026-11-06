@@ -1,10 +1,12 @@
+import { clearWorkingLayouts } from '../lib/layoutPrivacy';
 import {CurrentSecurityBadge} from './SecurityBadge';
 import { UnsavedBriefGuard } from './UnsavedBriefGuard';
 import { desktopBuild } from "../lib/desktop";
 import { ago, teamOrder, withTeamAncestors, workspaceName } from "../lib/format";
 import clsx from "clsx";
 import { ChevronRight, CornerDownRight, ExternalLink, LogOut, Menu, Monitor, Moon, Plus, Sun, X } from "lucide-react";
-import { NEXT_THEME, readTheme, saveTheme, THEME_LABEL, useAppliedTheme, type ThemeChoice } from "../lib/theme";
+import { useAppliedTheme, type ThemeChoice } from "../lib/theme";
+import { NEXT_THEME, useThemeChoice, saveTheme, THEME_LABEL } from "../lib/themeChoice";
 import { lazy, Suspense, type ReactNode, useCallback, useEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +14,6 @@ import { ApiError, post } from "../lib/api";
 import { BROKER_DOWN_TITLE, useAttention, useBrokerDown, useHealth, useOffline, useInstance, useProjects, useGroupAdministration, useRole, useSessions } from "../lib/queries";
 import { useUpdates } from "./Updates";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { CommandPalette } from "./CommandPalette";
 import { navFor, PHONE_TABS } from "./nav";
 import { lazyImport } from "../lib/lazyImport";
 import { NewSessionContext, type NewSessionPreset } from "./newSession";
@@ -20,13 +21,16 @@ import { groupLive, isLive, nowDoing, sessionState } from "./session-bits";
 import { announce, Button, Dialog, Dot, ErrorNote, IconButton, Kbd, useMedia } from "./ui";
 import type { AttentionItem } from "../lib/types";
 
+// Load the command search only when the person opens it.
+const CommandPalette = lazy(() => lazyImport(() => import("./CommandPalette")).then(m => ({ default: m.CommandPalette })));
+
 const NewSessionDialog = lazy(() => lazyImport(() => import("./NewSessionDialog").then(m => ({ default: m.NewSessionDialog }))));
 
 /** System, Light or Dark; System follows the device, including when it changes while Rynhult is open. */
-function useTheme() {
-  const [choice, setChoice] = useState<ThemeChoice>(readTheme);
+export function useTheme() {
+  const choice = useThemeChoice();
   useAppliedTheme(choice);
-  const toggle = useCallback(() => setChoice((current) => { const next = NEXT_THEME[current]; saveTheme(next); return next; }), []);
+  const toggle = useCallback(() => saveTheme(NEXT_THEME[choice]), [choice]);
   return { choice, toggle };
 }
 
@@ -174,7 +178,7 @@ function Sidebar({ username, onTheme, theme, onLogout, onNavigate }: {
 }
 
 /** Global freshness: every page polls; say plainly when the data has stopped updating. */
-function LiveIndicator() {
+export function LiveIndicator() {
   const health = useHealth();
   const offline = useOffline();
   const brokerDown = useBrokerDown();
@@ -190,7 +194,7 @@ function LiveIndicator() {
 
 /** On phones the top bar has no room for the Live indicator, so a problem shows as a banner instead: hide a healthy
     indicator when space is short, never an unhealthy one (UX review NAV-4). */
-function ConnectionBanner() {
+export function ConnectionBanner() {
   const sessions = useSessions();
   const health = useHealth();
   const offline = useOffline();
@@ -207,7 +211,7 @@ function ConnectionBanner() {
   );
 }
 
-function InboxStatus({ hidden, onHide }: { hidden: boolean; onHide: () => void }) {
+export function InboxStatus({ hidden, onHide }: { hidden: boolean; onHide: () => void }) {
   const attention = useAttention();
   const [lastCheckFailed, setLastCheckFailed] = useState(false);
   useEffect(() => {
@@ -240,6 +244,7 @@ function InboxStatus({ hidden, onHide }: { hidden: boolean; onHide: () => void }
 }
 
 export function Layout({ username, children }: { username: string; children: ReactNode }) {
+  useEffect(() => { clearWorkingLayouts(); return clearWorkingLayouts; }, [username]);
   const nav = navFor(useRole().owner, useGroupAdministration(), useInstance().features);
   const [launching, setLaunching] = useState(false);
   const [launcherLoaded, setLauncherLoaded] = useState(false);
@@ -262,7 +267,7 @@ export function Layout({ username, children }: { username: string; children: Rea
   // nothing is cleared and the person is told. A 401 means the sign-in had already ended, which is the outcome asked for.
   const signOut = useMutation({
     mutationFn: () => post("/api/auth/logout").catch((error) => { if (!(error instanceof ApiError && error.status === 401)) throw error; }),
-    onSuccess: () => { queryClient.clear(); navigate("/login"); },
+    onSuccess: () => { clearWorkingLayouts(); queryClient.clear(); navigate("/login"); },
   });
   const logout = () => signOut.mutate();
   const newSession = useCallback((next?: NewSessionPreset) => {
@@ -357,7 +362,7 @@ export function Layout({ username, children }: { username: string; children: Rea
           <ErrorNote error={signOut.error} />
         </div>
       </Dialog>
-      <CommandPalette open={palette} onClose={() => setPalette(false)} onNewSession={() => newSession()} onToggleTheme={toggle} />
+      {palette && <Suspense fallback={null}><CommandPalette open onClose={() => setPalette(false)} onNewSession={() => newSession()} onToggleTheme={toggle} /></Suspense>}
     </div></UnsavedBriefGuard>
   );
 }

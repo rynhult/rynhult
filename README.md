@@ -156,7 +156,7 @@ npm ci --prefix web
 uv run --frozen ruff check src tests
 PYTHONPATH=src uv run --frozen python -m pytest -q -n 8   # parallel; drop -n 8 for one process
 (cd web && npm run build -- --configLoader runner)
-(cd web && npx playwright test --project=desktop --project=mobile)
+(cd web && npx playwright test --project=view-registry --project=desktop-stateful --project=mobile-stateful --project=terminal-chromium --project=desktop --project=mobile --workers=1)
 uv run --frozen python scripts/third_party_notices.py --check
 ```
 

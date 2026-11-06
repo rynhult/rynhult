@@ -1,3 +1,9 @@
+import { draftIdentity, setDraftIdentity } from './draftIdentity';
+
+// A cancelled boundary navigation must settle its query and keep polling,
+// without asking again for every unchanged expiry/authority observation.
+let pendingAuthChange = '';
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public data?: unknown) {
     super(message);
@@ -63,7 +69,34 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
     if (response.status === 401 && !path.startsWith("/api/auth/")) window.location.assign("/login");
     throw new ApiError(response.status, message, data);
   }
-  return response.json() as Promise<T>;
+  const result = await response.json();
+  if (path === '/api/auth/state') {
+    const previous = draftIdentity();
+    const next = result.authenticated && result.username && !result.step_up_required
+      ? { installation: window.location.origin, person: result.username, authority: result.role } : null;
+    const change = JSON.stringify(next);
+    if (previous && JSON.stringify(previous) !== change) {
+      // Expiry/role changes retain the leave guard until real navigation. A
+      // different person clears immediately, never inheriting mounted editors.
+      if (pendingAuthChange !== change) {
+        pendingAuthChange = change;
+        if (next && previous.person !== next.person) setDraftIdentity(next);
+        if (result.authenticated) location.reload();
+        else location.assign('/login');
+      }
+      // Rejection retains the query's last accepted state; neither an expired
+      // result nor new authority reaches old mounted editors. Polls can resume.
+      throw new ApiError(401, 'Sign in again.');
+    }
+    pendingAuthChange = '';
+    setDraftIdentity(next);
+  }
+  if (path === '/api/auth/logout') {
+    window.dispatchEvent(new Event('acc:signed-out'));
+    try { for (const key in sessionStorage) if (key.startsWith('acc-draft:')) sessionStorage.removeItem(key); } catch { /* blocked storage */ }
+    setDraftIdentity(null);
+  }
+  return result as T;
 }
 
 /** The server said there is no such thing (404): a page shows "not here" with a way back, not an error. */

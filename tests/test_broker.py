@@ -47,7 +47,7 @@ def base_params(world, **overrides):
 
 
 @pytest.mark.parametrize("override, message", [
-    ({"cwd": "/etc"}, "outside this account.s workspace folders"),
+    ({"cwd": "/etc"}, "Allow this folder in Security → Allowed folders"),
     ({"tmux_name": "cc-roost"}, "invalid session terminal name"),
     ({"tmux_name": "acc-x; rm -rf"}, "invalid session terminal name"),
     ({"provider": "bash"}, "isn.t an agent CLI this machine knows"),
@@ -63,7 +63,7 @@ def test_launch_rejects_bad_input(env, override, message):
 
 def test_workspace_symlink_escape_rejected(env, tmp_path):
     (env["workspaces"] / "sneaky").symlink_to("/etc")
-    with pytest.raises(ops.OpError, match="outside"):
+    with pytest.raises(ops.OpError, match="Allow this folder in Security → Allowed folders"):
         ops.launch(env["broker"], base_params(env, cwd=str(env["workspaces"] / "sneaky")))
 
 
@@ -244,6 +244,7 @@ def test_long_launch_uses_private_script_and_preserves_arguments(env, monkeypatc
     executable = env['broker'].run_dir / 'fake capture'
     executable.write_text('#!/usr/bin/env python3\nimport json,sys,os\nfrom pathlib import Path\n'
                           'if sys.argv[1:] == ["--version"]: sys.exit(0)\n'
+                          'if sys.argv[-2:] == ["auth", "status"]: sys.exit(1)\n'  # launch auth probe, not the session
                           f'Path({str(capture)!r}).write_text(json.dumps([sys.argv[1:], os.getenv("LAUNCH_CHECK")]))\n')
     executable.chmod(0o700)
     config = dataclasses.replace(env['broker'], providers={provider: str(executable)})
@@ -275,11 +276,24 @@ def test_long_launch_uses_private_script_and_preserves_arguments(env, monkeypatc
     assert not (env['workspaces'] / 'demo' / 'unwanted').exists()
 
 
-def test_short_launch_keeps_direct_command(env):
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_short_launch_keeps_direct_command(env, provider):
     import shlex
-    params = base_params(env)
+
+    from acc.providers.claude_auth import subscription_command
+    params = base_params(env, provider=provider)
     result = ops.launch(env['broker'], params)
-    assert result['command'] == shlex.join([env['broker'].providers['claude'], *params['args']])
+    argv = [env['broker'].providers[provider], *params['args']]
+    assert result['command'] == shlex.join(subscription_command(argv) if provider == 'claude' else argv)
+
+
+def test_api_launch_does_not_add_subscription_wrapper(env):
+    import shlex
+    params = base_params(env, env={'ANTHROPIC_API_KEY': 'synthetic-key'})
+    result = ops.launch(env['broker'], params)
+    assert shlex.split(result['command']) == [
+        'sh', '-c', '. "$0" && exec "$@"', str(env['run_dir'] / params['acc_id'] / 'session.env'),
+        env['broker'].providers['claude'], *params['args']]
 
 
 @pytest.mark.parametrize('override', [

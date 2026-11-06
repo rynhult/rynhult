@@ -1087,3 +1087,62 @@ def test_external_update_marker_blocks_capture_without_compatibility_signal(sour
         finally:
             legacy.touch(mode=0o600)
     assert not list(source.staging.glob('*/manifest.json'))
+
+
+def test_local_provisioning_missing_restic_does_not_leave_password(source, tmp_path):
+    before = set((source.root / 'keys').glob('*'))
+    with pytest.raises(FileNotFoundError):
+        source.add_local_target(tmp_path / 'repository', binary=tmp_path / 'missing-restic')
+    assert set((source.root / 'keys').glob('*')) == before
+    assert source.targets() == []
+
+
+@pytest.mark.parametrize('prepared', [False, True])
+def test_local_prepared_directory_must_be_empty(source, tmp_path, prepared):
+    repository = tmp_path / 'existing'
+    repository.mkdir()
+    (repository / 'important').write_text('keep')
+    with pytest.raises(backup.Refused, match='fresh'):
+        source.add_local_target(repository, prepared=prepared)
+    assert (repository / 'important').read_text() == 'keep'
+
+
+def test_prepared_repository_preserves_sandbox_inode_and_one_audit(source, restic_binary, tmp_path):
+    from sqlalchemy import select
+
+    from acc.server.db import make_engine, make_sessionmaker
+    from acc.server.models import AuditLog
+    repository = tmp_path / 'granted'
+    repository.mkdir()
+    inode = repository.stat().st_ino
+    target = source.add_local_target(repository, prepared=True, binary=restic_binary)
+    assert repository.stat().st_ino == inode
+    assert (source.root / 'keys' / target['id']).stat().st_mode & 0o777 == 0o600
+    engine = make_engine(source.settings.db_url)
+    try:
+        with make_sessionmaker(engine)() as db:
+            rows = list(db.scalars(select(AuditLog).where(AuditLog.action == 'backup.target_add')))
+            assert len(rows) == 1
+            assert rows[0].target == target['id']
+    finally:
+        engine.dispose()
+
+
+def test_folder_rollback_removes_only_new_registration(source, tmp_path, monkeypatch):
+    from acc import admin_backups
+    repository = tmp_path / ('rynhult-' + 'a' * 32)
+    repository.mkdir()
+    (repository / 'partial').write_text('incomplete restic repository')
+    target = {'id': 'b' * 32, 'kind': 'local', 'repository': str(repository)}
+    other = {'id': 'c' * 32, 'kind': 'local', 'repository': str(tmp_path / 'existing')}
+    backup.private_write(source.root / 'targets.json', backup.canonical([target, other]))
+    for item in (target, other):
+        backup.private_write(source.root / 'keys' / item['id'], b'fixture-key')
+    monkeypatch.setattr(admin_backups, 'service_settings', lambda: source.settings)
+    monkeypatch.setattr(os, 'geteuid', lambda: 1000)
+    assert admin_backups.rollback(str(repository)) == {'rolled_back': True}
+    assert [t['id'] for t in source.targets()] == [other['id']]
+    assert not (source.root / 'keys' / target['id']).exists()
+    assert (source.root / 'keys' / other['id']).exists()
+    assert repository.is_dir() and not list(repository.iterdir())
+    admin_backups.rollback(str(repository))  # Idempotent after interrupted cleanup.

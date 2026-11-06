@@ -4,20 +4,11 @@ import { useEffect } from "react";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export const THEME_LABEL: Record<ThemeChoice, string> = { system: "System", light: "Light", dark: "Dark" };
-export const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
-
 export function readTheme(): ThemeChoice {
   try {
     const value = localStorage.getItem("acc-theme");
     return value === "light" || value === "dark" ? value : "system";
   } catch { return "system"; }
-}
-
-export function saveTheme(choice: ThemeChoice) {
-  try {
-    if (choice === "system") localStorage.removeItem("acc-theme"); else localStorage.setItem("acc-theme", choice);
-  } catch { /* storage unavailable: the choice lasts until reload */ }
 }
 
 const systemDark = () => (typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)").matches : true);

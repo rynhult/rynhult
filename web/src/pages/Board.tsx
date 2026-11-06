@@ -189,10 +189,6 @@ function planRows(observations: Observation[]) {
   const codex = get("codex.rate_limits");
   if (codex?.value?.primary) rows.push({ provider: "codex", label: "Codex", observed_at: codex.observed_at, windows: (["primary", "secondary"] as const)
     .filter((k) => codex.value[k]).map((k) => ({ label: codex.value[k].window_minutes >= 1440 ? "Weekly" : "5-hour", pct: Math.round(codex.value[k].used_percent ?? 0), resets: codex.value[k].resets_at })) });
-  const copilot = get("copilot.usage");
-  const credits = copilot?.value?.credits;
-  if (copilot && credits && !credits.unlimited) rows.push({ provider: "copilot", label: "Copilot", observed_at: copilot.observed_at,
-    windows: [{ label: "AI credits", pct: Math.round(100 - (credits.percent_remaining ?? 100)), resets: copilot.value.resets_at ? Date.parse(copilot.value.resets_at) / 1000 : undefined }] });
   return rows;
 }
 

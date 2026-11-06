@@ -1,9 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, routeDemoSessions, expectAxeClean, wikiShotPath } from './helpers';
 
 // Artificial fixtures only; the suite owns the server and its temporary database.
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 for (const theme of ['dark', 'light'] as const) for (const width of [1440, 390]) {
   test(`brand review ${theme} ${width}`, async ({ page }) => {
     test.setTimeout(90000);

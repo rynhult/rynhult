@@ -56,7 +56,8 @@ STRING = {'type': 'string'}
 M17_TOOLS = {
     'start': ('Start a helper in its own branch. Call list first for allowed choices and limits shared across every depth.',
               {'name': STRING, 'agent': STRING, 'profile': {'type': ['string', 'null']}, 'task': STRING,
-               'kind': {'type': 'string', 'enum': ['temporary', 'persistent']}, 'machine': STRING}, ['name', 'agent', 'task']),
+               'kind': {'type': 'string', 'enum': ['temporary', 'persistent']}, 'machine': STRING,
+               'claude_auth': {'type': 'string', 'enum': ['subscription', 'api_key'], 'default': 'subscription'}}, ['name', 'agent', 'task']),
     'list': ('List your descendants, allowed agents/profiles with permissions, shared limits and usage, current depth and expiry.', {}, []),
     'status': ('Get descendant status and branch.', {'helper': STRING}, ['helper']),
     'read': ('Read recent messages and handoffs.', {'helper': STRING, 'last': {'type': 'integer', 'minimum': 1, 'maximum': 100}}, ['helper']),
@@ -116,6 +117,7 @@ SELECTION_TOOLS = {
     'selection_status': ('Read a selection in your own subtree.', {'selection': STRING}, ['selection']),
     'start': ('Start an assignment once per attempt. Default temporary. Retry the same selection/attempt to adopt or refuse an uncertain launch, never launch twice. Prior work continues from its recorded head unless fresh is true.',
               {'assignment':STRING,'selection':STRING,'attempt':STRING,'name':STRING,
+               'claude_auth':{'type':'string','enum':['subscription','api_key'],'default':'subscription'},
                'kind':{'type':'string','enum':['temporary','persistent'],'default':'temporary'},'fresh':{'type':'boolean','default':False}}, ['assignment','selection','name']),
     'give': ('Give a new assignment to an idle persistent helper. Its provider/profile/model and permission cannot change.',
              {'helper':STRING,'assignment':STRING}, ['helper','assignment']),

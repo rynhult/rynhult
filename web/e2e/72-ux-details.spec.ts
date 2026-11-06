@@ -1,7 +1,38 @@
-import { expect, test } from "@playwright/test";
-import { AUTH_FILE, expectAxeClean, fileRow, gitProject, reviewSecurityChanges, wikiShotPath } from "./helpers";
+import { gotoLoadedPage } from './loaded-page';
+import { expect, test } from "./fixtures";
+import { AUTH_FILE, expectAxeClean, fileRow, gitProject, freshStep, loadSecret, PASSWORD, totp, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
+
+// Every repetition uses the same real owner authenticator. This file belongs to
+// the stateful project: TOTP counters and policy registry revisions are shared.
+async function reviewDraft(page: import('@playwright/test').Page) {
+  const waitPreview = () => page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/security/changes/preview');
+  const pending = waitPreview();
+  await page.locator('#security').getByRole('button', { name: 'Review changes', exact: true }).click();
+  const response = await pending;
+  expect([200, 403]).toContain(response.status());
+  expect(await response.finished()).toBeNull();
+  if (response.status() === 403) {
+    test.slow(); // Real one-use authenticator counters can require the next 30s step.
+    const verify = page.getByRole('dialog', { name: 'Verify your sign-in', exact: true });
+    await freshStep(page);
+    await verify.getByLabel('Verification password').fill(PASSWORD);
+    await verify.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
+    const verified = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/auth/passkeys/reauth');
+    const preview = waitPreview();
+    await verify.getByRole('button', { name: 'Verify with password and authenticator', exact: true }).click();
+    expect((await verified).ok()).toBe(true);
+    expect((await preview).ok()).toBe(true);
+    expect(await (await preview).finished()).toBeNull();
+  }
+  const review = page.getByRole('dialog', { name: 'Review Security changes', exact: true });
+  await expect(review).toBeVisible();
+  return review;
+}
+
 
 for (const width of [1440, 390]) {
   test.describe(`${width}px detail refinements`, () => {
@@ -54,7 +85,7 @@ for (const width of [1440, 390]) {
       test(`project section deep links select and focus their tab in ${theme}`, async ({ page }, testInfo) => {
         await page.emulateMedia({ colorScheme: theme });
         const project = await gitProject(page, `sections-${width}-${theme}`);
-        await page.goto(`/projects/${project.id}#project-ports`);
+        await gotoLoadedPage(page, `/projects/${project.id}#project-ports`, ["ProjectPage"], ["/api/projects"]);
         const tabs = page.getByRole("tablist", { name: "Project sections", exact: true });
         await expect(tabs.getByRole("tab", { name: "Ports", exact: true })).toHaveAttribute("aria-selected", "true");
         await expect(tabs.getByRole("tab", { name: "Ports", exact: true })).toBeFocused();
@@ -74,7 +105,7 @@ for (const width of [1440, 390]) {
       test(`Security drafts stay unsaved through review and acknowledge explicit apply in ${theme}`, async ({ page }, testInfo) => {
         await page.emulateMedia({ colorScheme: theme });
         const project = await gitProject(page, `security-draft-${width}-${theme}`);
-        await page.goto(`/settings?security_scope=project&project_id=${project.id}#security`);
+        await gotoLoadedPage(page, `/settings?security_scope=project&project_id=${project.id}#security`, ["Settings"], ["/api/projects", "/api/security/scopes", "/api/security/effective"]);
         const card = page.locator('#security');
         const rule = card.getByRole('switch', { name: 'Block force pushes', exact: true });
         await expect(rule).toBeChecked();
@@ -85,10 +116,14 @@ for (const width of [1440, 390]) {
         await expectAxeClean(page);
         if (theme === 'dark') await card.screenshot({ animations: 'disabled',
           path: wikiShotPath(testInfo, width === 390 ? 'security-draft-phone.png' : 'security-draft.png') });
-        const review = await reviewSecurityChanges(page);
+        const review = await reviewDraft(page);
         // Review is still a draft: only explicit apply changes the server policy.
         expect((await (await page.request.get(`/api/security/effective?project_id=${project.id}`)).json()).switches.force_push).toBe(checked);
+        const applying = page.waitForResponse(response => response.request().method() === 'POST'
+          && /\/api\/security\/changes\/[^/]+\/apply$/.test(new URL(response.url()).pathname));
         await review.getByRole('button', { name: 'Apply Security changes', exact: true }).click();
+        expect((await applying).ok()).toBe(true);
+        expect(await (await applying).finished()).toBeNull();
         await expect(review).toBeHidden();
         await expect(card.getByRole('status')).toContainText('Server policy saved');
         await expect(card.getByRole('region', { name: 'Effective Security status', exact: true })).toContainText('Custom');

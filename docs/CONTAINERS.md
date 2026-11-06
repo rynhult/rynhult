@@ -1215,3 +1215,26 @@ broker/trusted launcher, with the newly reviewed image/rootfs:
 These are owner-run qualification requirements, not results from this machine.
 Credentials, networking, persistent provider state and other existing unqualified
 phase-1/platform rows remain blockers. Only related fake tests ran for this slice.
+
+
+### Claude automation auth probe
+
+Automated Claude launches require the protected image-policy entry to contain
+`"claude_auth": "launch-v1"` alongside `"credentials": "readonly-v1"`. Set this only
+after qualifying an image with the updated `acc-session` / `session_runtime.py`,
+launcher and execution relay. The launcher refuses older policies before starting
+the unit. The control-plane grant freezes `automated` with the provider and argv.
+The entrypoint probes the policy-selected CLI before an automated initial prompt.
+A separate `auth.sock` beside the terminal relay accepts no command or path from
+the caller: it runs only the fixed, bounded, read-only in-container auth probe.
+The broker verifies the listener's account and session cgroup as for terminal attach.
+Only a normalized mode returns to the broker. Launch authority remains downgrade-only.
+Vault-supplied Claude API/cloud variables use the existing session/generation-bound
+credential adapter and sealed memfd instead of the account subscription snapshot.
+No credential value is included in the grant or launch contract. Automatic provider
+fallback and its remaining credential restrictions are described in the
+[Claude provider guide](wiki/Providers/Claude.md#walkthrough-helpers-and-containers).
+
+Automated Claude container launches require the explicit `claude_auth=api_key`
+billing choice to use granted vault credentials. A vault grant alone leaves the
+subscription choice in place; the existing Codex fallback still applies.

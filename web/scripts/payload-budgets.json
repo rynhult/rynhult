@@ -2,7 +2,8 @@
   "pages": {
     "sign-in": {
       "roots": [
-        "src/pages/Auth.tsx"
+        "src/pages/Auth.tsx",
+        "@chunk:PersonalThemeRuntime"
       ],
       "js": {
         "raw": 408169,
@@ -17,7 +18,9 @@
     },
     "board": {
       "roots": [
-        "src/pages/Board.tsx"
+        "src/pages/Board.tsx",
+        "@chunk:PersonalThemeRuntime",
+        "src/components/LayoutChoice.tsx"
       ],
       "js": {
         "raw": 438866,
@@ -34,7 +37,9 @@
       "roots": [
         "src/pages/SessionPage.tsx",
         "src/components/Layout.tsx",
-        "src/components/Terminal.tsx"
+        "src/components/LayoutChoice.tsx",
+        "src/components/Terminal.tsx",
+        "@chunk:PersonalThemeRuntime"
       ],
       "js": {
         "raw": 972314,

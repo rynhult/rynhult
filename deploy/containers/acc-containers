@@ -414,8 +414,10 @@ def read_grant(session_id: str) -> dict:
 
 
 def check_grant(grant, session_id: str) -> dict:
-    if not isinstance(grant, dict) or set(grant) != GRANT_KEYS or grant.get("version") != VERSION:
+    if not isinstance(grant, dict) or set(grant) not in (GRANT_KEYS, GRANT_KEYS | {'automated'}) or grant.get("version") != VERSION:
         raise Refused("bad_grant", "unexpected grant fields")
+    if type(grant.get('automated', False)) is not bool:
+        raise Refused('bad_grant', 'bad automated flag')
     if grant["session_id"] != session_id:
         raise Refused("bad_grant", "grant is for another session")
     if type(grant["generation"]) is not int or not 1 <= grant["generation"] <= (1 << 31):
@@ -508,6 +510,10 @@ def load_policy(policy_id: str) -> dict:
                 or ".." in path.split("/"):
             raise Refused("unpinned_image", f"{policy_id!r} names a bad provider command")
     result = {"image": entry["image"], "providers": dict(entry["providers"]), "network": entry.get("network", "none")}
+    if 'claude_auth' in entry:
+        if entry['claude_auth'] != 'launch-v1':
+            raise Refused('unpinned_image', 'unsupported Claude auth probe contract')
+        result['claude_auth'] = 'launch-v1'
     if 'credentials' in entry or 'egress' in entry:
         try:
             adapter = credential_adapter()
@@ -1149,9 +1155,11 @@ def freeze_inputs(grant: dict, held: list[int], entry: pwd.struct_passwd) -> Non
         contract = folder / '.acc-launch-contract.json'
         contract.write_text(json.dumps({'version': 1, 'issuer': 'acc-containers', 'sandbox': 'container',
                                         'network': 'none', 'session_id': grant['session_id'],
-                                        'generation': grant['generation'],
-                                        **({'integrations': 'readonly-v1', 'provider': grant['provider'],
-                                            'egress': grant['_egress']} if grant.get('_integrations') else {})}))
+                                        'generation': grant['generation'], 'provider': grant['provider'],
+                                        'automated': grant.get('automated', False),
+                                        'checkout': grant['checkout'], 'auth_args': grant['args'],
+                                        'auth_executable': grant.get('_auth_executable', '/usr/local/bin/' + grant['provider']),
+                                        **({'integrations': 'readonly-v1', 'egress': grant['_egress']} if grant.get('_integrations') else {})}))
         contract.chmod(0o444)
         folder.chmod(0o555)
         frozen_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -1730,6 +1738,11 @@ def reply(request: dict | None, ok: bool, code: str, detail: str = "", **extra) 
 
 def launch(request: dict, grant: dict, entry: pwd.struct_passwd, settings: dict) -> dict:
     policy = load_policy(request["policy_id"])
+    if grant.get('automated') and grant['provider'] == 'claude' and (
+            policy.get('claude_auth') != 'launch-v1' or policy.get('credentials') != 'readonly-v1'):
+        raise Refused('claude_subscription_automation',
+                      'Claude sessions signed in with a Claude subscription only take your own typing. Add an API key to automate them. '
+                      'The container image also needs a qualified launch-v1 auth probe and readonly-v1 credentials.')
     check_image(entry, policy)
     session_id, generation = request["session_id"], request["generation"]
     with Lock():
@@ -1757,6 +1770,9 @@ def launch(request: dict, grant: dict, entry: pwd.struct_passwd, settings: dict)
                   "mounts": identity, "state": "starting", "started_at": now()}
         write_record(record)
     try:
+        if grant['provider'] not in policy['providers']:
+            raise Refused('unpinned_image', 'the pinned image has no command for this provider')
+        grant['_auth_executable'] = policy['providers'][grant['provider']]
         freeze_integrations(grant, held, entry, policy)
         make_attach_dir(grant, entry)
         held.append(open_image_rootfs(policy))

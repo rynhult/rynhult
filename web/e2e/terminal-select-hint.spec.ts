@@ -1,4 +1,4 @@
-import {expect,test} from '@playwright/test';
+import {expect,test} from './fixtures';
 import {writeFileSync} from 'node:fs';
 import {AUTH_FILE,control,csrfHeaders,info,sessionWithChanges} from './helpers';
 test.use({storageState:AUTH_FILE});

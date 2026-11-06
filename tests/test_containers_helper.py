@@ -2318,3 +2318,10 @@ def test_team_reply_mount_refuses_unsafe_directory(env, unsafe):
     finally:
         for fd in held:
             os.close(fd)
+
+
+def test_automated_claude_requires_qualified_image_before_any_start(env):
+    grant(env, automated=True)
+    out = ask(env, request())
+    assert not out['ok'] and out['code'] == 'claude_subscription_automation'
+    assert not list((env.root / 'sessions').glob('*.json'))

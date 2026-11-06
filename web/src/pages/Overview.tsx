@@ -1,3 +1,4 @@
+import { ShellPage as Page, Workbar as PageHeader, Surface as Card, SurfaceHeader as CardHeader } from '../components/shell/PagePrimitives';
 import { MachineState } from "../components/MachinePolicy";
 import { useNodes } from "../components/Machines";
 import clsx from "clsx";
@@ -9,14 +10,15 @@ import { api } from "../lib/api";
 import { ago, isLocalProject, until } from "../lib/format";
 import { useAttention, useInstance, useProjects, useRole, useSessions } from "../lib/queries";
 import type { AccountHealth, HostView, Observation, Project } from "../lib/types";
-import { Button, Card, CardHeader, Dot, Empty, ErrorNote, IconButton, LoadingRows, Meter, Page, PageHeader, QueryState, Stat } from "../components/ui";
+import { Button, Dot, Empty, ErrorNote, IconButton, LoadingRows, Meter, QueryState, Stat } from "../components/ui";
 import { NewProjectDialog } from "../components/NewProject";
 import { useNewSession } from "../components/newSession";
-import { groupLive, isLive } from "../components/session-bits";
+import { groupLive, isLive, liveSessionsByProject } from "../components/session-bits";
 import { useBudgets } from "../components/Budgets";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { SessionList } from "../components/SessionList";
 import { needsYou, sessionCount, SESSION_GROUPS, sortInbox } from "../lib/order";
+import { useNewShell } from "../lib/uiShell";
 import { installedApp } from "../lib/app";
 
 export const useHost = () => useQuery({ queryKey: ["host"], queryFn: () => api<HostView>("/api/host"), refetchInterval: 15000 });
@@ -43,8 +45,6 @@ function PlanUsage() {
   const observations = useObservations();
   const claude = observations.data?.find((o) => o.key === "claude.rate_limits");
   const codex = observations.data?.find((o) => o.key === "codex.rate_limits");
-  const copilot = observations.data?.find((o) => o.key === "copilot.usage");
-  const credits = copilot?.value?.credits;
   const seen = (o?: Observation) => (o ? ago(new Date(o.observed_at * 1000).toISOString()) : "no reading yet");
   const budget = useBudgets().data?.status ?? {};
   return (
@@ -66,15 +66,10 @@ function PlanUsage() {
               pct={Math.round(codex.value.primary.used_percent)} resets={codex.value.primary.resets_at} budget={budget["codex.primary"]} />
           ) : <p className="text-xs text-faint">No reading yet.</p>}
         </div>
-        {credits && (
-          <div className="space-y-2.5 border-t border-line pt-3.5">
-            <div className="flex justify-between text-xs"><span className="font-medium text-fg">Copilot {copilot.value.plan ? copilot.value.plan[0].toUpperCase() + copilot.value.plan.slice(1) : ""}</span><span className="text-faint">{seen(copilot)}</span></div>
-            {credits.unlimited ? <p className="text-xs text-muted">Unlimited AI credits</p> : (
-              <UsageRow label={`AI credits · ${Number(credits.used ?? 0).toLocaleString()} of ${Number(credits.entitlement ?? 0).toLocaleString()}`}
-                pct={Math.round(100 - (credits.percent_remaining ?? 100))} resets={copilot.value.resets_at ? Date.parse(copilot.value.resets_at) / 1000 : 0} budget={budget["copilot.credits"]} />
-            )}
-          </div>
-        )}
+        <div className="space-y-2.5 border-t border-line pt-3.5">
+          <span className="text-xs font-medium text-fg">Copilot</span>
+          <p className="text-xs"><a className="text-accent underline" href="https://github.com/settings/copilot/features" target="_blank" rel="noreferrer">See GitHub settings</a></p>
+        </div>
       </div>
     </Card>
   );
@@ -163,6 +158,7 @@ function PhoneBanner() {
 function ProjectsGlance() {
   const projects = useProjects();
   const sessions = useSessions();
+  const sessionsByProject = liveSessionsByProject(sessions.data ?? []);
   const host = useHost();
   const containers = host.data?.snapshot?.containers ?? [];
   const list = (projects.data ?? []).filter(usableProject);
@@ -179,7 +175,7 @@ function ProjectsGlance() {
           {list.map((p) => {
             const mine = containers.filter((c) => c.project === p.slug && !c.status.startsWith("Exited (0)"));
             const up = mine.filter((c) => c.state === "running").length;
-            const live = (sessions.data ?? []).filter((s) => s.project_id === p.id && isLive(s)).length;
+            const live = sessionsByProject.get(p.id)?.length ?? 0;
             const tone = !mine.length ? "neutral" : up === mine.length ? "ok" : up ? "wait" : "bad";
             return (
               <Link key={p.id} to={`/projects/${p.id}`} className="flex pointer-coarse:min-h-11 items-center gap-3 px-4 py-2.5 text-[13px] hover:bg-panel-2/70 underline underline-offset-2">
@@ -229,7 +225,8 @@ export function Overview() {
   // controls, below the sessions on narrow screens.
   const urgent = blocked.length > 0 || critical;
   const machines = owner ? (nodes.data ?? []) : [];
-  const onboarding = <><GetStarted /><PhoneBanner /></>;
+  const shell = useNewShell();
+  const onboarding = <><GetStarted />{!shell && <PhoneBanner />}</>;
   return (
     <Page wide>
       <PageHeader title="Overview" description={`${owner ? "Sessions" : "Your sessions"}, attention and the health of ${hostLabel} at a glance.`} />

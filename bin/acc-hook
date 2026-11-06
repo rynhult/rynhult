@@ -13,8 +13,98 @@ provider=${1:-unknown}
 case $provider in *[!a-z0-9-]*) provider=unknown ;; esac
 event=${2:-}
 case $event in *[!A-Za-z]*) event= ;; esac
-ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 payload=$(cat)
+# A live PermissionRequest owns a random, one-shot socket. A timeout returns no decision,
+# leaving Claude's terminal prompt in charge. No saved permission rules are returned.
+if [ "$provider" = claude ] && printf '%s' "$payload" | /usr/bin/python3 -I -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("hook_event_name") == "PermissionRequest" else 1)' 2>/dev/null; then
+  printf '%s' "$payload" | /usr/bin/python3 -I -c '
+import json, os, signal, socket, subprocess, sys, time, uuid
+from datetime import datetime, timezone
+try:
+    payload = json.load(sys.stdin)
+except (ValueError, TypeError):
+    sys.exit(0)
+event = payload.get("hook_event_name")
+os.chdir(os.environ["ACC_RUN_DIR"])
+record = {"ts": datetime.now(timezone.utc).isoformat(), "provider": "claude", "event": event, "acc_session": os.environ.get("ACC_SESSION_ID", ""), "hook": payload}
+parent = os.getppid()
+def cancelled(signum, frame):
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, cancelled)
+signal.signal(signal.SIGINT, cancelled)
+def remote_allowed():
+    # Browser writers AND observers use broker tmux attach-session clients.
+    # Inspect both the session count and client list; unknown state falls back immediately.
+    try:
+        if (not os.environ.get("TMUX") or not os.environ.get("TMUX_PANE") or
+                (os.path.exists("permission-transport") and open("permission-transport").read() != "host")):
+            return False  # includes unqualified container transport
+        def query(*args):
+            return subprocess.run(["/usr/bin/tmux", "-S", os.environ["TMUX"].split(",")[0], *args], capture_output=True, text=True, timeout=.2, check=True).stdout.strip()
+        snapshot = query("display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{@acc-terminal-snapshot}")
+        if snapshot and time.time() - float(snapshot) < 60:
+            return False
+        return (query("display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{session_attached}") == "0"
+                and not query("list-clients", "-t", query("display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{session_id}"), "-F", "#{client_name}")
+                and query("display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{@acc-inbox-permissions}") != "off")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+listener = None
+name = None
+answered = False
+try:
+    if event == "PermissionRequest" and remote_allowed():
+        os.umask(0o077)
+        token = uuid.uuid4().hex
+        name = "permission-" + token + ".sock"
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(name)
+        os.chmod(name, 0o600)
+        listener.listen(1)
+        listener.settimeout(0.5)
+        payload["acc_permission_id"] = token
+    with open("events.jsonl", "a") as stream:
+        stream.write(json.dumps(record) + "\n")
+    if listener:
+        deadline = time.monotonic() + 45  # reserve time for bounded tmux probes, reply read and cleanup
+        while time.monotonic() < deadline and os.getppid() == parent and remote_allowed():
+            try:
+                connection, _ = listener.accept()
+                break
+            except socket.timeout:
+                continue
+        else:
+            sys.exit(0)
+        with connection:
+            connection.settimeout(2)
+            answer = connection.recv(16).decode()
+            if answer in ("allow", "deny") and os.getppid() == parent and remote_allowed():
+                listener.close()
+                os.unlink(name)
+                name = None
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+                    "decision": {"behavior": answer}}}), flush=True)
+                answered = True
+                connection.sendall(b"answered")
+except (OSError, ValueError):
+    pass
+finally:
+    if listener and not answered:
+        with open("events.jsonl", "a") as stream:
+            stream.write(json.dumps({**record, "event": "PermissionExpired", "ts": datetime.now(timezone.utc).isoformat(),
+                "hook": {"hook_event_name": "PermissionExpired",
+                "acc_permission_id": payload.get("acc_permission_id")}}) + "\n")
+    if listener:
+        listener.close()
+    if name:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+'
+  exit 0
+fi
+ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 printf '{"ts":"%s","provider":"%s","event":"%s","acc_session":"%s","hook":%s}\n' \
   "$ts" "$provider" "$event" "${ACC_SESSION_ID:-}" "${payload:-null}" >> "$ACC_RUN_DIR/events.jsonl"
 # The board attachment is data, separate from the immutable launch policy.

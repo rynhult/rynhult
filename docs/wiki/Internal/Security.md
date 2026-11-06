@@ -576,7 +576,7 @@ explicitly restores Allow for owners when recovering an owner, preserving sole-o
 Owner-mediated reset is blocked while Require is active; allowing fallback is an
 explicit owner action. Inviting an owner and resetting another person's sign-in need the acting owner's
 recent verification under any policy (refusals audited as `user.invite_refused` and
-`user.reset_refused`; your own reset is exempt for sole-owner recovery). The API token
+`user.reset_refused`; your own reset is exempt after full sign-in; recovery sessions require an active guarded second-code window). The API token
 has no human session and is refused for these. Changing a role whose passkeys are
 required needs the acting owner's recent verification (a passkey when owners require one), so a copied owner
 cookie can't create a lasting required-role account. Registration refuses credential
@@ -781,3 +781,39 @@ requires session recreation. Hooks remain in immutable image policy and use boun
 This code has fake-transport and filesystem tests, not root/runtime/provider qualification. Neither installer nor
 policy examples enable it. The source document `docs/CONTAINERS.md` records the exact supported formats, trust
 boundary and remaining owner gates. No new API route, sudoers entry, ACL or launcher socket permission is added.
+
+
+### Inbox permission decisions
+
+Claude Inbox replies are explicit, one-shot decisions, not saved permission rules.
+A person may approve only complete vault-redacted tool input displayed within the
+8 kB limit. Larger or missing inputs offer Deny and Answer in terminal. The hook
+waits at most 50 seconds, only while no tmux client or browser terminal writer or
+observer is attached. Browser terminals use broker tmux clients; both the attached
+count and client list are checked. An unknown attach state returns to the terminal.
+The session Setup toggle defaults on and applies to subsequent or pending waits.
+Container sessions use terminal-only replies until socket transport is qualified.
+
+The socket and token-bearing spool are accessible to the session uid. A process
+running as that uid can self-approve; this is the existing tmux access boundary,
+not isolation from an agent running under that account. Browser decisions require
+a signed-in person and session/Inbox authorization, and are audited. They bypass
+the terminal single-writer/take lock; the attachment checks yield the prompt to
+any attached writer or observer. No new authority is granted across Unix users.
+Claude automation treats local model endpoints supplying `ANTHROPIC_AUTH_TOKEN` as API authentication. Admission still requires the CLI authentication report to agree with the supplied credentials. Subscription sign-in withholds Anthropic auth keys from both the launch environment and selected MCP server environment references. Explanation helpers automatically select granted Anthropic credentials available to the launching person; without them, the existing refusal or Codex fallback applies.
+
+### Session Git actions and permission watching
+
+Commit and Push refusal attempts are audited even when the requested session is invisible or missing;
+both cases return the same 404. Offline machine errors retain their 409 response. The Changes buttons
+are hidden for container sessions and truncated diffs. Push refuses account credential configuration
+keys containing `=` because Git's `-c key=value` transport cannot represent them unambiguously.
+Account-global credential settings (including includes) and SSH configuration remain trusted as the
+agent account's own configuration. This is an accepted same-uid boundary, not isolation from that account.
+
+Inbox permission toggle writes record `session.inbox_permissions` with the resulting enabled value.
+The permission hook uses `/usr/bin/tmux`, the socket from its own `TMUX` environment and its `TMUX_PANE`.
+A terminal text capture marks the session as watched for 60 seconds; an open, visible snapshot renews
+that mark every 30 seconds without replacing selected text. Closing it stops renewal. An attached
+terminal or a watched snapshot makes the hook yield to Claude's terminal prompt. Completed answers
+are not also recorded as expired.

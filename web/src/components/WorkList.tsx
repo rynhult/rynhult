@@ -1,3 +1,5 @@
+import { draftField } from '../lib/unsaved';
+import { DraftSaveNote, useUnsavedDraft } from '../lib/useUnsaved';
 /** Orchestrator v2, slice 1: the team's working list and NOW (src/acc/server/orchestrator/worklist.py). Mounted on the
  *  Team tab; renders nothing while the server has orchestrator v2 off (the list answers 404). The lead's text is shown
  *  as plain text, never as HTML. Only exact local brief-review paths become additional navigation links. */
@@ -130,8 +132,8 @@ function NowEditor({ teamId, list, onSaved }: { teamId: string; list: List; onSa
   const [base, setBase] = useState(restored?.base ?? 0);
   const [stale, setStale] = useState(restored?.stale ?? false);
   useEffect(() => {
-    if (draft === null) clearDraft(storeKey); else saveDraft(storeKey, { draft, base, stale });
-  }, [storeKey, draft, base, stale]);
+    if (draft === null || !stale && draft === list.now && base === list.now_revision) clearDraft(storeKey); else saveDraft(storeKey, { draft, base, stale }, () => { setDraft(null); setStale(false); });
+  }, [storeKey, draft, base, stale, list.now, list.now_revision]);
   const save = useMutation({
     mutationFn: (text: string) => api(`/api/teams/${teamId}/worklist/now`, { method: 'PUT', json: {
       text, revision: list.revision, now_revision: stale ? list.now_revision : base } }),
@@ -140,7 +142,7 @@ function NowEditor({ teamId, list, onSaved }: { teamId: string; list: List; onSa
   });
   return <section aria-label="Now" className="space-y-2 rounded-md border border-line bg-panel-2 p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Now</h3>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Now</h3><DraftSaveNote id={storeKey} />
       {draft === null && <Button size="sm" onClick={() => { setDraft(list.now); setBase(list.now_revision); setStale(false); }}>Edit</Button>}
     </div>
     {draft === null
@@ -165,18 +167,19 @@ function ItemRow({ teamId, projectId, item, busy, conflict, onChange, up, down }
   // A typed answer is kept for this tab until the card is answered: a refresh or Back brings it back.
   const { owner } = useRole();
   const replyKey = `answer:${item.id}`;  // item ids are unique across teams
+  const [restoredReply] = useState(() => loadDraft<{ reply: string; seen: Item | null }>(replyKey));
   const [changing, setChanging] = useState(!!conflict?.body.answer_text);
   const [discussing, setDiscussing] = useState(false);
-  const [reply, setReply] = useState(() => typeof conflict?.body.answer_text === 'string' ? conflict.body.answer_text : item.kind !== 'decision' && typeof conflict?.body.answer === 'string' ? conflict.body.answer : loadDraft<string>(replyKey) ?? '');
-  const [blockEditing, setBlockEditing] = useState(!!conflict?.body.blocks);
-  const [blockDraft, setBlockDraft] = useState((conflict?.body.blocks ?? item.blocks ?? []).join(', '));
-  const [blockBase, setBlockBase] = useState(item);
+  const [reply, setReply] = useState(() => typeof conflict?.body.answer_text === 'string' ? conflict.body.answer_text : item.kind !== 'decision' && typeof conflict?.body.answer === 'string' ? conflict.body.answer : restoredReply?.reply ?? '');
+  const [blockEditing, setBlockEditing] = useState(!!conflict?.body.blocks || draftField(`blocks:${item.id}`, 'blockEditing', false));
+  const [blockDraft, setBlockDraft] = useState(() => draftField(`blocks:${item.id}`, 'blockDraft', (conflict?.body.blocks ?? item.blocks ?? []).join(', ')));
+  const [blockBase, setBlockBase] = useState(() => draftField(`blocks:${item.id}`, 'blockBase', item));
   useEffect(() => {
     if (!conflict && blockEditing && item.revision > blockBase.revision && (item.blocks ?? []).join(', ') === blockDraft) setBlockEditing(false);
   }, [conflict, blockEditing, item.revision, item.blocks, blockBase, blockDraft]);
   // The card as it was when the person chose or typed (break-it review 2026-10-26). If the lead rewrites it meanwhile,
   // the answer isn't sent with a meaning the person didn't see: the card says so, and answering again is deliberate.
-  const [seen, setSeen] = useState<Item | null>(conflict?.before ?? null);
+  const [seen, setSeen] = useState<Item | null>(conflict?.before ?? restoredReply?.seen ?? null);
   const changedSince = seen !== null && seen.revision !== item.revision;
   const answer = (value: string, custom = false) => {
     onChange(custom ? { answer_text: value } : { answer: value }, conflict || changedSince ? item : seen ?? item);
@@ -185,8 +188,8 @@ function ItemRow({ teamId, projectId, item, busy, conflict, onChange, up, down }
   const closed = item.state === 'done' || item.state === 'dismissed';
   const answerable = (open || conflict?.body.answer !== undefined || conflict?.body.answer_text !== undefined) && FOR_PERSON.includes(item.kind);
   useEffect(() => {
-    if (reply) saveDraft(replyKey, reply); else clearDraft(replyKey);
-  }, [replyKey, reply]);
+    if (reply) saveDraft(replyKey, { reply, seen }, () => { setReply(''); setSeen(null); }); else clearDraft(replyKey);
+  }, [replyKey, reply, seen]);
   const retry = (!!conflict && conflict.current.revision !== conflict.before.revision) || changedSince;
   const differences = conflict || changedSince ? cardChanges(conflict?.before ?? seen!, item) : [];
   const unansweredDecision = (item.kind === 'decision' || item.kind === 'need') && item.answer === null;
@@ -194,7 +197,8 @@ function ItemRow({ teamId, projectId, item, busy, conflict, onChange, up, down }
   const pendingChoice = item.kind === 'decision' ? conflict?.body.answer : undefined;
   const canEditBlocks = (!closed || conflict?.body.blocks !== undefined) && (item.kind === 'decision' || item.kind === 'question');
   const editBlocks = () => { setBlockDraft((item.blocks ?? []).join(', ')); setBlockBase(item); setBlockEditing(true); };
-  return <li className="space-y-2 rounded-md border border-line p-3" aria-label={item.title}>
+  useUnsavedDraft(`blocks:${item.id}`, 'worklist', 'Working list blocks', blockEditing && blockDraft !== (blockBase.blocks ?? []).join(', '), { blockDraft, blockBase, blockEditing }, () => { setBlockEditing(false); setBlockDraft((item.blocks ?? []).join(', ')); });
+  return <li className="space-y-2 rounded-md border border-line p-3" aria-label={item.title}><DraftSaveNote id={replyKey} />
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -315,12 +319,12 @@ function CardDiscussion({ teamId, item, editing, onClose }: { teamId: string; it
   const receipt = useQuery({ queryKey: ['card-delivery', link?.id], enabled: !!link,
     queryFn: () => api<{ delivery: { state: string; notice: string | null; session_id: string } }>(`/api/deliveries/${encodeURIComponent(link!.id)}`),
     refetchInterval: query => ['acknowledged', 'failed', 'expired'].includes(query.state.data?.delivery.state ?? '') ? false : 2000 });
-  useEffect(() => { if (text) saveDraft(draftKey, { text, revision: base ?? item.revision }); else clearDraft(draftKey); }, [draftKey, text, base, item.revision]);
+  useEffect(() => { if (text) saveDraft(draftKey, { text, revision: base ?? item.revision }, () => { setText(''); setBase(null); }); else clearDraft(draftKey); }, [draftKey, text, base, item.revision]);
   const send = useMutation({ mutationFn: () => api(`/api/teams/${teamId}/worklist/items/${item.id}/discuss`, {
     json: { revision: base ?? item.revision, text } }),
     onSuccess: () => { setText(''); setBase(null); onClose(); client.invalidateQueries({ queryKey: ['worklist', teamId] }); },
     onError: () => { setBase(null); client.invalidateQueries({ queryKey: ['worklist', teamId] }); } });
-  return <div className="space-y-2 text-xs">
+  return <div className="space-y-2 text-xs"><DraftSaveNote id={draftKey} />
     {editing && <form className="space-y-2" onSubmit={e => { e.preventDefault(); send.mutate(); }}>
       <Textarea aria-label="Message to lead" rows={3} maxLength={6000} value={text}
         onChange={e => { setText(e.target.value); if (base === null) setBase(item.revision); }} />
@@ -336,8 +340,9 @@ function CardDiscussion({ teamId, item, editing, onClose }: { teamId: string; it
 }
 
 function AddItem({ teamId, onAdded }: { teamId: string; onAdded: () => void }) {
-  const [kind, setKind] = useState<'task' | 'note'>('task');
-  const [title, setTitle] = useState('');
+  const [kind, setKind] = useState<'task' | 'note'>(() => draftField(`worklist-add:${teamId}`, 'kind', 'task'));
+  const [title, setTitle] = useState(() => draftField(`worklist-add:${teamId}`, 'title', ''));
+  useUnsavedDraft(`worklist-add:${teamId}`, 'worklist', 'New working list item', !!title || kind !== 'task', { title, kind }, () => { setTitle(''); setKind('task'); });
   const add = useMutation({
     mutationFn: () => api(`/api/teams/${teamId}/worklist/items`, { json: { kind, title } }),
     onSuccess: () => { setTitle(''); onAdded(); },

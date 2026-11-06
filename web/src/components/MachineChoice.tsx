@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { Button, ErrorNote, Skeleton } from "./ui";
 
 export interface LaunchMachine {
+  last_seen?: string | null;
   name: string; label: string; connected: boolean; system: string; available: boolean; reason: string | null;
   providers: { id: string; label: string; installed: boolean | null }[];
 }

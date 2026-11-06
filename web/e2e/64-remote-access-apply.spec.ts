@@ -1,5 +1,5 @@
 import { environmentValue } from "../../src/acc/env.mjs";
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { AUTH_FILE, csrfHeaders, verifyAgain, wikiShotPath, expectAxeClean } from './helpers';
 
 test.use({ storageState: AUTH_FILE });

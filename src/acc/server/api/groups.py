@@ -315,6 +315,26 @@ def router(ctx: Context) -> APIRouter:
             s.commit()
             return project_output(s, row)
 
+    @api.get('/{group_id}/projects/{project_id}/repositories')
+    def project_repositories(group_id: str, project_id: int, who=Depends(ctx.principal)):
+        from ..sources import inventory
+        with db() as s:
+            group = access(s, group_id, who)
+            row = project(s, group, project_id)
+            return inventory(s, row, person=None if who.is_owner else who.username,
+                             include_origin=who.is_owner)['repositories']
+
+    @api.get('/{group_id}/projects/{project_id}/locations')
+    def project_locations(group_id: str, project_id: int, who=Depends(ctx.principal)):
+        from ..sources import inventory
+        with db() as s:
+            group = access(s, group_id, who)
+            row = project(s, group, project_id)
+            if not who.is_owner and role(s, group_id, who) == 'viewer':
+                raise HTTPException(404, "Group viewers don't have private checkouts.")
+            return inventory(s, row, person=None if who.is_owner else who.username,
+                             include_origin=who.is_owner)['locations']
+
     @api.get('/{group_id}/projects/{project_id}/placements')
     def placements(group_id: str, project_id: int, who=Depends(ctx.principal)):
         with db() as s:

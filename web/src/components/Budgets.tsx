@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
@@ -5,7 +6,7 @@ import { Wallet } from "lucide-react";
 import { useState } from "react";
 import { api, post } from "../lib/api";
 import { until } from "../lib/format";
-import { Button, Card, CardHeader, ErrorNote, Input, Meter, Select, Skeleton } from "./ui";
+import { Button, ErrorNote, Input, Meter, Select, Skeleton } from "./ui";
 
 export type BudgetRule = { mode: "cap" | "pace"; limit: number; action: "notify" | "pause"; extra?: number; extra_until?: number };
 export type BudgetState = {

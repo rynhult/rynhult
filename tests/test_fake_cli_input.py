@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers import wait_for
+from helpers import wait_for, write_executable
 
 FAKE = Path(__file__).with_name('fake_cli.py')
 
@@ -47,3 +47,15 @@ async def test_a_partial_line_never_blocks_provider_control(fake_process):
     await wait_for(lambda: process.poll() is not None, timeout=5)
     assert process.returncode == 0
     assert not (run / 'fake.received').exists()
+
+
+def test_executable_replacement_does_not_reuse_an_open_writable_inode(tmp_path):
+    binary = tmp_path / 'fake-claude'
+    write_executable(binary, '#!/bin/sh\necho old\n')
+    with binary.open('w') as inherited_writer:
+        old_inode = os.fstat(inherited_writer.fileno()).st_ino
+        write_executable(binary, '#!/bin/sh\necho ready\n')
+        assert binary.stat().st_ino != old_inode
+        result = subprocess.run([str(binary)], capture_output=True, text=True, check=True)
+    assert result.stdout == 'ready\n'
+    assert list(tmp_path.iterdir()) == [binary]

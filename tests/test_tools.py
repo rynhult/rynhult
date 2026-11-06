@@ -250,3 +250,30 @@ async def test_owner_can_remove_system_tool_after_original_requester_is_demoted(
         request = db.scalar(select(AuditLog).where(AuditLog.action == "tool.request",
                                                   AuditLog.target == response.json()["id"]))
         assert request.actor == "@api"
+
+
+async def test_inbox_and_tools_share_one_outcome_and_dismissal_never_approves(api, project, monkeypatch):
+    sid = await seed(api, project)
+    as_member(api)
+    response = await api.post('/api/tools/requests', json={'session_id': sid, 'manager': 'npm',
+        'name': 'prettier', 'reason': 'Format this checkout'})
+    assert response.status_code == 201
+    rid = response.json()['id']
+    notice = next(item for item in (await api.get('/api/attention')).json() if item.get('tool', {}).get('id') == rid)
+    assert (await api.post(f"/api/attention/{notice['id']}/ack")).status_code == 200
+    assert (await api.post(f"/api/attention/{notice['id']}/snooze", json={'minutes': 60})).status_code == 400
+    request = next(row for row in (await api.get('/api/tools')).json()['requests'] if row['id'] == rid)
+    assert request['status'] == 'pending_approval'
+    service = api.app.state.supervisor.tools
+    calls = []
+    async def carry(request):
+        calls.append(request.id)
+        return {'ok': True, 'version': '3.6.2', 'detail': 'done'}
+    monkeypatch.setattr(service, '_carry', carry)
+    assert (await api.post(f'/api/tools/requests/{rid}/approve')).status_code == 200
+    await asyncio.gather(*service.tasks)
+    request = next(row for row in (await api.get('/api/tools')).json()['requests'] if row['id'] == rid)
+    notice = next(item for item in (await api.get('/api/attention?scope=all')).json() if item['id'] == notice['id'])
+    assert notice['tool']['id'] == request['id'] and notice['tool']['status'] == request['status'] == 'applied'
+    assert (await api.post(f'/api/tools/requests/{rid}/approve')).status_code == 409
+    assert calls == [rid]

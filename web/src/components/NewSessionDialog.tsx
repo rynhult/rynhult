@@ -1,3 +1,7 @@
+import { ClaudeAutomationNotice } from "./ClaudeAutomationNotice";
+import { useUnsavedDraft } from '../lib/useUnsaved';
+import { draftField, unsavedWork } from '../lib/unsaved';
+import {SessionLaunchFrame} from './SessionLaunchFrame';
 import {SecurityBadge} from './SecurityBadge';
 import {frozenSecurity} from '../lib/security';
 import { useFeatures } from "./Feature";
@@ -11,7 +15,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { ChevronRight, FolderPlus, Rocket, ShieldAlert } from "lucide-react";
-import { api, post } from "../lib/api";
+import { ApiError, api, post } from "../lib/api";
 import { LEGACY_OPTIONS, type Catalog, type MultiRunChoice, type MultiRunGroup, type IssueRef, type Project, type Provider, type ProviderInfo, type SessionDetail } from "../lib/types";
 import { MultiRunFields, newRunChoice, runDangerous, runOptions } from "./MultiRunFields";
 import { defaultGrant, OrchestratorFields, type TeamGrant } from "./OrchestratorFields";
@@ -20,14 +24,14 @@ import { CatalogPicker } from "./CatalogPicker";
 import { ScheduleTiming, defaultSchedule, type ScheduleDraft } from "./ScheduleTiming";
 import { SessionKeys } from "./Keys";
 import { advancedSummary, RUN_MODES, suggestedName, type NewSessionPreset, type RunMode } from "./newSession";
-import { Badge, Button, Dialog, ErrorNote, Field, Input, Note, SearchInput, Segmented, Select, Skeleton, Textarea } from "./ui";
+import { Badge, Button, ErrorNote, Field, Input, Note, SearchInput, Segmented, Select, Skeleton, Textarea } from "./ui";
 import { useConfirm } from "./confirm";
 import { NewProjectDialog } from "./NewProject";
-import { useInstance, useProviderRegistry, useSessions } from "../lib/queries";
+import { useInstance, useProjects, useProviderRegistry, useRole, useSessions } from "../lib/queries";
 import { isLive } from "./session-bits";
 import { useBudgets } from "./Budgets";
 import { useEndpoints } from "./Endpoints";
-import { isLocalProject } from "../lib/format";
+import { ago, isLocalProject } from "../lib/format";
 import { readBriefDraft, type BriefDraft, type BriefView } from "../lib/projectBrief";
 import { BriefLaunchReview, type BriefLaunchChoice } from "./BriefLaunchReview";
 import { useBriefNavigationConsent } from "./UnsavedBriefGuard";
@@ -76,9 +80,10 @@ const optionValues = (info: ProviderInfo | undefined, chosen: OptionValues): Opt
   Object.fromEntries((info?.options ?? []).map((o) => [o.key, chosen[o.key] ?? o.default ?? ""]));
 
 interface Preview { command: string[]; cwd: string; files: Record<string, string>; digest: string; trusted: boolean; import_mode: string;
-  machine?: string; checkout?: { requires_clone: boolean };
+  machine?: string; checkout?: { requires_clone: boolean; repository?: string | null };
   inputs?: { initial_prompt?: string | null };
   not_delivered?: { kind: string; id: string; reason: string }[];
+  claude_auth_keys?: { id: string; name: string; variable: string }[];
   keys?: { keys: { id: string; name: string; variable: string }[]; held_back: { id: string; name: string; variable: string }[] } }
 
 function DeliveryWarnings({ preview, agent }: { preview?: Preview; agent: string }) {
@@ -95,17 +100,41 @@ function DeliveryWarnings({ preview, agent }: { preview?: Preview; agent: string
 
 const shellQuote = (s: string) => (/^[\w@%+=:,./<>-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 
-export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset, schedule }: {
+export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset, schedule, presentation = "dialog" }: {
+  presentation?: "dialog" | "workspace";
   open: boolean; onClose: () => void; onLaunched?: () => void; preset?: NewSessionPreset; schedule?: ScheduleDraft;
   /** Clear the kept draft (Close keeps it for next time; UX review NS-6). */
   onDiscard?: () => void;
 }) {
+  const inline = presentation === "workspace" && !schedule;
+  const [locationOpen, setLocationOpen] = useState(false);
+  const locationPanel = useRef<HTMLDetailsElement>(null);
+  const permissionsPanel = useRef<HTMLDetailsElement>(null);
+  const [draftId] = useState(() => schedule ? `new-session:schedule:${schedule.id ?? 'new'}`
+    : preset ? `new-session:preset:${JSON.stringify([preset.mode ?? 'project', preset.project_id, preset.workspace, preset.issue_source])}` : 'new-session:launcher');
+  // Restore only this target's draft. Every explicitly supplied preset field
+  // wins; another project's retained task can never become this launch.
+  const readField = <T,>(id: string, field: string, fallback: T): T => {
+    const retained = draftField(id, field, fallback);
+    if (!preset) return retained;
+    if (field === 'mode') return fallback;
+    if (field === 'form') {
+      const value = { ...retained as Record<string, unknown> };
+      for (const key of ['project_id', 'name', 'initial_prompt', 'worktree'] as const)
+        if (preset[key] !== undefined) value[key] = preset[key];
+      return value as T;
+    }
+    if (field === 'profile' && preset.profile !== undefined || field === 'issue' && preset.issue_source !== undefined) return fallback;
+    return retained;
+  };
+  const edited = useRef(unsavedWork.read(draftId) !== undefined);
   const saved = schedule?.launch;
   const feature = useFeatures();
   const featureState = useInstance().features;
-  const [scheduleConfig, setScheduleConfig] = useState(schedule ?? defaultSchedule());
+  const [scheduleConfig, setScheduleConfig] = useState(() => readField(draftId, "scheduleConfig", schedule ?? defaultSchedule()));
   const queryClient = useQueryClient();
   const instance = useInstance();
+  const person = useRole();
   const sessions = useSessions();
   const navigate = useNavigate();
   const allowBriefNavigation = useBriefNavigationConsent();
@@ -115,30 +144,31 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   useEffect(() => {
     if (!briefChoice && returningFromBrief.current) { returningFromBrief.current = false; launchButton.current?.querySelector("button")?.focus(); }
   }, [!!briefChoice]);
-  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api<Project[]>("/api/projects"), enabled: open });
+  const projects = useProjects(undefined, open);
   // "local" is the built-in group for local workspaces: those get their own folder, never its root.
   const usable = (projects.data ?? []).filter((p) => !p.archived && p.import_mode === "managed" && !isLocalProject(p));
-  const [mode, setMode] = useState<"project" | "workspace">(preset?.mode ?? "project");
-  const [topic, setTopic] = useState("");
+  const [mode, setMode] = useState<"project" | "workspace">(() => readField(draftId, "mode", preset?.mode ?? "project"));
+  const [topic, setTopic] = useState(() => readField(draftId, "topic", ""));
   const existing = preset?.workspace;  // a session in an existing local workspace (e.g. Council after Researcher)
-  const [customModel, setCustomModel] = useState(!!saved?.model);
+  const [customModel, setCustomModel] = useState(() => readField(draftId, "customModel", !!saved?.model));
   const catalogQuery = useQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/api/catalog"), enabled: open, staleTime: 3600000 });
   const catalog = catalogQuery.data;
-  const [profile, setProfile] = useState(String(saved?.profile ?? ""));
-  const [picks, setPicks] = useState<{ skills: string[]; agents: string[]; mcps: string[] }>({ skills: (saved?.skills as string[]) ?? ["acc-workflow"], agents: (saved?.agents as string[]) ?? [], mcps: (saved?.mcps as string[]) ?? [] });
-  const [form, setForm] = useState({ project_id: (saved?.project_id as number) ?? preset?.project_id ?? 0, provider: (saved?.provider as Provider) ?? "claude" as Provider, name: (saved?.name as string) ?? preset?.name ?? "", model: String(saved?.model ?? ""), effort: String(saved?.effort ?? ""),
-    initial_prompt: (saved?.initial_prompt as string) ?? preset?.initial_prompt ?? "", endpoint: String(saved?.endpoint ?? ""), worktree: (saved?.worktree as boolean) ?? preset?.worktree ?? !!schedule });
-  const [machineChoice, setMachineChoice] = useState<string | undefined>(saved?.machine as string | undefined);
-  const [cloneOnMachine, setCloneOnMachine] = useState(!!saved?.clone_on_machine);
+  const [profile, setProfile] = useState(() => readField(draftId, "profile", String(saved?.profile ?? "")));
+  const [picks, setPicks] = useState<{ skills: string[]; agents: string[]; mcps: string[] }>(() => readField(draftId, "picks", { skills: (saved?.skills as string[]) ?? ["acc-workflow"], agents: (saved?.agents as string[]) ?? [], mcps: (saved?.mcps as string[]) ?? [] }));
+  const [form, setForm] = useState(() => readField(draftId, "form", { project_id: (saved?.project_id as number) ?? preset?.project_id ?? 0, provider: (saved?.provider as Provider) ?? "claude" as Provider, name: (saved?.name as string) ?? preset?.name ?? "", model: String(saved?.model ?? ""), effort: String(saved?.effort ?? ""),
+    claude_auth: (saved?.claude_auth as "subscription" | "api_key") ?? "subscription", initial_prompt: (saved?.initial_prompt as string) ?? preset?.initial_prompt ?? "", endpoint: String(saved?.endpoint ?? ""), worktree: (saved?.worktree as boolean) ?? preset?.worktree ?? !!schedule }));
+  const [targetReview, setTargetReview] = useState(() => readField<{machine: string; account: string; path: string; projectId?: number} | null>(draftId, 'targetReview', null));
+  const [machineChoice, setMachineChoice] = useState<string | undefined>(() => readField(draftId, "machineChoice", saved?.machine as string | undefined));
+  const [cloneOnMachine, setCloneOnMachine] = useState(() => readField(draftId, "cloneOnMachine", !!saved?.clone_on_machine));
   // One Run choice (owner decision 0008, Q5): once, several agents, with helpers, or on a schedule.
-  const [run, setRun] = useState<RunMode>(schedule ? "schedule" : saved?.orchestrator ? "helpers" : "once");
+  const [run, setRun] = useState<RunMode>(() => readField(draftId, "run", schedule ? "schedule" : saved?.orchestrator ? "helpers" : "once"));
   const orchestrator = run === "helpers";
   const [advanced, setAdvanced] = useState(false);
-  const [teamGrant, setTeamGrant] = useState<TeamGrant>((saved?.orchestrator as TeamGrant) ?? defaultGrant("local"));
+  const [teamGrant, setTeamGrant] = useState<TeamGrant>(() => readField(draftId, "teamGrant", (saved?.orchestrator as TeamGrant) ?? defaultGrant("local")));
 
-  const [issue, setIssue] = useState<{ projectId?: number; ref?: IssueRef }>({ projectId: (saved?.project_id as number) ?? preset?.project_id, ref: (saved?.issue_source as IssueRef) ?? preset?.issue_source });
-  const [automation, setAutomation] = useState<Automation>((saved?.automation as Automation) ?? {});
-  const [runChoices, setRunChoices] = useState<MultiRunChoice[]>([newRunChoice(), newRunChoice("codex")]);
+  const [issue, setIssue] = useState<{ projectId?: number; ref?: IssueRef }>(() => readField(draftId, "issue", { projectId: (saved?.project_id as number) ?? preset?.project_id, ref: (saved?.issue_source as IssueRef) ?? preset?.issue_source }));
+  const [automation, setAutomation] = useState<Automation>(() => readField(draftId, "automation", (saved?.automation as Automation) ?? {}));
+  const [runChoices, setRunChoices] = useState<MultiRunChoice[]>(() => readField(draftId, "runChoices", [newRunChoice(), newRunChoice("codex")]));
   const projectId = mode === "project" ? form.project_id || undefined : undefined;
   const project = usable.find((p) => p.id === form.project_id);
   const machine = mode === "workspace" ? "local" : machineChoice ?? project?.host ?? "local";
@@ -146,7 +176,11 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const scopeReady = open && (mode === "workspace" || !!projectId);
   const machines = useLaunchMachines(projectId, scopeReady);
   const selectedMachine = machines.data?.find(item => item.name === machine);
+  useEffect(() => { if (inline && open && scopeReady) void machines.refetch(); }, [inline, open, scopeReady, projectId]);
   const registry = useProviderRegistry(projectId, scopeReady, machine);
+  const authRefusal = form.provider === "claude" && form.claude_auth !== "api_key" ? {
+    code: "claude_subscription_automation", message: "Claude sessions signed in with a Claude subscription only take your own typing. Add an API key to automate them.", docs: "/guide/Providers/Claude",
+  } : null;
   const models = useQuery({ queryKey: ["models", projectId ?? "account", machine],
     queryFn: () => api<ModelCatalog>(`/api/models?${new URLSearchParams({ machine, ...(projectId ? { project_id: String(projectId) } : {}) })}`),
     enabled: scopeReady, staleTime: 3600000 });
@@ -175,9 +209,9 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const budgetKey = `${form.provider}|${budgetPaused.join("|")}`;
   const [budgetAck, setBudgetAck] = useState<string | null>(null);
   const budgetOk = budgetPaused.length > 0 && budgetAck === budgetKey;
-  const [chosenOptions, setChosenOptions] = useState<OptionValues>(saved ? {
+  const [chosenOptions, setChosenOptions] = useState<OptionValues>(() => readField(draftId, "chosenOptions", saved ? {
     ...(saved.options as OptionValues ?? {}), ...Object.fromEntries(LEGACY_OPTIONS.filter(k => saved[k] !== undefined).map(k => [k, saved[k]])) as OptionValues,
-  } : {});  // this provider's launch options, as changed here
+  } : {}));  // this provider's launch options, as changed here
   const info = registry.byId(form.provider);
   // Model endpoints this agent can use (it speaks one of their API styles)
   const usableEndpoints = (endpoints.data ?? []).filter((e) => e.styles.some((s) => info?.endpoint_styles.includes(s)));
@@ -191,7 +225,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     // A preset project that can't be used here (archived, read-only, local) falls back to the first usable one.
     if (projects.data && usable.length && !usable.some((p) => p.id === form.project_id)) setForm((f) => ({ ...f, project_id: usable[0].id }));
   }, [projects.data, usable, form.project_id]);
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => { beginEdit(); setForm((f) => ({ ...f, [key]: value })); };
   const workspace = mode === "workspace";
   useEffect(() => {
     if ((run === "several" && !feature("multirun")) || (run === "schedule" && !feature("schedules")) || (run === "helpers" && !feature("teams"))) setRun("once");
@@ -283,6 +317,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
         method: schedule?.id ? "PUT" : "POST", json: { ...scheduleConfig, launch: { ...body, budget_ok: false } } })
       : post<SessionDetail>("/api/sessions", { ...body, ...(choice.grant ? { orchestrator: choice.grant } : {}) }),
     onSuccess: (session, choice) => {
+      unsavedWork.unregister(activeDraftId);
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
       queryClient.invalidateQueries({ queryKey: ["multiruns"] });
       if (choice.briefDecision) allowBriefNavigation(`/sessions/${session.id}`);
@@ -367,49 +402,61 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const sharing = !workspace && project && !otherMachine && !form.worktree && !orchestrator && !multi && !project.private_workspace
     ? (sessions.data ?? []).filter((x) => x.project_id === project.id && isLive(x) && !x.worktree) : [];
   const runsOn = machine === "local" ? instance.host : machine;
-  const runsAs = workspace ? instance.agent_user : project?.account ?? instance.agent_user;
-  const dirty = !!(task || form.name.trim() || topic.trim());
+  const runsAs = workspace ? (inline ? person.account ?? instance.agent_user : instance.agent_user) : project?.account ?? instance.agent_user;
+  const activeDraftId = preset ? `new-session:preset:${JSON.stringify([mode, mode === 'project' ? form.project_id : undefined, existing, issue.ref])}` : draftId;
+  // A target change inside this mounted dialog moves its draft. Unmounting
+  // or opening another preset still retains that other dialog's own work.
+  const previousDraftId = useRef(activeDraftId);
+  useEffect(() => {
+    if (previousDraftId.current !== activeDraftId) unsavedWork.unregister(previousDraftId.current);
+    previousDraftId.current = activeDraftId;
+  }, [activeDraftId]);
+  const desiredDraft = { targetReview, scheduleConfig, mode, topic, customModel, profile, picks, form, machineChoice, cloneOnMachine, run, teamGrant, issue, automation, runChoices, chosenOptions };
+  const baseline = useRef(readField(draftId, "baseline", JSON.stringify(desiredDraft)));
+  // Automatic project/catalog defaults are not edits. Freeze their settled
+  // baseline at the first actual edit, before the event's state setters run.
+  if (!edited.current) baseline.current = JSON.stringify(desiredDraft);
+  const beginEdit = () => { if (inline && machineChoice === undefined && project) setMachineChoice(machine); if (!edited.current) { baseline.current = JSON.stringify(desiredDraft); edited.current = true; } };
+  const dirty = edited.current && JSON.stringify(desiredDraft) !== baseline.current;
+  const resetDraft = () => {
+    if (onDiscard) { onDiscard(); return; }
+    if (schedule) { onClose(); return; }
+    edited.current = false;
+    const initial = JSON.parse(baseline.current) as typeof desiredDraft;
+    setScheduleConfig(initial.scheduleConfig); setMode(initial.mode); setTopic(initial.topic); setCustomModel(initial.customModel);
+    setProfile(initial.profile); setPicks(initial.picks); setForm(initial.form); setMachineChoice(initial.machineChoice);
+    setCloneOnMachine(initial.cloneOnMachine); setRun(initial.run); setTeamGrant(initial.teamGrant); setIssue(initial.issue);
+    setAutomation(initial.automation); setRunChoices(initial.runChoices); setChosenOptions(initial.chosenOptions);
+  };
+  const clearUnsaved = useUnsavedDraft(activeDraftId, 'new-session', schedule ? 'Schedule draft' : 'New session', dirty, { ...desiredDraft, baseline: baseline.current }, resetDraft);
   const discard = async () => {
-    if (await confirm({ title: "Discard this draft?", body: "The task, name and choices you entered here are cleared.", confirm: "Discard draft", danger: true })) onDiscard?.();
+    if (await confirm({ title: "Discard this draft?", body: "The task, name and choices you entered here are cleared.", confirm: "Discard draft", danger: true })) { clearUnsaved(); resetDraft(); }
   };
   const runModes = RUN_MODES.filter((m) => (m.id !== "several" || feature("multirun")) && (m.id !== "schedule" || feature("schedules")) && (m.id !== "helpers" || feature("teams")) && (!desktopBuild && !workspace) || m.id === "once");
   const primary = scheduling ? (schedule?.id ? "Save schedule" : scheduleConfig.enabled ? "Create schedule" : "Create paused schedule")
     : untrusted ? "Trust and launch" : "Launch";
 
-  return (
-    <>
-    <Dialog open={open} onClose={onClose} title={schedule ? (schedule.id ? "Edit schedule" : "New schedule") : "New session"} wide dismissible={false}
-      description={scheduling ? "A saved launch that starts by itself at the times you choose. Each run is an ordinary session under your agent account."
-        : "Say what to work on and launch; the rest has defaults under Advanced."}
-      footer={briefChoice ? undefined : <>
-        <span className={clsx("mr-auto min-w-0 basis-full text-xs sm:basis-auto", reason && !/Add a task|topic|Choose a project/.test(reason) ? "text-wait" : "text-muted")} role="status">
-          {reason || (scheduling ? (scheduleConfig.enabled ? "Ready. It starts at the times you chose." : "Ready. It's saved paused: tick Enable schedule to start it, or enable it later on Schedules.")
-            : untrusted ? "Ready. Launch asks you to trust the project first." : "Ready to launch.")}
-          {orchestrator && instance.orchestrator && teamGrant.brief_version !== undefined && <span className="block">
-            {teamGrant.brief_version ? `Project brief: saved version ${teamGrant.brief_version}.` : 'Project brief: none pinned.'}
-          </span>}
-        </span>
-        {multi?multiPreviews.map((p,i)=><SecurityBadge key={i} policy={frozenSecurity(p.data?.files)} label={`Run ${i+1} launch`}/>):<SecurityBadge policy={frozenSecurity(preview.data?.files)} label="This launch"/>}
-        <ErrorNote error={trust.error} title="Couldn't trust the project." />
-        <ErrorNote error={launch.error} />
-        <ErrorNote error={reviewBrief.error} title="Couldn't check the next brief version. Try Launch again." />
-        <ErrorNote error={registry.error || models.error} />
-        {dirty && onDiscard && <Button variant="ghost" onClick={discard}>Discard draft</Button>}
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <span ref={launchButton} className="contents"><Button variant="primary" disabled={blocked || (!multi && !!preview.error) || launch.isPending || trust.isPending || reviewBrief.isPending} onClick={start}>
-          <Rocket size={14} aria-hidden="true" /> {reviewBrief.isPending ? "Checking brief…" : launch.isPending || trust.isPending ? (scheduling ? "Saving…" : "Launching…") : primary}
-        </Button></span>
-      </>}>
-      {briefChoice ? <>
-        <ErrorNote error={trust.error} title="Couldn't trust the project." />
-        <BriefLaunchReview choice={briefChoice} grant={teamGrant} ensureTrusted={ensureTrusted} onGrant={setTeamGrant}
-          onLaunch={grant => launch.mutateAsync({ grant, briefDecision: true })} onBack={() => {
-            returningFromBrief.current = true; setBriefChoice(undefined); reviewBrief.reset(); launch.reset();
-          }} />
-      </> : <div className="min-w-0 space-y-6">
-        <section aria-labelledby="ns-what" className="min-w-0 space-y-3">
+  const reviewedPath = workspace ? existing ?? (preview.data?.machine === machine ? preview.data.cwd : undefined)
+    : preview.data?.machine === machine && preview.data.checkout?.repository ? preview.data.checkout.repository
+    : targetReview?.machine === machine && targetReview.account === runsAs && targetReview.projectId === projectId ? targetReview.path
+    : !otherMachine ? project?.workspace_path ?? existing : undefined;
+  useEffect(() => {
+    if (workspace || !inline || !preview.data || preview.data.machine !== machine) return;
+    const path = preview.data.checkout?.repository ?? (!otherMachine ? project?.workspace_path ?? existing : undefined);
+    if (!path) return;
+    setTargetReview(previous => previous?.machine === machine && previous.account === runsAs && previous.projectId === projectId && previous.path === path
+      ? previous : {machine, account: runsAs, path, projectId});
+  }, [workspace, inline, preview.data, machine, runsAs, projectId, otherMachine, project?.workspace_path, existing]);
+  const offlineReview = inline && selectedMachine && !selectedMachine.connected ? <aside aria-label="Offline working location" className="space-y-3 rounded-lg border border-wait/30 bg-wait/10 p-4">
+    <h3 className="font-semibold">{runsOn} is offline</h3>
+    <p className="text-sm">Last seen: {selectedMachine.last_seen ? ago(selectedMachine.last_seen) : 'unknown'}. {selectedMachine.reason ?? 'This working location is unavailable.'}</p>
+    <p className="text-xs">Your task and selected location are kept. Reconnecting does not launch this draft.</p>
+    <div className="flex flex-wrap gap-2"><Button disabled={machines.isFetching} onClick={() => { void machines.refetch(); void registry.refetch(); void preview.refetch(); }}>Check connection</Button>
+      <Button onClick={() => { setLocationOpen(true); requestAnimationFrame(() => locationPanel.current?.querySelector<HTMLSelectElement>('[data-launch-machine]')?.focus()); }}>Choose another location</Button></div>
+  </aside> : null;
+  const locationFields = <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 id="ns-what" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">What</h3>
+            <h3 hidden={inline} id="ns-what" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">What</h3>
             {schedule ? <Badge>Scheduled project session</Badge> : existing ? <Badge tone="info">Local workspace</Badge> : (
               <Segmented label="Where it runs" value={mode} onChange={switchMode} options={[
                 { id: "project", label: "Project" }, { id: "workspace", label: "Local workspace" }]} />)}
@@ -439,28 +486,21 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                   <Button size="sm" variant="primary" onClick={() => setCreatingProject(true)}><FolderPlus size={13} aria-hidden="true" /> New project</Button>
                 </div>
               )}
-              {feature("issue_sources") && !multi && project && !project.private_workspace && <NewSessionIssuePicker key={project.id} projectId={project.id}
+              {feature("issue_sources") && !multi && project && !project.private_workspace && <NewSessionIssuePicker key={project.id} projectId={project.id} ownTaskLabel={inline ? "Your own task (above)" : undefined}
                 selected={issue.projectId === project.id ? issue.ref : undefined}
-                onSelect={(ref, name) => { setIssue({ projectId: project.id, ref }); if (name && !form.name.trim()) set("name", name); }} />}
+                onSelect={(ref, name) => { beginEdit(); setIssue({ projectId: project.id, ref }); if (name && !form.name.trim()) set("name", name); }} />}
             </>
           )}
+  </>;
+  const taskField = <>
           <Field label={multi ? "Task" : "Task (optional)"} hint={multi ? "The same task is sent once to every run." : scheduling ? "Sent at the start of every run." : orchestrator ? "This first message starts the lead’s planning session. Edit it to give your own instructions. It is not resent on resume." : "Sent once when the session starts. Without one, the agent waits for you."}>
-            <Textarea rows={orchestrator ? 6 : 3} value={firstMessage} onChange={(e) => set("initial_prompt", e.target.value)} placeholder="What should the agent work on?"
+            <Textarea data-launch-task rows={orchestrator ? 6 : 3} value={firstMessage} onChange={(e) => set("initial_prompt", e.target.value)} placeholder="What should the agent work on?"
               autoFocus={!workspace} aria-required={multi || undefined} />
           </Field>
-          {sharing.length > 0 && (
-            <Note icon={ShieldAlert}>
-              <span className="block">{sharing.map((x) => x.name).join(", ")} {sharing.length === 1 ? "is" : "are"} already working in this checkout. Two agents in one folder can overwrite each other's files.</span>
-              <button type="button" className="mt-1 inline-flex pointer-coarse:min-h-11 items-center font-medium underline underline-offset-2" onClick={() => set("worktree", true)}>Use its own worktree</button>
-            </Note>
-          )}
-          {scheduling && <ScheduleTiming value={scheduleConfig} onChange={setScheduleConfig} />}
-        </section>
-
-        <section aria-labelledby="ns-who" className="min-w-0 space-y-3">
-          <h3 id="ns-who" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Who</h3>
+  </>;
+  const machineFields = <>
           <Field label="Machine" hint={workspace ? "Local workspaces stay on this Rynhult. Choose a project to use another machine." : selectedMachine ? machineDetail(selectedMachine) : "Choose where this session runs."}>
-            <Select value={machine} disabled={machines.isPending || workspace} onChange={e => chooseMachine(e.target.value)}>
+            <Select data-launch-machine value={machine} disabled={machines.isPending || workspace} onChange={e => chooseMachine(e.target.value)}>
               {!machines.data?.some(item => item.name === machine) && <option value={machine}>{machine === "local" ? "This Rynhult (main)" : machine}</option>}
               {machines.data?.map(item => <option key={item.name} value={item.name}
                 disabled={!item.available || !!project?.containers && item.name !== "local" || !!project?.private_workspace && item.name !== (project.host || "local")}>
@@ -475,9 +515,11 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
               : <Button onClick={() => setCloneOnMachine(true)}>Clone on {machine}</Button>}
           </div>}
           {otherMachine && !needsClone && preview.data?.machine === machine && <p className="text-xs text-muted">Using an existing checkout on {machine}.</p>}
-          {multi ? <MultiRunFields value={runChoices} onChange={setRunChoices} catalog={catalog} providers={registry.list}
+  </>;
+  const agentFields = <>
+          {multi ? <MultiRunFields value={runChoices} onChange={value => { beginEdit(); setRunChoices(value); }} catalog={catalog} providers={registry.list}
             models={(p) => modelsFor(models.data, p)} /> : <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className={clsx("grid grid-cols-1 gap-3", inline ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
               <Field label="Agent">
                 <Select value={form.provider} onChange={(e) => {
                   const provider = e.target.value as Provider;
@@ -501,31 +543,42 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                   {profiles.map((p) => <option key={p.id} value={p.id} title={p.description}>{p.name}</option>)}
                 </Select>
               </Field>
+              {inline && <>
+            <Field label="Run">
+              <Select value={run} onChange={event => chooseRun(event.target.value as RunMode)}>
+                {runModes.map(item => <option key={item.id} value={item.id} disabled={item.id === 'helpers' && (registry.isPending || !!registry.error)}>{item.label}</option>)}
+              </Select>
+            </Field>
+              </>}
             </div>
-            {profile ? <p className="-mt-1 text-xs text-muted">{catalog?.profiles.find((p) => p.id === profile)?.description}</p>
-              : !workspace && profiles.length > 0 && <p className="-mt-1 text-xs text-muted">Optional: a profile gives the agent a role, with its own skills and tools. Not sure? Leave None, or choose Full-stack to build an app end to end.</p>}
+            {!inline && (profile ? <p className="-mt-1 text-xs text-muted">{catalog?.profiles.find((p) => p.id === profile)?.description}</p>
+              : !workspace && profiles.length > 0 && <p className="-mt-1 text-xs text-muted">Optional: a profile gives the agent a role, with its own skills and tools. Not sure? Leave None, or choose Full-stack to build an app end to end.</p>)}
             {info?.preview && (
               <Note>{info.label} support is a preview: {info.preview_note ?? "Rynhult hasn't been verified against the real CLI yet."}
                 {info.tier !== "full" && " It has no reliable “needs you” signal, so check on it in the terminal."}</Note>
             )}
+            {form.provider === "claude" && (!!schedule || !!preview.data?.claude_auth_keys?.length || form.claude_auth === "api_key") && <Field label="Claude sign-in">
+              <Select value={form.claude_auth ?? "subscription"} onChange={e => setForm(f => ({ ...f, claude_auth: e.target.value as "subscription" | "api_key" }))}>
+                <option value="subscription">Your Claude login (subscription)</option>
+                <option value="api_key">{preview.data?.claude_auth_keys?.length && preview.data.claude_auth_keys.every(k => k.variable === "CLAUDE_CODE_OAUTH_TOKEN") ? "Subscription token" : "API key"}: {(preview.data?.claude_auth_keys ?? []).map(k => k.name).join(", ")}{preview.data?.claude_auth_keys?.every(k => k.variable === "CLAUDE_CODE_OAUTH_TOKEN") ? "" : " (API billing)"}</option>
+              </Select>
+            </Field>}
             <SessionKeys keys={preview.data?.keys} />
           </>}
+  </>;
+  const nameFields = <>
           <SessionName value={form.name} auto={autoName} onChange={(name) => set("name", name)} />
           <p className="text-xs text-faint">Runs on {runsOn} as <span className="font-mono">{runsAs}</span>. Watch and answer it here, or in its terminal{info?.supports.includes("remote_control") ? " or Remote Control" : ""}.</p>
-        </section>
-
-        <section aria-label="Advanced" className="min-w-0 rounded-lg border border-line">
-          <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} aria-controls="ns-advanced"
-            className="flex w-full items-start gap-2 px-3 py-2.5 text-left">
-            <ChevronRight size={14} className={clsx("mt-0.5 shrink-0 text-faint transition-transform", advanced && "rotate-90")} aria-hidden="true" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium text-fg">Advanced</span>
-              <span className="block text-xs text-muted [overflow-wrap:anywhere]" data-testid="advanced-summary">{summary}</span>
-            </span>
-            <span className="text-xs text-accent">{advanced ? "Done" : "Change"}</span>
-          </button>
-          {advanced && (
-            <div id="ns-advanced" className="min-w-0 space-y-5 border-t border-line p-3">
+  </>;
+  const chooseRun = (next: RunMode) => {
+    setRun(next); setConfirmBypass(false);
+    if (next === 'helpers') {
+      setTeamGrant(defaultGrant(machine, registry.data?.team_agents));
+      if (inline && permissionsPanel.current) permissionsPanel.current.open = true;
+    }
+    if (next === 'schedule' && !form.worktree) set('worktree', true);
+  };
+  const runFields = <>
               {!schedule && runModes.length > 1 && (
                 <fieldset className="min-w-0 space-y-2">
                   <legend className="mb-1.5 text-xs font-medium text-muted">Run</legend>
@@ -534,18 +587,20 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                       <input type="radio" name="ns-run" value={m.id} checked={run === m.id} className="mt-0.5 size-3.5 accent-[var(--accent)]"
                         disabled={m.id === "helpers" && (registry.isPending || !!registry.error)}
                         onChange={() => {
-                          setRun(m.id);
-                          setConfirmBypass(false);
-                          if (m.id === "helpers") setTeamGrant(defaultGrant(machine, registry.data?.team_agents));
-                          if (m.id === "schedule" && !form.worktree) set("worktree", true);  // scheduled runs default to their own worktree
+                          chooseRun(m.id);
                         }} />
                       <span><span className="font-medium">{m.label}</span><span className="block text-xs text-muted">{m.detail}</span></span>
                     </label>
                   ))}
                 </fieldset>
               )}
+  </>;
+  const grantFields = <>
+              {orchestrator && <ClaudeAutomationNotice refusal={authRefusal} />}
               {orchestrator && !workspace && <OrchestratorFields key={project?.id} projectId={project?.id} value={teamGrant}
                 onChange={(value) => { setTeamGrant(value); setConfirmBypass(false); }} onOpenBrief={onClose} catalog={catalog} providers={registry.list} />}
+  </>;
+  const worktreeFields = <>
               {!workspace && project && !multi && (
                 <label className="flex items-start gap-2.5 text-[13px]">
                   <input type="checkbox" className="mt-0.5 size-3.5 accent-[var(--accent)]" checked={orchestrator || otherMachine || !!project.private_workspace || form.worktree} disabled={orchestrator || otherMachine || project.private_workspace}
@@ -554,7 +609,17 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                     <span className="block text-xs text-muted">A separate copy on its own branch (acc/…), so parallel agents don't overwrite each other's files. Needs git.{otherMachine ? " Required on another machine." : project.private_workspace ? " Required for Development workspaces; git stays local-only." : ""}</span></span>
                 </label>
               )}
-              {!multi && <>
+  </>;
+  const providerSelectFields = <>
+                  {info?.options.filter((o) => o.kind === "select").map((o) => (
+                    <Field key={o.key} label={o.label} hint={o.help || undefined}>
+                      <Select value={String(options[o.key])} onChange={(e) => setChosenOptions((x) => ({ ...x, [o.key]: e.target.value }))}>
+                        {o.choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </Select>
+                    </Field>
+                  ))}
+  </>;
+  const modelFields = <>
                 {usableEndpoints.length > 0 && (
                   <Field label="Models from" hint={endpoint ? `${endpoint.name}: hooks, resume and the terminal work as usual; only the model changes.` : undefined}>
                     <Select value={form.endpoint} onChange={(e) => { set("endpoint", e.target.value); set("model", ""); setCustomModel(false); }}>
@@ -589,14 +654,11 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                       </Select>
                     </Field>
                   )}
-                  {info?.options.filter((o) => o.kind === "select").map((o) => (
-                    <Field key={o.key} label={o.label} hint={o.help || undefined}>
-                      <Select value={String(options[o.key])} onChange={(e) => setChosenOptions((x) => ({ ...x, [o.key]: e.target.value }))}>
-                        {o.choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </Select>
-                    </Field>
-                  ))}
+                  {!inline && providerSelectFields}
                 </div>
+  </>;
+  const permissionFields = <>
+                {inline && providerSelectFields}
                 {info?.options.filter((o) => o.kind === "bool").map((o) => (
                   <label key={o.key} className="flex items-start gap-2 text-[13px] text-fg">
                     <input type="checkbox" checked={options[o.key] === true} disabled={!!endpoint && o.key === "remote_control"}
@@ -605,9 +667,12 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                     <span>{o.label}{o.help && <span className="block text-xs text-faint">{o.help}</span>}</span>
                   </label>
                 ))}
+  </>;
+  const extraFields = <>
                 <fieldset hidden={!feature("automation")} className="min-w-0 space-y-3">
                   <legend className="mb-1.5 text-xs font-medium text-muted">Goal and auto-resume</legend>
-                  <AutomationFields provider={form.provider} value={automation} onChange={setAutomation} disabled={!!form.endpoint} />
+                  <ClaudeAutomationNotice refusal={authRefusal} />
+                  <AutomationFields provider={form.provider} value={automation} onChange={setAutomation} disabled={!!form.endpoint || !!authRefusal} />
                 </fieldset>
                 {catalog && (
                   <div className="rounded-lg border border-line">
@@ -628,13 +693,15 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                         <SearchInput value={pickQuery} onChange={setPickQuery} placeholder="Filter skills, agents and servers" className="w-full" />
                         <CatalogPicker title="Skills" query={pickQuery} items={catalog.skills} selected={picks.skills} provider={form.provider} onChange={(skills) => setPicks((x) => ({ ...x, skills }))} />
                         {(!info || info.supports.includes("agents")) && <CatalogPicker title="Agents (subagents)" query={pickQuery} items={catalog.agents} selected={picks.agents} provider={form.provider} onChange={(agents) => setPicks((x) => ({ ...x, agents }))} />}
+                        {form.provider === "claude" && form.claude_auth !== "api_key" && <p className="text-xs text-muted">Anthropic keys are only passed with API billing</p>}
                         <CatalogPicker title="MCP servers" query={pickQuery} items={catalog.mcps} selected={picks.mcps} provider={form.provider} onChange={(mcps) => setPicks((x) => ({ ...x, mcps }))} />
                         <p className="text-[11px] text-faint">Only what is selected is enabled for this session. Hover an item for its source and licence.</p>
                       </div>
                     )}
                   </div>
                 )}
-              </>}
+  </>;
+  const commandFields = <>
               <div className="min-w-0 space-y-2">
                 <div className="text-xs font-medium text-muted">Exactly what will run</div><p className="text-xs text-muted">Commands containing placeholders such as &lt;run-dir&gt; are previews, not directly runnable. Replace placeholders before running.</p>
                 {multi ? multiPreviews.map((p, i) => <details key={i} className="min-w-0 rounded-lg border border-line bg-bg text-xs">
@@ -663,9 +730,117 @@ ${preview.data.command.map(shellQuote).join(" ")}`} label="Copy launch command" 
                 <p className="text-xs text-faint">Hooks report status to Rynhult; nothing else is injected{preview.data?.keys?.keys.length ? " besides the keys listed above, as environment variables" : ""}.</p>
                 </>}
               </div>
+  </>;
+  return (
+    <>
+    <SessionLaunchFrame workspace={inline} recovery={!!offlineReview} open={open} onClose={onClose} title={schedule ? (schedule.id ? "Edit schedule" : "New schedule") : "New session"} wide dismissible={false}
+      description={scheduling ? "A saved launch that starts by itself at the times you choose. Each run is an ordinary session under your agent account."
+        : inline ? "Start with a task. Your project context comes with you." : "Say what to work on and launch; the rest has defaults under Advanced."}
+      footer={briefChoice ? undefined : <>
+        <span className={clsx("mr-auto min-w-0 basis-full text-xs sm:basis-auto", reason && !/Add a task|topic|Choose a project/.test(reason) ? "text-wait" : "text-muted")} role="status">
+          {reason || (scheduling ? (scheduleConfig.enabled ? "Ready. It starts at the times you chose." : "Ready. It's saved paused: tick Enable schedule to start it, or enable it later on Schedules.")
+            : untrusted ? "Ready. Launch asks you to trust the project first." : "Ready to launch.")}
+          {orchestrator && instance.orchestrator && teamGrant.brief_version !== undefined && <span className="block">
+            {teamGrant.brief_version ? `Project brief: saved version ${teamGrant.brief_version}.` : 'Project brief: none pinned.'}
+          </span>}
+        </span>
+        {multi?multiPreviews.map((p,i)=><SecurityBadge key={i} policy={frozenSecurity(p.data?.files)} label={`Run ${i+1} launch`}/>):<SecurityBadge policy={frozenSecurity(preview.data?.files)} label="This launch"/>}
+        <ErrorNote error={trust.error} title="Couldn't trust the project." action={<a href="/settings/security/folders">Open Allowed folders in Security</a>} />
+        <ErrorNote error={launch.error} />
+        {inline && launch.error && (!(launch.error instanceof ApiError) || launch.error.status >= 500) && <p role="status" className="text-xs text-wait">{scheduling ? "Schedule save was not confirmed. Check Schedules before trying again; it may have been saved. Your draft is kept." : "Launch was not confirmed. Check Sessions before trying again; a session may have started. Your draft is kept."}</p>}
+        <ErrorNote error={reviewBrief.error} title="Couldn't check the next brief version. Try Launch again." />
+        <ErrorNote error={registry.error || models.error} />
+        {dirty && <Button variant="ghost" onClick={discard}>Discard draft</Button>}
+        <Button variant="ghost" onClick={onClose}>{inline ? "Back to workspace" : "Cancel"}</Button>
+        <span ref={launchButton} className="contents"><Button variant="primary" disabled={blocked || (!multi && !!preview.error) || launch.isPending || trust.isPending || reviewBrief.isPending} onClick={start}>
+          <Rocket size={14} aria-hidden="true" /> {reviewBrief.isPending ? "Checking brief…" : launch.isPending || trust.isPending ? (scheduling ? "Saving…" : "Launching…") : primary}
+        </Button></span>
+      </>}>
+      {briefChoice ? <>
+        <ErrorNote error={trust.error} title="Couldn't trust the project." action={<a href="/settings/security/folders">Open Allowed folders in Security</a>} />
+        <BriefLaunchReview choice={briefChoice} grant={teamGrant} ensureTrusted={ensureTrusted} onGrant={setTeamGrant}
+          onLaunch={grant => launch.mutateAsync({ grant, briefDecision: true })} onBack={() => {
+            returningFromBrief.current = true; setBriefChoice(undefined); reviewBrief.reset(); launch.reset();
+          }} />
+      </> : <div className="min-w-0 space-y-6" onChangeCapture={beginEdit} onClickCapture={event => {
+        if ((event.target as HTMLElement).closest('button[role="radio"], button[aria-pressed]')) beginEdit();
+      }}>
+        {inline ? <>
+          <div><p className="text-xs text-muted">{project?.name ?? (workspace ? 'Local workspace' : 'Choose a project below')}</p><h2 className="mt-2 text-xl font-semibold">What would you like to work on?</h2></div>
+          <div className={offlineReview ? "grid items-start gap-6 lg:grid-cols-2" : "space-y-4"}><div className="space-y-4">{taskField}
+          <section aria-label="Working location" className="space-y-1 border-y border-line py-3 text-sm [overflow-wrap:anywhere]">
+            {!workspace && !project ? <p role="status">{projects.isPending ? 'Checking selected project…' : projects.error ? 'Could not load the selected project.' : 'Choose a project under Model and working location.'}</p> : <>
+            <p>Target: <strong>{runsOn}</strong> · <span className="font-mono">{runsAs}</span></p>
+            <p className="text-xs text-muted">{workspace && !existing ? "Planned workspace folder" : "Recorded checkout"}</p><p className="font-mono text-xs">{reviewedPath ?? 'Working path not yet checked on this target.'}</p>
+            </>}
+          </section>
+          </div>{offlineReview}</div>
+          <section aria-label="Agent or team" className="space-y-3">
+            <h3 className="text-sm font-medium">Agent or team</h3>
+            {agentFields}
+
+            <p className="text-xs text-muted [overflow-wrap:anywhere]">{summary}</p>
+            {orchestrator && <p className="text-xs text-muted">Up to {teamGrant.at_once} helpers at once, {teamGrant.total} in total · {teamGrant.hours ? `${teamGrant.hours} hours` : "no time limit"}. Review the grant under Permissions and limits.</p>}
+          </section>
+          {nameFields}
+          <details ref={locationPanel} open={locationOpen} onToggle={event => setLocationOpen(event.currentTarget.open)} className="border-b border-line pb-4">
+            <summary className="cursor-pointer text-sm font-medium">Model and working location</summary>
+            <div className="mt-4 space-y-4">{locationFields}{machineFields}{worktreeFields}{!multi && modelFields}</div>
+          </details>
+          <details ref={permissionsPanel} className="border-b border-line pb-4"><summary className="cursor-pointer text-sm font-medium">Permissions and limits</summary>
+            <div className="mt-4 space-y-4">{grantFields}{!multi && permissionFields}<p className="text-xs text-muted">{optionWords.join(' · ') || 'The selected agent’s defaults apply.'} Consent and Security checks still apply before launching.</p></div>
+          </details>
+          <details className="border-b border-line pb-4"><summary className="cursor-pointer text-sm font-medium">More options</summary>
+            <div className="mt-4 space-y-4">{!multi && extraFields}{commandFields}</div>
+          </details>
+          {sharing.length > 0 && <Note icon={ShieldAlert}>Other sessions already work in this checkout. Review Own worktree under Model and working location.</Note>}
+          {scheduling && <><ClaudeAutomationNotice refusal={authRefusal} /><ScheduleTiming value={scheduleConfig} onChange={setScheduleConfig}/></>}
+        </> : <>
+        <section aria-labelledby="ns-what" className="min-w-0 space-y-3">
+          {locationFields}
+          {taskField}
+          {sharing.length > 0 && (
+            <Note icon={ShieldAlert}>
+              <span className="block">{sharing.map((x) => x.name).join(", ")} {sharing.length === 1 ? "is" : "are"} already working in this checkout. Two agents in one folder can overwrite each other's files.</span>
+              <button type="button" className="mt-1 inline-flex pointer-coarse:min-h-11 items-center font-medium underline underline-offset-2" onClick={() => set("worktree", true)}>Use its own worktree</button>
+            </Note>
+          )}
+          {scheduling && <ScheduleTiming value={scheduleConfig} onChange={setScheduleConfig} />}
+        </section>
+
+        <section aria-labelledby="ns-who" className="min-w-0 space-y-3">
+          <h3 id="ns-who" className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Who</h3>
+          {machineFields}
+          {agentFields}
+          {nameFields}
+        </section>
+
+        <section aria-label="Advanced" className="min-w-0 rounded-lg border border-line">
+          <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} aria-controls="ns-advanced"
+            className="flex w-full items-start gap-2 px-3 py-2.5 text-left">
+            <ChevronRight size={14} className={clsx("mt-0.5 shrink-0 text-faint transition-transform", advanced && "rotate-90")} aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-medium text-fg">Advanced</span>
+              <span className="block text-xs text-muted [overflow-wrap:anywhere]" data-testid="advanced-summary">{summary}</span>
+            </span>
+            <span className="text-xs text-accent">{advanced ? "Done" : "Change"}</span>
+          </button>
+          {advanced && (
+            <div id="ns-advanced" className="min-w-0 space-y-5 border-t border-line p-3">
+          {runFields}
+          {grantFields}
+          {worktreeFields}
+              {!multi && <>
+                {modelFields}
+                {permissionFields}
+          {extraFields}
+              </>}
+          {commandFields}
             </div>
           )}
         </section>
+
+        </>}
 
         {multi ? multiPreviews.map((p, i) => {
           if (!p.error && !p.data?.not_delivered?.length && !p.data?.keys?.keys.length && !p.data?.keys?.held_back.length) return null;
@@ -694,8 +869,8 @@ ${preview.data.command.map(shellQuote).join(" ")}`} label="Copy launch command" 
           </label>
         )}
       </div>}
-    </Dialog>
-    <NewProjectDialog open={creatingProject} onClose={() => setCreatingProject(false)}
+    </SessionLaunchFrame>
+    <NewProjectDialog parentId={activeDraftId} open={creatingProject} onClose={() => setCreatingProject(false)}
       onCreated={(made) => { setMode("project"); set("project_id", made.id); setIssue({}); }} />
     </>
   );

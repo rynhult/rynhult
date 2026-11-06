@@ -1,12 +1,13 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "./fixtures";
+import { test } from './shell-state';
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { AUTH_FILE, control, info, openAdvanced, shot, totp, wikiShotPath } from "./helpers";
+import { AUTH_FILE, control, csrfHeaders, info, openAdvanced, shot, totp, wikiShotPath } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard', presentationChanges: ['ui_shell', 'layouts'] });
 test.describe.configure({ mode: "serial" });
 
 let sessionId = "";
@@ -50,7 +51,10 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test.afterEach(async () => {
+test.afterEach(async ({ page }) => {
+  // Proxy routes can still be reading a polling response when assertions finish.
+  // Drain handlers before disposing their API response context.
+  await page.unrouteAll({ behavior: 'wait' });
   await Promise.all(captures);
 });
 
@@ -150,6 +154,9 @@ test("second window is read-only until it takes control", async ({ browser }, te
   await two.goto(`/sessions/${sessionId}`);
   await expect(two.getByText(/Read-only · another window/)).toBeVisible();
   await two.getByRole("button", { name: "Take control" }).click();
+  const handover = two.getByRole('dialog', { name: 'Take terminal control' });
+  await handover.getByLabel('Reason').selectOption('manual_handover');
+  await handover.getByRole('button', { name: 'Take control', exact: true }).click();
   await expect(two.getByText("Read-write")).toBeVisible();
   await expect(one.getByText("Another window took control of this terminal.", { exact: true })).toBeVisible();
   await shot(one, testInfo.project.name, "control-taken");
@@ -298,7 +305,11 @@ test("catalog: add an MCP server and a skill, assign them, edit a profile", asyn
   await dialog.getByRole("button", { name: "Add to catalog" }).dblclick();
   await expect(page.getByText(`mcp · ${fixture("shadcn")}`)).toBeVisible();  // Frontend profile now includes it
   await page.getByRole("tab", { name: /MCP servers/ }).click();
+  // Other catalog entries can legitimately use this same command. Filter by
+  // this repetition's owned ID before checking its exact pinned invocation.
+  await page.getByRole("searchbox", { name: "Filter" }).fill(fixture("shadcn"));
   await expect(page.getByText("npx -y shadcn@4.22.0 mcp")).toBeVisible();
+  await page.getByRole("searchbox", { name: "Filter" }).fill("");
 
   await page.getByRole("tab", { name: /Skills/ }).click();
   await page.getByRole("button", { name: "Add skill or agent" }).click();
@@ -542,11 +553,17 @@ test("keys: add one, paste a .env, give it to a project, New session shows the v
 });
 
 test("an issue or pull request opens New session pre-filled (nothing launches by itself)", async ({ page }) => {
-  // The fixture project has no GitHub repository: stand in a repo and a snapshot with one issue and one PR.
+  // Own the project: this test must also run alone, without "register and trust a project".
+  const created = await page.request.post("/api/projects/new", {
+    headers: await csrfHeaders(page), data: { name: fixture("Issues"), source: "empty" },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const project = await created.json() as { id: number; name: string };
+  // It has no GitHub repository: stand in a repo and a snapshot with one issue and one PR.
   await page.route("**/api/projects", async (route) => {
     const response = await route.fetch();
-    const projects = (await response.json()) as { name: string; repo?: string }[];
-    await route.fulfill({ response, json: projects.map((p) => (p.name === fixture("Demo") ? { ...p, repo: "example/demo" } : p)) });
+    const projects = (await response.json()) as { id: number; repo?: string }[];
+    await route.fulfill({ response, json: projects.map((p) => (p.id === project.id ? { ...p, repo: "example/demo" } : p)) });
   });
   const updated = new Date().toISOString();
   await page.route("**/api/projects/*/github*", (route) => route.fulfill({ json: {
@@ -556,7 +573,7 @@ test("an issue or pull request opens New session pre-filled (nothing launches by
     issues: [{ number: 12, title: "Crash on empty input", author: "alex", labels: ["bug"], updated_at: updated, url: "https://github.com/example/demo/issues/12" }],
   } }));
   await page.goto("/projects");
-  await page.getByRole("link", { name: fixture("Demo"), exact: true }).click();
+  await page.getByRole("link", { name: project.name, exact: true }).click();
   await page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues and pull requests", exact: true }).click();
   await page.getByRole("button", { name: "Start session for issue #12" }).click();
   const dialog = page.getByRole("dialog");
@@ -572,18 +589,23 @@ test("an issue or pull request opens New session pre-filled (nothing launches by
 });
 
 test("autostart: an owner approves the compose files, and a change holds the stack until approved", async ({ page }, testInfo) => {
-  // The fixture project has no compose file and no Docker: stand in the runtime answers (tests/test_compose_pin.py covers the server).
+  // Own the project: this test must also run alone, without "register and trust a project".
+  const created = await page.request.post("/api/projects/new", {
+    headers: await csrfHeaders(page), data: { name: fixture("Autostart"), source: "empty" },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const project = await created.json() as { id: number; name: string };
+  // No Docker in the fixture: stand in only this project's runtime answers
+  // (tests/test_compose_pin.py covers the server). Bind its ID before any page query.
   let approved = false, autostart = false, posted: { compose_autostart?: boolean; digest?: string } = {};
   const digest = "a".repeat(64), changed = "b".repeat(64);
-  let demo = -1;
   await page.route("**/api/projects", async (route) => {
     const response = await route.fetch();
     const projects = (await response.json()) as { id: number; name: string }[];
-    demo = projects.find((p) => p.name === fixture("Demo"))?.id ?? -1;
-    await route.fulfill({ response, json: projects.map((p) => (p.name === fixture("Demo") ? { ...p, compose_autostart: autostart, compose_approved: approved } : p)) });
+    await route.fulfill({ response, json: projects.map((p) => (p.id === project.id ? { ...p, compose_autostart: autostart, compose_approved: approved } : p)) });
   });
   await page.route("**/api/projects/*/runtime", async (route) => {
-    if (!route.request().url().includes(`/api/projects/${demo}/runtime`)) return route.continue();
+    if (!route.request().url().includes(`/api/projects/${project.id}/runtime`)) return route.continue();
     if (route.request().method() === "POST") {
       posted = route.request().postDataJSON();
       autostart = !!posted.compose_autostart;
@@ -598,12 +620,12 @@ test("autostart: an owner approves the compose files, and a change holds the sta
     await route.fulfill({ json: { containers: [{ Service: "web", Name: "demo-web-1", State: "running", Status: "Up 2 minutes" }], compose: review } });
   });
   await page.goto("/projects");
-  // Demo's card (other tests may have added projects)
-  const card = page.locator("section").filter({ has: page.getByRole("link", { name: fixture("Demo"), exact: true }) });
+  // Scope to the owned project; neighboring cases may have added other projects.
+  const card = page.locator("section").filter({ has: page.getByRole("link", { name: project.name, exact: true }) });
   const autostartBox = card.getByRole("checkbox", { name: "Autostart" });
   await expect(autostartBox).toBeEnabled();  // once the review has loaded
   await autostartBox.click();
-  const dialog = page.getByRole("dialog", { name: `Approve ${fixture("Demo")}'s compose files?` });
+  const dialog = page.getByRole("dialog", { name: `Approve ${project.name}'s compose files?` });
   await expect(dialog.getByText("+    image: nginx")).toBeVisible();
   await expect(dialog.getByText(/Never approved/)).toBeVisible();
   await dialog.getByRole("button", { name: "Approve and turn on autostart" }).dblclick();
@@ -909,9 +931,12 @@ test("owner invites a member, who joins with their own sign-in", async ({ page, 
   await page.getByRole("button", { name: "Create invite link" }).dblclick();
   const url = (await page.locator("code").filter({ hasText: "/invite/" }).textContent())!.trim();
   await shot(page, testInfo.project.name, "settings-people");
-  const guest = await browser.newContext();  // a different person, signed out
+  // newContext inherits the fixture sign-in. Joining must also replace an
+  // existing person safely, without reloading the now-consumed invite URL.
+  const guest = await browser.newContext({ storageState: AUTH_FILE });
   const joiner = await guest.newPage();
   await joiner.goto(url);
+  expect((await (await guest.request.get(info().origin + '/api/auth/state')).json()).username).toBe('alex');
   await expect(joiner.getByText("You're invited as a member")).toBeVisible();
   await shot(joiner, testInfo.project.name, "invite");
   const secret = (await joiner.getByTitle("Manual entry key").textContent())!.trim();
@@ -920,7 +945,10 @@ test("owner invites a member, who joins with their own sign-in", async ({ page, 
   await joiner.getByLabel("Confirm password").fill("blair's long password");
   await joiner.getByLabel("Code from your authenticator").fill(totp(secret));
   await joiner.getByRole("button", { name: "Join" }).dblclick();
+  await joiner.getByRole("button", { name: "I saved the codes", exact: true }).click();
   await expect(joiner.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+  expect((await joiner.request.put(info().origin + '/api/preferences/ui-shell', { headers: await csrfHeaders(joiner), data: { enabled: false } })).ok()).toBeTruthy();
+  await joiner.reload();
   const menu = joiner.getByRole("navigation", { name: "Main" });
   await expect(menu.getByRole("link", { name: "Sessions" })).toBeVisible();
   await expect(menu.getByRole("link", { name: "Host" })).toBeVisible();  // health is for everyone

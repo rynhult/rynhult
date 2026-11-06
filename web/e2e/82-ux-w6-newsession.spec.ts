@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, expectAxeClean, gitProject, openAdvanced } from "./helpers";
 
 // UX declutter wave 6: New session shows the automatic name with an explicit Rename, after the task and Agent/Profile;

@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { loadPage } from './loaded-page';
+import { expect, test } from "./fixtures";
 import { AUTH_FILE } from "./helpers";
 
 // Break-it pass 9: careless use of tonight's UX waves (focused Settings, automatic session names, Overview links).
@@ -12,8 +13,13 @@ test("an emoji topic names the session with whole characters, and the launch pre
   const dialog = page.getByRole("dialog", { name: "New session" });
   await dialog.getByRole("radio", { name: "Local workspace" }).click();
   // 41 characters: cutting the name at 40 UTF-16 units used to leave half of the last emoji.
+  const preview = page.waitForResponse(response => response.request().method() === "POST"
+    && new URL(response.url()).pathname === "/api/sessions/preview"
+    && response.request().postDataJSON().name === "a" + "😀".repeat(39));
   await dialog.getByRole("textbox", { name: "Topic", exact: true }).fill("a" + "😀".repeat(40));
   await expect(dialog.getByTestId("automatic-name")).toHaveText("a" + "😀".repeat(39));
+  expect((await preview).status()).toBe(200);
+  expect(await (await preview).finished()).toBeNull();
   await expect(dialog.getByText("Ready to launch.")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeEnabled();
   expect(previews.length).toBeGreaterThan(0);
@@ -52,7 +58,7 @@ test("Overview's budget link opens Settings at Budgets", async ({ page }) => {
       "claude.five_hour": { allowed: 50, used: 38, over: false, action: "warn" } } } });
   });
   await page.goto("/");
-  await page.getByRole("link", { name: /Budget details/ }).click();
+  await loadPage(page, () => page.getByRole("link", { name: /Budget details/ }).click(), ["Settings"], []);
   await expect(page).toHaveURL(/\/settings#budgets$/);
   await expect(page.locator("#budgets")).toBeVisible();
   await expect(page.locator("#passkeys")).toBeHidden();

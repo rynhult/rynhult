@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useUnsavedDraft } from '../lib/useUnsaved';
+import { unsavedWork } from '../lib/unsaved';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Shield } from 'lucide-react';
@@ -6,7 +8,8 @@ import { api, post } from '../lib/api';
 import { OFFLINE_TITLE, useOffline } from '../lib/queries';
 import { useConfirm } from '../components/confirm';
 import { ConfirmByCode, Devices } from '../components/Devices';
-import { announce, Badge, Button, Card, CardHeader, ErrorNote, Field, Input, LoadingRows, Note, Page, PageHeader, QueryState } from '../components/ui';
+import { announce, Badge, Button, Card, CardHeader, ErrorNote, Field, Input, LoadingRows, Note, QueryState } from '../components/ui';
+import { ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 
 interface Settings { pairing_enabled: boolean; public_hostname: string; private_origin: string; certificate_days: number; machine_identities: boolean; settings_revision: string }
 interface Pending { id: string; person: string; label: string; status: string }
@@ -17,15 +20,12 @@ interface Review { revision: string; configuration: unknown; devices_allowed: nu
 function Preparation({ initial }: { initial: Settings }) {
   const client = useQueryClient();
   const { settings_revision, ...values } = initial;
-  const [draft, setDraft] = useState(values);
-  const [savedDraft, setSavedDraft] = useState(JSON.stringify(values));
-  const [revision, setRevision] = useState(settings_revision);
+  const [retained] = useState(() => unsavedWork.read<{ draft: typeof values; savedDraft: string; revision: string }>('remote-access'));
+  const [draft, setDraft] = useState(retained?.draft ?? values);
+  const [savedDraft, setSavedDraft] = useState(retained?.savedDraft ?? JSON.stringify(values));
+  const [revision, setRevision] = useState(retained?.revision ?? settings_revision);
   const dirty = JSON.stringify(draft) !== savedDraft;
-  useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirty) event.preventDefault(); };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  useUnsavedDraft('remote-access', 'remote-access', 'Remote access settings', dirty, { draft, savedDraft, revision }, () => setDraft(JSON.parse(savedDraft)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);

@@ -291,3 +291,50 @@ async def test_items_of_sessions_nobody_signs_in_as_go_to_owners(api, project, e
         assert mine.owner == "real"
         s.rollback()
     WRITE_INTENT.reset(intent)
+
+
+async def test_inbox_exposes_execution_host_only_for_authorized_item_sessions(api, project):
+    from helpers import pause_supervisor
+
+    from acc.server.models import Session
+    sid = (await launch(api, project))['id']
+    await pause_supervisor(api)
+    with write_db(api.app.state.db) as db:
+        session = db.get(Session, sid)
+        session.placement_id = None
+        session.team_host = 'cedar-node'
+        item = attention.raise_item(db, 'inbox-host-context', kind='needs_input', title='Choose scope',
+                                    source='test', session_id=sid)
+        db.commit()
+        item_id = item.id
+    item = next(row for row in (await api.get('/api/attention')).json() if row['id'] == item_id)
+    assert item['host'] == 'cedar-node'
+    assert item['session_name'] and item['project'] == project['slug']
+
+
+async def test_host_context_does_not_expose_another_persons_inbox(api, project):
+    from helpers import pause_supervisor
+
+    from acc.server.models import User
+
+    sid = (await launch(api, project))['id']
+    await pause_supervisor(api)
+    with write_db(api.app.state.db) as db:
+        db.add(User(username='another-person', password_hash='unused', totp_secret='unused', role='member', account='other-agent'))
+        db.flush()
+        item = attention.raise_item(db, 'private-inbox-context', kind='needs_input', title='Private question',
+                                    source='test', session_id=sid, owner='another-person')
+        db.commit()
+        private_id = item.id
+    for scope in ('open', 'all', 'pending'):
+        assert private_id not in {item['id'] for item in (await api.get('/api/attention', params={'scope': scope})).json()}
+
+
+async def test_unbound_legacy_operational_notice_has_no_invented_host(api):
+    with write_db(api.app.state.db) as db:
+        item = attention.raise_item(db, 'legacy-unbound-notice', kind='machine_offline', title='Machine unavailable', source='test')
+        db.commit()
+        item_id = item.id
+    response = await api.get('/api/attention')
+    assert response.status_code == 200
+    assert next(item for item in response.json() if item['id'] == item_id)['host'] is None

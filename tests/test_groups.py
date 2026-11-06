@@ -171,6 +171,8 @@ async def test_group_roles_never_open_any_legacy_private_route(preview_switch, g
                 expected = 404  # a switched-off preview's route is absent, whatever the method
             url = fill(path, bound)
             query = {'path': 'README.md'} if path.endswith(('/doc', '/page', '/attachment')) else None
+            if path.endswith('/search'):
+                query = {'q': 'README'}
             if path.endswith('/compare'):
                 query = {'left': 'a', 'right': 'b'}
             body = next((b for k, b in BODIES.items() if url.endswith(k)), {})
@@ -232,7 +234,7 @@ async def test_instance_owner_cannot_reach_live_group_checkout_through_any_proje
             continue
         url = fill(path, {**grouped, 'project': grouped['group_project']})
         body = next((b for k, b in BODIES.items() if url.endswith(k)), {})
-        response = await owner.request(method, url, params={'path': 'README.md'}, json=body if method != 'GET' else None, headers=csrf(owner))
+        response = await owner.request(method, url, params={'path': 'README.md', 'q': 'README'}, json=body if method != 'GET' else None, headers=csrf(owner))
         assert response.status_code == 404, (method, path, response.status_code, response.text[:200])
 
 

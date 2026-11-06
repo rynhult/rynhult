@@ -1,6 +1,6 @@
 import { openAdvanced, wikiShotPath } from "./helpers";
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test as base } from '@playwright/test';
+import { expect, test as base } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -8,12 +8,12 @@ import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState, settleSessi
 
 // Register/trust is setup here; the UI registration journey has its own specs.
 const test = base.extend<{ projectFixture: Awaited<ReturnType<typeof gitProject>> }>({
-  projectFixture: [async ({ page }, use) => {
+  projectFixture: [async ({ page, isolatedOwner }, use) => {
     await use(await gitProject(page, 'multirun-demo'));
   }, { timeout: 45000 }],
 });
 test.use({ storageState: AUTH_FILE });
-test('person starts alternatives, compares files, and keeps one without deleting branches', async ({ page, projectFixture }, testInfo) => {
+test('person starts alternatives, compares files, and keeps one without deleting branches', async ({ page, projectFixture, isolatedOwner }, testInfo) => {
   const suffix = randomUUID().slice(0, 8);
   const sessionName = `Improve greeting ${suffix}`;
   const owned: string[] = [];
@@ -22,16 +22,30 @@ test('person starts alternatives, compares files, and keeps one without deleting
   const project = { id };
   // The unsafe-provider confirmation cannot override the owner's Security policy.
   // Review that exception for this disposable project before exercising bypass.
-  await verifyAgain(page);
+  await verifyAgain(page, isolatedOwner.secret);
   const headers = await csrfHeaders(page);
-  const registry = await (await page.request.get('/api/security/scopes')).json();
-  const previewResponse = await page.request.post('/api/security/changes/preview', { headers, data: {
-    scope: { kind: 'project', project_id: id }, overrides: { provider_prompts: false }, preset: 'custom', revision: registry.revision,
-  } });
-  expect(previewResponse.ok(), await previewResponse.text()).toBeTruthy();
-  const preview = await previewResponse.json();
-  const applied = await page.request.post(`/api/security/changes/${preview.id}/apply`, { headers, data: { digest: preview.digest } });
-  expect(applied.ok(), await applied.text()).toBeTruthy();
+  // Re-review a stale installation revision when another project commits.
+  let policyApplied = false;
+  for (let attempt = 0; attempt < 10 && !policyApplied; attempt++) {
+    const registry = await (await page.request.get('/api/security/scopes')).json();
+    const previewResponse = await page.request.post('/api/security/changes/preview', { headers, data: {
+      scope: { kind: 'project', project_id: id }, overrides: { provider_prompts: false }, preset: 'custom', revision: registry.revision,
+    } });
+    if (previewResponse.status() === 409) {
+      expect((await previewResponse.json()).detail).toBe('Security settings changed. Refresh and review again.');
+      continue;
+    }
+    expect(previewResponse.ok(), await previewResponse.text()).toBeTruthy();
+    const preview = await previewResponse.json();
+    const applied = await page.request.post(`/api/security/changes/${preview.id}/apply`, { headers, data: { digest: preview.digest } });
+    if (applied.status() === 409) {
+      expect((await applied.json()).detail).toBe('Security settings changed. Review a fresh preview.');
+      continue;
+    }
+    expect(applied.ok(), await applied.text()).toBeTruthy();
+    policyApplied = true;
+  }
+  expect(policyApplied, 'Owned project Security exception was applied').toBe(true);
   const git = (...args: string[]) => execFileSync('git', ['-C', folder, ...args]);
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();

@@ -46,7 +46,7 @@ async def test_cancelled_connect_releases_writer():
 async def test_attach_cleans_up_every_setup_failure(monkeypatch, failure):
     master, slave = os.openpty()
     monkeypatch.setattr(pty.os, "openpty", lambda: (master, slave))
-    monkeypatch.setattr(pty.ops, "tmux", lambda *a: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(pty.ops, "tmux", lambda *a, **kw: SimpleNamespace(returncode=0, stdout='40 120'))
     process = None
 
     def spawn(*a, **kw):
@@ -114,7 +114,7 @@ async def test_stalled_output_stops_reading_pty(monkeypatch):
     master, slave = os.openpty()
     original_spawn = subprocess.Popen
     monkeypatch.setattr(pty.os, "openpty", lambda: (master, slave))
-    monkeypatch.setattr(pty.ops, "tmux", lambda *a: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(pty.ops, "tmux", lambda *a, **kw: SimpleNamespace(returncode=0, stdout='40 120'))
     monkeypatch.setattr(pty.subprocess, "Popen", lambda *a, **kw: original_spawn(["sleep", "30"]))
     original_read = os.read
     reads = 0
@@ -156,8 +156,9 @@ async def test_stalled_output_stops_reading_pty(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_attach_acquires_controlling_terminal_without_setsid_executable(tmp_path, monkeypatch):
-    monkeypatch.setattr(pty.ops, "tmux", lambda *a: SimpleNamespace(returncode=0))
+@pytest.mark.parametrize("readonly, expected_size", [(True, b"(40, 120)"), (False, b"(31, 97)")])
+async def test_attach_acquires_controlling_terminal_without_setsid_executable(tmp_path, monkeypatch, readonly, expected_size):
+    monkeypatch.setattr(pty.ops, "tmux", lambda *a, **kw: SimpleNamespace(returncode=0, stdout='40 120'))
     tmux = tmp_path / "tmux"
     tmux.write_text(f"#!{sys.executable}\n"
                     "import os, fcntl, termios, struct\n"
@@ -177,6 +178,110 @@ async def test_attach_acquires_controlling_terminal_without_setsid_executable(tm
             pass
 
     await asyncio.wait_for(pty.attach(SimpleNamespace(tmux_socket="test"),
-                                     {"tmux_name": "acc-test", "rows": 31, "cols": 97},
+                                     {"tmux_name": "acc-test", "readonly": readonly, "rows": 31, "cols": 97},
                                      asyncio.StreamReader(), Writer()), 5)
-    assert b"controlling tty True (31, 97)" in data
+    assert b"controlling tty True " + expected_size in data
+
+
+async def test_observer_output_authorization_is_bounded_not_per_frame():
+    from acc.server.tty import _frame
+    reader = asyncio.StreamReader()
+    reader.feed_data(b'{"ok":true,"readonly":true}\n' + _frame(b'd', b'output') * 3000 + _frame(b'x', b''))
+    checks, seen = 0, 0
+    async def authorize():
+        nonlocal checks
+        checks += 1
+        await asyncio.sleep(0)
+        return True
+    class Socket:
+        async def send_text(self, data):
+            pass
+        async def send_bytes(self, data):
+            nonlocal seen
+            seen += 1
+        async def receive_text(self):
+            await asyncio.Event().wait()
+    class Stream:
+        def write(self, data):
+            pass
+        async def drain(self):
+            pass
+        def close(self):
+            pass
+    async def connect():
+        return reader, Stream()
+    await bridge(Socket(), connect, 'session', 'acc-test', Writers(), False, False, 40, 120,
+                 signed_in=authorize, bound_run='1', bound_instance='test')
+    assert seen == 3000
+    assert checks < 100  # not 3000 synchronous DB checks, even on a loaded host
+
+
+@pytest.mark.parametrize('data,human', [
+    ('', False), ('\x1b[I', False), ('\x1b[O', False),
+    ('\x1b[?1;2c', False), ('\x1b[>0;276;0c', False),
+    ('\x1b[12;34R', False), ('\x1b[?12;34R', False),
+    ('\x1b[I\x1b[?1;2c\x1b[12;34R', False),
+    ('\x1b[Ihello', True), ('x', True), ('\r', True),
+    ('\x03', True), ('\x1b', True), ('\x1b[A', True),
+    ('\x1b[200~paste\x1b[201~', True),
+    ('\x1b[1;2R', True), ('\x1b[1;3R', True), ('\x1b[1;5R', True),
+    ('\x1b[1;8R', True), ('\x1b[1;1R', True),
+    ('\x1b[0;0R', True), ('\x1b[;c', True),
+])
+async def test_bridge_cancels_only_human_input_before_forwarding_exact_bytes(data, human):
+    import json
+
+    from fastapi import WebSocketDisconnect
+
+    from acc.server.tty import _frame
+
+    entered, release, forwarded = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    chunks = []
+    reader = asyncio.StreamReader()
+    reader.feed_data(b'{"id":1,"ok":true,"readonly":false}\n')
+
+    class Socket:
+        delivered = False
+
+        async def send_text(self, _data):
+            pass
+
+        async def receive_text(self):
+            if not self.delivered:
+                self.delivered = True
+                return json.dumps({'t': 'i', 'd': data})
+            await forwarded.wait()
+            raise WebSocketDisconnect()
+
+    class Writer:
+        def write(self, chunk):
+            chunks.append(chunk)
+            if chunk == _frame(b'd', data.encode()):
+                forwarded.set()
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    async def connect():
+        return reader, Writer()
+
+    async def cancel():
+        entered.set()
+        await release.wait()
+
+    task = asyncio.create_task(bridge(Socket(), connect, 'session', 'acc-test', Writers(),
+                                      True, False, 40, 120, on_input=cancel))
+    try:
+        if human:
+            await asyncio.wait_for(entered.wait(), 1)
+            assert not forwarded.is_set()
+            release.set()
+        await asyncio.wait_for(task, 1)
+        assert entered.is_set() == human
+        assert chunks.count(_frame(b'd', data.encode())) == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import type { ReactNode, DragEvent } from "react";
 import { uploadJson } from "../lib/api";
-import { Button } from "./ui";
+import { Upload } from "lucide-react";
+import { Button, IconButton } from "./ui";
 
 const MAX_FILE = 4 * 1024 * 1024;
 const MAX_BATCH = 16 * 1024 * 1024;
@@ -14,8 +15,8 @@ const encode = (file: File) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-export function FileUploads({ base, folder, onFolder, onSaved, children }: {
-  base: string; folder: string; onFolder: (path: string) => void; onSaved: () => void; children: ReactNode;
+export function FileUploads({ base, folder, onFolder, onSaved, tools, children }: {
+  base: string; folder: string; onFolder: (path: string) => void; onSaved: () => void; tools?: ReactNode; children: ReactNode;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const lock = useRef(false);
@@ -62,7 +63,8 @@ export function FileUploads({ base, folder, onFolder, onSaved, children }: {
   }
   return <div className="min-w-0 space-y-3" onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = busy ? "none" : "copy"; } }} onDrop={drop}>
     <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" disabled={busy} onClick={() => input.current?.click()}>Upload files</Button>
+      {tools}
+      {tools ? <IconButton label="Upload files" icon={Upload} disabled={busy} onClick={() => input.current?.click()} /> : <Button size="sm" disabled={busy} onClick={() => input.current?.click()}>Upload files</Button>}
       <input ref={input} type="file" multiple className="sr-only" tabIndex={-1} aria-label="Choose files to upload" onChange={(e) => { start(Array.from(e.target.files ?? []), folder); e.target.value = ""; }} />
       <p className="min-w-0 break-all text-xs text-muted">Upload to: {folder || "workspace root"}. Drop files onto a folder or this tree. 4 MiB per file · 16 MiB per batch.</p>
       {folder && <Button size="sm" onClick={() => onFolder("")}>Use workspace root</Button>}

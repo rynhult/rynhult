@@ -1,0 +1,14 @@
+{
+  "manifest": {
+    "schema_version": 1,
+    "name": "Café",
+    "tokens": {
+      "dark": {},
+      "light": {}
+    }
+  },
+  "files": {
+    "LICENSE.txt": "MIT\n"
+  },
+  "digest": "sha256:1201bda949a2a2fb109e5522856310eba43c4c9ed66758e2708d76c86e2d645c"
+}

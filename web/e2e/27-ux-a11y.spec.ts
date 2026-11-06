@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { randomUUID } from "node:crypto";
 import { AUTH_FILE, AXE_PAGES, csrfHeaders, expectAxeCleanPage, SESSION_TABS, sessionWithChanges, waitForSessionState } from "./helpers";
 
@@ -65,11 +65,11 @@ test("tabs: arrow keys on Catalog and the session page", async ({ page }) => {
   await expect(skills).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tabpanel")).toHaveAccessibleName(/Skills/);
   await page.keyboard.press("End");
-  await expect(page.getByRole("tab", { name: /Not loaded by default/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Themes", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("ArrowRight");  // wraps
   await expect(profiles).toBeFocused();
   await page.keyboard.press("ArrowLeft");
-  await expect(page.getByRole("tab", { name: /Not loaded by default/ })).toBeFocused();
+  await expect(page.getByRole("tab", { name: "Themes", exact: true })).toBeFocused();
 
   const id = sessionId = await sessionWithChanges(page, `a11y-tabs-${randomUUID().slice(0, 8)}`);
   await waitForSessionState(page, id, "idle", "claude_hook");

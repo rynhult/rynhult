@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { AUTH_FILE, expectAxeClean, gitProject, openAdvanced, wikiShotPath } from "./helpers";
 
 // Fields are found by role and name: a reopened draft's textarea text would leak into getByLabel's label-text match.
@@ -7,6 +7,16 @@ import { AUTH_FILE, expectAxeClean, gitProject, openAdvanced, wikiShotPath } fro
 test.use({ storageState: AUTH_FILE });
 test.describe.configure({ mode: "serial" });
 let projectId: number;
+function projectAgents(page: Page, id: number) {
+  return page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/providers/registry' && url.searchParams.get('project_id') === String(id)
+      && url.searchParams.get('machine') === 'local';
+  }).then(async response => {
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+  });
+}
 
 test("the task is in the first screen, a closed Advanced says what it holds, and the run is one choice", async ({ page }, testInfo) => {
   const { id } = await gitProject(page, "task-first");
@@ -15,9 +25,11 @@ test("the task is in the first screen, a closed Advanced says what it holds, and
   await page.route("**/api/projects", async (route) => route.request().method() !== "GET" ? route.continue() : route.fulfill({
     json: (await (await route.fetch()).json()).map((p: { slug: string }) => ({ ...p, workspace_path: `/srv/acc/workspaces/${p.slug}` })) }));
   await page.reload();
+  const agents = projectAgents(page, id);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New session", exact: true });
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
+  await agents;
   const task = dialog.getByRole("textbox", { name: "Task (optional)", exact: true });
   const box = (await task.boundingBox())!;
   expect(box.y + box.height).toBeLessThanOrEqual(900);  // no scrolling to reach it at 1440×900
@@ -26,7 +38,13 @@ test("the task is in the first screen, a closed Advanced says what it holds, and
   await expect(summary).toHaveText(/^Once · default model · .*shared checkout · 1 skill$/);
   await expect(dialog.getByLabel("Permissions")).toHaveCount(0);  // engine choices wait under Advanced
   await expectAxeClean(page, "[role=dialog]");
+  const preview = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/sessions/preview'
+    && response.request().postDataJSON().project_id === id
+    && response.request().postDataJSON().initial_prompt === 'Tidy the greeting in app.py and add a test.');
   await task.fill("Tidy the greeting in app.py and add a test.");
+  expect((await preview).ok()).toBe(true);
+  expect(await (await preview).finished()).toBeNull();
   await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeEnabled();
   await dialog.screenshot({ path: wikiShotPath(testInfo, "new-session-dialog.png") });
   await task.fill("");
@@ -49,9 +67,11 @@ test("the task is in the first screen, a closed Advanced says what it holds, and
 
 test("the draft survives closing, Discard draft clears it, and project + task + Launch is enough", async ({ page }) => {
   await page.goto("/sessions");
+  const agents = projectAgents(page, projectId);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   let dialog = page.getByRole("dialog", { name: "New session", exact: true });
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(projectId));
+  await agents;
   await dialog.getByRole("textbox", { name: "Task (optional)", exact: true }).fill("Tidy the greeting in app.py");
   await expect(dialog.getByTestId("automatic-name")).toHaveText("tidy-the-greeting-in");
   await page.keyboard.press("Escape");
@@ -66,7 +86,11 @@ test("the draft survives closing, Discard draft clears it, and project + task + 
 
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(projectId));
   await dialog.getByRole("textbox", { name: "Task (optional)", exact: true }).fill("Tidy the greeting in app.py");
+  const launching = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/sessions');
   await dialog.getByRole("button", { name: "Launch", exact: true }).dblclick();
+  expect((await launching).status()).toBe(201);
+  expect(await (await launching).finished()).toBeNull();
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]{12}$/);
   const session = await (await page.request.get(`/api/sessions/${page.url().split("/").pop()}`)).json();
   expect(session.name).toBe("tidy-the-greeting-in");
@@ -79,9 +103,11 @@ test("the draft survives closing, Discard draft clears it, and project + task + 
 
 test("a second session in the same checkout is warned, and can take its own worktree", async ({ page }) => {
   await page.goto("/sessions");
+  const agents = projectAgents(page, projectId);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New session", exact: true });
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(projectId));
+  await agents;
   const warning = dialog.getByText("tidy-the-greeting-in is already working in this checkout.", { exact: false });
   await expect(warning).toBeVisible({ timeout: 15_000 });
   await dialog.getByRole("button", { name: "Use its own worktree" }).click();

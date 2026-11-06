@@ -1,5 +1,5 @@
 import { wikiShotPath } from "./helpers";
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, csrfHeaders, expectAxeClean } from './helpers';
 

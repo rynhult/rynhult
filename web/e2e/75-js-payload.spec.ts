@@ -1,6 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { execFileSync } from "node:child_process";
-import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, freshStep, loadSecret, PASSWORD, sessionWithChanges, totp } from "./helpers";
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, info, PASSWORD, sessionWithChanges, totp } from "./helpers";
 
 const payload = JSON.parse(execFileSync(process.execPath, ["scripts/check-bundle-size.mjs", "--report"], { encoding: "utf8" })) as {
   pages: Record<string, { js: { files: string[] }; css: { files: string[] } }>;
@@ -11,8 +13,12 @@ for (const phone of [false, true]) {
   test.describe(phone ? "phone payload" : "desktop payload", () => {
     test.use({ storageState: AUTH_FILE, viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
       isMobile: phone, hasTouch: phone });
+    // These asset budgets and editor journeys intentionally cover the classic frame.
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: false } }));
+    });
 
-    test("sign-in loads only its budgeted assets and still signs in", async ({ browser }, testInfo) => {
+    test("sign-in loads only its budgeted assets and still signs in", async ({ browser, page: owner }, testInfo) => {
       const context = await browser.newContext({ storageState: { cookies: [], origins: [] },
         viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: phone, hasTouch: phone, colorScheme: "dark" });
       const page = await context.newPage();
@@ -22,22 +28,63 @@ for (const phone of [false, true]) {
         if (/^\/assets\/.*\.(js|css)$/.test(path)) assets.add(path);
       });
       try {
+        // TOTP codes are single-use per person. Parallel repeats must not all
+        // consume alex's next code, even when each waits for a fresh time step.
+        // A member fixture exercises this generic sign-in path without adding
+        // an unrelated owner-promotion/reverification requirement.
+        const identity = randomUUID().replaceAll('-', '').slice(0, 12);
+        const username = `payload-${identity}`;
+        const account = `${username}-agent`;
+        mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
+        const invite = await owner.request.post('/api/users/invites', {
+          headers: await csrfHeaders(owner), data: { role: 'member', account },
+        });
+        expect(invite.ok(), await invite.text()).toBe(true);
+        const token = (await invite.json()).link.split('/').pop();
+        const headers = { Origin: info().origin };
+        const begin = await context.request.post('/api/auth/invite/begin', { headers, data: { token } });
+        expect(begin.ok(), await begin.text()).toBe(true);
+        const secret = (await begin.json()).totp_secret;
+        const joined = await context.request.post('/api/auth/invite/complete', {
+          headers, data: { token, username, password: PASSWORD, code: totp(secret) },
+        });
+        expect(joined.ok(), await joined.text()).toBe(true);
+        await context.clearCookies();
         await page.goto("/login");
         await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+        expect([...assets].filter(path => /\/(?:ThemeAppearance|SetupLevelSetting|SettingsSurfaces|SessionChat|Chat|SourceViews|Shell)-/.test(path))).toEqual([]);
         expect([...assets].sort()).toEqual(initialAssets("sign-in"));
         await expectAxeClean(page);
         await page.screenshot({ path: testInfo.outputPath("sign-in.png"), fullPage: true });
-        await page.getByLabel("Username", { exact: true }).fill("alex");
+        await page.getByLabel("Username", { exact: true }).fill(username);
         await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
-        await freshStep(page);
-        await page.getByLabel("Authenticator code", { exact: true }).fill(totp(loadSecret()));
-        await page.getByRole("button", { name: "Sign in", exact: true }).click();
+        // Enrollment used the current step. Use the next, still-valid skew
+        // window once, so payload coverage need not sleep at a wall-clock edge.
+        await page.getByLabel("Authenticator code", { exact: true }).fill(totp(secret, Date.now() / 1000 + 30));
+        // The URL changes before the lazy working page finishes loading. Wait
+        // for that actual chunk, rather than spending the heading assertion's
+        // render budget on a cold download under concurrent browser load.
+        const [overview] = await Promise.all([
+          page.waitForResponse(response => /\/assets\/Overview-[^/]+\.js$/.test(new URL(response.url()).pathname)),
+          page.getByRole("button", { name: "Sign in", exact: true }).click(),
+        ]);
+        expect(overview.status()).toBe(200);
+        expect(await overview.finished()).toBeNull();
         await expect(page).toHaveURL(/\/$/);
         await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+        const signedIn = await (await page.request.get('/api/auth/state')).json();
+        expect(signedIn.username).toBe(username);
+        expect(signedIn.role).toBe('member');
       } finally { await context.close(); }
     });
 
-    test("Board loads only its budgeted assets without the authenticated shell", async ({ page }, testInfo) => {
+    for (const newShell of [false, true]) test(`Board loads only its budgeted assets without the authenticated shell (new layout ${newShell})`, async ({ page }, testInfo) => {
+      await page.route('**/api/auth/state', async route => {
+        const response = await route.fetch(); const state = await response.json();
+        await route.fulfill({ response, json: { ...state, instance: { ...state.instance,
+          features: { ...state.instance.features, new_shell: true } } } });
+      });
+      await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: newShell } }));
       const assets = new Set<string>();
       page.on("request", (request) => {
         const path = new URL(request.url()).pathname;
@@ -45,6 +92,8 @@ for (const phone of [false, true]) {
       });
       await page.goto("/board");
       await expect(page.getByRole("heading", { name: "Status board", exact: true })).toBeVisible();
+      expect([...assets].filter(path => /\/(?:ThemeAppearance|SetupLevelSetting|SettingsSurfaces|SessionChat|Chat|SourceViews|Shell)-/.test(path))).toEqual([]);
+      expect([...assets].filter(path => /\/useMutation-/.test(path))).toEqual([]);
       expect([...assets].sort()).toEqual(initialAssets("board"));
       expect([...assets].filter((path) => /\/(?:Layout|NewSessionDialog|Terminal|FileEditor)-/.test(path))).toEqual([]);
       await expectAxeClean(page);

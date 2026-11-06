@@ -1,5 +1,5 @@
 /** New-person walkthrough on disposable fake-provider state only. */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { environmentValue } from '../../src/acc/env.mjs';

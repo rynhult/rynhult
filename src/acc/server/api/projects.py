@@ -32,6 +32,20 @@ def router(ctx: Context) -> APIRouter:
         with db() as s:
             return [project_out(p) for p in s.scalars(ctx.scope(select(Project), Project, who).order_by(Project.slug))]
 
+    @api.get("/api/projects/{project_id}/repositories")
+    def project_repositories(project_id: int, who=Depends(ctx.principal)):
+        from ..sources import inventory
+        with db() as s:
+            project = ctx.project_for(s, who, project_id)
+            return inventory(s, project)['repositories']
+
+    @api.get("/api/projects/{project_id}/locations")
+    def project_locations(project_id: int, who=Depends(ctx.principal)):
+        from ..sources import inventory
+        with db() as s:
+            project = ctx.project_for(s, who, project_id)
+            return inventory(s, project, person=None if who.is_owner else who.username)['locations']
+
     def project_account(s, body: ProjectIn | NewProjectIn, who) -> str:
         """The agent account a project's sessions run as. Here: yours. On another machine: one of the accounts it
         reported: yours if it has it, else (owners only) the one you name, or its only one; members always run as their
@@ -41,8 +55,11 @@ def router(ctx: Context) -> APIRouter:
                 raise HTTPException(422, "Projects on this machine run as your own agent account, so you can't choose another one.")
             return who.account
         node = s.scalar(select(Node).where(Node.name == body.host, Node.status == "active"))
-        if node:
-            s.execute(update(Node).where(Node.id == node.id).values(status=Node.status))
+        if node is None:
+            raise HTTPException(422, f"There's no machine named {body.host}. Check the name in Host → Machines." if who.is_owner else
+                                f"{body.host} has no agent account for you ({who.account}). Ask an owner to run that "
+                                f"machine's installer again with --agent {who.account}.")
+        s.execute(update(Node).where(Node.id == node.id).values(status=Node.status))
         link = ctx.broker.hub.links.get(body.host) if ctx.broker.hub else None
         accounts = [a for a in (link.accounts if link else (node.info or {}).get("accounts", []))
                     if valid_agent_account(a)]
@@ -79,7 +96,18 @@ def router(ctx: Context) -> APIRouter:
                 identity = await broker.call("workspace_identity", account=account, path=body.workspace_path)
             except BrokerError as error:
                 raise HTTPException(409, "Cannot safely identify this workspace. Ask the owner to update or repair its agent service before registering it.") from error
+            if identity.get("allowed") is False:
+                raise HTTPException(409, "Allow this folder in Security → Allowed folders, then register it again. Ask an owner if you cannot edit Security.")
             body = body.model_copy(update={"workspace_path": identity["path"]})
+        if body.host != "local":
+            with db() as s:
+                account = project_account(s, body, who)
+            try:
+                identity = await broker.call("workspace_identity", account=account, host=body.host, path=body.workspace_path)
+            except BrokerError as error:
+                raise HTTPException(409, "Cannot safely identify this workspace. The node must be online and updated before registering a folder. Check Host → Machines and update its agent service, then retry.") from error
+            if identity.get("allowed") is False:
+                raise HTTPException(409, "Allow this folder in Security → Allowed folders, then register it again. Ask an owner if you cannot edit Security.")
         return await supervisor.workspace_operations.run(body.workspace_path,
             lambda: _create_project(body, who), body.host)
 

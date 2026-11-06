@@ -1,8 +1,11 @@
 """Settings that apply across sessions: guardrails (owner-chosen, instance-wide)."""
 from __future__ import annotations
 
+from typing import Literal, get_args
+from uuid import NAMESPACE_URL, uuid5
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from .. import budgets, guardrails, risk_labels
 from ..models import AuditLog, Setting
@@ -38,6 +41,42 @@ class GuardrailsIn(BaseModel):
 
 class RiskLabelsIn(BaseModel):
     enabled: bool = Field(strict=True)
+
+
+def shell_enabled(value, request):
+    """Classic choices remain stored; the released layout is always new."""
+    return True
+
+
+class UIShellIn(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
+HeaderModule = Literal['machine_load', 'plan_usage', 'go_to', 'conversation_search', 'file_search']
+
+
+class UIHeaderIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    order: list[HeaderModule] = Field(min_length=5, max_length=5)
+    hidden: list[HeaderModule] = Field(max_length=5)
+
+    @field_validator('order', 'hidden')
+    @classmethod
+    def unique_modules(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError('Each header module may appear only once.')
+        return value
+
+
+def default_header() -> dict:
+    return {'order': list(get_args(HeaderModule)), 'hidden': []}
+
+
+class SetupLevelIn(BaseModel):
+    # No names, policy fields or launch options may cross this boundary.
+    model_config = ConfigDict(extra="forbid")
+    level: int | None = Field(ge=0, le=6, strict=True)
+    dismissed: bool = Field(default=True, strict=True)
 
 
 class PhoneBannerIn(BaseModel):
@@ -76,6 +115,71 @@ def router(ctx: Context) -> APIRouter:
         with db() as s:
             value = body.model_dump()
             s.merge(Setting(key=f"phone_banner.{who.username}", value=value, updated_by=who.username))
+            s.commit()
+            return value
+
+    def shell_person_id(who) -> str | None:
+        # SQLite can reuse User.id after removal. Usernames are immutable and
+        # permanently reserved by RetiredUser; this opaque presentation ID cannot
+        # be reassigned. The browser also namespaces it by installation origin.
+        return str(uuid5(NAMESPACE_URL, f"urn:rynhult:ui-shell:{who.username}")) if who.user_id is not None else None
+
+    @api.get("/api/preferences/ui-shell")
+    def get_ui_shell(request: Request, who=Depends(ctx.principal)):
+        with db() as s:
+            row = s.get(Setting, f"ui_shell.{who.username}")
+            return {"enabled": shell_enabled(row.value if row else {}, request), "person_id": shell_person_id(who)}
+
+    @api.put("/api/preferences/ui-shell")
+    def put_ui_shell(body: UIShellIn, request: Request, who=Depends(ctx.principal)):
+        with db() as s:
+            value = body.model_dump()
+            s.merge(Setting(key=f"ui_shell.{who.username}", value=value, updated_by=who.username))
+            s.commit()
+            return {"enabled": shell_enabled(value, request), "person_id": shell_person_id(who)}
+
+    # Presentation only, with exactly the same caller-scoped principal contract as ui-shell.
+    # Required controls and role authorization are deliberately absent from this schema.
+    @api.get('/api/preferences/ui-header')
+    def get_ui_header(who=Depends(ctx.principal)):
+        with db() as s:
+            row = s.get(Setting, f'ui_header.{who.username}')
+            if row:
+                try:
+                    return UIHeaderIn.model_validate(row.value).model_dump()
+                except ValidationError:
+                    pass  # Invalid/obsolete stored presentation must never hide required controls.
+            return default_header()
+
+    @api.put('/api/preferences/ui-header')
+    def put_ui_header(body: UIHeaderIn, who=Depends(ctx.principal)):
+        with db() as s:
+            value = body.model_dump()
+            s.merge(Setting(key=f'ui_header.{who.username}', value=value, updated_by=who.username))
+            s.commit()
+            return value
+
+    def setup_person(who=Depends(ctx.principal)):
+        if who.user_id is None:
+            raise HTTPException(403, "Choose your layout from a signed-in person browser.")
+        return who
+
+    @api.get("/api/preferences/setup-level")
+    def get_setup_level(who=Depends(setup_person)):
+        with db() as s:
+            row = s.get(Setting, f"setup_level.{who.username}")
+            value = row.value if row else {}
+            # Missing/unknown versions preserve the existing complete layout.
+            level = value.get("level") if value.get("version") == 1 else None
+            if type(level) is not int or not 0 <= level <= 6:
+                level = None
+            return {"level": level, "dismissed": value.get("dismissed") is True, "version": 1}
+
+    @api.put("/api/preferences/setup-level")
+    def put_setup_level(body: SetupLevelIn, who=Depends(setup_person)):
+        with db() as s:
+            value = {**body.model_dump(), "version": 1}
+            s.merge(Setting(key=f"setup_level.{who.username}", value=value, updated_by=who.username))
             s.commit()
             return value
 

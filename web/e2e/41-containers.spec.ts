@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { existsSync, renameSync } from "node:fs";
 import path from "node:path";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, openAdvanced, wikiShotPath } from "./helpers";

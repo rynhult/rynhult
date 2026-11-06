@@ -18,7 +18,7 @@ DEADLINE = 180
 MAX_OUTPUT = 256 * 1024
 
 
-def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe: str | None = None, *, bootstrap: bool = True) -> None:
+def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe: str | None = None, *, bootstrap: bool = True, launch_env: dict | None = None) -> None:
     home.mkdir(mode=0o700, exist_ok=True)
     credentials = {
         "claude": (".claude/.credentials.json",),
@@ -27,8 +27,11 @@ def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe
         "antigravity": (".gemini/antigravity-cli/antigravity-oauth-token",),
         "cursor": (".config/cursor/auth.json", ".cursor/auth.json"),
     }
+    from .claude_auth import supplied_mode
     for name in credentials[provider]:
         source, target = original / name, home / name
+        if provider == 'claude' and supplied_mode(launch_env or {}) != 'unknown':
+            continue
         if source.is_file():
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.symlink_to(source)
@@ -49,7 +52,7 @@ def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe
 
 
 def arguments(provider: str, model: str, run_dir: Path, native_id: str | None) -> list[str]:
-    model_args = ["--model", model]
+    model_args = ["--model", model] if model else []
     session_args = ["--session-id", native_id] if native_id else []
     if provider in ("claude", "copilot") and not session_args:
         raise ValueError("this explanation CLI needs a pre-assigned session id")
@@ -88,14 +91,23 @@ def run(run_dir: Path, executable: str, hook_path: str) -> int:
     handlers = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
     try:
         home = run_dir / "home"
-        isolated_home(Path.home(), home, spec["provider"], hook_path, exe=executable)
+        isolated_home(Path.home(), home, spec["provider"], hook_path, exe=executable, launch_env=environment)
         env = {k: v for k, v in environment.items() if k in (
             "PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
             "ACC_RUN_DIR", "ACC_SESSION_ID", "ACC_GUARD_FILES",
             "RYNHULT_RUN_DIR", "RYNHULT_SESSION_ID", "RYNHULT_GUARD_FILES")}
+        from acc.providers.claude_auth import credential_env
+        env.update(credential_env(environment) if spec['provider'] == 'claude' else {})
         env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"), CODEX_HOME=str(home / ".codex"),
                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", NO_OPEN_BROWSER="1")
         argv = [executable, *arguments(spec["provider"], spec["model"], run_dir, spec.get("native_id"))]
+        if spec['provider'] == 'claude':
+            from acc.providers.claude_auth import DOCS, MESSAGE, refusal
+
+            from .claude_auth import probe, supplied_mode
+            reported = probe(executable, str(run_dir / 'workspace'), env, argv[1:], inherit=False)
+            if refusal('claude', reported) or reported != supplied_mode(env):
+                raise ValueError(f'{MESSAGE} {DOCS}')
         with (run_dir / "prompt.txt").open("rb") as stdin:
             process = subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        cwd=run_dir / "workspace", env=env, start_new_session=True)

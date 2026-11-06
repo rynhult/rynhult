@@ -203,3 +203,20 @@ After **Check now**, the agent's card shows **Log in** instead of the steps, and
 | *machine* **refused a request:** … **can't be installed on a Mac from Rynhult** | An older Rynhult offered a button the Mac refuses. Reload Providers: the card now shows the steps. |
 | The install command fails | Use the provider's page linked in the steps: it lists other ways to install and fixes for common errors. |
 | Ollama is installed but no agent uses it | Ollama has no sign-in: pull a model, then add it under **Model endpoints** on Providers (see [Host and providers](/User-Guide/Host-and-Providers#model-endpoints-local-llms-and-compatible-apis)). |
+
+### Codex terminal scrollback
+
+Codex defaults to **Keep scrollback (inline mode)** in its launch options. On a CLI
+that advertises `--no-alt-screen`, output stays in terminal history so the mouse
+wheel can scroll back instead of moving through submitted prompts. Older CLIs
+continue without the flag. Support is checked once per account service process;
+restart that service after updating an older CLI if inline mode is still unavailable.
+The bundled container CLI supports inline mode.
+
+Existing Codex sessions pick up this default on their next launch/resume; a running
+terminal is unchanged. Turn the option off at launch to use Codex's alternate screen.
+
+The browser retains up to 10,000 terminal rows and tmux retains up to 50,000 history
+rows. Reconnecting or resizing can redraw or reflow the screen; retained output is
+not a permanent transcript, and tmux can show duplicated or displaced rows after an
+inline TUI redraw. Inline mode does not remove these tmux caveats.

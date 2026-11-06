@@ -1,14 +1,17 @@
 """Attention inbox: list, acknowledge and snooze operational alerts."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from .. import attention, auth, risk_labels
-from ..models import AttentionItem, AuditLog, Node, Project, PublishRequest, Session, ToolRequest
+from ..db import write_intent
+from ..models import AttentionItem, AuditLog, Event, Node, Placement, Project, PublishRequest, Session, ToolRequest
 from ..tools import out
 from .context import Context
 
@@ -30,17 +33,56 @@ class UndoDismiss(BaseModel):
     batch: int = Field(gt=0, strict=True)
 
 
+class PermissionReply(BaseModel):
+    token: str = Field(pattern="^[0-9a-f]{32}$")
+    decision: Literal["allow", "deny"]
+
+
+def permission_info(db, session_id):
+    session = db.get(Session, session_id)
+    if session and session.container:
+        return {}
+    event = db.scalar(select(Event).where(Event.session_id == session_id,
+        Event.source == "claude_hook", Event.kind.in_(["PermissionRequest", "PermissionExpired"])
+        ).order_by(Event.id.desc()).limit(1))
+    return permission_event_info(event)
+
+
+def permission_event_info(event):
+    """Render the latest permission event, shared by single-item and batched reads."""
+    if not event or event.kind != "PermissionRequest" or auth.now() - event.ts > timedelta(seconds=50):
+        return {}
+    payload = event.payload or {}
+    token = payload.get("acc_permission_id")
+    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+        return {}
+    rendered = payload.get("acc_complete_input")
+    complete = isinstance(rendered, str) and len(rendered.encode("utf-8")) <= 8192
+    return {"permission_id": token, "permission_input": rendered if complete else None,
+            "permission_can_approve": complete,
+            "permission_expires_at": (event.ts + timedelta(seconds=50)).isoformat(),
+            "permission_reason": None if complete else
+                "Complete tool input exceeds the 8 kB display limit or is unavailable. Answer in terminal to approve."}
+
+
+def permission_token(db, session_id):
+    return permission_info(db, session_id).get("permission_id")
+
+
 def router(ctx: Context) -> APIRouter:
     db = ctx.db
     api = APIRouter()
 
     def attention_out(item: AttentionItem, names: dict[str, tuple[str, str]], publishes: dict | None = None,
-                      tools: dict | None = None, show_risk: bool = True, image_check: dict | None = None) -> dict:
+                      tools: dict | None = None, show_risk: bool = True, image_check: dict | None = None, hosts: dict | None = None, permission: dict | None = None) -> dict:
         publishes = publishes or {}
         name, project = names.get(item.session_id or "", (None, None))
-        return {"image_check": image_check, "id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
+        return {**(permission or {}), "image_check": image_check, "id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
                 "verified": item.verified, "title": item.title, "detail": item.detail,
                 "session_id": item.session_id, "session_name": name, "project": project,
+                "host": (hosts or {}).get(item.session_id) if item.session_id else (
+                    item.dedupe_key.partition(':')[2] or None
+                    if item.kind == 'machine_offline' and item.dedupe_key.startswith('machine_offline:') else None),
                 "created_at": item.created_at, "updated_at": item.updated_at,
                 "snoozed_until": item.snoozed_until, "acked_at": item.acked_at, "resolved_at": item.resolved_at,
                 "persistent": attention.persistent_reason(item),
@@ -52,9 +94,12 @@ def router(ctx: Context) -> APIRouter:
                 "tool": (tools or {}).get(item.dedupe_key.split(":", 1)[1]) if item.kind == "tool_request" else None}
 
     @api.get("/api/attention")
+    @write_intent
     def list_attention(scope: str = "open", limit: int = 200, session_id: str | None = None,
                        who=Depends(ctx.principal)):
         with db() as s:
+            attention.sync_phone_prompt(s, who.username, who.user_id)
+            s.commit()
             query = ctx.inbox_scope(select(AttentionItem), AttentionItem, who)
             if scope == "open":
                 query = query.where(AttentionItem.resolved_at.is_(None),
@@ -70,11 +115,14 @@ def router(ctx: Context) -> APIRouter:
             # Only the listed items' sessions, not every session this person can see (rc performance check).
             wanted = {i.session_id for i in items if i.session_id}
             session_rows = list(s.execute(
-                ctx.scope(select(Session.id, Session.name, Session.team_id, Project.slug, Session.project_id).join(Project, Session.project),
+                ctx.scope(select(Session.id, Session.name, Session.team_id, Project.slug, Session.project_id, Session.container,
+                                 func.coalesce(Placement.host, Session.team_host, Project.host, 'local')).join(Project, Session.project)
+                          .outerjoin(Placement, Session.placement_id == Placement.id),
                           Session, who).where(Session.id.in_(wanted)))) if wanted else []
             names = {sid: (name + (f" · team {team}" if team else ""), slug)
-                     for sid, name, team, slug, project_id in session_rows}
-            risk_projects = {sid: project_id for sid, name, team, slug, project_id in session_rows}
+                     for sid, name, team, slug, project_id, container, host in session_rows}
+            hosts = {sid: host for sid, name, team, slug, project_id, container, host in session_rows}
+            risk_projects = {sid: project_id for sid, name, team, slug, project_id, container, host in session_rows}
             ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "publish_request"]
             # The same facts Publishing shows under the request (UX review IN-1): an approver on a phone sees them too.
             requests = list(s.scalars(select(PublishRequest).where(PublishRequest.id.in_(ids)))) if ids else []
@@ -90,9 +138,56 @@ def router(ctx: Context) -> APIRouter:
             # not a second session read or one identical policy read per item.
             risk_enabled = {project_id: risk_labels.enabled(s, who.username, project_id=project_id)
                             for project_id in {risk_projects.get(i.session_id) for i in items}}
+            # Batch the latest permission events using the already authorized session metadata.
+            pending_sessions = {i.session_id for i in items if i.kind == "needs_input" and not i.resolved_at}
+            permission_sessions = {sid for sid, name, team, slug, project_id, container, host in session_rows
+                                   if not container and sid in pending_sessions}
+            latest = (select(func.max(Event.id)).where(Event.session_id.in_(permission_sessions),
+                      Event.source == "claude_hook", Event.kind.in_(["PermissionRequest", "PermissionExpired"]))
+                      .group_by(Event.session_id))
+            permissions = {event.session_id: permission_event_info(event)
+                           for event in s.scalars(select(Event).where(Event.id.in_(latest)))} if permission_sessions else {}
             from ..image_capabilities import check_action
             return [attention_out(i, names, publishes, tools, risk_enabled[risk_projects.get(i.session_id)],
-                                  check_action(s, i) if who.is_owner else None) for i in items]
+                                  check_action(s, i) if who.is_owner else None, hosts,
+                                  permissions.get(i.session_id) if i.kind == "needs_input" and not i.resolved_at else None) for i in items]
+
+    @api.post("/api/attention/{item_id}/permission")
+    async def answer_permission(item_id: int, body: PermissionReply, who=Depends(ctx.principal)):
+        from ...backup_activation import held
+        from ..broker_client import BrokerError
+        from .security_settings import human
+        human(who)
+        with db() as s:
+            item = s.scalar(ctx.inbox_scope(select(AttentionItem), AttentionItem, who).where(AttentionItem.id == item_id))
+            if item is None or not item.session_id:
+                raise HTTPException(404, "That permission request was not found.")
+            session = ctx.session_for(s, who, item.session_id)
+            if session.management != "acc" or session.container or held(s, session):
+                raise HTTPException(403, "This session cannot receive input.")
+            if (item.kind != "needs_input" or item.resolved_at or session.provider != "claude"
+                    or session.observed_state != "waiting_input" or permission_token(s, session.id) != body.token):
+                raise HTTPException(409, "This request expired or was answered. Answer in the terminal.")
+            if body.decision == "allow" and not permission_info(s, session.id).get("permission_can_approve"):
+                raise HTTPException(409, "Complete input is unavailable. Answer in the terminal.")
+            account, host, sid = session.run_as, session.host, session.id
+            s.add(AuditLog(actor=who.username, action="permission.answer", target=sid,
+                           detail={"item": item_id, "token": body.token, "decision": body.decision, "outcome": "attempt"}))
+            s.commit()
+        try:
+            result = await ctx.broker.call("permission_reply", account=account, host=host,
+                                           acc_id=sid, token=body.token, decision=body.decision)
+        except BrokerError as error:
+            raise ctx.refused(error) from None
+        answered = result.get("answered") is True
+        with db() as s:
+            s.add(AuditLog(actor=who.username, action="permission.result", target=sid,
+                           detail={"item": item_id, "token": body.token,
+                                   "outcome": "answered" if answered else "already_answered"}))
+            s.commit()
+        if not answered:
+            raise HTTPException(409, "This request expired or was answered. Answer in the terminal.")
+        return {"answered": True}
 
     @api.post("/api/attention/dismiss")
     def dismiss_attention(body: DismissItems, who=Depends(ctx.principal)):

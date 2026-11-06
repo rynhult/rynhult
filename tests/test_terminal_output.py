@@ -26,6 +26,9 @@ async def test_terminal_output_reads_history_and_is_not_cached(api, project, env
     result = await wait_for(captured)
     assert "First history marker" in result["text"] and "\x1b" not in result["text"]
     assert result["truncated"] is False
+    watched = ops.tmux(env["broker"], "show-option", "-v", "-t", f"={session['tmux_name']}:",
+                       "@acc-terminal-snapshot", check=True).stdout.strip()
+    assert float(watched) > 0
     # Reading neither acquires terminal ownership nor sends input.
     assert (await api.get(f'/api/sessions/{session["id"]}')).json()["observed_state"] == "idle"
 
@@ -109,3 +112,20 @@ async def test_server_bounds_the_reply_itself(api, project, monkeypatch):
 
     fake_capture(api, monkeypatch, {"not": "text"})
     assert (await api.get(f'/api/sessions/{session["id"]}/terminal-output')).status_code == 502
+
+
+@pytest.mark.parametrize("watching", [False, True])
+def test_only_person_snapshot_marks_its_own_session_watched(env, monkeypatch, watching):
+    calls = []
+    def tmux(config, *args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "snapshot", "")
+    monkeypatch.setattr(ops, "tmux", tmux)
+    monkeypatch.setattr(ops.time, "time", lambda: 1234567890)
+    ops.terminal_output(env["broker"], "acc-watched", watching=watching)
+    if not watching:
+        assert len(calls) == 1
+        assert calls[0][0] == "capture-pane"
+        return
+    assert calls[0] == ("set-option", "-t", "=acc-watched:", "@acc-terminal-snapshot", "1234567890")
+    assert calls[1][0] == "capture-pane"

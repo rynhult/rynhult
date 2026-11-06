@@ -51,6 +51,7 @@ def test_complete_schema_is_inventoried(tmp_path):
     Base.metadata.create_all(create_engine(f'sqlite:///{path}'))
     result = report_copy(path, namespace='e41c9c3b-4f72-4ba4-9834-e42af726a754')
     assert result['blocked'] is False
+    assert 'personal_layout.owner' in result['references']
     assert 'placement.person' in result['references']
     assert 'infrastructure_credential.owner' in result['references']
     assert 'audit_log.actor' in result['references']
@@ -65,9 +66,11 @@ def test_foreign_keys_and_name_keyed_settings_are_reported(tmp_path):
     Base.metadata.create_all(create_engine(f'sqlite:///{path}'))
     with sqlite3.connect(path) as db:
         db.execute("INSERT INTO setting(key,value,updated_at) VALUES('budget.alex','{}','2026-10-24')")
+        db.execute("INSERT INTO setting(key,value,updated_at) VALUES('theme.person.alex','{}','2026-11-01')")
+        db.execute("INSERT INTO setting(key,value,updated_at) VALUES('ui_header.alex','{}','2026-11-01')")
     result = report_copy(path, namespace='e41c9c3b-4f72-4ba4-9834-e42af726a754')
     assert result['foreign_keys']['session.project_id']['target'] == 'project.id'
-    assert result['name_keyed_settings'] == {'budget.': 1, 'tools.person.': 0, 'risk_labels.': 0, 'phone_banner.': 0}
+    assert result['name_keyed_settings'] == {'budget.': 1, 'tools.person.': 0, 'risk_labels.': 0, 'phone_banner.': 0, 'ui_shell.': 0, 'ui_header.': 1, 'setup_level.': 0, 'theme.person.': 1}
 
 
 def test_reserved_identity_collision_blocks_mapping(tmp_path):

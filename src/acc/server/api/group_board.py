@@ -18,6 +18,7 @@ class LaunchIn(BaseModel):
     task: str = Field(min_length=1, max_length=500)
     name: str = Field(min_length=1, max_length=64)
     provider: Literal['claude', 'codex'] = 'claude'
+    claude_auth: Literal['subscription', 'api_key'] = 'subscription'
     budget_ok: bool = False
     prompt: str = Field(default='', max_length=32000)
     trust_source: bool = False
@@ -126,7 +127,7 @@ def router(ctx: Context):
                         raise HTTPException(409, 'Your personal budget has paused launches. To launch anyway, confirm the override for your own budget.')
                 inputs = LaunchInputs(provider=body.provider, initial_prompt=body.prompt)
                 sid = await ctx.supervisor.create_session(project_id, inputs, body.name, who.username,
-                    owner=who.username, group_checkout=body.checkout_id, group_task=body.task)
+                    owner=who.username, group_checkout=body.checkout_id, group_task=body.task, claude_auth=body.claude_auth)
             except (LaunchRefused, CompileError) as error:
                 raise HTTPException(409, str(error)) from None
             return {'id': sid}

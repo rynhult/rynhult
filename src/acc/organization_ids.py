@@ -15,7 +15,7 @@ from pathlib import Path
 # Explicit reviewable principal references. JSON, settings keys, paths and audit
 # targets need semantic migration; they must not be rewritten by string replacement.
 PRINCIPAL_COLUMNS = {
-    'project': ('owner',), 'session': ('owner',), 'multirun': ('owner',),
+    'personal_layout': ('owner',), 'layout_file_ref': ('owner',), 'project': ('owner',), 'session': ('owner',), 'multirun': ('owner',),
     'node': ('created_by',), 'setting': ('updated_by',), 'audit_log': ('actor',),
     'retired_user': ('removed_by',), 'invite': ('created_by',),
     'attention_item': ('owner',), 'publish_request': ('owner', 'decided_by'),
@@ -89,7 +89,7 @@ def report_copy(path: Path, *, namespace: str) -> dict:
                     }
         settings = {prefix: db.execute('SELECT count(*) FROM setting WHERE substr(key,1,?)=?',
                                       (len(prefix), prefix)).fetchone()[0] if 'setting' in tables else 0
-                    for prefix in ('budget.', 'tools.person.', 'risk_labels.', 'phone_banner.')}
+                    for prefix in ('budget.', 'tools.person.', 'risk_labels.', 'phone_banner.', 'ui_shell.', 'ui_header.', 'setup_level.', 'theme.person.')}
         return {'schema_version': 1, 'namespace': str(ns), 'entities': entities, 'principals': principals,
                 'foreign_keys': foreign_keys, 'name_keyed_settings': settings,
                 'references': references, 'blocked': any(r['unresolved'] for r in references.values()),

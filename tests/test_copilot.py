@@ -83,34 +83,52 @@ async def test_a_quiet_screen_ends_a_turn_copilot_never_closed(api, project, env
     assert quiet["status_source"] == "tmux"
 
 
-def test_plan_and_ai_credits_from_the_copilot_account(tmp_path, monkeypatch):
-    """The shape GitHub returned for an enterprise seat (2026-10-21), trimmed."""
-    import io
+def test_usage_never_reads_credentials_or_calls_an_api(tmp_path, monkeypatch):
     import urllib.request
+    from pathlib import Path
 
     from acc.providers.copilot import PROVIDER
-    (tmp_path / ".copilot").mkdir()
-    (tmp_path / ".copilot/config.json").write_text('// managed\n' + json.dumps({
-        "lastLoggedInUser": {"host": "https://github.com", "login": "octo"},
-        "authTokens": {"https://github.com:octo": {"token": "gho_test"}}}))
-    seen = {}
 
-    def fake_urlopen(request, timeout):
-        seen["url"], seen["auth"] = request.full_url, request.headers.get("Authorization")
-        return io.BytesIO(json.dumps({
-            "copilot_plan": "enterprise", "access_type_sku": "copilot_enterprise_seat_quota",
-            "organization_login_list": ["Example-Org"], "quota_reset_date_utc": "2026-11-01T00:00:00.000Z",
-            "quota_snapshots": {"chat": {"unlimited": True}, "completions": {"unlimited": True},
-                                "premium_interactions": {"credits_used": 1200, "entitlement": 1000000, "remaining": 998800,
-                                                         "percent_remaining": 99.88, "unlimited": False,
-                                                         "overage_permitted": True, "overage_count": 0}}}).encode())
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    usage = PROVIDER.usage("copilot", tmp_path)
-    assert seen == {"url": "https://api.github.com/copilot_internal/user", "auth": "token gho_test"}
-    assert usage["plan"] == "enterprise" and usage["organizations"] == ["Example-Org"]
-    assert usage["credits"]["entitlement"] == 1000000 and usage["credits"]["used"] == 1200
-    assert usage["chat"] == {"unlimited": True} and usage["resets_at"].startswith("2026-11-01")
-    assert "gho_test" not in json.dumps(usage)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Usage must not read credentials, call a CLI, or use the network")
+
+    monkeypatch.setattr(Path, "read_text", forbidden)
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+    monkeypatch.setattr("acc.providers.copilot.run", forbidden)
+    assert PROVIDER.usage("copilot", tmp_path) == {
+        "message": "See GitHub settings", "usage_url": "https://github.com/settings/copilot/features",
+        "source": "GitHub settings",
+    }
+
+
+def test_auth_health_uses_login_metadata_without_account_api(tmp_path, monkeypatch):
+    import urllib.request
+    from types import SimpleNamespace
+
+    from acc.providers.copilot import PROVIDER
+
+    (tmp_path / ".copilot").mkdir()
+    (tmp_path / ".copilot/config.json").write_text(json.dumps({
+        "lastLoggedInUser": {"login": "octo"},
+        "authTokens": {"https://github.com:octo": {"token": "test-secret"}},
+    }))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Login health must not query an account API")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+    monkeypatch.setattr("acc.providers.copilot.run", lambda *a, **k: SimpleNamespace(stdout="GitHub Copilot CLI 1.0.103"))
+    assert PROVIDER.auth_health("copilot", tmp_path) == {
+        "logged_in": True, "login": "octo", "email": "octo", "version": "1.0.103",
+    }
+
+
+def test_source_never_references_copilot_internal():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src"
+    assert not [str(path.relative_to(root)) for path in root.rglob("*")
+                if path.is_file() and path.suffix != ".pyc" and b"copilot_internal" in path.read_bytes()]
 
 
 async def test_models_come_from_the_cli_and_the_probe_leaves_nothing(api, env):

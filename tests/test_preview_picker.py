@@ -274,3 +274,17 @@ def test_the_selector_grammar_agrees_in_all_three_copies():
     tag = re.search(r"if \(!/\^(.+?)\$/\.test\(tag\)\) return null;", js).group(1)
     assert preview_elements.SELECTOR.startswith(tag + ':nth-of-type')
     assert 'parts.length < 8' in js and 'path.length <= 512' in js
+
+
+@pytest.mark.parametrize('mode', ['subscription', 'unknown', 'api_key',
+                                  pytest.param('cloud', marks=pytest.mark.claude_launch_cloud)])
+async def test_preview_feedback_auth_guard(picked, monkeypatch, mode):
+    from acc.broker import claude_auth
+    from acc.providers.claude_auth import CODE
+    client, _, sid, _ = picked
+    draft = await prepare(picked)
+    monkeypatch.setattr(claude_auth, 'probe', lambda *a, **kw: mode)
+    response = await client.post(f"/api/sessions/{sid}/preview-element/{draft['id']}/send", headers=csrf(client))
+    assert response.status_code == (200 if mode in ('api_key', 'cloud') else 409), response.text
+    if response.status_code == 409:
+        assert response.json()['detail']['code'] == CODE

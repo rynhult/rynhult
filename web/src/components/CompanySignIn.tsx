@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
@@ -7,7 +8,7 @@ import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useConfirm } from "./confirm";
 import { CopyBlock } from "./InstallSteps";
 import { type Leftovers, RemoveChoice } from "./People";
-import { announce, Badge, Button, Card, CardHeader, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Note, QueryState } from "./ui";
+import { announce, Badge, Button, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Note, QueryState } from "./ui";
 
 interface ProviderState { issuer: string; client_id: string; has_secret: boolean; enabled: boolean; session_hours: number; mfa_acr: string[]; passkey_enrollment: boolean; redirect_uri: string }
 interface Probe { ok: boolean; reason?: string; detail?: string; issuer?: string; authorization_endpoint?: string; token_endpoint?: string; keys?: number }

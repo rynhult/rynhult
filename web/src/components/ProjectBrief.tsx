@@ -1,3 +1,4 @@
+import { DraftSaveNote } from '../lib/useUnsaved';
 /** Project-owned intake; DB versions are authoritative, references stay private. */
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -64,7 +65,7 @@ export function ProjectBrief({ projectId, compact = false, onVersion }: { projec
   const [exportPath, setExportPath] = useState(restored?.exportPath ?? 'docs/PROJECT-BRIEF.md');
   const liveDraft = useRef({ draft, references, base, exportPath });
   liveDraft.current = { draft, references, base, exportPath };
-  useEffect(() => { keepBriefDraft(projectId, dirty ? { draft, references, base, exportPath } : null); }, [projectId, dirty, draft, references, base, exportPath]);
+  useEffect(() => { keepBriefDraft(projectId, dirty ? { draft, references, base, exportPath } : null, () => { setDirty(false); setRestoredNote(false); }); }, [projectId, dirty, draft, references, base, exportPath]);
   useEffect(() => {
     const acknowledge = (event: Event) => {
       const change = (event as CustomEvent<SavedBriefEvent>).detail;
@@ -118,7 +119,7 @@ export function ProjectBrief({ projectId, compact = false, onVersion }: { projec
     });
   }
   const missingProduct = !draft.product?.trim();
-  const form = <div ref={formRef} className="min-w-0 space-y-4">
+  const form = <div ref={formRef} className="min-w-0 space-y-4"><DraftSaveNote id={`brief:${projectId}`} />
     {pendingProposal && <section aria-label="Proposed project brief" className="space-y-2 rounded-lg border border-wait/40 bg-wait/5 p-3">
       <p className="font-medium">{pendingProposal.source === 'documents' ? 'A brief drafted from your documents is ready to review' : 'An imported brief is ready to review'}</p>
       <Button onClick={() => openReview(pendingProposal.version)}>Review</Button>

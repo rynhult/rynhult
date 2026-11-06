@@ -1,3 +1,8 @@
+import { SessionActions } from "../components/SessionActions";
+import { SessionChat } from '../components/SessionChat';
+import { useNewShell } from '../lib/uiShell';
+import { OfflineHost, UnavailableTab, UnavailableView, unavailableResource } from '../components/shell/RecoveryStates';
+import { useWorkingView, workingId } from "../lib/workingView";
 import {SecurityBadge} from '../components/SecurityBadge';
 import {frozenSecurity} from '../lib/security';
 import { DeliveryHistory, SessionDeliveries } from '../components/SessionDeliveries';
@@ -13,11 +18,12 @@ import { ArrowLeft, BookMarked, ChevronDown, Code2,  Download, ExternalLink, Fol
 import { api, isNotFound, post } from "../lib/api";
 import { stamp, workspaceName, workspaceTopic } from "../lib/format";
 import type { AccEvent, AttentionItem, GithubSnapshot, Project, SessionDetail } from "../lib/types";
-import { announce, Badge, Button, Card, Dialog, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Page, PageHeader, Popover, QueryState, Select, Skeleton, TabPanel, Tabs, useDocumentTitle } from "../components/ui";
-import { isLive, NowDoing, permissionWords, ProviderBadge, SessionActions, sessionMachineName, sessionState, StateBadge } from "../components/session-bits";
+import { announce, Badge, Button, Card, Dialog, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Page, PageHeader, Popover, QueryState, Select, Skeleton, useDocumentTitle, useMedia } from "../components/ui";
+import { TabPanel, Tabs } from "../components/Tabs";
+import { isLive, NowDoing, permissionWords, ProviderBadge, sessionMachineName, sessionState, StateBadge } from "../components/session-bits";
 import { Artifacts, useArtifacts } from "../components/Artifacts";
 import { DocList, DocViewer, type KnowledgeView, KnowledgePanel, useKnowledge } from "../components/Knowledge";
-import { Fragment, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { providerLabel, useInstance, useProviderRegistry, useRole } from "../lib/queries";
 import { eventWords, notificationWords, permissionSummary, sourceWords } from "../lib/words";
 import { RiskLabel } from "../components/RiskLabel";
@@ -26,16 +32,18 @@ import { lazyImport } from "../lib/lazyImport";
 
 const Files = lazy(() => lazyImport(() => import("../components/Files")).then((m) => ({ default: m.Files })));
 const Changes = lazy(() => lazyImport(() => import("../components/Changes")).then((m) => ({ default: m.Changes })));
+const RegisteredTerminal = lazy(() => lazyImport(() => import("../components/RegisteredTerminal")).then(m => ({ default: m.RegisteredTerminal })));
 const Terminal = lazy(() => lazyImport(() => import("../components/Terminal")).then((m) => ({ default: m.Terminal })));
 const Preview = lazy(() => lazyImport(() => import("../components/Preview")).then((m) => ({ default: m.Preview })));
 const PullRequestPanel = lazy(() => lazyImport(() => import("../components/PullRequest")).then((m) => ({ default: m.PullRequestPanel })));
 const TeamPanel = lazy(() => lazyImport(() => import("../components/TeamPanel")).then((m) => ({ default: m.TeamPanel })));
 
 function usePendingRisk(session: SessionDetail) {
+  const view = useWorkingView();
   return useQuery({
     queryKey: ["attention", "pending", session.id],
     queryFn: () => api<AttentionItem[]>(`/api/attention?scope=pending&session_id=${session.id}`),
-    refetchInterval: 3000,
+    refetchInterval: view && !view.visible ? false : 3000, enabled: !view || view.visible,
   });
 }
 
@@ -76,7 +84,7 @@ function NeedsYouLine({ session }: { session: SessionDetail }) {
   );
 }
 
-const TABS = ["Terminal", "Files", "Preview", "Changes", "Pull request", "Artifacts", "Activity", "Handoffs", "Setup", "Team"] as const;
+const TABS = ["Terminal", "Chat", "Files", "Preview", "Changes", "Pull request", "Artifacts", "Activity", "Handoffs", "Setup", "Team"] as const;
 type Tab = (typeof TABS)[number];
 const hasPullTab = (session: SessionDetail) => !!session.repo && !session.standalone;
 const tabLabel = (t: Tab, standalone: boolean) => (t === "Handoffs" && standalone ? "Findings" : t);
@@ -167,6 +175,7 @@ function Setup({ session }: { session: SessionDetail }) {
   const activeFile = selectedFile !== undefined && filteredFiles.includes(selectedFile) ? selectedFile : filteredFiles[0];
   const items: [string, ReactNode][] = [
     ["Agent", <>{providerLabel(provider, registry.byId(provider))} · {inputs.model ? String(inputs.model) : "default model"}{inputs.effort ? ` · ${inputs.effort} effort` : ""}</>],
+    ...(provider === "claude" ? [["Claude sign-in", session.claude_auth === "api_key" ? (session.auth?.mode === "subscription" ? "Subscription token" : "API key (API billing)") : "Your Claude login (subscription)"] as [string, ReactNode]] : []),
     ["Permissions", permissions],
     ["Profile", inputs.profile ? String(inputs.profile) : "None"],
     ["Skills", list("skills").length ? list("skills").join(", ") : "None"],
@@ -286,10 +295,11 @@ const ciTone = (run: { status: string; conclusion: string | null }) =>
 
 /** The branch the session's folder is on and, from the project's GitHub view, the open pull request from it and its CI. */
 function BranchAndPull({ session }: { session: SessionDetail }) {
+  const view = useWorkingView();
   const branch = session.changes?.branch ?? session.worktree_branch;
   const github = useQuery({
     queryKey: ["github", String(session.project_id)], queryFn: () => api<GithubSnapshot>(`/api/projects/${session.project_id}/github`),
-    refetchInterval: 60000, enabled: !!branch && !session.standalone,
+    refetchInterval: 60000, enabled: !!branch && !session.standalone && (!view || view.visible),
   });
   if (!branch) return null;
   const pull = github.data?.pulls?.find((p) => p.head === branch);
@@ -316,7 +326,7 @@ function BranchAndPull({ session }: { session: SessionDetail }) {
 }
 
 /** VS Code Remote-SSH into the session's folder (its worktree if it has one): a link, and the command to paste. */
-function OpenInEditor({ editor }: { editor: NonNullable<SessionDetail["editor"]> }) {
+function OpenInEditor({ editor, inline = false }: { editor: NonNullable<SessionDetail["editor"]>; inline?: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useDismissableLayer({ open, root: box, dismissOnOutside: true, onDismiss: () => setOpen(false) });
@@ -327,7 +337,7 @@ function OpenInEditor({ editor }: { editor: NonNullable<SessionDetail["editor"]>
     <div ref={box} className="relative">
       <Button aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}><Code2 size={14} aria-hidden="true" /> Open in editor</Button>
       {open && (
-        <div className="absolute right-0 z-20 mt-1.5 w-[22rem] max-w-[calc(100vw-2rem)] space-y-3 rounded-[10px] border border-line-strong bg-panel p-3 shadow-lg">
+        <div className={inline ? "mt-1.5 w-full min-w-0 space-y-3 border-t border-line pt-3" : "absolute right-0 z-20 mt-1.5 w-[22rem] max-w-[calc(100vw-2rem)] space-y-3 rounded-[10px] border border-line-strong bg-panel p-3 shadow-lg"}>
           <a href={link} onClick={() => setOpen(false)}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium text-fg hover:bg-panel-2">
             <ExternalLink size={14} aria-hidden="true" /> VS Code (Remote-SSH)
@@ -341,6 +351,16 @@ function OpenInEditor({ editor }: { editor: NonNullable<SessionDetail["editor"]>
       )}
     </div>
   );
+}
+
+function InboxPermissionSetting({ id }: { id: string }) {
+  const path = `/api/sessions/${id}/inbox-permissions`;
+  const setting = useQuery({ queryKey: ["inbox-permissions", id], queryFn: () => api<{ enabled: boolean }>(path) });
+  const change = useMutation({ mutationFn: (enabled: boolean) => api(path, { method: "PUT", json: { enabled } }),
+    onSuccess: () => setting.refetch() });
+  return <Card><label className="flex items-center gap-2"><input type="checkbox" checked={setting.data?.enabled ?? true}
+    disabled={!setting.data || change.isPending} onChange={e => change.mutate(e.target.checked)} />
+    Answer permission prompts from the Inbox</label><ErrorNote error={setting.error || change.error} /></Card>;
 }
 
 function RenameButton({ session }: { session: SessionDetail }) {
@@ -377,13 +397,16 @@ function RenameButton({ session }: { session: SessionDetail }) {
 const availableTab = (session: SessionDetail, tab: Tab): Tab =>
   (tab === "Team" && session.team_id !== session.id) || (tab === "Pull request" && !hasPullTab(session)) ? "Terminal" : tab;
 
-function SessionTabs({ session, tab, setTab }: { session: SessionDetail; tab: Tab; setTab: (t: Tab) => void }) {
+function SessionTabs({ session, tab, setTab, chatAvailable }: { session: SessionDetail; tab: Tab; setTab: (t: Tab) => void; chatAvailable: boolean }) {
   const feature = useFeatures();
+  const shell = useNewShell();
+  const small = useMedia("(max-width: 639px)");
+  const compact = shell && !small;
   const artifacts = useArtifacts(session).data?.files.length ?? 0;
-  const shown = TABS.filter((t) => (t !== "Preview" || feature("live_preview")) && (t !== "Team" || feature("teams")) && (t !== "Team" || session.team_id === session.id) && (t !== "Artifacts" || artifacts > 0 || tab === "Artifacts") && (t !== "Pull request" || hasPullTab(session)));
+  const shown = TABS.filter((t) => (t !== "Chat" || (feature("chat") && (chatAvailable || tab === "Chat"))) && (t !== "Preview" || feature("live_preview")) && (t !== "Team" || feature("teams")) && (t !== "Team" || session.team_id === session.id) && (t !== "Artifacts" || artifacts > 0 || tab === "Artifacts") && (t !== "Pull request" || hasPullTab(session)));
   return <Tabs id="session-tabs" label="Session views" tabs={shown.map((t) => ({ id: t, label: tabLabel(t, session.standalone),
-    count: t === "Changes" ? session.changes?.files || undefined : t === "Artifacts" ? artifacts || undefined : undefined }))} value={tab} onChange={setTab} className="shrink-0"
-    phone={["Terminal", "Changes"]} />;
+    count: t === "Changes" ? session.changes?.files || undefined : t === "Artifacts" ? artifacts || undefined : undefined }))} value={tab} onChange={setTab} className={clsx("shrink-0", shell && "session-views-compact")}
+    phone={compact ? shown.filter(t => !["Setup", "Activity", "Handoffs"].includes(t)) : ["Terminal", "Chat", "Changes"]} />;
 }
 
 /** Says a state change out loud once (polite), without reading the terminal's stream (UX review SE-9). */
@@ -398,22 +421,28 @@ function useAnnounceState(session: SessionDetail | undefined) {
 }
 
 export function SessionPage() {
+  const working = useWorkingView();
+  const newShell = useNewShell();
+  const [terminalTools, setTerminalTools] = useState<HTMLDivElement | null>(null);
   const { id = "" } = useParams();
   const [search, setSearch] = useSearchParams();
   const tabParam = search.get("tab");
-  const requested: Tab = tabParam === "team" ? "Team" : tabParam === "activity" ? "Activity" : ["spec", "automation", "goal"].includes(tabParam ?? "") ? "Setup" : tabParam === "handoffs" ? "Handoffs"
+  const requested: Tab = tabParam === "chat" ? "Chat" : tabParam === "team" ? "Team" : tabParam === "activity" ? "Activity" : ["spec", "automation", "goal"].includes(tabParam ?? "") ? "Setup" : tabParam === "handoffs" ? "Handoffs"
     : tabParam === "files" ? "Files" : tabParam === "preview" ? "Preview" : tabParam === "changes" ? "Changes" : tabParam === "pull" ? "Pull request" : tabParam === "artifacts" ? "Artifacts" : "Terminal";
   const setTab = (t: Tab) =>
-    setSearch(t === "Terminal" ? {} : { tab: t === "Activity" ? "activity" : t === "Handoffs" ? "handoffs" : t === "Changes" ? "changes" : t === "Pull request" ? "pull"
+    setSearch(t === "Terminal" ? {} : { tab: t === "Chat" ? "chat" : t === "Activity" ? "activity" : t === "Handoffs" ? "handoffs" : t === "Changes" ? "changes" : t === "Pull request" ? "pull"
       : t === "Preview" ? "preview" : t === "Files" ? "files" : t === "Artifacts" ? "artifacts" : t === "Team" ? "team" : "spec" }, { replace: true });
-  const query = useQuery({ queryKey: ["sessions", id], queryFn: () => api<SessionDetail>(`/api/sessions/${id}`), refetchInterval: 3000,
-    retry: (count, error) => !isNotFound(error) && count < 3 });
+  const query = useQuery({ queryKey: ["sessions", id], queryFn: () => api<SessionDetail>(`/api/sessions/${id}`), refetchInterval: working && !working.visible ? false : 3000, enabled: !working || working.visible,
+    retry: (count, error) => !(newShell ? unavailableResource(error) : isNotFound(error)) && count < 3 });
   const session = query.data;
+  const [chatAvailability, setChatAvailability] = useState({ id: "", available: false });
+  const onChatAvailability = useCallback((id: string, available: boolean) => setChatAvailability(previous => previous.id === id && previous.available === available ? previous : { id, available }), []);
   const { host } = useInstance();
   const feature = useFeatures();
   const [editingAutomation, setEditingAutomation] = useState(false);
-  useDocumentTitle(session?.name);
-  useAnnounceState(session);
+  useDocumentTitle(newShell && unavailableResource(query.error) ? undefined : session?.name);
+  useAnnounceState(newShell && unavailableResource(query.error) || working && !working.visible ? undefined : session);
+  if (newShell && unavailableResource(query.error)) return <Page><UnavailableView onRetry={() => { void query.refetch(); }} /></Page>;
   if (!session) return <Page>{isNotFound(query.error) ? (
     <Card><Empty icon={TerminalSquare} action={<Link to="/sessions" className="inline-flex h-8 pointer-coarse:h-11 items-center gap-1.5 rounded-md border border-line-strong px-3 text-[13px] text-fg hover:bg-panel-2 underline underline-offset-2"><ArrowLeft size={14} aria-hidden="true" /> Back to sessions</Link>}>
       <span className="block text-[15px] font-semibold text-fg">There's no session here</span>
@@ -421,6 +450,10 @@ export function SessionPage() {
     </Empty></Card>
   ) : query.error ? <ErrorNote error={query.error} title="Couldn't load this session." onRetry={query.refetch} /> : <Skeleton className="h-64" />}</Page>;
   const tab = availableTab(session, requested);
+  const knownTabs = ['chat', 'team', 'activity', 'spec', 'automation', 'goal', 'handoffs', 'files', 'preview', 'changes', 'pull', 'artifacts', 'terminal'];
+  if (requested === 'Chat' && !feature('chat')) return <Page><Feature name="chat" page>{null}</Feature></Page>;
+  if (newShell && ((tabParam && !knownTabs.includes(tabParam)) || tab !== requested || (requested === 'Preview' && !feature('live_preview')) || (requested === 'Team' && !feature('teams')))) return <Page><UnavailableTab sessionId={session.id} onRetry={() => { void query.refetch(); }} /></Page>;
+
   const waiting = session.observed_state === "waiting_input";
   const automation = session.management !== "external";
   const projectLink = session.standalone
@@ -442,8 +475,26 @@ export function SessionPage() {
       <Download size={14} aria-hidden="true" /> Export</a>
   );
   return (
-    <div className="flex h-full flex-col gap-3 px-4 pb-4 pt-3 md:gap-4 md:px-8 md:pb-6 md:pt-5">
-      <div className="session-heading grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:grid-cols-[minmax(0,1fr)] md:gap-x-0">
+    <div className={clsx("flex h-full flex-col gap-3 px-4 pb-4 pt-3 md:gap-4 md:px-8 md:pb-6 md:pt-5", newShell && "shell-session-page")}>
+      {newShell ? <div className="session-heading shell-session-heading">
+        <div className="session-primary-line">
+          <h1 title={session.name}>{session.name}</h1>
+          <ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} />
+          <SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session" />
+          {waiting && tab === "Terminal" && <HeaderRisk session={session} />}
+          <SessionDeliveries key={session.id} id={session.id} onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} />
+          <Popover label="Session details" className="session-details-popover" wide trigger={<>Details <ChevronDown size={13} aria-hidden="true" /></>}>
+            {close => <div className="space-y-3 p-1.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-3 text-xs text-muted">{projectLink}{meta(close)}</div>
+              <p className="break-all font-mono text-xs text-muted">{session.worktree ?? session.cwd}</p>
+              <NowDoing session={session} className="text-xs text-muted" />
+              <div className="flex flex-wrap items-center gap-2"><RenameButton session={session} />{exportLink}{session.editor && <OpenInEditor editor={session.editor} inline />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} secondaryOnly /></div>
+            </div>}
+          </Popover>
+          <SessionActions session={session} compact primaryOnly />
+        </div>
+        <div className="session-tab-line"><SessionTabs session={session} tab={tab} setTab={setTab} chatAvailable={chatAvailability.id === session.id && chatAvailability.available} />{tab === "Terminal" && <div className="session-terminal-tools" ref={setTerminalTools} />}</div>
+      </div> : <div className="session-heading grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:grid-cols-[minmax(0,1fr)] md:gap-x-0">
       <div className="col-span-full row-start-1 max-md:hidden">
         <PageHeader
           title={<span className="flex flex-wrap items-center gap-2.5">{session.name}<RenameButton session={session} /><ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} /><SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session"/>{waiting && tab === "Terminal" ? <HeaderRisk session={session} />
@@ -483,10 +534,10 @@ export function SessionPage() {
           <SessionDeliveries key={session.id} id={session.id}
             onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} />
         </div>
-        <div className="col-span-full row-start-4 mt-3 md:mt-0"><SessionTabs session={session} tab={tab} setTab={setTab} /></div>
-      </div>
-      <TabPanel id="session-tabs" value={tab} className="min-h-[420px] flex-1">
-        {session.machine_offline && <p className="text-sm text-muted">Machine offline. Sessions check in when the machine returns.</p>}
+        <div className="col-span-full row-start-4 mt-3 md:mt-0"><SessionTabs session={session} tab={tab} setTab={setTab} chatAvailable={chatAvailability.id === session.id && chatAvailability.available} /></div>
+      </div>}
+      <TabPanel id="session-tabs" value={tab} className={clsx("min-h-[420px] flex-1", newShell && tab === "Terminal" && "shell-terminal-panel")}>
+        {session.machine_offline && (newShell ? <OfflineHost host={session.host} /> : <p className="text-sm text-muted">Machine offline. Sessions check in when the machine returns.</p>)}
         {!session.machine_offline && session.last_error && <ErrorNote error={session.last_error} />}
         {waiting && tab !== "Terminal" && <NeedsYou session={session} onTerminal={() => setTab("Terminal")} />}
         <Suspense fallback={<div role="status" className="h-full min-h-[420px]">
@@ -508,24 +559,31 @@ export function SessionPage() {
             <p className="mt-5 border-t border-line pt-4 text-xs text-faint">From a shell on {host}: <span className="font-mono text-muted">sudo tmux -L acc-root attach -t acc-root</span></p>
           </Card>
         )}
-        {tab === "Terminal" && session.management !== "external" && (session.machine_offline
-          ? <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card> : isLive(session) || session.observed_state === "exited"
-          ? <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
-          : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)}
+        {feature("chat") ? <SessionChat key={session.id} session={session} tab={tab} onTerminal={() => { setTab("Terminal"); requestAnimationFrame(() => document.getElementById(`${workingId("session-tabs", working)}-tab-Terminal`)?.focus()); }} onChat={() => setTab("Chat")} onAvailability={onChatAvailability}
+          terminal={session.management !== "external" && (session.machine_offline
+          ? newShell ? null : <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card> : isLive(session) || session.observed_state === "exited"
+          ? newShell ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} /> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
+          : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)} />
+          : tab === "Terminal" && session.management !== "external" && (session.machine_offline
+            ? newShell ? null : <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card>
+            : isLive(session) || session.observed_state === "exited"
+              ? newShell ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} /> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
+              : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)}
         {tab === "Team" && session.project_id !== null && !session.machine_offline && session.team_id === session.id && <Feature name="teams"><TeamPanel id={session.id} projectId={session.project_id} /></Feature>}
         {feature("live_preview") && tab === "Preview" && session.project_id !== null && !session.machine_offline && <div className="grid min-w-0 gap-4 xl:grid-cols-2">
           <Preview key={session.id} projectId={session.project_id} projectName={session.project}
             folder={session.worktree ?? session.cwd} branch={session.changes?.branch ?? session.worktree_branch} sessionId={session.id} />
           <div className="min-w-0">{session.management !== "external" && (isLive(session) || session.observed_state === "exited")
-            ? <Terminal key={session.id} sessionId={session.id} live={isLive(session)} /> : <Activity id={session.id} />}</div>
+            ? newShell ? <Link to={`/sessions/${session.id}`}>Open terminal view</Link> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} /> : <Activity id={session.id} />}</div>
         </div>}
         {tab === "Activity" && <div className="space-y-4"><DeliveryHistory id={session.id} focus={search.get("delivery") === "details"} /><Activity id={session.id} /></div>}
-        {session.machine_offline && ["Files", "Changes", "Artifacts", "Preview", "Handoffs", "Team"].includes(tab) && <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card>}
+        {!newShell && session.machine_offline && ["Files", "Changes", "Artifacts", "Preview", "Handoffs", "Team"].includes(tab) && <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card>}
         {tab === "Files" && !session.machine_offline && <Files kind="session" scopeKey={session.id} />}
         {tab === "Changes" && !session.machine_offline && <Changes session={session} />}
         {tab === "Pull request" && hasPullTab(session) && <PullRequestPanel session={session} />}
         {tab === "Artifacts" && !session.machine_offline && <Artifacts session={session} />}
         {tab === "Setup" && <div className="space-y-4">
+          {session.provider === "claude" && session.management === "acc" && !session.container && <InboxPermissionSetting id={session.id} />}
           {feature("automation") && automation && <Feature name="automation">
             <SessionAutomation key={session.id} session={session} editing={editingAutomation} onEditing={setEditingAutomation}
               disabledReason={session.launch_spec.inputs.endpoint ? "Goal and auto-resume need the provider plan, not a model endpoint." : undefined} />

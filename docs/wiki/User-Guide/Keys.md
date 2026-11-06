@@ -1,5 +1,7 @@
 # Keys
 
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
 **What it's for:** keep API keys (OpenAI, Stripe, Sentry, …) in one place and give them to [projects](/User-Guide/Glossary#project). Each [session](/User-Guide/Glossary#session) in a project gets the keys as environment variables, so an agent can call `curl -H "Authorization: Bearer $OPENAI_API_KEY" …` without the key ever being pasted into a prompt, a file or the chat.
@@ -27,7 +29,7 @@ A key has:
 
 ![Custom variable on a phone, with the free-text field and pinned Add key action](/.attachments/settings-keys-custom-mobile.png)
 
-The key appears in the list with its variable, its sharing, the projects it's given to and when a session last used it.
+The key appears in the list with its variable, its sharing, the projects it's given to and when a session last used it. Adding or cancelling keeps Settings on Keys, including when you opened the form from a Claude guard notice.
 
 Interpreter, loader and shell startup variables cannot be keys: any name starting with `PYTHON`, `LD_` or `DYLD_`, and names such as `NODE_PATH`, `NODE_OPTIONS`, `PERL5LIB`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`, `BASH_ENV`, `ENV` and `ZDOTDIR`. The same goes for variables that make git run a command or read other configuration: any name starting with `GIT_CONFIG`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PAGER`, `GIT_EDITOR`, `EDITOR`, `PAGER` and similar. Nor can a key move where an agent's coding tool reads its settings, which is where Rynhult's guardrails are: `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, `CURSOR_CONFIG_DIR`, `GNUPGHOME`, and any name starting with `XDG_`, `NPM_CONFIG_` or `OPENCODE_`. `NODE_AUTH_TOKEN`, `NODE_ENV`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*` are fine. They can load code before the session starts. Choose the credential variable your service expects instead. If an older key uses a reserved name, remove it from the project and add a key with the credential's proper variable before the next launch; the broker refuses to launch with the reserved variable.
 
@@ -53,6 +55,17 @@ Its sessions get the key from their next launch or resume. To take it back, sele
 You can give your own keys and shared keys to projects you can launch in (members: their own projects).
 
 ## What a session gets
+
+For Claude, an Anthropic credential grant enables a **Claude sign-in** choice in New session.
+**Your Claude login (subscription)** is the default: Anthropic auth variables are withheld,
+while every other granted key is still delivered. Choose **API key: <key name> (API billing)**
+to use the granted credentials. **Keys this session gets** lists the keys actually delivered.
+With no applicable Anthropic grant, there is no selector.
+
+The choice stays with the session through restart, resume and auto-resume; giving a project
+an Anthropic key later does not switch a subscription session to API billing. Removing a
+required grant makes an API session's next launch fail instead of changing its sign-in.
+
 - Keys selected for a project's GitLab, Gitea / Forgejo or Linear connection are **server only** for that project: excluded from
   agent environments, key context and MCP delivery. This persists after disconnecting the source; explicitly remove
   and give the key again to repurpose it. Use dedicated source keys. Already-running sessions keep any key they
@@ -119,3 +132,9 @@ ownership, mode and symlink checks. It never asks an agent to paste a token, ove
 a value. Certificate and Publishing entries stay separate even when their values match. Import alone does not
 activate the binding or delete the legacy files. Existing files and backups still contain old secrets until the
 operator completes verified cutover and the rollback retention period. See [Caddy hardening](/User-Guide/Caddy-Hardening).
+
+### Saved approvals and keys
+
+Tool or main-operation consent never grants a new key, exports a secret or
+authorizes delivery to another account or machine. Those decisions stay with
+the key's authorized person. A worker's request text is not that person's consent.

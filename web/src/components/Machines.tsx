@@ -11,7 +11,8 @@ import { providerShort, useInstance, useProviderRegistry } from "../lib/queries"
 import { useConfirm } from "./confirm";
 import { CopyBlock } from "./InstallSteps";
 import { ago } from "../lib/format";
-import { announce, Badge, Button, Card, CardHeader, Dialog, Dot, Empty, ErrorNote, Field, IconButton, Input, Note, Segmented, Select, TabPanel, Tabs } from "./ui";
+import { announce, Badge, Button, Card, CardHeader, Dialog, Dot, Empty, ErrorNote, Field, IconButton, Input, Note, Segmented, Select } from "./ui";
+import { TabPanel, Tabs } from "./Tabs";
 
 export type NodeRow = {
   policy_revision?: string;

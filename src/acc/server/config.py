@@ -28,7 +28,7 @@ class Settings:
     broker_env_dir: Path = Path("/etc/acc/broker")  # per-account broker settings (allowed roots)
     accounts_dir: Path = Path("/srv/acc/accounts")  # requests to the acc-accounts root helper (new agent accounts)
     accounts_timeout: float = 60.0
-    update_repository: str | None = None  # root-owned ACC_UPDATE_REPOSITORY, else derived from ACC_SOURCE_URL
+    update_repository: str | None = None  # root-owned ACC_UPDATE_REPOSITORY, else official rynhult/rynhult
     updates_dir: Path = Path("/srv/acc/updates")
     update_source: Path = Path(__file__).resolve().parents[3]
     packages_dir: Path = Path("/srv/acc/packages")  # requests to the acc-packages root helper (agent software)
@@ -244,8 +244,8 @@ class Settings:
         return self.data_dir / "secrets" / "api_token"
 
     @classmethod
-    def from_env(cls) -> "Settings":
-        env = environment
+    def from_env(cls, env=None) -> "Settings":
+        env = environment if env is None else env
         kwargs = {}
         for name, key, cast in [
             ("database_url", "ACC_DATABASE_URL", str),

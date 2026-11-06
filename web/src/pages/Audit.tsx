@@ -5,7 +5,8 @@ import { api } from "../lib/api";
 import { stamp } from "../lib/format";
 import { useSessions } from "../lib/queries";
 import { auditWords, foldAudit } from "../lib/words";
-import { Button, Card, Empty, Field, Input, Page, PageHeader, QueryState, Select, Toolbar } from "../components/ui";
+import { Button, Card, Empty, Field, Input, QueryState, Select, Toolbar } from "../components/ui";
+import { ShellPage as Page, Workbar as PageHeader } from "../components/shell/PagePrimitives";
 
 interface AuditRow { id: number; ts: string; actor: string; action: string; target: string | null; detail: Record<string, unknown> }
 

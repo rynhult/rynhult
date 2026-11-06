@@ -49,6 +49,16 @@ def head(url: str) -> str:
 def upgrade(url: str, revision: str = 'head') -> None:
     """The app's own path (db.migrate) runs these same scripts; this one can stop at any revision."""
     _run(url, command.upgrade, revision)
+    if revision == BASE:
+        # 0030 uses today's model metadata. A fresh 0066 fixture must instead
+        # represent 0066: decision provenance was introduced after that baseline.
+        engine = make_engine(url)
+        try:
+            with engine.begin() as db:
+                if 'decision' in {c['name'] for c in inspect(db).get_columns('tool_request')}:
+                    db.exec_driver_sql('ALTER TABLE tool_request DROP COLUMN decision')
+        finally:
+            engine.dispose()
 
 
 def downgrade(url: str, revision: str) -> None:
@@ -294,6 +304,13 @@ def rows(data_dir: Path) -> dict[str, list[dict]]:
         'team': [dict(id='t' + '1' * 31, limits={'max_helpers': 3, 'max_depth': 1}, expires_at=at(2), stopped=False, started=1)],
         'port_reservation': [dict(port=8000 + n, project_id=pid, label=f'dev {n}', owner='alex', created_at=at(-4))
                              for n, pid in enumerate((1, 1, 3))],
+        'tool_request': [dict(id='tool-111111111111', session_id='s' + '0' * 31, project_id=1,
+                             owner='alex', account='alex-agent', host='local', manager='npm', name='prettier',
+                             version='3.6.2', operation='install', reason='Format the demo app',
+                             status='applied', decided_by='alex', resolved_version='3.6.2',
+                             detail='Legacy specific approval, not durable consent', created_at=at(-5), completed_at=at(-4))],
+        'installed_tool': [dict(id='e' * 64, owner='alex', host='local', account='alex-agent', manager='npm',
+                               name='prettier', version='3.6.2', request_id='tool-111111111111', installed_at=at(-4))],
     }
 
 

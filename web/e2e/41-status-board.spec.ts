@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./fixtures";
 import type { AuthState, BoardView } from "../src/lib/types";
 import { AUTH_FILE, demoSessions, expectAxeClean, wikiShotPath } from "./helpers";
 

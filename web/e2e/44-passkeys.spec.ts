@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { AUTH_FILE, PASSWORD, loadSecret, totp, freshStep, wikiShotPath, expectAxeClean } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
@@ -22,7 +22,7 @@ test('passkey enrollment, discoverable login, rename and removal on desktop and 
   await expect(page.getByRole('heading', { name: 'Passkeys', exact: true })).toBeVisible();
   await freshStep(page);
   await page.getByLabel('Verification password', { exact: true }).fill(PASSWORD);
-  await page.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+  await page.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
   await page.getByRole('button', { name: 'Verify with password and authenticator' }).click();
   await expect(page.getByText('Verified for five minutes.')).toBeVisible();
   await page.getByLabel('Passkey name', { exact: true }).fill('Alex laptop');
@@ -69,7 +69,7 @@ test('offline recovery works after the virtual authenticator is lost', async ({ 
   await page.goto('/settings');
   await freshStep(page);
   await page.getByLabel('Verification password', { exact: true }).fill(PASSWORD);
-  await page.getByLabel('Verification authenticator code').fill(totp(loadSecret()));
+  await page.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
   await page.getByRole('button', { name: 'Verify with password and authenticator' }).click();
   await expect(page.getByText('Verified for five minutes.')).toBeVisible();
   await page.getByLabel('Passkey name', { exact: true }).fill('Lost device');

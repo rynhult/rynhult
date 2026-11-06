@@ -17,7 +17,7 @@ type Target = {
   last_job?: { state: string; error?: string; note?: string; repository_locked?:boolean;
     locks?:{hostname:string;pid:number;age_seconds:number;exclusive:boolean}[] };
 };
-type State = { targets: Target[]; coverage: string; quarterly_due: boolean; drill: {at?: number} };
+type State = { installed_local?: {repository:string;last_run:number|null;next_run:number|null;bytes:number|null;state:string}; targets: Target[]; coverage: string; quarterly_due: boolean; drill: {at?: number} };
 const age = (time?: number) => time ? ago(new Date(time * 1000).toISOString()) : 'Never';
 type Generation = {backup_id:string;snapshot_id:string;time:string;duplicate:boolean;note?:string};
 type History = {items:Generation[];verified_missing:boolean};
@@ -38,6 +38,7 @@ function BackupHistory({id, busy, onDrill}:{id:string;busy:boolean;onDrill:(item
         <span className="text-muted">snapshot <code title={item.snapshot_id}>{item.snapshot_id.slice(0, 12)}</code></span>
         {item.note && <span className="text-muted">{item.note}</span>}
         {item.duplicate && <Badge tone="wait">Duplicate ID</Badge>}
+        <details className="w-full"><summary>Restore this snapshot manually</summary><p>Fence the old machine. Use trusted matching source, pinned Restic and your saved kit on an isolated replacement. This command validates into a fresh directory and leaves it quarantined; it does not activate the replacement.</p><pre className="overflow-auto whitespace-pre-wrap">{['python -m acc.backup_server restore --kit /secure/acc-recovery-kit.json', '  --repository /secure/exported-repository', `  --target-id ${id} --backup-id ${item.backup_id} --snapshot-id ${item.snapshot_id} --destination /secure/example-replacement`].join(' \\\n')}</pre><Link className="underline" to="/guide/User-Guide/Backups#test-recovery-every-quarter">Recovery steps and quarantine checks</Link></details>
         <Button disabled={busy || verify.isPending} aria-label={`Test restore of snapshot ${item.snapshot_id.slice(0, 12)}`} onClick={() => verify.mutate(item)}>Test restore</Button>
         <Button aria-label={`Record restore drill of snapshot ${item.snapshot_id.slice(0, 12)}`} onClick={() => onDrill(item)}>Record restore drill</Button>
       </div>)}
@@ -108,6 +109,7 @@ export function HostBackups() {
   // One status line on Host (UX review 2, R3): amber only when something needs doing; the details on request.
   const status = (state: State) => {
     const targets = state.targets.filter(t => !t.machine_removed);
+    if (!targets.length && state.installed_local?.last_run) return {tone:'text-wait', text:`Local backup ${age(state.installed_local.last_run)} · no off-machine backup yet`};
     if (!targets.length) return {tone:'text-wait', text:state.targets.length ? 'No active targets · machine removed' : 'Not set up · no backup target yet'};
     const latest = Math.max(...targets.map(t => t.last_successful_off_machine_at ?? 0));
     const localLatest = Math.max(...targets.filter(t => !['node', 's3'].includes(t.kind ?? '')).map(t => t.captured_at ?? 0), 0);
@@ -135,12 +137,14 @@ export function HostBackups() {
         <Button size="sm" variant="ghost" aria-expanded={open} aria-controls="host-backups-details" onClick={() => setOpen(!open)}>{open ? 'Hide details' : 'Details'}</Button>
       </div>} />
     {(open || query.error) && <div id="host-backups-details" className="border-t border-line"><QueryState query={query} errorTitle="Couldn't read the backup status.">{state => <div className="space-y-4 p-4 text-[13px]">
+      {state.installed_local && <div className="space-y-2 border-b border-line pb-4"><h3>Local backup on this disk</h3><code>{state.installed_local.repository}</code><p>Last run: {state.installed_local.last_run ? age(state.installed_local.last_run) : 'Unknown or never'} · {state.installed_local.state}</p><p>Size: {state.installed_local.bytes == null ? 'Unavailable (collector has no size reading)' : size(state.installed_local.bytes)} · Next run: {state.installed_local.next_run ? new Date(state.installed_local.next_run * 1000).toLocaleString() : 'Unavailable (timer disabled or not installed)'}</p><p>Read-only install-time timer. This is on the same disk and does not protect against disk loss. It uses a separate manual recovery procedure in the Guide.</p></div>}
+      <Link className="underline" to="/host/backups/setup?kind=local">Back up to a folder or USB disk</Link>
       <p className="text-muted">{state.coverage}</p>
       <p className="text-muted">Per-target schedule · stale after twice its capture interval · 48 hourly / 30 daily / 12 monthly retention · 10 MiB/s</p>
       <p className="text-muted">Protection requires an independent immutable or offline copy with a 30-day lock.</p>
       {state.quarterly_due && <p role="status" className="text-wait">Quarterly restore test due</p>}
       <p className="text-muted">Last owner restore drill: {age(state.drill.at)}{!state.drill.at && state.targets.some(t => t.backup_id) ? ' · after restoring a backup on an isolated machine, select Record restore drill below' : ''}</p>
-      {!state.targets.length && <p>Choose an enrolled Linux machine or S3-compatible storage with Set up, or provision a local target using the Guide: <Link to="/guide/User-Guide/Backups#before-you-start" className="text-accent">Backups → Before you start</Link>. Rynhult never takes a destination path from the dashboard.</p>}
+      {!state.targets.length && <p>Choose an enrolled Linux machine, S3-compatible storage, or a folder or USB disk with Set up. See <Link to="/guide/User-Guide/Backups#before-you-start" className="text-accent">Backups → Before you start</Link>.</p>}
       {state.targets.map(target => {
         const busy = action.isPending || ['queued','running'].includes(target.last_job?.state ?? '');
         return <div key={target.id} className="space-y-2 border-t border-line pt-4">

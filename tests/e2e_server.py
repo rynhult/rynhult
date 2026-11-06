@@ -27,9 +27,23 @@ from acc.broker.config import BrokerConfig
 from acc.broker.server import MAX_SOCKET_PATH, serve
 from acc.env import environment
 from acc.server import host
+
+# Test-only compatibility for classic journeys until their post-rc.4 migration.
+from acc.server.api import settings_routes
 from acc.server.app import create_app
 from acc.server.config import Settings
 from acc.server.github import GitHub
+
+production_shell_enabled = settings_routes.shell_enabled
+
+
+def fixture_shell_enabled(value, request):
+    if request.headers.get('x-acc-e2e-layout') == 'release':
+        return production_shell_enabled(value, request)
+    return bool(value.get('enabled', True))
+
+
+settings_routes.shell_enabled = fixture_shell_enabled
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -71,6 +85,18 @@ def qualify_containers(state: Path) -> None:
 
 async def main(base: Path, port: int, socket_name: str) -> None:
     os.environ['ACC_TEST'] = '1'  # Browser opt-in tests must never reach a real collector.
+    # Match the fake CLI's API auth status with credentials supplied at launch.
+    # Inherited worker credentials do not grant automation authority. This is
+    # artificial material for fake providers only, like tests/conftest.py.
+    from acc.server.vault import Vault
+    deliver = Vault.deliver
+
+    def fixture_deliver(*args, **kwargs):
+        result = deliver(*args, **kwargs)
+        result.env.setdefault('ANTHROPIC_API_KEY', 'fixture-key')
+        return result
+
+    Vault.deliver = fixture_deliver
     # This fixture owns a private server, not the launching agent's tmux session.
     os.environ.pop("TMUX", None)
     os.environ.pop("TMUX_PANE", None)
@@ -235,6 +261,9 @@ async def main(base: Path, port: int, socket_name: str) -> None:
         return {"ok": True, "version": "3.6.2" if request.operation == "install" else None,
                 "detail": "Demo tool change (no software installed)"}
     app.state.supervisor.tools._carry = demo_tool
+    if os.environ.get("ACC_E2E_TERMINAL_TRACE") == "1":
+        from e2e_terminal_trace import install
+        app.state.terminal_trace = install(app.state.supervisor, base / "terminal-times.jsonl")
     # Test-owned app: only this suite starts and stops it, never a workspace service.
     async def demo_preview(reader, writer):
         try:
@@ -258,6 +287,12 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     from starlette.responses import JSONResponse
     from starlette.routing import Route
     install_team_deadlines(app)
+    from e2e_presentation_state import install as install_presentation_state
+    isolation_token = install_presentation_state(app)
+    from e2e_identity import install as install_identity
+    install_identity(app, isolation_token)
+    from e2e_team_fixtures import install as install_team_fixtures
+    install_team_fixtures(app, isolation_token)
     app.router.routes.insert(0, Route('/preview-test-port', lambda request: JSONResponse({'port': demo_port})))
 
     def reset_pairing_throttle(request):
@@ -327,7 +362,7 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     fixture_accounts = state / "fixture-accounts"
     fixture_accounts.mkdir()
     app.state.supervisor.broker.accounts = lambda: known + sorted(p.name for p in fixture_accounts.glob("*-agent"))
-    (base / "info.json").write_text(json.dumps({"state": str(state), "preview_port": demo_port,
+    (base / "info.json").write_text(json.dumps({"state": str(state), "preview_port": demo_port, "isolation_token": isolation_token,
         "setup_token_path": str(settings.setup_token_path), "run_dir": str(run_dir),
         "workspace": str(workspaces / "demo"), "origin": origin}))
     tls = {}

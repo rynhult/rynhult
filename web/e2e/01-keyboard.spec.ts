@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";

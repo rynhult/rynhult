@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 let script: string;
 test.beforeAll(async () => {

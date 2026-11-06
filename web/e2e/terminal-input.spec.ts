@@ -1,5 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { expect, test, type Page } from './fixtures';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle, waitForSessionState } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
@@ -7,13 +7,27 @@ let sessionId: string | undefined;
 
 test.beforeEach(async ({ page }) => {
   await resetTerminalThrottle(page);
+  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } });
   await page.addInitScript(() => {
     const Native = window.WebSocket;
     (window as any).__terminalSockets = [];
+    (window as any).__terminalSent = [];
+    (window as any).__terminalTimeline = [];
+    document.addEventListener('keydown', event => {
+      if ((event.target as HTMLElement)?.classList.contains('xterm-helper-textarea'))
+        (window as any).__terminalTimeline.push({stage:'browser.keydown', at:performance.timeOrigin+performance.now(), key:event.key});
+    }, true);
     window.WebSocket = class extends Native {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
         if (String(url).includes('/tty?')) (window as any).__terminalSockets.push(this);
+      }
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        if (this.url.includes('/tty?') && typeof data === 'string') {
+          (window as any).__terminalSent.push(data);
+          (window as any).__terminalTimeline.push({stage:'browser.send',at:performance.timeOrigin+performance.now(),frame:JSON.parse(data)});
+        }
+        super.send(data);
       }
     };
   });
@@ -29,7 +43,24 @@ test.beforeEach(async ({ page }) => {
   await writable(page);
 });
 
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, testInfo) => {
+  if (!page.isClosed()) {
+    const timeline=await page.evaluate(() => (window as any).__terminalTimeline);
+    const recording=JSON.stringify({session:sessionId,timeline});
+    writeFileSync(testInfo.outputPath('terminal-timeline.json'),recording);
+    await testInfo.attach('terminal-timeline', {contentType:'application/json',body:recording});
+  }
+  if (testInfo.status !== testInfo.expectedStatus && !page.isClosed()) {
+    // Fixture-only key evidence distinguishes a browser-handler failure from
+    // input delayed between the bridge, broker and fake provider.
+    const input = await page.evaluate(() => ({ sent: (window as any).__terminalSent,
+      focused: document.activeElement?.className }));
+    await testInfo.attach('terminal-input-frames', { contentType: 'application/json', body: JSON.stringify(input) });
+    if (sessionId) {
+      const pane = await page.request.get(`/api/sessions/${sessionId}/terminal-output`);
+      if (pane.ok()) await testInfo.attach('terminal-input-pane', { contentType: 'application/json', body: await pane.body() });
+    }
+  }
   if (sessionId) expect((await page.request.post(`/api/sessions/${sessionId}/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
   sessionId = undefined;
 });
@@ -37,7 +68,12 @@ test.afterEach(async ({ page }) => {
 async function writable(page: Page) {
   const take = page.getByRole('button', { name: 'Take control', exact: true });
   await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
-  if (await take.isVisible()) await take.click();
+  if (await take.isVisible()) {
+    await take.click();
+    const dialog = page.getByRole('dialog', { name: 'Take terminal control' });
+    await dialog.getByLabel('Reason').selectOption('manual_handover');
+    await dialog.getByRole('button', { name: 'Take control', exact: true }).click();
+  }
   await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').focus();
 }
@@ -179,4 +215,26 @@ test('cancelled composition never replays the old prefix or loses the following 
   await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
   await page.keyboard.type('done');
   await submittedOnce(page, 'review done');
+});
+
+test('reloading with unsent text keeps writing for the same person and warns to inspect it', async ({ page }) => {
+  const project = await gitProject(page, 'partial-reload');
+  const created = await (await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'partial-reload' } })).json();
+  sessionId = created.id; await waitForSessionState(page, created.id, 'idle');
+  await page.goto(`/sessions/${created.id}`);
+  const input = page.locator('.xterm-helper-textarea');
+  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await input.focus(); await page.keyboard.type('half');
+  await expect.poll(() => page.evaluate(() => (window as any).__terminalSent.some((f: string) => JSON.parse(f).partial === true))).toBe(true);
+  await page.waitForTimeout(300);
+  await page.reload();
+  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-terminal-notice]')).toContainText('Partial input may remain');
+  await expect(page.getByRole('status', { name: 'Announcements' })).toContainText('Inspect');
+  await expect(page.getByRole('button', { name: 'Take control', exact: true })).toHaveCount(0);
+  const refused = await page.request.post(`/api/sessions/${created.id}/message`, { headers: await csrfHeaders(page), data: { text: 'automation must wait' } });
+  expect(refused.ok()).toBeTruthy();
+  await expect.poll(async () => JSON.stringify(await (await page.request.get(`/api/sessions/${created.id}/deliveries`)).json())).toMatch(/"state":"queued"/);
+  await input.focus(); await page.keyboard.press('Control+u');
+  await expect(page.locator('[data-terminal-notice]')).toHaveCount(0);
 });

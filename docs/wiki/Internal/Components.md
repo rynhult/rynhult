@@ -1,5 +1,7 @@
 # Components
 
+The [view registry foundation](View-Registry.md) separates terminal resource ownership from placement for future P2 integration. No production page uses the registry yet; the existing Terminal delegates construction to a shared runtime and retains its current lifecycle.
+
 Terminal attachment uses a separate Python interpreter (`broker/pty_exec.py`) in a new OS session to acquire the PTY as its controlling terminal before executing tmux. It needs no Linux `setsid` utility or threaded `preexec_fn`. Allocation, sizing, spawn and handshake share one cleanup lifetime. The output pump reads at most one 64 KiB chunk before awaiting socket drain, with no PTY reader registered while blocked. WebSocket writer claims are released even when connecting fails or is cancelled.
 
 The terminal API reauthorizes both the current login role and the session's current ownership every 30 seconds. Owner demotion closes affected read-only and writable sockets immediately, preserving the person's own terminals and login.
@@ -51,6 +53,7 @@ Provider login dialogs are keyed by provider, account and machine. Each start op
 | `GET /api/host · /api/providers · /api/accounts · /api/audit` | Read views |
 | `GET /api/host?machine=` | Another machine's details over its link (owners; `node_host.py`, docs/MULTIHOST.md "Host details") |
 | `GET /api/board` | The status board's machines and projects (owners; `api/board.py`) |
+| `GET /api/readings/machine` | Local label, connection and CPU/memory/freshness readings without project or machine inventory (owner / installation API token; `api/board.py`) |
 | `GET /api/sessions/{id}/changes` | Current-branch diff, sharing the polled badge's baseline (broker `workspace_changes`) |
 | `GET /api/search?q=` | History search, scoped like `/api/sessions`; optional `project_id`, `provider`, and inclusive UTC session-start date `since=YYYY-MM-DD` filters apply before ranking/limits. `indexed_sessions` counts only filtered, accessible conversations with indexed messages |
 | `GET · PUT /api/guardrails` | Guardrail rules (everyone reads; owners write) |

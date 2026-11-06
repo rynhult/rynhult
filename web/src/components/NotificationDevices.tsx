@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 // Notification devices (UX declutter W5): the push subscriptions that receive alerts. A separate registry from Access
 // devices (components/Devices.tsx): removing one stops alerts there and never revokes that device's access.
 import { useSingleMutation as useMutation } from "../lib/mutations";
@@ -7,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
-import { Badge, Button, Card, CardHeader, Empty, ErrorNote, IconButton, LoadingRows, QueryState } from "./ui";
+import { Badge, Button, Empty, ErrorNote, IconButton, LoadingRows, QueryState } from "./ui";
 import { installedApp } from "../lib/app";
 
 interface Device { id: number; label: string; endpoint: string; created_at: string; last_ok_at: string | null; failures: number }

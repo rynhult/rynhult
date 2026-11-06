@@ -1,8 +1,9 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../lib/api";
-import { Card, CardHeader, ErrorNote, QueryState } from "./ui";
+import { ErrorNote, QueryState } from "./ui";
 
 type Preference = { enabled: boolean };
 

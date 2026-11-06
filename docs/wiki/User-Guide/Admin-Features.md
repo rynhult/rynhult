@@ -11,7 +11,7 @@ terminal, Inbox, local sign-in, guardrails, backups, machines and the Guide rema
 
 ## Features and Previews
 
-**Features:** Multi-run, scheduled sessions, auto-resume and goals, live preview,
+**Features:** read-only Chat (off by default), Multi-run, scheduled sessions, auto-resume and goals, live preview,
 publishing, issue sources (Linear and GitLab), groups, agent teams, telemetry opt-in,
 local models, web notifications, change explanations, advisory risk labels and
 Orchestrator v2 (on by default, not a Preview).

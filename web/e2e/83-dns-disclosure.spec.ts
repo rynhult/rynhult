@@ -1,10 +1,13 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { AUTH_FILE, expectAxeClean } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 
 for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const) {
   test(`DNS fields precede optional help at ${width}px in ${theme}`, async ({ page }) => {
+    // Six provider keyboard/disclosure journeys each run a full WCAG audit.
+    // Traces exhaust 45s on provider five/six, rather than waiting on one UI state.
+    test.slow();
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme });
     await page.goto('/settings#dns');

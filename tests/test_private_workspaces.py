@@ -175,6 +175,8 @@ async def test_development_github_promotion_preserves_capabilities_and_backup_id
     assert git(w['workspace_path'], 'remote') == 'origin'
     preview = (await api.post('/api/sessions/preview', json={'project_id': pid, 'name': 'project', 'provider': 'claude'})).json()
     assert not json.loads(preview['files']['guardrails.json'])['local_only']
+    launched = await api.post('/api/sessions', json={'project_id': pid, 'name': 'after-promotion', 'provider': 'claude'})
+    assert launched.status_code == 201, launched.text
 
 
 async def test_conversion_does_not_mix_identical_folder_names_across_accounts(api, two, env):

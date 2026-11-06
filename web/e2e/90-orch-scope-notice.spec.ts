@@ -1,5 +1,5 @@
 /** Real scope edit -> expired notice -> Inbox Stop, on disposable fake-provider state. */
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { environmentValue } from '../../src/acc/env.mjs';
 import { AUTH_FILE, control, expectAxeClean, gitProject, info, teamRequest as team, waitForSessionState, waitForTeamStopped } from './helpers';

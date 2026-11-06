@@ -1,5 +1,5 @@
 import { wikiShotPath } from "./helpers";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, info } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });

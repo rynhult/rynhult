@@ -88,7 +88,7 @@ def machine(unprivileged):
     link(units / 'graphical.target.wants/accounts-daemon.service', '/usr/lib/systemd/system/accounts-daemon.service')
     write(units / 'accounts-daemon.service.d/override.conf')
     write(units / 'accounting.service', '[Unit]\n')
-    for name in ('acc-update', 'acc-backup', 'acc_env.py', 'acc-agent-add'):
+    for name in ('acc-update', 'acc-backup', 'acc_env.py', 'acc-agent-add', 'rynhult-admin'):
         write(root / 'usr/local/sbin' / name)
     link(root / 'usr/local/sbin/rynhult-backup', '/usr/local/sbin/acc-backup')
     write(root / 'usr/local/bin/acc-env.sh')
@@ -190,7 +190,7 @@ def test_yes_removes_rynhult_and_keeps_data_and_what_isnt_rynhults(machine):
     for gone in (units / 'accd.service', units / 'rynhultd.service', units / 'acc-broker@.service',
                  units / 'sockets.target.wants/accd.socket', units / 'acc-backup.service.d', units / 'caddy.service.d',
                  root / 'etc/caddy/acc.d', root / 'etc/caddy/cloudflare.env', root / 'etc/apparmor.d/acc-chrome',
-                 root / 'etc/default/accd', root / 'etc/acc', root / 'usr/local/sbin/acc-update',
+                 root / 'etc/default/accd', root / 'etc/acc', root / 'usr/local/sbin/acc-update', root / 'usr/local/sbin/rynhult-admin',
                  root / 'usr/local/sbin/rynhult-backup', root / 'usr/local/bin/rynhult', root / 'usr/local/bin/acc-request',
                  root / 'usr/local/bin/acc-env.sh', root / 'usr/local/lib/acc-dns', root / 'var/log/acc-install.log',
                  root / 'srv/acc/app', root / 'srv/acc/bin', root / 'srv/acc/run', root / 'srv/acc/.uv-cache'):

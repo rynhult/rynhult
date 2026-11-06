@@ -140,9 +140,9 @@ haven't verified, Rynhult refuses the invite, says why and records it in the aud
 ### Reset someone's sign-in
 Resetting someone else's sign-in needs the same fresh verification as inviting an
 owner: verify under **Passkeys** first, then select the key icon within five minutes.
-Refused attempts appear in the audit log. Resetting your own sign-in needs no
-verification, so a sole owner who recovered with a recovery code can still replace a
-lost authenticator.
+Refused attempts appear in the audit log. After a full sign-in, resetting your own sign-in needs no extra verification.
+After a recovery-code sign-in, first verify your password and a second unused
+recovery code using the guarded recovery step below, or verify with your authenticator or passkey.
 
 Select the key icon next to their name to get a reset link. When they use it they choose a new password and authenticator, and all their existing sign-ins end. Their passkeys and recovery code are also revoked; they must enroll again. If passkeys are required for their role, explicitly select Allow before they use the reset link.
 
@@ -211,3 +211,63 @@ is implemented, qualified and deliberately enabled by an owner.
 ## Passkey setup steps
 
 Follow **1. Verify your sign-in**, **2. Add a passkey**, then **3. Save a recovery code**. Before verification, changing actions take you to verification. Verification expires after five minutes, including while the tab is in the background; verify again when prompted. The server still decides whether each change is authorized. Owners manage requirements in **Owner policy**. Generating a recovery code replaces the previous code; using recovery removes passkeys and ends existing sign-ins.
+
+## If you lose your authenticator
+
+First-run owner setup shows ten recovery codes once. Save them offline with your
+password before continuing. To replace them later, open **Settings → Account → Security** (**Sign-in security** in the section chooser),
+then **Sign-in recovery codes**, verify again with your
+password and authenticator or a passkey, and save the new set. Every code is single
+use; generating a new set invalidates all codes in the previous set. Rynhult stores
+only independently salted hashes and never offers a way to read the codes back.
+
+At sign-in, enter your username, password and one of these codes in **Authenticator code**, then select **Sign in**. This works even when passkeys are
+required. It consumes that code without deleting your passkeys or changing policy.
+Codes accept uppercase or lowercase; spaces and dashes are ignored.
+After signing in with a recovery code, open **Sign-in recovery codes** and select
+**I signed in with a recovery code and lost my authenticator**. Re-enter your
+password and a second, different unused recovery code. This audited check opens
+five minutes in this browser to add one replacement passkey in **Passkeys** or
+regenerate your ten codes. The first successful enrollment or regeneration ends
+the window. Owners may also issue their own reset link during the active window.
+Verify with your authenticator or passkey for other sensitive changes.
+This check cannot authorize other owner actions, policy
+changes or removing existing credentials. If you lack a second unused code, ask
+an owner for a reset link or use the host recovery path below.
+
+The older single passkey recovery code uses **Lost your passkeys?** instead; keep
+that destructive passkey reset separate from the ten sign-in codes. All sign-in
+attempts share the normal rate limit. Code creation, code use and host resets are
+recorded in the audit log without including the codes.
+
+If the sole owner also lost their recovery codes, an administrator with root access
+to the host can reset their credentials. Use a trusted root shell on the host over
+SSH or its physical console and the **installed, root-controlled** `rynhult-admin`
+command. Stop the Rynhult service before changing its database; do not run a source
+checkout as root. For the default SQLite install:
+
+```bash
+sudo systemctl stop accd.service accd.socket
+sudo rynhult-admin reset-owner-mfa casey --database sqlite:////srv/acc/data/acc.db
+sudo systemctl start accd.socket accd.service
+```
+
+Replace `casey` with your Rynhult username. Use your installation's configured
+service names and database URL if different. PostgreSQL installations use their
+configured URL instead; keep credentials out of shell history and process arguments
+by using a local peer-authenticated connection where configured. Run on the active
+host only, with other writers stopped. This command requires both real and effective
+root; it has no HTTP endpoint or dashboard action. Non-owners are refused unless
+root explicitly adds `--force`.
+
+The command prints a one-time `/invite/…` path only to the terminal. Open it at your
+trusted Rynhult HTTPS address within 15 minutes, choose a new password and enroll a
+new authenticator, then save the new recovery codes. Do not share or record the
+terminal output; the command refuses redirected output. Re-running the command invalidates the previous link. The reset
+immediately invalidates the old password, authenticator, passkeys, recovery codes,
+reset links and browser sign-ins. Restarting the stopped service closes old terminal
+connections. Role-wide passkey policy stays unchanged. The root-issued link permits
+replacement authenticator enrollment even under Require; use a new recovery code
+to sign in and the guarded check above to add replacement passkeys.
+Root control of the host is the trust anchor for this emergency
+path; it is not available to someone holding only a browser sign-in or API token.

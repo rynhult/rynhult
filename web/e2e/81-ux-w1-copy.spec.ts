@@ -1,9 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { AUTH_FILE, expectAxeClean, gitProject } from "./helpers";
 
 // UX declutter wave 1 (copy and naming): access and notification devices are named apart, old links still land, and
 // New session's name sits after Agent/Profile with short routine hints.
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 for (const width of [1440, 390]) {
   test.describe(`${width}px`, () => {

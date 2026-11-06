@@ -67,6 +67,10 @@ def router(ctx):
                 raise HTTPException(422, 'The schedule’s owner can’t use that project. Choose another project.')
         try:
             inputs = launch.inputs(ctx.supervisor.catalog)
+            from .. import vault
+            vault.plan(db, project.id, existing.owner if existing else who.username,
+                       (launch.machine or project.host or 'local') != 'local',
+                       ctx.supervisor.catalog, inputs.mcps).claude_auth(inputs.provider, launch.claude_auth)
             # Freeze resolved profile defaults and selections: later catalog edits cannot broaden the approval.
             dangerous = providers.get(inputs.provider).dangerous(inputs)
             if dangerous and not launch.confirm_dangerous:

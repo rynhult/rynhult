@@ -60,7 +60,7 @@ def test_external_worktree_metadata_is_not_granted(env, tmp_path):
     repo(outside)
     work = env['workspaces'] / 'helper'
     subprocess.run(['git', '-C', str(outside), 'worktree', 'add', '-qb', 'acc/helper/work', str(work)], check=True)
-    with pytest.raises(ops.OpError, match='outside this account'):
+    with pytest.raises(ops.OpError, match='Allow this folder in Security → Allowed folders'):
         ops._codex_team_git_args(env['broker'], work, ['--sandbox', 'workspace-write'],
                                 {'guardrails.json': '{"rules":{"team":true}}'})
 

@@ -14,7 +14,7 @@ from ..broker_protocol import response_from
 # Deliberately exclude mixed read/write APIs (files, github_api) and unknown methods.
 # Add a method only after checking that repeating it cannot repeat a side effect.
 RETRYABLE_READS = frozenset({
-    "ping", "list", "auth_health", "model_catalog", "image_identity", "usage", "installed_providers",
+    "ping", "list", "session_auth", "claude_auth", "auth_health", "model_catalog", "image_identity", "usage", "installed_providers",
     "read_spool", "workspace_changes", "automation_screen", "screen_prompt", "terminal_output",
     "transcript_messages", "transcript_exists", "claude_agents", "claude_remote",
     "compose_digest", "compose_ps", "codex_plugins", "wiki_tree", "wiki_page",
@@ -27,6 +27,10 @@ ACCOUNT = re.compile(r"[a-z_][a-z0-9_-]{0,31}")  # a Linux user name
 
 class BrokerError(Exception):
     pass
+
+
+class BrokerBusy(BrokerError):
+    """A bounded account-read queue is full or its admission deadline expired."""
 
 
 class BrokerUnavailable(BrokerError):
@@ -74,8 +78,8 @@ class BrokerClient:
             raise BrokerUnavailable(f"broker socket {self.socket_path} is held by uid {uid}, not the broker; refusing it")
 
     async def call(self, method: str, **params):
-        if self.folder_policy and method not in {'ping', 'list', 'kill', 'interrupt', 'send_text', 'clear_env',
-                'read_spool', 'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}:
+        if self.folder_policy and method not in {'ping', 'list', 'session_auth', 'claude_auth', 'kill', 'interrupt', 'send_text', 'clear_env',
+                'read_spool', 'terminal_observer_geometry', 'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}:
             expected = self.folder_policy()
             if expected is not None:
                 params['folder_revision'] = expected
@@ -83,7 +87,7 @@ class BrokerClient:
             return await self._call(method, **params)
 
     def _uncertain(self, method):
-        if self.authority and method not in RETRYABLE_READS:
+        if self.authority and method not in RETRYABLE_READS and method not in {"chat_read", "files_search"}:
             self.authority.mark_uncertain('broker.' + method)
 
     async def _call(self, method: str, **params):
@@ -121,6 +125,8 @@ class BrokerClient:
                     await self.close()
                     raise BrokerUnavailable(str(error)) from error
                 if not response.get("ok"):
+                    if method in {"chat_read", "files_search"} and response.get("code") == "read_busy":
+                        raise BrokerBusy("Account read is busy. Retry shortly.")
                     raise BrokerError(str(response.get("error", "unknown broker error"))[:500])
                 return response.get("result")
 

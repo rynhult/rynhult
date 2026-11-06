@@ -1,8 +1,9 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, post } from '../lib/api';
 import { useSingleMutation } from '../lib/mutations';
-import { Button, Card, CardHeader, ErrorNote, Field, QueryState, Select } from './ui';
+import { Button, ErrorNote, Field, QueryState, Select } from './ui';
 
 type Model = {id:string;label?:string;image_input?:boolean|null;image_qualification?:{status:string;checked_at?:number;evidence?:{outcome?:string}}};
 type Result = {image_input:boolean|null;checked_at:number;evidence:{outcome:string;error_kind?:string}};

@@ -2,17 +2,21 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import posixpath
 import re
+from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from acc.broker.files import MAX_UPLOAD, MAX_UPLOAD_BATCH
 
-from ..broker_client import BrokerError
+from ..broker_client import BrokerBusy, BrokerError
 from ..models import AuditLog, Project, Session, Setting, VaultKey, VaultRetired
 from .context import Context
 
@@ -35,6 +39,8 @@ class Mutation(BaseModel):
     path: str = Field('', max_length=4096)
     content: str = Field('', max_length=1024 * 1024)
     revision: str | None = Field(None, max_length=100)
+    file_identity: str | None = Field(None, pattern=r'^[a-f0-9]{64}$')
+    workspace_revision: str | None = Field(None, pattern=r'^[a-f0-9]{64}$')
     destination: str = Field('', max_length=4096)
     message: str | None = Field(None, min_length=1, max_length=2000)
 
@@ -48,6 +54,20 @@ class UploadFile(BaseModel):
 
 class UploadBatch(BaseModel):
     files: list[UploadFile] = Field(default_factory=list, max_length=100)
+    terminal_upload: str | None = Field(None, max_length=100)
+
+
+class SearchEntry(BaseModel):
+    name: str
+    path: str
+    kind: Literal['file']
+
+
+class SearchResult(BaseModel):
+    results: list[SearchEntry]
+    visited: int
+    truncated: bool
+    reason: str | None
 
 
 def router(ctx: Context) -> APIRouter:
@@ -113,6 +133,11 @@ def router(ctx: Context) -> APIRouter:
         except BrokerError as error:
             raise ctx.refused(error)
 
+    def file_identity(where, rel):
+        # Authorized placement, not a display name or the route alias used to reach it.
+        return hashlib.sha256(json.dumps([where['host'], where['account'], where['path'], rel],
+                                         separators=(',', ':')).encode()).hexdigest()
+
     @api.get('/api/files/{kind}/{key}')
     async def listing(kind: str, key: str, path: str = '', who=Depends(ctx.principal)):
         with ctx.db() as s:
@@ -121,13 +146,75 @@ def router(ctx: Context) -> APIRouter:
         with ctx.db() as s:
             return {**redact(s, result), 'working': working}
 
+    searches = set()
+
+    def search_binding(request: Request, who=Depends(ctx.principal)):
+        # Dependencies resolve before FastAPI validates endpoint query fields.
+        # Unauthorized callers must get the same refusal with any query shape.
+        params = request.path_params
+        if 'project_id' in params:
+            kind, key = 'project', str(params['project_id'])
+        elif 'acc_id' in params:
+            kind, key = 'session', params['acc_id']
+        else:
+            kind, key = params['kind'], params['key']
+        with ctx.db() as s:
+            where, _ = location(s, kind, key, who)
+        return where, who
+
+    async def search_location(binding, q, limit):
+        from acc.broker.file_search import validate
+        from acc.broker.ops import OpError
+        where, who = binding
+        try:
+            validate(q, limit)
+        except OpError as error:
+            raise HTTPException(422, str(error)) from None
+        from ..ha import Fenced
+        slot = (who.username, where.get('host'), where.get('account'), where['path'])
+        if slot in searches:
+            return JSONResponse(status_code=429, content={'state': 'unavailable',
+                'detail': 'A search is already running for this location. Try again shortly.'})
+        searches.add(slot)
+        client = None
+        try:
+            client = ctx.broker.fresh(where.get('account'), host=where.get('host'), timeout=3)
+            result = await client.call('files_search', path=where['path'], q=q, limit=limit)
+        except BrokerBusy:
+            return JSONResponse(status_code=429, headers={'Retry-After': '1'}, content={'state': 'busy',
+                'detail': 'File search is busy for this account. Try again shortly.'})
+        except (BrokerError, Fenced):
+            return JSONResponse(status_code=503, content={'state': 'unavailable',
+                'detail': 'File search is unavailable for this location. Reconnect or update its account service and try again.'})
+        finally:
+            searches.discard(slot)
+            if client is not None:
+                await client.close()
+        with ctx.db() as s:
+            return redact(s, result)
+
+    @api.get('/api/projects/{project_id}/files/search', response_model=SearchResult)
+    async def project_search(project_id: int, q: str = Query(min_length=1, max_length=200),
+                             limit: int = Query(20, ge=1, le=100), binding=Depends(search_binding)):
+        return await search_location(binding, q, limit)
+
+    @api.get('/api/sessions/{acc_id}/files/search', response_model=SearchResult)
+    async def session_search(acc_id: str, q: str = Query(min_length=1, max_length=200),
+                             limit: int = Query(20, ge=1, le=100), binding=Depends(search_binding)):
+        return await search_location(binding, q, limit)
+
+    @api.get('/api/files/{kind}/{key}/search', response_model=SearchResult)
+    async def search(kind: str, key: str, q: str = Query(min_length=1, max_length=200),
+                     limit: int = Query(20, ge=1, le=100), binding=Depends(search_binding)):
+        return await search_location(binding, q, limit)
+
     @api.get('/api/files/{kind}/{key}/read')
     async def read(kind: str, key: str, path: str = '', who=Depends(ctx.principal)):
         with ctx.db() as s:
             where, _ = location(s, kind, key, who)
         result = await call(where, action='read', rel=path)
         with ctx.db() as s:
-            return redact(s, result)
+            return {**redact(s, result), 'file_identity': file_identity(where, path)}
 
     @api.get('/api/files/{kind}/{key}/download')
     async def download(kind: str, key: str, path: str = '', who=Depends(ctx.principal)):
@@ -157,6 +244,15 @@ def router(ctx: Context) -> APIRouter:
     async def upload(kind: str, key: str, body: UploadBatch, who=Depends(ctx.principal)):
         with ctx.db() as s:
             where, _ = location(s, kind, key, who)
+        if body.terminal_upload is not None:
+            if kind != 'session' or not 1 <= len(body.files) <= 10:
+                raise HTTPException(422, 'Paste or drop between 1 and 10 files into a session.')
+            writer = ctx.writers.by_session.get(key)
+            controller = ctx.writers.controllers.get(writer)
+            if (writer is None or (getattr(writer, 'query_params', None) or {}).get('upload_id') != body.terminal_upload
+                    or getattr(controller, 'actor', None) != who.username):
+                raise HTTPException(403, 'Read-only terminal: acquire control before uploading files.')
+        upload_epoch = ctx.writers.epoch(key)
         total = 0
         invalid = {}
         for index, item in enumerate(body.files):
@@ -177,13 +273,15 @@ def router(ctx: Context) -> APIRouter:
             try:
                 if index in invalid:
                     raise HTTPException(422, invalid[index])
-                if item.overwrite == 'replace':
+                if body.terminal_upload is not None and (ctx.writers.by_session.get(key) is not writer or ctx.writers.epoch(key) != upload_epoch):
+                    raise HTTPException(403, 'Read-only terminal: control changed during upload.')
+                if item.overwrite == 'replace' and body.terminal_upload is None:
                     current = await call(where, action='download', rel=item.path)
                     with ctx.db() as s:
                         text = base64.b64decode(current['data'], validate=True).decode('utf-8', errors='replace')
                         if redactor(s).text(text) != text:
                             raise HTTPException(409, 'This file contains hidden secret values, so it cannot be replaced here.')
-                result = await call(where, action='upload', rel=item.path, data=item.data,
+                result = await call(where, action='terminal-upload' if body.terminal_upload is not None else 'upload', rel=item.path, data=item.data,
                                     overwrite=item.overwrite, revision=item.revision)
                 results.append({'requested_path': item.path, **result})
             except HTTPException as error:
@@ -200,6 +298,10 @@ def router(ctx: Context) -> APIRouter:
     async def mutate(kind: str, key: str, body: Mutation, who=Depends(ctx.principal)):
         with ctx.db() as s:
             where, _ = location(s, kind, key, who)
+            if body.file_identity is not None and body.file_identity != file_identity(where, body.path):
+                raise HTTPException(409, 'The file placement changed. Reopen it before saving.')
+            if (body.file_identity is None) != (body.workspace_revision is None):
+                raise HTTPException(422, 'The file placement and folder revision must be supplied together.')
             person = identity(s, who)
             if body.message is not None and (not person['name'] or not person['email']):
                 raise HTTPException(422, 'Set your Commit identity (name and email) before committing.')
@@ -209,7 +311,10 @@ def router(ctx: Context) -> APIRouter:
                 if current.get('revision') == body.revision and redact(s, current).get('redacted'):
                     raise HTTPException(409, 'This file contains hidden secret values, so it can\'t be edited here. Ask your agent to edit it instead.')
         result = await call(where, action=body.action, rel=body.path, content=body.content, revision=body.revision,
-                            destination=body.destination, message=body.message, **person)
+                            destination=body.destination, message=body.message,
+                            **({'workspace_revision': body.workspace_revision} if body.workspace_revision else {}), **person)
+        if body.action == 'write':
+            result = {**result, 'file_identity': file_identity(where, body.path)}
         with ctx.db() as s:
             if not result.get('conflict') or result.get('incoming_copy'):
                 paths = [body.path] + ([body.destination] if body.action == 'rename' else [])

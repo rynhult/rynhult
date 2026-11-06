@@ -25,6 +25,8 @@ class Feature:
 
 
 FEATURES = {
+    'chat': Feature('Chat', 'Read qualified native conversation history; Terminal remains available.', False),
+    'new_shell': Feature('New layout', 'The new layout is always on.', True, preview=True, sensitive=True),
     'multirun': Feature('Multi-run', 'Compare several agent runs for the same task.'),
     'schedules': Feature('Scheduled sessions', 'Start saved sessions at chosen times; Off pauses dispatch.'),
     'automation': Feature('Auto-resume and goals', 'Continue goals and recover sessions automatically.'),
@@ -83,6 +85,8 @@ class Features:
         return self.configured(key) is not None
 
     def enabled(self, key):
+        if key == 'new_shell':
+            return True
         configured = self.configured(key)
         return configured if configured is not None else self.choices.get(key, FEATURES[key].default)
 
@@ -96,7 +100,7 @@ class Features:
 
     def rows(self):
         return [dict(id=key, label=f.label, description=f.description, enabled=self.enabled(key),
-                     preview=f.preview, sensitive=f.sensitive, locked=self.locked(key)) for key, f in FEATURES.items()]
+                     preview=f.preview, sensitive=f.sensitive, locked=self.locked(key)) for key, f in FEATURES.items() if key != 'new_shell']
 
 
 class RuntimeSettings(Settings):

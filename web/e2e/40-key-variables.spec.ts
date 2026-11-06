@@ -1,6 +1,6 @@
 import { environmentValue } from "../../src/acc/env.mjs";
-import { expect, test } from "@playwright/test";
-import { AUTH_FILE, expectAxeClean, wikiShotPath } from "./helpers";
+import { expect, test } from "./fixtures";
+import { AUTH_FILE, expectAxeClean, gitProject, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -19,6 +19,7 @@ test("listed variables save, mark existing names, and reset when reopening", asy
     await page.screenshot({ path: wikiShotPath(testInfo, "settings-keys-add.png"), fullPage: true });
   }
   await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings#keys$/);
   const keys = page.getByRole("list", { name: "Keys", exact: true });
   await expect(keys.getByText("Demo Mistral", { exact: true })).toBeVisible();
   await expect(keys.getByText("MISTRAL_API_KEY", { exact: true })).toBeVisible();
@@ -28,6 +29,7 @@ test("listed variables save, mark existing names, and reset when reopening", asy
   await variable.selectOption("MISTRAL_API_KEY");
   await expect(variable).toHaveValue("MISTRAL_API_KEY"); // duplicates are allowed, not disabled
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings#keys$/);
   await keys.getByRole("button", { name: "Edit Demo Mistral", exact: true }).click();
   const edit = page.getByRole("dialog", { name: "Edit Demo Mistral" });
   await expect(edit.getByRole("combobox", { name: "Variable", exact: true })).toHaveValue("MISTRAL_API_KEY");
@@ -73,4 +75,23 @@ test("Custom preserves normalization and validation, switches names, and fits a 
   const edit = page.getByRole("dialog", { name: "Edit Demo application" });
   await expect(edit.getByRole("combobox", { name: "Variable", exact: true })).toHaveValue("custom");
   await expect(edit.getByRole("textbox", { name: "Custom variable", exact: true })).toHaveValue("DEMO_APP_TOKEN");
+});
+
+
+test("Claude guard opens a preset key form and grants the key to its project", async ({ page }) => {
+  const { id, name } = await gitProject(page, "claude-api-way-out");
+  await page.goto(`/settings?claude_api=1&project_id=${id}&from=guard#keys`);
+  const dialog = page.getByRole("dialog", { name: "Add a key" });
+  await expect(dialog.getByRole("combobox", { name: "Variable", exact: true })).toHaveValue("ANTHROPIC_API_KEY");
+  await expect(dialog).toContainText("API billing");
+  await expect(dialog).toContainText(`The key will be given to ${name} when added.`);
+  await dialog.getByLabel("Value", { exact: true }).fill("synthetic-claude-way-out");
+  await dialog.getByRole("button", { name: "Add key", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/settings\?from=guard#keys$/);
+  await expect(page.getByRole("list", { name: "Keys", exact: true }).getByText("Claude API", { exact: true })).toBeVisible();
+  const keys = await (await page.request.get("/api/vault/keys")).json();
+  const key = keys.find((k: { name: string }) => k.name === "Claude API");
+  expect(key.projects.some((p: { id: number }) => p.id === id)).toBe(true);
+  expect(JSON.stringify(key)).not.toContain("synthetic-claude-way-out");
 });

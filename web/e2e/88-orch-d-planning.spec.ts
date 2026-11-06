@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { environmentValue } from '../../src/acc/env.mjs';
-import { expect, test } from '@playwright/test';
-import { expandTeamPanels, AUTH_FILE, expectAxeClean, gitProject, info, openAdvanced, waitForSessionState, csrfHeaders } from './helpers';
+import { expect, test } from './fixtures';
+import { expandTeamPanels, AUTH_FILE, expectAxeClean, gitProject, openAdvanced, waitForSessionState, csrfHeaders } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 const ownedLeads: string[] = [];
@@ -113,7 +111,7 @@ test('person records boundaries and switches a running prepare lead to build', a
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });
 
-test('switching a running build lead to prepare stops helpers first and resumes with read-only permissions', async ({ page }) => {
+test('switching a running build lead to prepare stops helpers first and resumes with read-only permissions', async ({ page, arrangeTeam }) => {
   const { lead, headers } = await buildLead(page);
   const original = await (await page.request.get(`/api/sessions/${lead}`)).json();
   const made = await page.request.post('/api/sessions', { headers, data: {
@@ -121,10 +119,7 @@ test('switching a running build lead to prepare stops helpers first and resumes 
   } });
   expect(made.ok(), await made.text()).toBeTruthy();
   const helper = (await made.json()).id;
-  // Only arrange an already-running member in this suite's disposable fixture DB.
-  execFileSync(environmentValue('ACC_E2E_PYTHON') ?? 'python3', ['-c',
-    'import sqlite3,sys\nwith sqlite3.connect(sys.argv[1]) as db: db.execute("UPDATE session SET team_id=?,parent_session_id=? WHERE id=?",sys.argv[2:])',
-    `${info().state}/data/acc.db`, lead, lead, helper]);
+  await arrangeTeam('member', lead, helper);
   const stopped: string[] = [];
   page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/stop')) stopped.push(new URL(r.url()).pathname); });
   await page.goto(`/sessions/${lead}?tab=team#overview`);
@@ -163,8 +158,10 @@ test('a failed stop does not switch mode or resume and explains the failed step'
   await expandTeamPanels(page);
   await page.getByRole('combobox', { name: 'Run mode', exact: true }).selectOption('prepare');
   await page.getByRole('button', { name: 'Save run mode', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Stopping the lead failed');
-  await expect(page.getByRole('alert')).toContainText('The test machine is offline.');
+  const failure = page.getByRole('tabpanel', { name: 'Settings', exact: true })
+    .getByRole('alert').filter({ hasText: 'Stopping the lead failed' });
+  await expect(failure).toContainText('Stopping the lead failed');
+  await expect(failure).toContainText('The test machine is offline.');
   expect(subsequent).toEqual([]);
 });
 
@@ -175,19 +172,27 @@ for (const savedLatest of [false, true]) test(`a restored plan draft reviews the
     phases: [{ key: 'booking', title: 'Booking phase', check: 'Original check' }] } })).ok()).toBeTruthy();
   const original = await (await page.request.get(url)).json();
   await page.goto(`/sessions/${lead}?tab=team#overview`);
-  await page.evaluate(({ lead, original, savedLatest }) => sessionStorage.setItem(`acc-draft:plan:${lead}`, JSON.stringify({
-    origin: original, base: 75, latest: savedLatest ? { ...original, version: 75 } : null, idea: 'Private booking calendar',
-    scope: { in: 'Private bookings', out: '', parked: '' }, phases: [{
-      key: 'booking', title: 'Private booking phase', summary: '', check: 'Original check',
-      status: 'planned', depends_on: [], requirement_ids: [],
-    }], reason: 'Keep my draft',
-  })), { lead, original, savedLatest });
+  // Let the real editor establish the current person/installation/authority scope.
+  await page.getByRole('button', { name: 'Edit plan', exact: true }).click();
+  await page.getByRole('form', { name: 'Edit the plan', exact: true }).getByLabel('Idea', { exact: true }).fill('Seed scoped draft');
+  await expect.poll(() => page.evaluate(lead => Object.keys(sessionStorage).some(key => key.startsWith('acc-draft:v2:') && JSON.parse(key.slice('acc-draft:v2:'.length))[3] === `plan:${lead}`), lead)).toBe(true);
+  await page.evaluate(({ lead, original, savedLatest }) => {
+    const key = Object.keys(sessionStorage).find(key => key.startsWith('acc-draft:v2:') && JSON.parse(key.slice('acc-draft:v2:'.length))[3] === `plan:${lead}`)!;
+    sessionStorage.setItem(key, JSON.stringify({
+      origin: original, base: 75, latest: savedLatest ? { ...original, version: 75 } : null, idea: 'Private booking calendar',
+      scope: { in: 'Private bookings', out: '', parked: '' }, phases: [{
+        key: 'booking', title: 'Private booking phase', summary: '', check: 'Original check',
+        status: 'planned', depends_on: [], requirement_ids: [],
+      }], reason: 'Keep my draft',
+    }));
+  }, { lead, original, savedLatest });
   const changed = await page.request.patch(url, { headers, data: { version: original.version,
     scope: { in: ['Bookings'], out: ['Payments'], parked: [] },
     phases: [{ key: 'booking', check: 'Test booking with only the keyboard' }],
   } });
   expect(changed.ok(), await changed.text()).toBeTruthy();
   const current = await changed.json();
+  page.once('dialog', dialog => dialog.accept());
   await page.reload();
   const form = page.getByRole('form', { name: 'Edit the plan', exact: true });
   await expect(form.getByRole('status')).toContainText(`now version ${current.version}`);
@@ -259,14 +264,16 @@ test('run-mode save waits for confirmed stop and does not resume after a rejecte
     const boundaries = page.getByRole('region', { name: 'Constraints and requirements', exact: true });
     await page.getByRole('tab', { name: 'Settings', exact: true }).click();
     await expandTeamPanels(page);
-  await page.getByRole('combobox', { name: 'Run mode', exact: true }).selectOption('prepare');
+    await page.getByRole('combobox', { name: 'Run mode', exact: true }).selectOption('prepare');
     await page.getByRole('button', { name: 'Save run mode', exact: true }).click();
     await checking;
     await expect(page.getByRole('status').filter({ hasText: 'Stopping the lead' })).toContainText('Stopping the lead');
     expect(resumed).toBe(false);
     release();
-    await expect(page.getByRole('alert')).toContainText('Saving Prepare mode failed');
-    await expect(page.getByRole('alert')).toContainText('Review it first');
+    const failure = page.getByRole('tabpanel', { name: 'Settings', exact: true })
+      .getByRole('alert').filter({ hasText: 'Saving Prepare mode failed' });
+    await expect(failure).toContainText('Saving Prepare mode failed');
+    await expect(failure).toContainText('Review it first');
     expect(resumed).toBe(false);
     expect((await (await page.request.get(`/api/teams/${lead}/plan`)).json()).run_mode).toBe('build');
   } finally { release(); }

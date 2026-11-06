@@ -1,10 +1,9 @@
-import { test, expect } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { test, expect } from './fixtures';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { environmentValue } from '../../src/acc/env.mjs';
 import { AUTH_FILE, expectAxeClean, gitProject, info } from './helpers';
 
+import { gotoLoadedPage } from './loaded-page';
 test.use({ storageState: AUTH_FILE });
 async function team(session: string, action: string, args: object = {}) {
   const id = randomUUID().replaceAll('-', '');
@@ -17,7 +16,7 @@ async function team(session: string, action: string, args: object = {}) {
   return result.result;
 }
 
-for (const colorScheme of ['dark', 'light'] as const) test(`50 assignments and 491 attempts remain usable on a phone in ${colorScheme}`, async ({ page }, ti) => {
+for (const colorScheme of ['dark', 'light'] as const) test(`50 assignments and 491 attempts remain usable on a phone in ${colorScheme}`, async ({ page, arrangeTeam }, ti) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 390, height: 900 });
   await page.emulateMedia({ colorScheme });
@@ -39,33 +38,11 @@ for (const colorScheme of ['dark', 'light'] as const) test(`50 assignments and 4
     expect(first.id).toBe(second.id);
     await team(first.id, 'report', { status: 'blocked', summary: 'Waiting for the person' });
     await team(first.id, 'report', { status: 'done', summary: 'Reviewed fixture history' });
-    // Seed historical rows in THIS disposable DB, avoiding hundreds of live fake CLIs.
-    execFileSync(environmentValue('ACC_E2E_PYTHON') ?? 'python3', ['-c', `
-import sys, uuid
-from datetime import timedelta
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from acc.server.models import utcnow
-from acc.server.orchestrator.assignments import Assignment, Attempt
-from acc.server.orchestrator.delivery import TaskReport
-with Session(create_engine('sqlite:///' + sys.argv[1])) as db:
-    lead, helper = sys.argv[2:]
-    for i in range(49):
-        assignment = Assignment(id=uuid.uuid4().hex, team_id=lead, created_by=lead,
-            task_type='implementation', goal=f'Synthetic history {i:02d} ' + 'x'*120,
-            need={'role':'general'}, state='reported', created_at=utcnow()+timedelta(seconds=i))
-        db.add(assignment); db.flush()
-        for j in range(10):
-            attempt = Attempt(id=uuid.uuid4().hex, assignment_id=assignment.id, session_id=helper,
-                sequence=2+i*10+j, state='reported', branch='acc/synthetic-history', head='a'*40)
-            db.add(attempt); db.flush()
-            for v in range(1,4):
-                db.add(TaskReport(session_id=helper, team_id=lead, task_id=f'{attempt.id}:{v}',
-                    attempt_id=attempt.id, version=v, status='done', summary='<img src=x onerror=window.pwned=1> '+('evidence'*80),
-                    findings_md='# Synthetic findings', branch='acc/synthetic-history', head='a'*40))
-    db.commit()
-`, `${info().state}/data/acc.db`, lead, first.id], { cwd: '..', env: { ...process.env, PYTHONPATH: 'src' } });
-    await page.goto(`/sessions/${lead}?tab=team#settings`);
+    // Seed through server writer admission, so this fixture cannot invalidate
+    // another worker's in-flight team action/result transaction.
+    await arrangeTeam('history', lead, first.id);
+    await gotoLoadedPage(page, `/sessions/${lead}?tab=team#settings`, ['SessionPage', 'TeamPanel'],
+      [`/api/sessions/${lead}/team`, `/api/teams/${lead}/selections`]);
     const assignments = page.getByRole('region', { name: 'Assignments', exact: true });
     await expect(assignments.getByRole('article')).toHaveCount(25);
     await expect(page.getByRole('navigation', { name: 'Assignment pages', exact: true })).toContainText('1–25 of 50');

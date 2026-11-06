@@ -5,6 +5,132 @@ Rynhult follows [semantic versioning](https://semver.org). Stable tags use `vX.Y
 
 ## [Unreleased]
 
+
+## [0.15.0-rc.4] - 2026-11-05
+
+Interface, sign-in and upgrade improvements since rc.3 (#419–#425).
+This is a release candidate. See the [rc.4 release notes](docs/release-notes/0.15.0-rc.4.md).
+
+### Added
+- Changes offers Commit all and Push with review; Inbox offers Approve / Deny.
+- Host backups can use a folder or USB disk, with one root setup command.
+- Offline sign-in recovery codes and a root owner MFA reset route aid recovery.
+- Providers includes owner GitHub token management; clean release-tag installs can use signed updates.
+
+### Changed
+- The new layout is the only layout; classic is retired and layout choices are removed.
+  Overview has a compact, dismissible prompt linking to Settings → Setup level.
+- Project tab rows, denser navigation and terminal controls leave more room for work.
+- New Claude sessions default to subscription sign-in; API billing requires an explicit choice.
+- Archive all stopped clears eligible sessions, and idle Claude status is clearer.
+
+### Fixed
+- Folder provisioning, owner-home backup targets and fresh-host installer dry runs,
+  including host-folder validation, are more reliable.
+- Terminal reconnect control, scoped authorization and Claude credential filtering are tightened.
+- Migrations 0085–0087 repair layout saves, add recovery-code storage and preserve Claude sign-in choices.
+- Inbox hook actions target the intended pane; toggle changes are audited. Push explains
+  refusals and offline machines, and Add key identifies its project.
+
+
+- Walkthrough helpers and automated containers use signed-in Codex when Claude launch credentials are absent. Vault API/cloud credentials enable isolated Claude helpers and qualified containers, with launch-frozen auth and provider-choice notices.
+
+- Claude subscription and unknown-auth sessions refuse automated prompts, including schedules, goals, team messages and feedback. Terminal typing and the person’s New session prompt remain available; automation needs API-key or cloud authentication. Configuration shows the reason, and skipped schedules notify Inbox.
+
+- Codex writers scroll retained tmux history with wheel/trackpad input while keeping browser drag selection. Typing, sent messages and interrupts leave copy mode before delivery.
+
+- Codex keeps terminal scrollback by default using inline mode when supported by the installed CLI. Disable **Keep scrollback (inline mode)** at launch to use the alternate screen. Existing sessions pick up the default on their next launch/resume.
+
+- Copilot usage now links to GitHub settings. Removed quota requests using the CLI OAuth token and undocumented account API; previous quota readings no longer drive meters, budgets or orchestrator selection.
+
+- High availability status no longer reports the database as unreachable when only its
+  evaluation audit record has to wait for a busy database; the record is written on the next read.
+- The Status board returns to the standard colours when opened from the new layout.
+- New-layout polish: the Security shield keeps the current policy when only a
+  machine is offline, the Providers breadcrumb names only known machines, Settings
+  arrives at its section, and project Overview has one fewer New session button.
+
+- New-layout core pages use compact workbars, pane tabs and flatter divided surfaces; the standard layout keeps its existing presentation.
+- The new project directory mounts authorized source-owner and working-location
+  filters, separate repository/location columns and visible counts. Project Overview
+  shows Sources and Working locations directly; unsupported changes remain disabled.
+
+- The opt-in new layout shows read-only project Sources and Working locations,
+  with audience-scoped counts and private group-checkout isolation. Connections,
+  membership changes and alternate launch targets remain disabled pending qualification.
+
+- The new layout adopts the mockup's warm neutral and lavender palette in light
+  and dark themes, with AA text contrast and the existing strong safety colours.
+
+- Draft identity changes now reload section URLs, and auth checks continue after
+  cancelling an expiry warning. Clean forms no longer invent failed-removal
+  drafts, and moving a session draft to another project clears its former target.
+
+- Completing an invite opens Overview under the new sign-in instead of reloading
+  a consumed link when another person was already signed in. Failed credential
+  checks and expired-sign-in draft warnings retain their existing protections.
+- Projects Cards and List load runtime status as cards and rows enter view, retaining
+  the visible 15-second refresh cadence and existing project authorization.
+- The Preview project sidebar stays usable with large project lists: Available
+  projects is paged in stable order, search covers the whole list, and phone Browse
+  scrolls within the screen. Project selection continues to leave working views open.
+- The new shell's owner-only Security shield shows current protections, warning,
+  older-session and unavailable states compactly. Hover or focus reveals the full
+  text; activation opens the existing scoped Security editor. The standard
+  layout retains its full badge.
+
+- The new layout adopts the mockup’s warm neutral and lavender palette in light
+  and dark themes, with the main content on the mockup panel surface, light-mode
+  accent/focus contrast at least as strong as before, and existing safety colours.
+
+- The Preview shell has a compact desktop header with provider usage details,
+  project Work/Project/Working locations menus that follow the project into its
+  sessions (including Files and Changes), and an edge resizer with keyboard
+  controls and a persisted collapse option.
+
+- Preview new layout, off by default: per-person opt-in, header, rail and contextual sidebar,
+  with Projects → Overview → Continue working. Rail browsing keeps the current view open;
+  Continue opens the existing session and respects another terminal window's input control.
+- Layout preference changes take effect only on the person's next reload. Disabling the
+  feature leaves open work in place with a notice. There is no in-app switch or automatic reload.
+
+
+- In the Preview layout, working columns now follow your sign-in across windows and
+  browsers, per project and device class. Two windows never overwrite each other
+  silently: the second chooses **Use this window's layout** or **Load the newer one**.
+  Layouts save files by private reference, recheck access on every restore, and never
+  start work or take terminal control. Offline changes wait on this device.
+- In the Preview layout, an offline session machine disables only Resume. Stop,
+  Interrupt and Archive retain their standard-layout conditions. Enabling New
+  layout now requires recent sign-in verification, like other sensitive Previews.
+- Customize the Preview header's optional modules with per-person saved visibility
+  and order, keyboard move controls, reset and a phone overflow menu. Required
+  identity, account and operational status controls stay outside customization.
+- The Preview layout's header can find project files by filename or path, with an
+  explicit project/folder target, keyboard navigation and partial/offline states.
+  Results open in Files and retain its unsaved-edit warning.
+- The Preview project sidebar stays usable with large project lists: Available
+  projects is paged in stable order, search covers the whole list, and phone Browse
+  scrolls within the screen. Rail selection keeps working views open; sidebar project
+  names open Overview and replace the list with a project menu.
+- New layout Project Overview adds Recent results: the five newest indexed
+  handoffs, council reports and research findings, with update ages, authorized
+  session references and the existing note viewer/Knowledge links.
+- Project/session list caches now follow person, role and agent-account authority,
+  so in-place demotion removes private Settings/sidebar choices and Continue rows
+  even while the new authorized list is loading or its refresh fails.
+
+- New layout Settings groups existing editors under Account, Project and owner-only
+  Installation, with explicit scoped Security and account Allowed folders links.
+  Legacy Settings bookmarks and the standard layout keep working.
+- Draft identity changes now reload section URLs, and auth checks continue after
+  cancelling an expiry warning. Clean forms no longer invent failed-removal
+  drafts, and moving a session draft to another project clears its former target.
+
+- Completing an invite opens Overview under the new sign-in instead of reloading
+  a consumed link when another person was already signed in. Failed credential
+  checks and expired-sign-in draft warnings retain their existing protections.
+
 ## [0.15.0-rc.3] - 2026-10-31
 
 Security settings and terminal improvements since rc.2 (#395 and the rc.3 batch).

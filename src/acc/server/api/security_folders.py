@@ -338,6 +338,28 @@ def router(ctx):
 
     @api.post('/api/security/folders/{operation_id}/recover')
     async def recover(operation_id: str, body: RecoverIn, request: Request, who=Depends(ctx.owner)):
+        # Reject a stale review before dispatching any recovery. Once a request
+        # may have reached the worker, the recovering fence must remain: even a
+        # refused/lost reply cannot prove that no newer reload was started.
+        with ctx.db() as db:
+            browser(db, request, who)
+            change = db.get(SecurityChange, operation_id)
+            if (not change or change.payload.get('lane') != 'folders' or not change.applied
+                    or change.digest != body.digest):
+                raise HTTPException(404, 'No such published folder operation.')
+            coordinates = scope(db, change.payload['scope']['machine'], change.payload['scope']['account'])
+            row = db.get(SecurityFolderPolicy, policy.scope_key(coordinates))
+            if (coordinates != change.payload['scope'] or not row or row.state not in ('pending', 'recovering')
+                    or row.detail.get('operation_id') != operation_id):
+                raise HTTPException(409, 'This operation is not awaiting acknowledgement. Refresh status.')
+            check_before_dispatch = row.state == 'pending'
+            message = {k: v for k, v in change.payload['message'].items() if k not in ('roots', 'allowed_folders')}
+        if check_before_dispatch:
+            observed = await target(coordinates, message | {'action': 'status'})
+            if observed.get('policy_recovery') is not True or observed.get('recovery_digest') != body.recovery_digest:
+                raise HTTPException(409, 'Recovery status changed. Refresh the pending review before confirming again.')
+        # Already-recovering rows retain the worker's exact consent replay path:
+        # the old consent may validly acknowledge a completed but lost reply.
         with ctx.db() as db:
             browser(db, request, who)
             policy.lock_revision(db)

@@ -1,0 +1,91 @@
+{
+ "schema": "rynhult.session-relay.fixture/1",
+ "kind": "errors",
+ "cases": [
+  {
+   "name": "NOT_FOUND_OR_DENIED",
+   "code": "NOT_FOUND_OR_DENIED",
+   "retry": "never"
+  },
+  {
+   "name": "STALE_RUN",
+   "code": "STALE_RUN",
+   "retry": "after_review"
+  },
+  {
+   "name": "STALE_AUTHORITY",
+   "code": "STALE_AUTHORITY",
+   "retry": "read_only"
+  },
+  {
+   "name": "REVISION_CONFLICT",
+   "code": "REVISION_CONFLICT",
+   "retry": "after_review"
+  },
+  {
+   "name": "UNSUPPORTED",
+   "code": "UNSUPPORTED",
+   "retry": "never"
+  },
+  {
+   "name": "BUSY",
+   "code": "BUSY",
+   "retry": "after_review"
+  },
+  {
+   "name": "INPUT_CONFLICT",
+   "code": "INPUT_CONFLICT",
+   "retry": "after_review"
+  },
+  {
+   "name": "DECISION_RESOLVED",
+   "code": "DECISION_RESOLVED",
+   "retry": "read_only"
+  },
+  {
+   "name": "DECISION_EXPIRED",
+   "code": "DECISION_EXPIRED",
+   "retry": "read_only"
+  },
+  {
+   "name": "POLICY_REFUSED",
+   "code": "POLICY_REFUSED",
+   "retry": "never"
+  },
+  {
+   "name": "OFFLINE",
+   "code": "OFFLINE",
+   "retry": "read_only"
+  },
+  {
+   "name": "LIMIT",
+   "code": "LIMIT",
+   "retry": "after_review"
+  },
+  {
+   "name": "CURSOR_RESET",
+   "code": "CURSOR_RESET",
+   "retry": "read_only"
+  },
+  {
+   "name": "DEFINITIVE_REJECTION",
+   "code": "DEFINITIVE_REJECTION",
+   "retry": "after_review"
+  },
+  {
+   "name": "OUTCOME_UNKNOWN",
+   "code": "OUTCOME_UNKNOWN",
+   "retry": "same_operation_query"
+  },
+  {
+   "name": "INTEGRITY_FAILURE",
+   "code": "INTEGRITY_FAILURE",
+   "retry": "never"
+  },
+  {
+   "name": "VERSION_MISMATCH",
+   "code": "VERSION_MISMATCH",
+   "retry": "never"
+  }
+ ]
+}

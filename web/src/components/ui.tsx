@@ -1,5 +1,9 @@
+import { ClaudeApiKeyLink } from "./ClaudeAutomationNotice";
+import { ApiError } from "../lib/api";
+import type { AutomationRefusal } from "./ClaudeAutomationNotice";
+import { useWorkingView } from "../lib/workingView";
 import clsx from "clsx";
-import { ChevronDown, type LucideIcon, Search, X } from "lucide-react";
+import { type LucideIcon, Search, X } from "lucide-react";
 import {
   cloneElement, Fragment, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactElement, type ReactNode,
   type SelectHTMLAttributes, type TextareaHTMLAttributes, useEffect, useId, useRef, useState,
@@ -74,14 +78,15 @@ export function useMedia(query: string) {
 }
 
 export function useDocumentTitle(title?: string) {
-  useEffect(() => { document.title = title ? `${title} · Rynhult` : "Rynhult"; }, [title]);
+  const working = useWorkingView();
+  useEffect(() => { if (!working || working.visible && working.focused) document.title = title ? `${title} · Rynhult` : "Rynhult"; }, [title, working?.visible, working?.focused]);
 }
 
 export function PageHeader({ title, description, actions, meta }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; meta?: ReactNode }) {
   useDocumentTitle(typeof title === "string" ? title : undefined);
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-      <div className="min-w-0">
+      <div className="min-w-0 [overflow-wrap:anywhere]">
         <h1 className="text-[20px] font-semibold leading-tight tracking-[-0.01em] text-fg">{title}</h1>
         {description && <p className="mt-1 max-w-[70ch] text-[13px] text-muted">{description}</p>}
         {meta && <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">{meta}</div>}
@@ -201,74 +206,6 @@ export function Meter({ value, className, label }: { value: number; className?: 
   );
 }
 
-const tabKey = (id: string) => id.replace(/[^A-Za-z0-9_-]+/g, "-");
-
-/** ARIA tabs (UX review SE-8): one Tab stop (the selected tab), Arrow keys, Home and End move and select, and with an
-    `id` each tab controls the `TabPanel` given the same id. The selected tab is scrolled into view (a deep link on a
-    phone), the strip fades at an edge that has more tabs beyond it, and `phone` names the tabs a phone shows; the
-    others go under "More" there (UX review SE-7). */
-export function Tabs<T extends string>({ tabs, value, onChange, className, phone, id, label }: {
-  tabs: readonly { id: T; label: ReactNode; count?: number }[]; value: T; onChange: (id: T) => void; className?: string;
-  phone?: readonly T[];
-  /** Links the tabs to a `TabPanel` with the same id. */
-  id?: string;
-  /** The tab list's accessible name, when the page has more than one. */
-  label?: string;
-}) {
-  const strip = useRef<HTMLDivElement>(null);
-  const [fade, setFade] = useState({ left: false, right: false });
-  useEffect(() => {
-    const el = strip.current;
-    if (!el) return;
-    const measure = () => setFade({ left: el.scrollLeft > 1, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 });
-    el.querySelector<HTMLElement>("[aria-selected=true]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    measure();
-    el.addEventListener("scroll", measure, { passive: true });
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => { el.removeEventListener("scroll", measure); observer.disconnect(); };
-  }, [value, tabs.length]);
-  const onPhone = (t: T) => !phone || phone.includes(t) || t === value;
-  const more = phone ? tabs.filter((t) => !onPhone(t.id)) : [];
-  const onKeyDown = useRovingFocus(strip, { selector: "[role=tab]", orientation: "horizontal", onNavigate: (item) => item.click() });
-  const mask = fade.left && fade.right ? "[mask-image:linear-gradient(to_right,transparent,black_24px,black_calc(100%-24px),transparent)]"
-    : fade.right ? "[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]"
-      : fade.left ? "[mask-image:linear-gradient(to_right,transparent,black_24px)]" : undefined;
-  return (
-    <div className={clsx("flex min-w-0 items-end border-b border-line", className)}>
-      <div ref={strip} role="tablist" aria-label={label} onKeyDown={onKeyDown}
-        className={clsx("flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:none]", mask)}>
-        {tabs.map((t) => (
-          <button key={t.id} type="button" role="tab" data-tab={t.id} aria-selected={value === t.id} tabIndex={value === t.id ? 0 : -1}
-            id={id ? `${id}-tab-${tabKey(t.id)}` : undefined} aria-controls={id && value === t.id ? `${id}-panel` : undefined}
-            onClick={() => onChange(t.id)}
-            className={clsx("-mb-px inline-flex min-h-9 pointer-coarse:min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 pb-2.5 pt-1.5 text-[13px] transition-colors",
-              value === t.id ? "border-accent font-medium text-fg" : "border-transparent text-muted hover:text-fg",
-              !onPhone(t.id) && "max-sm:hidden")}>
-            {t.label}
-            {t.count !== undefined && <span className="tnum rounded bg-panel-2 px-1.5 text-[11px] text-muted">{t.count}</span>}
-          </button>
-        ))}
-      </div>
-      {more.length > 0 && (
-        <Popover menu label="More" className="mb-1 sm:hidden" trigger={<>More <ChevronDown size={13} aria-hidden="true" /></>}>
-          {(close) => more.map((t) => (
-            <button key={t.id} type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); onChange(t.id); }}
-              className="flex min-h-10 pointer-coarse:min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 text-left text-[13px] text-fg hover:bg-panel-2">
-              {t.label}{t.count !== undefined && <span className="tnum rounded bg-panel-2 px-1.5 text-[11px] text-muted">{t.count}</span>}
-            </button>
-          ))}
-        </Popover>
-      )}
-    </div>
-  );
-}
-
-/** The panel a `Tabs` with the same `id` controls; labelled by the selected tab. */
-export function TabPanel({ id, value, className, children }: { id: string; value: string; className?: string; children: ReactNode }) {
-  return <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tabKey(value)}`} className={className}>{children}</div>;
-}
-
 /** Menus opt into roving focus; mixed-content panels keep normal Tab navigation.
     Escape/actions return to the trigger; outside clicks and Tab retain their destination. */
 export function Popover({ label, trigger, children, className, align = "right", wide, menu = false }: {
@@ -384,9 +321,12 @@ export function Announcer() {
   const [text, setText] = useState("");
   useEffect(() => {
     // Clear first so the same sentence twice is still read twice.
-    const listener = (next: string) => { setText(""); window.setTimeout(() => setText(next), 50); };
+    let pending: number | undefined;
+    const clear = () => { window.clearTimeout(pending); setText(""); };
+    const listener = (next: string) => { clear(); pending = window.setTimeout(() => setText(next), 50); };
     listeners.add(listener);
-    return () => { listeners.delete(listener); };
+    window.addEventListener("acc:signed-out", clear);  // nothing said for one person stays for the next
+    return () => { clear(); listeners.delete(listener); window.removeEventListener("acc:signed-out", clear); };
   }, []);
   return <div aria-live="polite" role="status" aria-label="Announcements" className="sr-only">{text}</div>;
 }
@@ -527,6 +467,8 @@ export function errorWords(error: unknown): { message: string; raw?: string } {
 
 export function ErrorNote({ error, title, onRetry, action }: { error: unknown; title?: string; onRetry?: () => unknown; action?: ReactNode }) {
   if (!error) return null;
+  const refusal = error instanceof ApiError ? (error.data as { detail?: AutomationRefusal } | undefined)?.detail : undefined;
+  if (refusal?.code === "claude_subscription_automation") return <p role="alert" className="text-xs text-wait">{refusal.message}{" "}<ClaudeApiKeyLink href={refusal.keys} /></p>;
   const { message, raw } = errorWords(error);
   if (message.startsWith('Machine offline:')) return <p className="px-3 py-2 text-[13px] text-muted">{message}</p>;
   const body = <>

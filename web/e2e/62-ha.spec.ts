@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { expectAxeClean, wikiShotPath } from './helpers';
 
 test('standby shows observation only and active shows current epoch', async ({ page }, testInfo) => {

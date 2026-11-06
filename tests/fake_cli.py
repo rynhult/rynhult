@@ -27,9 +27,24 @@ args = sys.argv[1:]
 if provider == "codex" and args == ["--version"]:
     print("codex-cli 0.163.0")
     sys.exit(0)
+if provider == "codex" and args == ["--help"]:
+    print("Usage: codex [OPTIONS]\n  --no-alt-screen  Disable alternate screen mode")
+    sys.exit(0)
 run_dir = Path(os.environ.get("ACC_RUN_DIR", "/nonexistent"))
 hook_bin = os.environ.get("FAKE_HOOK", "/srv/acc/bin/acc-hook")
 home = Path.home()
+
+if provider == "claude" and (args[-2:] == ["auth", "status"] or args[:2] == ["auth", "status"]):
+    # Ordinary automation fixtures model API authentication. A test-owned run can
+    # explicitly exercise subscription/unknown mode without changing other runs.
+    mode_file = Path(args[args.index("--settings") + 1]).parent / "fake-auth-method" if "--settings" in args else None
+    method = mode_file.read_text().strip() if mode_file and mode_file.is_file() else "api_key"
+    if any(os.environ.get(k) == "1" for k in
+           ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")):
+        method = "third_party"
+    print(json.dumps({"loggedIn": method != "none", "authMethod": method,
+                      "email": "test@example.com", "subscriptionType": "max"}))
+    sys.exit(0)
 
 if (run_dir / "explanation.json").is_file():
     spec = json.loads((run_dir / "explanation.json").read_text())
@@ -358,9 +373,6 @@ if args[:1] == ["app-server"]:  # minimal JSON-RPC: initialize + model/list
                  "defaultReasoningEffort": "low"},
                 {"model": "hidden-one", "hidden": True}]}}), flush=True)
     sys.exit(0)
-if args[:2] == ["auth", "status"]:
-    print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "email": "test@example.com", "subscriptionType": "max"}))
-    sys.exit(0)
 if args[:2] == ["login", "status"]:
     print("Logged in using ChatGPT")
     sys.exit(0)
@@ -452,6 +464,11 @@ while True:
     import select
     if select.select([sys.stdin], [], [], 0)[0]:
         chunk = os.read(sys.stdin.fileno(), 65536)
+        if os.environ.get("ACC_E2E_TERMINAL_TRACE") == "1":
+            import hashlib
+            with (run_dir / "fake.input-times.jsonl").open("a") as timing:
+                timing.write(json.dumps({"ns": time.time_ns(), "bytes": len(chunk),
+                                         "hash": hashlib.sha256(chunk).hexdigest()[:16]}) + "\n")
         pending_input += chunk
         while b"\n" in pending_input:
             line, pending_input = pending_input.split(b"\n", 1)

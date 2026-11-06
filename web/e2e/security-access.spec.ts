@@ -1,4 +1,4 @@
-import {expect,test} from '@playwright/test';
+import {expect,test} from './fixtures';
 import {AUTH_FILE,csrfHeaders,expectAxeClean,freshStep,gitProject,loadSecret,PASSWORD,totp} from './helpers';
 test.use({storageState:AUTH_FILE});
 test.setTimeout(90000);

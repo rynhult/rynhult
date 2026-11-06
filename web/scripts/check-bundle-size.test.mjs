@@ -133,3 +133,28 @@ for (const problem of ['route', 'CSS', 'budget metric', 'pages']) {
       }, limits);
   });
 }
+
+test('counts an explicitly mounted shared chunk by its stable manifest name', () => {
+  fixture({
+    'index.html': { file: 'entry.js', isEntry: true },
+    '_ThemeRuntime-buildhash.js': { file: 'theme.js', name: 'ThemeRuntime', imports: ['shared'] },
+    shared: { file: 'shared.js' },
+  }, { 'entry.js': 'entry', 'theme.js': 'theme', 'shared.js': 'shared' }, (dir) => {
+    const result = check(dir, '--report');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout).pages.test.js.files, ['entry.js', 'shared.js', 'theme.js']);
+  }, budgets(['@chunk:ThemeRuntime']));
+});
+
+for (const names of [[], ['ThemeRuntime', 'ThemeRuntime']]) {
+  test(`fails closed for ${names.length ? 'ambiguous' : 'missing'} mounted chunk names`, () => {
+    const manifest = { 'index.html': { file: 'entry.js', isEntry: true } };
+    const files = { 'entry.js': 'entry' };
+    names.forEach((name, i) => { manifest[`theme-${i}`] = { file: `theme-${i}.js`, name }; files[`theme-${i}.js`] = 'theme'; });
+    fixture(manifest, files, dir => {
+      const result = check(dir);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /ambiguous or missing mounted chunk: ThemeRuntime/);
+    }, budgets(['@chunk:ThemeRuntime']));
+  });
+}

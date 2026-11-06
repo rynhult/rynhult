@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./shell-state";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, sessionWithChanges } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: "standard" });
 
 // UX review top-ten #10: phone polish on secondary paths.
 test("mobile: icon buttons are 44px on touch (PH-2, phone pass)", async ({ page }) => {

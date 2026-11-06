@@ -23,8 +23,21 @@ from pathlib import Path
 from .. import peercred, tooling
 from ..broker_protocol import request_from
 from ..providers.rpc import cancellable
-from . import attach, brief_references, document_extract, gate_ops, group_git, image_probe, logins, models, ops
+from . import (
+    attach,
+    brief_references,
+    claude_auth,
+    document_extract,
+    gate_ops,
+    group_git,
+    image_probe,
+    logins,
+    models,
+    ops,
+    session_git,
+)
 from .config import BrokerConfig
+from .search_worker import ReadBusy
 
 log = logging.getLogger("acc.broker")
 MAX_LINE = 16 * 1024 * 1024
@@ -45,14 +58,24 @@ class Broker:
     def __init__(self, config: BrokerConfig):
         self.config = config
         self._folder_lock = threading.RLock()
+        from .search_worker import Searches
+        self._searches = Searches()
         self._folder_snapshot = None
         self._workspace_key = secrets.token_bytes(32)
         self.logins = logins.Logins(config)
         from ..node import group_proof
+        from .chat import read_chat
+        from .search_worker import Searches
+        self._searches = Searches()
         self.methods = {
+            "chat_read": lambda p: read_chat(Path.home(), **p),
             "group_machine_verify": lambda p: {"verified": group_proof.verify(self.config.run_dir, p["node_id"], p["proof_account"], p["request_id"], p["code"])},
             "folder_check": self.folder_check,
             "files": lambda p: ops.files(self.config, **p),
+            "session_git": lambda p: session_git.operate(self.config, **p),
+            "files_search": lambda p: ops.file_search(self.config, **p),
+            "claude_auth": lambda p: claude_auth.account(self.config),
+            "session_auth": lambda p: claude_auth.refresh(self.config, p['tmux_name']),
             "auth_health": lambda p: logins.auth_health(self.config),
             "brief_document_extract": lambda p: document_extract.run(self.config, **p),
             "brief_reference": lambda p: brief_references.receive(self.config, **p, binding_key=self._workspace_key),
@@ -67,6 +90,8 @@ class Broker:
             "login_cancel": lambda p: self.logins.cancel(p["flow_id"]),
             "ping": self.ping,
             "list": lambda p: ops.list_sessions(self.config),
+            "inbox_permissions": lambda p: ops.inbox_permissions(self.config, p["tmux_name"], p.get("enabled")),
+            "terminal_observer_geometry": lambda p: attach.observer_geometry(self.config, p["tmux_name"]),
             "launch": lambda p: ops.launch(self.config, p, workspace_key=self._workspace_key),
             "kill": lambda p: ops.kill(self.config, p["tmux_name"], p.get("container"), p.get("acc_id")),
             "make_private_checkout": lambda p: ops.make_private_checkout(self.config, p["repo"], p["root"], p["name"],
@@ -83,13 +108,14 @@ class Broker:
             "team_prepare_merge": lambda p: ops.team_prepare_merge(self.config, p["path"], p["branch"], p["acc_id"]),
             "team_clear_bundles": lambda p: ops.team_clear_bundles(self.config, p["acc_id"], p.get("branch")),
             "team_merge": lambda p: ops.team_merge(self.config, p["path"], p["branch"], p["expected_branch"], expected_head=p.get("expected_head"), expected_base=p.get("expected_base"), report_heads=p.get("report_heads"), generated_exports=p.get("generated_exports")),
+            "permission_reply": lambda p: ops.permission_reply(self.config, p["acc_id"], p["token"], p["decision"]),
             "read_spool": lambda p: ops.read_spool(self.config, p["acc_id"], p["offset"]),
             "make_worktree": lambda p: ops.make_worktree(self.config, p["repo"], p["root"], p["name"], p["branch"], p.get("base_commit")),
             "remove_worktree": lambda p: ops.remove_worktree(self.config, p["repo"], p["path"]),
             "workspace_changes": lambda p: ops.workspace_changes(self.config, p["path"], p.get("base"),
                                                                  bool(p.get("detail"))),
             "automation_screen": lambda p: ops.automation_screen(self.config, p["tmux_name"], p["provider"]),
-            "terminal_output": lambda p: ops.terminal_output(self.config, p["tmux_name"]),
+            "terminal_output": lambda p: ops.terminal_output(self.config, p["tmux_name"], watching=p.get("watching") is True),
             "screen_prompt": lambda p: ops.screen_prompt(self.config, p["tmux_name"], p["provider"]),
             "transcript_messages": lambda p: ops.transcript_messages(p["provider"], p["native_id"], p.get("stamp")),
             "transcript_exists": lambda p: ops.transcript_exists(p["provider"], p["native_id"]),
@@ -211,6 +237,14 @@ class Broker:
                 raise RequestError('Folder policy revision changed before execution. Review again.')
             return method(params)
 
+    def _search_snapshot(self, expected, enforce):
+        # Policy application atomically replaces this frozen config. Capture the
+        # reference without joining the control lock or its executor queue.
+        snapshot = self.config
+        if enforce and (snapshot.folder_revision < 1 or expected != snapshot.folder_revision):
+            raise RequestError('Folder policy revision changed. Refresh and retry.')
+        return snapshot
+
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             uid = peer_uid(writer)
@@ -264,7 +298,7 @@ class Broker:
             params = dict(request['params'])
             expected = params.pop('folder_revision', None)
             # Terminal observation and stop must remain available during a policy fence.
-            exempt = {'ping', 'list', 'kill', 'interrupt', 'send_text', 'clear_env', 'read_spool',
+            exempt = {'ping', 'list', 'session_auth', 'claude_auth', 'kill', 'interrupt', 'send_text', 'clear_env', 'read_spool', 'terminal_observer_geometry',
                       'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}
             if request['method'] not in exempt and (self.config.folder_policy_required or expected is not None):
                 if self.config.folder_revision < 1 or expected != self.config.folder_revision:
@@ -272,13 +306,29 @@ class Broker:
             method = self.methods.get(request.get("method"))
             if method is None:
                 raise RequestError(f"unknown method {request.get('method')!r}")
-            if request["method"] in ("model_catalog", "usage"):
+            if request['method'] in {'files_search', 'chat_read'}:
+                enforce = self.config.folder_policy_required or expected is not None
+                snapshot = self._search_snapshot(expected, enforce)
+                if request['method'] == 'chat_read':
+                    result = await self._searches.run(snapshot, params, operation='chat_read')
+                else:
+                    result = await self._searches.run(snapshot, params)
+                current = self._search_snapshot(expected, enforce)
+                if current != snapshot:
+                    raise RequestError('Folder policy revision changed. Refresh and retry.')
+            elif request["method"] in ("model_catalog", "usage"):
                 result = await cancellable(method, params)
             else:
                 result = await asyncio.to_thread(self._folder_call, method, params, expected,
                     request['method'] not in exempt and (self.config.folder_policy_required or expected is not None))
             return {"id": request_id, "ok": True, "result": result}
+        except ReadBusy:
+            return {"id": request_id, "ok": False, "code": "read_busy",
+                    "error": "Account read is busy. Retry shortly."}
         except (RequestError, ops.OpError, logins.LoginError, KeyError, ValueError) as error:
+            from acc.providers.claude_auth import CODE, DOCS, MESSAGE
+            if MESSAGE in str(error):
+                return {'id': request_id, 'ok': False, 'code': CODE, 'docs': DOCS, 'error': MESSAGE}
             return {"id": request_id, "ok": False, "error": f"{type(error).__name__}: {error}"}
         except Exception as error:  # keep serving other requests
             log.exception("method failed")

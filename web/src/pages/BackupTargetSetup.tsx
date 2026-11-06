@@ -10,14 +10,17 @@ import { CopyButton } from '../components/InstallSteps';
 type Node = {id:string; name:string; status:string; info:{os?:string}; backup_default_max_size_bytes?:number};
 export function BackupTargetSetup() {
   const [params] = useSearchParams();
-  return <TargetSetup key={params.get('target') ?? `new:${params.get('kind') === 's3' ? 's3' : 'node'}`} />;
+  return <TargetSetup key={params.get('target') ?? `new:${params.get('kind') ?? 'node'}`} />;
 }
 
 function TargetSetup() {
   const [params, setParams] = useSearchParams();
   const id = params.get('target');
   const commands = useRef<HTMLPreElement>(null);
-  const [kind, setKind] = useState(params.get('kind') === 's3' ? 's3' : 'node');
+  const [kind, setKind] = useState(params.get('kind') === 'local' ? 'local' : params.get('kind') === 's3' ? 's3' : 'node');
+  const [folder, setFolder] = useState('');
+  const [sameDisk, setSameDisk] = useState(false);
+  const local = useMutation({mutationFn:() => post<{command:string}>('/api/host/backups/local-targets', {confirmed:true,folder,same_disk:sameDisk})});
   const [endpoint, setEndpoint] = useState('');
   const [bucket, setBucket] = useState('');
   const [region, setRegion] = useState('us-east-1');
@@ -36,11 +39,24 @@ function TargetSetup() {
     credentials:{access_key_id:access,secret_access_key:secret,...(session ? {session_token:session} : {})},
   }), onSuccess:() => {setAccess('');setSecret('');setSession('');check.reset();void setup.refetch();}});
   const check = useMutation({mutationFn:() => post<{kind?:string;immutability?:unknown;capabilities?:{versioning:boolean;mode:string|null;default_days:number}}>(`/api/host/backups/${id}/check`,{}),onSuccess:() => {void setup.refetch();}});
-  return <Page><PageHeader title="Target setup" description="Choose where Rynhult keeps its encrypted backups: another Linux machine you've added, or cloud storage. A folder on this server is set up by an administrator instead (see the Guide, Backups). Only owners can do this." actions={<Link to="/host" className="inline-flex min-h-8 pointer-coarse:min-h-11 items-center rounded-md border border-line-strong px-3 underline underline-offset-2">Back to Host</Link>} />
+  return <Page><PageHeader title="Target setup" description="Choose where Rynhult keeps its encrypted backups: another Linux machine you've added, or cloud storage. Or choose a folder or USB disk on this server. Only owners can do this." actions={<Link to="/host" className="inline-flex min-h-8 pointer-coarse:min-h-11 items-center rounded-md border border-line-strong px-3 underline underline-offset-2">Back to Host</Link>} />
     <Card><CardHeader title={id ? setup.data?.kind === 's3' ? 'Check S3 storage' : 'Install the append-only receiver' : 'Choose a backup target'} />
       <div className="space-y-4 p-4 text-sm">
-        {!id && <Field label="Target type" hint="Where the backups go. Another Linux machine works best if it's always on; cloud storage means a bucket at AWS S3, Backblaze B2, Wasabi, Cloudflare R2 or similar."><Select aria-label="Target type" name="target_type" value={kind} onChange={e => setKind(e.target.value)}><option value="node">Another Linux machine (receiver)</option><option value="s3">Cloud storage (S3-compatible)</option></Select></Field>}
-        {!id && kind === 's3' ? <form className="space-y-4" onSubmit={e => {e.preventDefault();createS3.mutate();}}>
+        {!id && <Field label="Target type" hint="Where the backups go. Another Linux machine works best if it's always on; cloud storage means a bucket at AWS S3, Backblaze B2, Wasabi, Cloudflare R2 or similar."><Select aria-label="Target type" name="target_type" value={kind} onChange={e => setKind(e.target.value)}><option value="local">Back up to a folder or USB disk</option><option value="node">Another Linux machine (receiver)</option><option value="s3">Cloud storage (S3-compatible)</option></Select></Field>}
+        {!id && kind === 'local' ? <form className="space-y-4" onSubmit={e => {e.preventDefault();local.mutate();}}>
+          <p>Mount the USB disk first, then enter an existing absolute folder. The console command validates the storage, creates an encrypted repository and grants access to that repository only. Temporary storage and hidden home folders are refused.</p>
+          <Field label="Folder path"><Input required value={folder} onChange={e => {setFolder(e.target.value);local.reset();}} placeholder="/mnt/recovery" /></Field>
+          <label className="flex gap-2"><input type="checkbox" checked={sameDisk} onChange={e => {setSameDisk(e.target.checked);local.reset();}} />I understand this is the same disk</label>
+          <p>Copies on the same disk do not protect against disk loss. The console refuses same-disk storage unless you select this acknowledgement.</p>
+          <Button type="submit" disabled={local.isPending}>{local.isPending ? 'Preparing…' : 'Show console command'}</Button>
+          {local.data && <>
+            <p>Run this once in the server’s root console. It restarts Rynhult to apply folder access and queues the first backup. Install Restic in Host → Packages first.</p>
+            <CopyButton text={local.data.command} label="Copy folder command" target={commands} />
+            <pre ref={commands} role="region" aria-label="Folder command" tabIndex={0} className="overflow-auto whitespace-pre-wrap break-all">{local.data.command}</pre>
+            <p><Link className="underline" to="/host#host-backups">View the target and first backup result in Host → Backups</Link>. Export a new recovery kit and keep it offline.</p>
+          </>}
+          <ErrorNote error={local.error} />
+        </form> : !id && kind === 's3' ? <form className="space-y-4" onSubmit={e => {e.preventDefault();createS3.mutate();}}>
           <p className="text-muted">AWS S3, Backblaze B2, Wasabi, MinIO or R2 through restic’s S3 backend. Use the regional HTTPS endpoint. Provider support for immutable retention varies.</p>
           <Field label="Endpoint"><Input name="s3_endpoint" type="url" required autoComplete="off" spellCheck={false} placeholder="https://s3.example.com…" value={endpoint} onChange={e => setEndpoint(e.target.value)} /></Field>
           <Field label="Bucket"><Input name="s3_bucket" required autoComplete="off" spellCheck={false} value={bucket} onChange={e => setBucket(e.target.value)} /></Field>

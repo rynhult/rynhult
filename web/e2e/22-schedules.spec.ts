@@ -1,6 +1,6 @@
 import { wikiShotPath } from "./helpers";
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -19,6 +19,8 @@ test.afterEach(async ({ page }) => {
 });
 
 test('a person creates a schedule, runs it now and cancels its ordinary session', async ({ page }, testInfo) => {
+  // Exercises debounce/preview, real scheduler delivery, cancellation and an axe audit.
+  test.slow();
   const suffix = randomUUID().slice(0, 8);
   const slug = `schedule-demo-${suffix}`;
   const weekly = `Weekly review ${suffix}`;
@@ -45,7 +47,14 @@ test('a person creates a schedule, runs it now and cancels its ordinary session'
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(pid));
   await dialog.getByRole('combobox', { name: 'Timing', exact: true }).selectOption('weekly');
   await dialog.getByRole('combobox', { name: 'Weekday', exact: true }).selectOption('1');
+  const preview = page.waitForResponse(response => {
+    if (new URL(response.url()).pathname !== '/api/schedules/preview' || response.request().method() !== 'POST') return false;
+    const body = response.request().postDataJSON();
+    return body.timezone === 'America/Chicago' && body.timing.kind === 'weekly' && body.timing.weekday === 1;
+  });
   await dialog.getByLabel('Timezone', { exact: true }).fill('America/Chicago');
+  expect((await preview).ok()).toBe(true);
+  expect(await (await preview).finished()).toBeNull();
   await dialog.getByLabel('Task (optional)', { exact: true }).fill('Review the project and report findings.');
   await expect(dialog.getByRole('button', { name: 'Create paused schedule', exact: true })).toBeVisible();  // paused unless enabled
   // The next run is worked out live, by the scheduler's own rules (UX review R5).

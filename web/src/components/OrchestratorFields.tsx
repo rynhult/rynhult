@@ -1,3 +1,4 @@
+import { ClaudeAutomationNotice } from "./ClaudeAutomationNotice";
 import { lazy, Suspense, useState } from 'react';
 import { lazyImport } from '../lib/lazyImport';
 import type { Catalog, ProviderInfo } from '../lib/types';
@@ -65,6 +66,7 @@ export function OrchestratorFields({ value, onChange, catalog, providers, projec
             onChange={(e) => update(i, { options: { ...choice.options, [o.key]: e.target.checked } })} />
           <span>Helper {i + 1}: {o.label}</span>
         </label>)}
+        <ClaudeAutomationNotice refusal={provider?.automation_refusal} />
         {value.agents.length > 1 && <Button variant="ghost" onClick={() => onChange({ ...value, agents: value.agents.filter((_, n) => i !== n) })}>Remove helper choice {i + 1}</Button>}
       </fieldset>;
     })}

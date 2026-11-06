@@ -1,3 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { useSingleMutation } from "../lib/mutations";
+import { post } from "../lib/api";
+import { Surface as Card, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 import { Feature } from "../components/Feature";
 import clsx from "clsx";
 import { withTeamAncestors } from "../lib/format";
@@ -5,9 +9,9 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Plus, TerminalSquare, X } from "lucide-react";
 import { byRecent, groupSessions, type GroupKey, SESSION_GROUPS } from "../lib/order";
-import { useProjects, useProviderRegistry, useSessions } from "../lib/queries";
+import { useProjects, useProviderRegistry, useSessions, useRole } from "../lib/queries";
 import type { SessionSummary } from "../lib/types";
-import { Badge, Button, Card, Empty, Page, PageHeader, QueryState, SearchInput, Segmented, Select, Toolbar } from "../components/ui";
+import { Badge, Button, ErrorNote, Empty, QueryState, SearchInput, Segmented, Select, Toolbar } from "../components/ui";
 import { useMultiRuns } from "./MultiRunPage";
 import { isLive } from "../components/session-bits";
 import { SessionList } from "../components/SessionList";
@@ -19,6 +23,14 @@ const inScope = (s: SessionSummary, scope: Scope) =>
 
 export function Sessions() {
   const sessions = useSessions();
+  const role = useRole();
+  const queryClient = useQueryClient();
+  const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const archive = useSingleMutation({
+    mutationFn: () => post<{ archived: number; more_remain: boolean }>("/api/sessions/archive-stopped"),
+    onSuccess: () => { setArchiveConfirm(false); },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
   const newSession = useNewSession();
   const groups = useMultiRuns();
   const registry = useProviderRegistry();
@@ -61,6 +73,15 @@ export function Sessions() {
           {(projects.data ?? []).filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
       </Toolbar>
+      {scope === "stopped" && role.known && all.some((s) => s.desired_state === "stopped" && (role.owner || s.owner === role.username)) && <Card className="p-4 space-y-3">
+        {archiveConfirm ? <>
+          <p>Archive all stopped sessions you may archive? Transcripts, worktrees and branches are kept. This applies across all filters.</p>
+          <Button disabled={archive.isPending} onClick={() => archive.mutate()}>Confirm archive all stopped</Button>{" "}
+          <Button variant="ghost" disabled={archive.isPending} onClick={() => setArchiveConfirm(false)}>Cancel</Button>
+        </> : <Button onClick={() => { archive.reset(); setArchiveConfirm(true); }}>Archive all stopped</Button>}
+        {archive.error && <ErrorNote error={archive.error} />}
+      </Card>}
+      {archive.data && <p role="status">Archived {archive.data.archived} stopped sessions. {archive.data.more_remain && "More remain; use Archive all stopped again. "}Transcripts, worktrees and branches are kept.</p>}
       <Feature name="multirun"><QueryState query={groups}>{(data) => <div className="space-y-2">
         {data.filter((g) => (!project || String(g.project_id) === project)
           && (!provider || g.runs.some((r) => r.choice.provider === provider))
@@ -68,7 +89,7 @@ export function Sessions() {
           && (scope === "all" || g.runs.some((r) => r.session && inScope(r.session, scope)) || (!g.runs.some((r) => r.session) && scope !== "stopped")))
           .map((g) => <Card key={g.id}>
             <details>
-              <summary className="cursor-pointer px-4 py-3 text-sm hover:bg-panel-2">
+              <summary className="cursor-pointer px-4 py-3 text-sm hover:bg-panel-2 [overflow-wrap:anywhere]">
                 <span className="ml-2 inline-flex flex-wrap items-center gap-2">
                   <Badge>Multi-run</Badge>
                   <span className="font-medium text-fg">{g.name}</span>

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from starlette.requests import HTTPConnection
 from starlette.responses import JSONResponse
 
@@ -15,6 +16,8 @@ from .ha import Fenced
 from .ha_automatic import Policy, evaluate
 from .models import AuditLog
 from .node_tasks import NodeTasks
+
+log = logging.getLogger(__name__)
 
 
 class Change(BaseModel):
@@ -42,10 +45,14 @@ class Runtime:
                       'promotion_wired': False}
             if result != self._last_evaluation:
                 epoch = self.authority.status()['epoch']
-                with self.authority.control.begin() as connection:
-                    connection.execute(AuditLog.__table__.insert().values(
-                        actor=actor, action='ha.automatic_evaluation', target=self.authority.node_id,
-                        detail={**result, 'epoch': epoch}))
+                try:
+                    with self.authority.control.begin() as connection:
+                        connection.execute(AuditLog.__table__.insert().values(
+                            actor=actor, action='ha.automatic_evaluation', target=self.authority.node_id,
+                            detail={**result, 'epoch': epoch}))
+                except OperationalError:  # a busy database must not hide who is active: audit on the next read
+                    log.warning('ha.automatic_evaluation audit skipped: database busy')
+                    return result
                 self._last_evaluation = result
             return result
 

@@ -53,4 +53,8 @@ settings = runtime['prepare']()
 if 'HTTPS_PROXY' in settings:
     runtime['start_bridge']()
 environment.update(settings)
+contract = __import__('json').loads(_CompatPath('/run/acc-container/contract.json').read_text())
+if contract.get('automated') and contract.get('provider') == 'claude':
+    if runtime['auth_mode']() not in ('api_key', 'cloud'):
+        raise SystemExit('claude_subscription_automation: Claude automation needs API or cloud launch credentials')
 os.execv('/bin/sh', ['/bin/sh', '-c', '[ ! -f "$0" ] || . "$0"; exec "$@"', *sys.argv[1:]])

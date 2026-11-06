@@ -1,0 +1,43 @@
+/* Only explicit adopters render these classes. No selectors target legacy pages,
+   the shared header/sidebar, dialogs, terminal canvas or recovery notices. */
+.shell-page {
+  --page-space: 20px;
+  width: 100%; max-width: 1600px; margin-inline: auto;
+  padding: 0 var(--page-space) 32px; color: var(--text);
+  font-size: 14px; line-height: 1.5;
+}
+.shell-page-wide { max-width: 1600px; }
+.shell-page > * + *, .shell-page-stack > * + * { margin-top: var(--page-space, 20px); }
+.shell-workbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 12px 20px; padding-block: 16px; border-bottom: 1px solid var(--border);
+}
+.shell-workbar h1 { font-size: 20px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+.shell-page-meta { font-size: 11px; line-height: 1.5; color: var(--muted); margin-bottom: 3px; }
+.shell-workbar-description { max-width: 70ch; margin-top: 4px; font-size: 13px; color: var(--muted); }
+.shell-workbar-meta, .shell-workbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.shell-workbar-meta { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.shell-surface.shell-surface {
+  min-width: 0; border-radius: 0; box-shadow: none;
+  border-inline: 0; border-block: 1px solid var(--border); background: var(--panel);
+}
+.shell-surface .shell-surface { background: transparent; }
+.shell-surface-heading > div { min-height: 44px; padding: 10px 12px; }
+.shell-pane-tabs.shell-pane-tabs { align-items: center; background: var(--panel); padding: 6px; }
+.shell-pane-tabs [role=tab] {
+  min-height: 32px; margin-bottom: 0; padding: 5px 10px; border: 0;
+  border-radius: 4px; font-size: 13px; line-height: 1.5;
+}
+.shell-pane-tabs [role=tab][aria-selected=true] { color: var(--accent); background: var(--accent-tint); }
+@media (max-width: 767px) {
+  .shell-page { --page-space: 16px; }
+  .shell-workbar { padding-block: 12px; }
+}
+@media (pointer: coarse) { .shell-pane-tabs [role=tab] { min-height: 44px; } }
+
+/* The sidebar owns project navigation; keep the title and status on one row. */
+.shell-project-page > .shell-workbar > .min-w-0 {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+}
+.shell-project-page > .shell-workbar .shell-workbar-meta { margin-top: 0; }
+.shell-project-page > .shell-workbar .shell-workbar-meta:empty { display: none; }

@@ -1,3 +1,4 @@
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import { Feature } from "./Feature";
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -6,7 +7,7 @@ import { Link } from 'react-router-dom';
 import { api, post } from '../lib/api';
 import { OFFLINE_TITLE, useOffline } from '../lib/queries';
 import { useConfirm } from './confirm';
-import { announce, Badge, Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, Input, LoadingRows, QueryState } from './ui';
+import { announce, Badge, Button, Dialog, Empty, ErrorNote, Field, Input, LoadingRows, QueryState } from './ui';
 
 interface Device { id: string; person: string; label: string; kind: string; status: string; expires_at: string; last_seen_at: string | null; previous_authority?: boolean }
 interface State { devices: Device[]; pairing_enabled: boolean; policy_pending: boolean }

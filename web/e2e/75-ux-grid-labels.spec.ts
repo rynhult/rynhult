@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { writeFileSync } from "node:fs";
 import { AUTH_FILE, control, expectAxeClean, info, sessionWithChanges, wikiShotPath } from "./helpers";
 

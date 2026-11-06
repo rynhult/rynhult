@@ -655,3 +655,52 @@ async def test_machines_list_says_whether_each_machine_has_a_public_identity(api
     assert (await identity())['rotating'] is True
     machines_on(api, False)  # its leaves stay recorded but are no longer admitted
     assert (await identity())['enabled'] is False
+
+
+async def test_nodes_authority_refresh_allows_an_inflight_snapshot_to_finish(api, authority, monkeypatch):
+    """The Machines GET must not block the loop waiting for its own authority writer."""
+    import threading
+
+    from sqlalchemy import event
+
+    db_factory = api.app.state.db
+    engine = db_factory.kw['bind']
+    ctx = api.app.state.ctx
+    started, done = threading.Event(), threading.Event()
+    record = ctx.edge._record_authority
+
+    def recording(answer):
+        started.set()
+        try:
+            return record(answer)
+        finally:
+            done.set()
+
+    def short_timeout(connection, *_):
+        connection.execute('PRAGMA busy_timeout=100')
+
+    monkeypatch.setattr(ctx.edge, '_record_authority', recording)
+    ctx.edge.forget_authority()
+    event.listen(engine, 'checkout', short_timeout)
+    task = None
+    try:
+        with db_factory() as db:
+            db.merge(Setting(key='authority-list-reader', value={'finished': False}))
+            db.commit()
+            row = db.get(Setting, 'authority-list-reader')
+            task = asyncio.create_task(api.get('/api/nodes'))
+            try:
+                assert await asyncio.to_thread(started.wait, 2)
+                assert not done.is_set(), 'Authority refresh blocked the loop until writer admission timed out'
+                row.value = {'finished': True}
+                db.commit()
+            finally:
+                db.close()
+                response = await asyncio.wait_for(task, 3)
+        assert response.status_code == 200
+        assert done.is_set()
+        with db_factory() as db:
+            assert db.get(Setting, 'authority-list-reader').value == {'finished': True}
+            assert db.get(Setting, 'device_ca_authority') is not None
+    finally:
+        event.remove(engine, 'checkout', short_timeout)

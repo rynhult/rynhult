@@ -142,3 +142,10 @@ before retrying a launch: the server may have accepted it before the connection
 was lost.
 
 Under **Advanced**, **Exactly what will run** has **Copy launch command**, including the working-directory step. Each generated file has its own Copy control and keyboard-readable region. Several agents shows a command for every run. A command containing a placeholder such as `<run-dir>` is a preview: replace the placeholder before running it. Copying does not execute a command.
+
+### Team approval scope
+
+Choosing a profile, saved team or broad task does not issue a saved approval.
+The server's new scoped consent records remain separate from the launch grant.
+This phase adds no automatic setup-level permission and no new consent switch
+to this dialog. Prepare stays read-only; the existing person review still applies.

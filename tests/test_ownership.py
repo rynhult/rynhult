@@ -26,7 +26,33 @@ def orchestrator_preview(monkeypatch):
 # Every route with a resource in its path must appear here (test_every_resource_route_is_covered keeps it honest),
 # with how a member is answered when it's someone else's: 404 (not theirs, existence not revealed) or 403
 # (owner-only).
+# POST /api/sessions and preview accept claude_auth; ownership and refusal classes are unchanged.
 MATRIX = {
+    ('POST', '/api/sessions/{acc_id}/git/{action}'): 404,
+    ('GET', '/api/sessions/{acc_id}/inbox-permissions'): 404,
+    ('PUT', '/api/sessions/{acc_id}/inbox-permissions'): 404,
+    ('POST', '/api/attention/{item_id}/permission'): 404,
+    ("POST", "/api/sessions/archive-stopped"): None,  # bulk action scopes to authorized sessions
+    ('POST', '/api/approvals/consents/{consent_id}/revoke'): 404,
+    ('POST', '/api/approvals/consents/{consent_id}/bind'): 403,  # recent verification first
+    ('POST', '/api/approvals/batches/{batch_id}/approve'): 404,
+    ("GET", "/api/projects/{project_id}/files/search"): 404,
+    ("GET", "/api/sessions/{acc_id}/files/search"): 404,
+    ("GET", "/api/files/{kind}/{key}/search"): 404,
+    ('GET', '/api/projects/{project_id}/layouts/{device}/{viewport}'): 404,
+    ('PUT', '/api/projects/{project_id}/layouts/{device}/{viewport}'): 404,
+    ('POST', '/api/projects/{project_id}/layouts/{device}/{viewport}/reset'): 404,
+    ('GET', '/api/source-views/projects/{project_id}'): 404,
+    ('GET', '/api/source-views/groups/{group_id}/projects/{project_id}'): 404,
+    ('GET', '/api/projects/{project_id}/repositories'): 404,
+    ('GET', '/api/projects/{project_id}/locations'): 404,
+    ('GET', '/api/groups/{group_id}/projects/{project_id}/repositories'): 404,
+    ('GET', '/api/groups/{group_id}/projects/{project_id}/locations'): 404,
+
+    ("GET", "/api/sessions/{acc_id}/chat"): 404,
+    ("GET", "/api/sessions/{acc_id}/chat/events"): 404,
+    ("GET", "/api/sessions/{acc_id}/terminal-reference"): 404,
+    ('POST', '/api/projects/{project_id}/layouts/file-refs'): 404,
     ("POST", "/api/security/access/{operation_id}/cancel"): 403,
     ("POST", "/api/security/access/{operation_id}/apply"): 403,
     ("POST", "/api/security/access/{operation_id}/undo-preview"): 403,
@@ -217,6 +243,7 @@ MATRIX = {
     ("POST", "/api/sessions/{acc_id}/stop"): 404,
     ("POST", "/api/sessions/{acc_id}/archive"): 404,
     ("POST", "/api/sessions/{acc_id}/resume"): 404,
+    ("GET", "/api/sessions/{acc_id}/resume-check"): 404,
     ("POST", "/api/gates/{job_id}/cancel"): 404,
     ("POST", "/api/gates/{job_id}/accept-retry"): 403,
     ("GET", "/api/gates/projects/{project_id}/flakes"): 404,
@@ -298,7 +325,7 @@ MATRIX = {
     ("PUT", "/api/containers/limits/{account}"): 403,  # owners only
     ("POST", "/api/projects/{project_id}/containers"): 403,
 }
-OWNER_ONLY = [('GET', '/api/security/access'), ('POST', '/api/security/access/preview'), ('GET', '/api/security/folders'), ('POST', '/api/security/folders/check'), ('POST', '/api/security/folders/preview'), ('GET', '/api/security/scopes'), ('POST', '/api/security/changes/preview'), ("POST", "/api/providers/image-check"), ("PUT", "/api/gates/wrapup"), ("PUT", "/api/gates/projects/{project_id}/flakes"), ("POST", "/api/gates/{job_id}/accept-retry"), ("GET", "/api/admin-features"),("GET", "/api/remote-access/review"), ("POST", "/api/remote-access/apply"),
+OWNER_ONLY = [('POST', '/api/host/backups/local-targets'), ('GET', '/api/security/access'), ('POST', '/api/security/access/preview'), ('GET', '/api/security/folders'), ('POST', '/api/security/folders/check'), ('POST', '/api/security/folders/preview'), ('GET', '/api/security/scopes'), ('POST', '/api/security/changes/preview'), ("POST", "/api/providers/image-check"), ("PUT", "/api/gates/wrapup"), ("PUT", "/api/gates/projects/{project_id}/flakes"), ("POST", "/api/gates/{job_id}/accept-retry"), ("GET", "/api/admin-features"),("GET", "/api/remote-access/review"), ("POST", "/api/remote-access/apply"),
               ("POST", "/api/remote-access/off"), ("GET", "/api/remote-access"), ("PUT", "/api/remote-access"),
               ("GET", "/api/remote-access/policy"), ("GET", "/api/devices/pairings"),
               ("GET", "/api/telemetry"), ("GET", "/api/telemetry/preview"),
@@ -371,6 +398,9 @@ async def _idle(api, acc_id):
 
 
 def fill(path: str, w: dict) -> str:
+    if path == "/api/sessions/{acc_id}/git/{action}":
+        path = path.replace("{action}", "commit")
+    path = path.replace('{consent_id}', 'a' * 32).replace('{batch_id}', 'b' * 32)
     return (path.replace("{change_id}", "a" * 32).replace("{team_id}", w["session"]["id"]).replace("{reference_id}", "REF-1").replace("{lead}", w["session"]["id"]).replace("{number}", "1").replace("{binding_id}", "a" * 32).replace("{report_id}", "not-your-report").replace("{id}", w["pairing"] if "/pairings/" in path else w["browser_device"]).replace("{identifier:int}", "1").replace("{entry_id}", "example-address").replace("{server_id}", "a" * 16).replace("{schedule_id}", w["schedule"]).replace("{project_id}", str(w["project"]["id"])).replace("{acc_id}", w["session"]["id"])
             .replace("{target_id}", "a" * 32).replace("{folder}", "nothing-here").replace("{kind}", "project").replace("{key}", str(w["project"]["id"]))
             .replace("{item_id}", str(w["item"])).replace("{request_id}", "pub-ownertest01")
@@ -381,7 +411,11 @@ def fill(path: str, w: dict) -> str:
             .replace("{operation_id}", "missing-operation").replace("{snapshot}", "a" * 32).replace("{placement_id}", "1").replace("{grant_id}", "1").replace("{group_id}", "not-your-group").replace("{source}", "gitlab").replace("{repo}", f"{w['project']['id']}.git").replace("{preview}", "nothing"))
 
 
-BODIES = {'/verify': {'code': 'ABCDEFGH23'},'/remote-placements': {'binding_id': 'a' * 32, 'revision': 1}, "d" * 32: {"label": "Taken"}, "/update": {"revision": 1, "action": "resolve"}, "policy": {"role": "workstation", "revision": 1, "concurrent": 4, "daily_launches": 50},
+BODIES = {
+    '/git/commit': {'message': 'Review changes', 'fingerprint': 'a' * 64},
+    '/inbox-permissions': {'enabled': False},
+    '/permission': {'token': 'a' * 32, 'decision': 'deny'},
+    '/verify': {'code': 'ABCDEFGH23'},'/remote-placements': {'binding_id': 'a' * 32, 'revision': 1}, "d" * 32: {"label": "Taken"}, "/update": {"revision": 1, "action": "resolve"}, "policy": {"role": "workstation", "revision": 1, "concurrent": 4, "daily_launches": 50},
     "/task": {"task": "Review tests"}, "/claim": {"path": "src/"}, "/release": {"path": "src/"},
     "/sessions": {"checkout_id": "a" * 12, "task": "Review tests", "name": "Demo", "provider": "claude"},
     "containers": {"enabled": False},
@@ -407,6 +441,13 @@ BODIES = {'/verify': {'code': 'ABCDEFGH23'},'/remote-placements': {'binding_id':
           "/override": {"choice": 0, "reason": "x"}}
 
 
+# Shared with the group-role matrix: valid bodies must reach authorization.
+BODIES.update({
+    '/api/approvals/consents/' + 'a' * 32 + '/revoke': {'revision': 1},
+    '/api/approvals/consents/' + 'a' * 32 + '/bind': {'team_id': 'a' * 32},
+    '/api/approvals/batches/' + 'b' * 32 + '/approve': {'digest': 'a' * 64},
+})
+
 async def test_member_cannot_reach_anything_of_the_owners(two):
     member = two["member"]
     for (method, path), expected in MATRIX.items():
@@ -414,6 +455,8 @@ async def test_member_cannot_reach_anything_of_the_owners(two):
             continue
         url = fill(path, two)
         query = {"path": "README.md"} if path.endswith(("/doc", "/page", "/attachment")) else None
+        if path in {"/api/projects/{project_id}/files/search", "/api/sessions/{acc_id}/files/search", "/api/files/{kind}/{key}/search"}:
+            query = {"q": "README"}
         if path.endswith("/compare"):
             query = {"left": "a", "right": "b"}
         body = next((b for k, b in BODIES.items() if url.endswith(k)), {})

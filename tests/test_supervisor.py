@@ -7,7 +7,7 @@ import sys
 import threading
 
 import pytest
-from helpers import control, pause_supervisor, reconcile_passes, wait_for
+from helpers import control, pause_supervisor, reconcile_passes, wait_for, write_executable
 
 
 async def launch(api, project, provider="claude", **extra):
@@ -190,7 +190,7 @@ async def test_failed_resume_waits_for_exit_after_terminal_closes(api, project, 
     # A real tmux pane becomes dead on PTY EOF, before SIGCHLD supplies its exit result.
     # Stretch that interval deterministically instead of relying on poll timing at Python shutdown.
     failing_cli = env["home"] / "failing-cli"
-    failing_cli.write_text(
+    write_executable(failing_cli,
         f"#!{sys.executable}\n"
         "import os, signal, time\n"
         "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
@@ -198,7 +198,6 @@ async def test_failed_resume_waits_for_exit_after_terminal_closes(api, project, 
         "time.sleep(1)\n"
         f"{ending}\n"
     )
-    failing_cli.chmod(0o755)
     env["broker"].providers["claude"] = str(failing_cli)
     control(env, session["id"], "crash")
     stuck = await wait_for(state_is(api, session["id"], "recovery_needed"))
@@ -426,6 +425,39 @@ async def test_remote_probe_does_not_pin_reconcile_read_snapshot(api, project, e
         assert observed.last_output_at == output_at
         assert observed.remote_url == 'https://claude.ai/code/session_01SNAPSHOT'
     assert not any('reconcile failed' in record.getMessage() for record in caplog.records)
+
+
+async def test_stop_confirmation_survives_a_commit_during_kill(api, project, env, monkeypatch, caplog, tmux_has):
+    """The kill awaits the broker inside reconcile's snapshot; a concurrent commit must not leave the stop pending."""
+    from acc.server.models import Project, Session
+
+    session = await launch(api, project)
+    await wait_for(state_is(api, session["id"], "idle"))
+    await pause_supervisor(api)
+    supervisor = api.app.state.supervisor
+    with supervisor.db() as db:
+        row = db.get(Session, session["id"])
+        row.desired_state, row.team_stop_pending = "stopped", True
+        db.commit()
+    original = supervisor.broker.call
+    kills = []
+
+    async def interleaved(method, **params):
+        if method == "kill":
+            kills.append(params["tmux_name"])
+            with supervisor.db() as other:
+                other.get(Project, project["id"]).name = "Renamed during kill"
+                other.commit()
+        return await original(method, **params)
+
+    monkeypatch.setattr(supervisor.broker, "call", interleaved)
+    await supervisor.reconcile()
+    assert kills == [session["tmux_name"]]  # the retry does not kill again
+    assert not tmux_has(session["tmux_name"])
+    with supervisor.db() as db:
+        assert db.get(Session, session["id"]).team_stop_pending is False
+        assert db.get(Project, project["id"]).name == "Renamed during kill"
+    assert not any("reconcile failed" in record.getMessage() for record in caplog.records)
 
 
 async def test_maintenance_busy_skips_rest_of_pass_once(api, monkeypatch, caplog):

@@ -1,4 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { gotoLoadedPage, loadPage } from './loaded-page';
+import { expect, type Page } from './fixtures';
+import { test } from './shell-state';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSessionState, waitForTeamStopped, csrfHeaders } from './helpers';
@@ -7,7 +9,7 @@ import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSes
 // person would follow it: every click uses the words the Guide gives. The server runs the preview with the plan and
 // working list (playwright.v2.config.ts) and fake providers; the lead's own actions go through its tool spool, as an
 // agent's would. One test, in the Guide's order, so a broken step names the Guide section it breaks.
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 test.setTimeout(240_000);
 let ownedLead: string | undefined;
 test.afterEach(async ({ page }) => {
@@ -28,8 +30,9 @@ async function team(lead: string, action: string, args: object = {}) {
 }
 
 async function teamTab(page: Page, lead: string, section = 'Working list') {
-  await page.goto(`/sessions/${lead}`);
-  await page.getByRole('tab', { name: 'Team', exact: true }).click();
+  await gotoLoadedPage(page, `/sessions/${lead}`, ["SessionPage"], [`/api/sessions/${lead}`]);
+  await loadPage(page, () => page.getByRole('tab', { name: 'Team', exact: true }).click(),
+    ['TeamPanel'], [`/api/sessions/${lead}/team`]);
   await page.getByRole('tab', { name: section, exact: true }).click();
   if (section !== 'Working list') await expandTeamPanels(page);
 }
@@ -37,10 +40,12 @@ async function teamTab(page: Page, lead: string, section = 'Working list') {
 test('a new person follows "Orchestrate a project" from the preview switch to Stop team', async ({ page }) => {
   // Before you start, step 3: "the Settings section chooser lists Selection allow-lists, and managed projects have a
   // Gate queue card."
-  await page.goto('/settings');
+  await gotoLoadedPage(page, '/settings', ['Settings']);
   await expect(page.getByLabel('Settings section').getByRole('option', { name: 'Selection allow-lists' })).toBeAttached();
   const { id: projectId } = await gitProject(page, 'guide-walk');
-  await page.goto(`/projects/${projectId}`);
+  const accountNeed = `Create the test address book account [project ${projectId}]`;
+  const portNeed = `Approve the staging port [project ${projectId}]`;
+  await gotoLoadedPage(page, `/projects/${projectId}`, ["ProjectPage"], ["/api/projects"]);
   await expect(page.getByText('Gate queue', { exact: true }).first()).toBeVisible();
 
   // 1. Start the lead.
@@ -61,7 +66,8 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   await expect(page).toHaveURL(new RegExp(`/sessions/${lead}`));
   await waitForSessionState(page, lead, 'idle', 'claude_hook');
   // "What you should see: ... Its Team tab shows the team."
-  await page.getByRole('tab', { name: 'Team', exact: true }).click();
+  await loadPage(page, () => page.getByRole('tab', { name: 'Team', exact: true }).click(),
+    ['TeamPanel'], [`/api/sessions/${lead}/team`]);
   await expandTeamPanels(page);
 
   // 2. Plan the work together: "No helper can start until the plan is ready."
@@ -76,8 +82,8 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
     recommendation: { option: 'csv', reason: 'Most files are CSV.' }, default: { option: 'csv' } });
   const question = await team(lead, 'worklist_add', { kind: 'question', title: 'Who will use the import page?',
     default: { text: 'Office staff' } });
-  await team(lead, 'worklist_add', { kind: 'need', title: 'Create the test address book account', steps: '1. Open the admin page.\n2. Add a test account.' });
-  await team(lead, 'worklist_add', { kind: 'need', title: 'Approve the staging port', steps: '1. Open Inbox.\n2. Approve the port request.' });
+  await team(lead, 'worklist_add', { kind: 'need', title: accountNeed, steps: '1. Open the admin page.\n2. Add a test account.' });
+  await team(lead, 'worklist_add', { kind: 'need', title: portNeed, steps: '1. Open Inbox.\n2. Approve the port request.' });
   await team(lead, 'now', { text: 'Planning the importer with you.' });
   await teamTab(page, lead, 'Overview');
   await expect(page.getByRole('heading', { name: 'Plan', exact: true })).toBeVisible();
@@ -104,25 +110,30 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   await now.getByRole('button', { name: 'Save' }).click();
   await expect(now).toContainText('Planning: formats decided.');
   // Record an explicit outcome for a Needs you card: it leaves the Inbox; the other stays.
-  await page.goto('/inbox');
-  await expect(page.getByText('Create the test address book account', { exact: false }).first()).toBeVisible();
+  await gotoLoadedPage(page, '/inbox', ['Inbox'], ['/api/attention']);
+  await expect(page.getByText(accountNeed, { exact: false }).first()).toBeVisible();
   await teamTab(page, lead);
-  const need = yours.getByRole('listitem', { name: 'Create the test address book account' });
+  const need = yours.getByRole('listitem', { name: accountNeed });
   await expect(need.getByRole('button', { name: 'Mark done', exact: true })).toHaveCount(0);
-  await need.getByRole('textbox', { name: 'Answer "Create the test address book account"', exact: true }).fill('Created the test account.');
+  await need.getByRole('textbox', { name: `Answer "${accountNeed}"`, exact: true }).fill('Created the test account.');
   await need.getByRole('button', { name: 'Answer', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Answered', exact: true })).toContainText('Created the test account.');
-  await expect(yours.getByRole('listitem', { name: 'Create the test address book account' })).toHaveCount(0);
-  await page.goto('/inbox');
-  await expect(page.getByText('Approve the staging port', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('Create the test address book account', { exact: false })).toHaveCount(0);
+  await expect(yours.getByRole('listitem', { name: accountNeed })).toHaveCount(0);
+  await gotoLoadedPage(page, '/inbox', ['Inbox'], ['/api/attention']);
+  await expect(page.getByText(portNeed, { exact: false }).first()).toBeVisible();
+  await expect(page.getByText(accountNeed, { exact: false })).toHaveCount(0);
 
   // 4. Talk to the lead directly: its Terminal tab, as in any session.
-  await page.goto(`/sessions/${lead}`);
+  await gotoLoadedPage(page, `/sessions/${lead}`, ["SessionPage"], [`/api/sessions/${lead}`]);
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   const take = page.getByRole('button', { name: 'Take control', exact: true });
   await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
-  if (await take.isVisible()) await take.click();
+  if (await take.isVisible()) {
+    await take.click();
+    const dialog = page.getByRole('dialog', { name: 'Take terminal control' });
+    await dialog.getByLabel('Reason').selectOption('manual_handover');
+    await dialog.getByRole('button', { name: 'Take control', exact: true }).click();
+  }
   await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('Please keep the first version small.');
@@ -169,7 +180,7 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   expect(late.ok).toBe(false);
   // "The working list stays on the Team tab for the record, but its questions leave your Inbox."
   await page.getByRole('tab', { name: 'Working list', exact: true }).click();
-  await expect(page.getByText('Approve the staging port', { exact: false }).first()).toBeVisible();
-  await page.goto('/inbox');
-  await expect(page.getByText('Approve the staging port', { exact: false })).toHaveCount(0);
+  await expect(page.getByText(portNeed, { exact: false }).first()).toBeVisible();
+  await gotoLoadedPage(page, '/inbox', ['Inbox'], ['/api/attention']);
+  await expect(page.getByText(portNeed, { exact: false })).toHaveCount(0);
 });

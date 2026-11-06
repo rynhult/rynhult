@@ -56,7 +56,7 @@ def repository(ctx, who, project_id, machine):
 async def inventory(ctx, who, project_id=None):
     account, _ = scope(ctx, who, project_id)
     with ctx.db() as db:
-        rows = [("local", "This Rynhult (main)", True, platform.system(), ctx.broker.accounts())]
+        rows = [("local", "This Rynhult (main)", True, platform.system(), ctx.broker.accounts(), None)]
         for node in db.scalars(select(Node).where(Node.status == "active").order_by(Node.name)):
             if not who.is_owner and reserved_for_other(db, node.name, account, who.username):
                 continue
@@ -66,9 +66,9 @@ async def inventory(ctx, who, project_id=None):
                 continue
             from .api.nodes import describe_system
             rows.append((node.name, node.name, bool(link and not link.closed),
-                         describe_system(node.info or {})["label"], accounts))
+                         describe_system(node.info or {})["label"], accounts, node.last_seen))
     result = []
-    for name, label, connected, system, accounts in rows:
+    for name, label, connected, system, accounts, last_seen in rows:
         reason = "Offline. Reconnect this machine." if not connected else (
             "The project's agent account is not available on this machine." if account not in accounts else None)
         installed = {}
@@ -79,6 +79,7 @@ async def inventory(ctx, who, project_id=None):
                 reason = "Could not check agents. Reconnect the machine and try again."
         result.append({"name": name, "label": label, "connected": connected, "system": system,
                        "available": reason is None, "reason": reason,
+                       **({"last_seen": last_seen} if who.is_owner else {}),
                        "providers": [{"id": p.id, "label": p.label,
                                       "installed": bool(installed.get(p.id)) if installed else None}
                                      for p in providers.PROVIDERS.values()]})

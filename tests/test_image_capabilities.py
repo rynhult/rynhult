@@ -162,6 +162,8 @@ import json,sys,zlib,struct,os
 from pathlib import Path
 if '--version' in sys.argv:
     print('fake-image 1');sys.exit()
+if 'auth' in sys.argv and 'status' in sys.argv:
+    print(json.dumps({'loggedIn':True,'authMethod':'api_key'}));sys.exit()
 model=sys.argv[sys.argv.index('--model')+1]
 if model=='error': sys.exit(2)
 image=next(Path.cwd().glob('.acc/image-check/*.png'))
@@ -544,3 +546,21 @@ async def test_image_check_card_is_owner_only_and_removed_scope_cannot_be_checke
         db.commit()
     card = next(i for i in (await api.get('/api/attention')).json() if i['kind'] == 'image_check')
     assert card['image_check'] is None
+
+
+@pytest.mark.parametrize('mode', ['subscription', 'unknown'])
+def test_image_prompt_requires_api_or_cloud_auth(env, tmp_path, monkeypatch, mode):
+    from dataclasses import replace
+
+    from acc.broker import claude_auth, image_probe
+    from acc.providers.claude_auth import CODE
+    executable = fake_image_executable(tmp_path)
+    config = replace(env['broker'], providers={**env['broker'].providers, 'claude': str(executable)})
+    monkeypatch.setattr(claude_auth, 'probe', lambda *a, **kw: mode)
+    original = image_probe.bounded
+    def bounded(argv, **kwargs):
+        assert '--print' not in argv  # never start a Claude turn
+        return original(argv, **kwargs)
+    monkeypatch.setattr(image_probe, 'bounded', bounded)
+    result = image_probe.run(config, 'claude', 'pass')
+    assert result['image_input'] is None and result['evidence']['error_kind'] == CODE

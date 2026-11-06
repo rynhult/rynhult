@@ -16,6 +16,38 @@ tests/           pytest suite, fake CLIs, the end-to-end server
 
 For dependency PRs and binary download pins, follow [Dependency updates](/Internal/Dependency-Updates).
 
+## Terminal wheel state and mode frames
+
+Codex wheel-enabled sessions carry tmux `@acc-wheel=on`. Before entering wheel
+copy mode, the broker sets `@acc-scrolled=on`; successful copy-mode cancellation
+clears it. This pane history marker lives on the session so automation broker
+processes can see scrolling performed by an attachment. `send_text` and
+`interrupt` query `pane_in_mode` only for Codex with both flags on. Failed mode
+probes stop delivery with `OpError` and preserve the marker for a retry.
+Attachment input retains its local scroll tracking and drains pending wheel work
+before cancellation.
+
+Legacy terminal `mode` frames carry `wheel` as a capability boolean alongside
+`write`, `partial`, and `reason`. Read-only mode frames also carry the observed
+pane `rows` and `cols`; writer frames omit observer geometry. These fields do
+not grant input, scroll or resize authority. Bound observer frames retain their
+run/instance/protocol contract.
+
+A confirmed fenced controller inherits responsibility for existing partial input
+when control is granted, before any subsequent pins or input frame. If that
+controller disconnects immediately, only that recorded person can reclaim a
+free prompt without confirmation. Unknown-origin input still requires confirmation;
+a second live window never receives reclaim authority.
+The standard terminal keeps its Read-write label and icon on one line when a
+partial-input warning appears after reclaim. The warning truncates within the
+available toolbar width with its full text in the title, preserving terminal
+geometry without hiding the authority label or clearing input.
+a second live window never receives reclaim authority. Attribution in both terminal
+bridges uses the authenticated user ID; usernames are display/audit labels only.
+A fenced same-person reconnect grant records `same_person_reconnect` with
+`partial=true` and no previous holder in the session control audit. The audit
+contains no terminal input text.
+
 ## Running the checks
 
 The supported full-suite platform is Linux, with `/proc`, git and tmux on PATH. Install Python 3.12+, uv, Node.js 22+ and npm using your platform's documented route. Chromium also needs its OS libraries; on a machine missing them, ask its administrator to provision Playwright's documented Linux dependencies. macOS and Windows node installers have separate checks; the full server suite is not qualified on those platforms. No vendor CLI, subscription, root access or running ACC service is needed for the default suite.
@@ -30,9 +62,22 @@ python3 scripts/check_pins.py
 uv run --frozen ruff check src tests scripts/check_pins.py
 PYTHONPATH=src uv run --frozen python -m pytest -q -n 8
 (cd web && npm run build -- --configLoader runner)
-(cd web && npx playwright test --project=desktop --project=mobile)
+(cd web && npx playwright test --project=view-registry --project=desktop-stateful --project=mobile-stateful --project=terminal-chromium --project=desktop --project=mobile --workers=1)
 uv run --frozen python scripts/third_party_notices.py --check
 ```
+
+For focused retained-terminal height checks, run
+`npx playwright test e2e/terminal-height.spec.ts --project=desktop-stateful --project=terminal-webkit --workers=1`
+from `web/`, with unique fixture port/base values as described below. This checks
+both requested desktop sizes, sidebar and retained tab transitions, rendered rows
+and the private fixture's tmux pane height, plus Chromium display-scale changes.
+A second page mounts an observer hidden, then reveals and resizes it: the observer
+keeps the writer's full grid in a scrollable viewport without claiming control
+or sending program resize/input frames. Writer resizing updates the observer too.
+The WebKit project requires an already provisioned Playwright WebKit browser; Chromium success alone does not
+qualify Safari.
+
+The classic frame loads its command palette when Jump to… is first opened, through the shared lazy-import retry path. Cold page payload budgets exclude the unopened palette.
 
 The normal browser projects use the plain-HTTP disposable fixture. Secure-cookie
 recovery tests run separately with its self-signed HTTPS fixture (Chromium and
@@ -41,6 +86,14 @@ WebKit); they are intentionally excluded from HTTP collection. CI runs both:
 ```bash
 (cd web && ACC_E2E_PORT=19661 ACC_E2E_BASE=/tmp/acc-ci-csrf npx playwright test --config playwright.csrf.config.ts --workers=1)
 ```
+
+Browser specs must **own the state they change**. Import the shared test fixture
+from `web/e2e/fixtures.ts`. Stateful tests start from default rollout/presentation
+choices and clean up even after failure. Declare only intentionally managed
+temporary settings; undeclared changes fail at their source with the setting
+name. See `web/e2e/README.md` for the ownership groups and merge rules. Use one
+worker against the shared disposable browser server. Setup is a real dependency;
+stateful failures do not skip the later desktop/mobile projects.
 
 For a bounded terminal-input and chunk-loading neighbour check, use
 `npx playwright test --config playwright.misc.config.ts --repeat-each=3` from
@@ -58,7 +111,9 @@ its follow-up. Stream admission, TLS peer observation and sweep retries likewise
 use observable conditions rather than settling sleeps. Identity workers reserve
 SQLite write intent before reading rows they will update, so another commit cannot
 invalidate their snapshot. The signer runs between transactions without holding
-the database reservation. Concurrency regressions keep an owner transaction open
+the database reservation. The Machines listing refreshes and audits the authority
+in a thread before opening its listing snapshot, so it cannot block the event
+loop that must release an earlier snapshot. Concurrency regressions keep an owner transaction open
 while issuance or retirement attempts its commit.
 
 Optional: `scripts/security-check.sh` scans history and source with `gitleaks` and scans locked dependencies with `osv-scanner`. Supply independently verified tools on PATH, or set `ACC_TOOLS` to their directory. OSV receives package names and versions. A missing tool is an error, not a clean scan. Live provider qualification is opt-in and requires real CLIs and credentials; fake CLIs do not establish vendor compatibility.
@@ -266,10 +321,17 @@ files; pass the relevant changed spec paths to each command:
 
 ```bash
 cd web
-npx playwright test e2e/44-passkeys.spec.ts --project=desktop-stateful --workers=4 --repeat-each=3
-npx playwright test e2e/35-terminal-output-mobile.spec.ts --project=mobile-stateful --workers=4 --repeat-each=3
+npx playwright test e2e/44-passkeys.spec.ts --project=desktop-stateful --workers=1 --repeat-each=3
+npx playwright test e2e/35-terminal-output-mobile.spec.ts --project=mobile-stateful --workers=1 --repeat-each=3
 npx playwright test e2e/19-host-backups.spec.ts --project=desktop --project=mobile --workers=4 --repeat-each=3
 ```
+
+The six-project gate must use one worker: stateful resets must never overlap
+another project. Global setup rejects mixed presentation/non-presentation or
+multiple presentation families with more workers. The last focused example uses
+four workers only across non-stateful desktop/mobile projects. A single selected
+stateful family still has its project worker limit of one. Do not add failure
+dependencies to serialize the gate; name all six projects explicitly instead.
 
 The shared axe helpers wait for document fonts, two rendering frames and finite animations
 (including theme and hover transitions) before checking WCAG 2.2 A/AA. Infinite live-dot
@@ -369,6 +431,11 @@ tick. Events, not sleeps, establish both interleavings. Job polling runs off the
 event loop so a real capture's exclusive maintenance lease cannot reject the
 test's read with a retryable maintenance error.
 
+Transcript indexing backs off missing files and broker read failures. Fresh session
+activity or status changes cancel that backoff, so a Claude transcript created after
+its preassigned ID was first read becomes available to search and Markdown export
+on the next history pass.
+
 Database contention regressions in `test_history.py`, `test_autoresume.py` and
 `test_host.py` hold a real second writer and release it only after indexing,
 cancellation or host polling checks out its worker connection (before admission). They verify the event loop
@@ -436,11 +503,23 @@ gap entries when those migrations land and fill the gaps.
 Resolve collisions in undeployed work before integration; never renumber a
 migration already applied to an installation.
 
+The delegated-approval integration checks share their expected revision in
+`tests/migration_revisions.py`. When integration assigns layout-store 0082 and
+renumbers delegated approvals to 0083, change that constant on one line after
+renumbering the migration and its parent; the head checks and delegation fixtures
+use it together.
+
 ### Upgrade rehearsal
 
 `tests/upgrade_rehearsal.py` builds a synthetic, populated database at 0066 (people, projects, sessions with history,
 devices, a group, backups, DNS credentials, telemetry consent; nothing from a real installation). It upgrades it with
 `db.migrate` and compares every 0066 column value by value, then downgrades back to 0066.
+It includes a legacy applied tool request and installed-tool record. The synthetic
+0066 baseline explicitly excludes decision provenance: historical migration 0030
+uses today's model metadata and would otherwise introduce that future column.
+Upgrade must preserve the legacy values, leave their decision null, and create
+empty approval tables; downgrade must restore the exact baseline schema without
+weakening the production guard against discarding retained approval evidence.
 `tests/test_upgrade_rehearsal.py` runs this on SQLite, and on PostgreSQL when local binaries exist
 (`ACC_TEST_POSTGRES_BIN`, default `/usr/lib/postgresql/16/bin`): a throwaway cluster in the test's temporary folder,
 Unix socket only. A migration that changes or loses existing data fails it.
@@ -711,6 +790,9 @@ The initial optimization reduced gzip JS from 181,252 to 128,429 bytes for sign-
 for Board, and 343,082 to 294,180 for a session including xterm. Keep the authenticated shell out of
 sign-in/Board and Files, Changes, Preview, Pull request and Team out of unopened session tabs.
 CodeMirror and its language grammars load when a file opens; Markdown preview loads for Markdown files.
+Tab controls live in `web/src/components/Tabs.tsx`, imported directly by their route/panel consumers.
+Keep them out of the shared `ui.tsx` barrel so the existing `lazyImport` route boundaries
+exclude them from cold sign-in and Board loads.
 The launch form stays mounted with the shell: opening it does not swap a smaller loading dialog for
 a larger form, and Close still retains the draft.
 
@@ -1147,3 +1229,6 @@ unless Git ignores the destination. This is transport only: lane E's assigned-
 reference authorization and lane C's qualified assignment remain required. Old
 sessions without a current binding must be launched again before receiving uploads.
 A broker restart rotates the key; replace team helpers through a new attempt.
+
+Terminal text snapshots opened by a person mark that session as watched for 60 seconds.
+Internal delivery captures do not mark presence or suppress unattended permission handling.

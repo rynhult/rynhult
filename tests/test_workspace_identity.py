@@ -12,10 +12,10 @@ def test_identity_alias_outside_workspace_root_is_still_canonical(env):
     target.mkdir()
     alias = env['home'] / 'alias'
     alias.symlink_to(local, target_is_directory=True)
-    assert ops.workspace_identity(env['broker'], str(alias / target.name)) == {'path': str(target)}
+    assert ops.workspace_identity(env['broker'], str(alias / target.name)) == {'path': str(target), 'allowed': True}
     # Ordinary registration does not get an existence/directory probe response.
     missing = str(env['workspaces'] / 'missing')
-    assert ops.workspace_identity(env['broker'], missing) == {'path': missing}
+    assert ops.workspace_identity(env['broker'], missing) == {'path': missing, 'allowed': True}
 
 
 async def test_identity_is_not_available_from_services_broker(env):

@@ -19,7 +19,7 @@ async def test_registry_lists_providers_with_options_and_install_state(api):
     assert claude["installed"] is True and codex["installed"] is True  # the fake CLIs
     assert [o["key"] for o in claude["options"]] == ["permission_mode", "remote_control"]
     assert "bypassPermissions" in claude["options"][0]["dangerous"]
-    assert {o["key"] for o in codex["options"]} == {"sandbox", "approval"}
+    assert {o["key"] for o in codex["options"]} == {"sandbox", "approval", "keep_scrollback"}
     assert claude["login"] == "paste" and codex["login"] == "device"
     assert "agents" in claude["supports"] and "agents" not in codex["supports"]
 

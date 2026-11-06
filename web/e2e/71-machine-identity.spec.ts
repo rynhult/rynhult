@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
+import { gotoLoadedPage } from "./loaded-page";
 import { AUTH_FILE, expectAxeClean, wikiShotPath } from "./helpers";
 
 /* Host → Machines shows each machine's public identity read-only (Remote access → machine identities).
@@ -15,7 +16,7 @@ async function machineState(page: Page, identity: object | null, connected = tru
     await route.fulfill({ json: rows.map((row: { name: string }) =>
       row.name === "lab-box" ? { ...row, connected, machine_identity: identity } : row) });
   });
-  await page.goto("/host");
+  await gotoLoadedPage(page, "/host", ["Host"], ["/api/host", "/api/nodes"]);
   return page.getByRole("region", { name: "Public identity of lab-box" });
 }
 

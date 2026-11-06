@@ -1,9 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { AUTH_FILE, expectAxeClean, gitProject, wikiShotPath, createProjectFromDialog, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
 import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 test.use({ storageState: AUTH_FILE });
+
+// Creating the worktree/team is asynchronous under concurrent load. Observe its
+// committed response before checking the exact navigation and reading the team.
+async function launch(page: Page, activate: () => Promise<unknown>) {
+  const created = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/sessions');
+  await activate();
+  const response = await created;
+  expect(response.status(), await response.text()).toBe(201);
+  const session = (await response.json()).id as string;
+  await page.waitForURL(url => url.pathname === `/sessions/${session}`);
+  return session;
+}
 
 test('New project keeps the build description and starts a saved brief', async ({ page }) => {
   await page.goto('/projects');
@@ -71,8 +84,8 @@ for (const origin of ['project', 'grant'] as const) for (const choice of ['save'
     const action = choice === 'back' ? 'Back' : choice === 'save' ? 'Save and launch' : 'Launch without the brief';
     for (let tab = 0; tab < (choice === 'back' ? 1 : choice === 'without' ? 2 : 3); tab++) await page.keyboard.press('Tab');
     await expect(dialog.getByRole('button', { name: action, exact: true })).toBeFocused();
-    await page.keyboard.press('Enter');
     if (choice === 'back') {
+      await page.keyboard.press('Enter');
       await expect(step).toHaveCount(0);
       await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeFocused();
       await dialog.getByText('Add a project brief', { exact: true }).click();
@@ -81,8 +94,7 @@ for (const origin of ['project', 'grant'] as const) for (const choice of ['save'
       expect((await (await page.request.get(`/api/projects/${id}/brief`)).json()).current_version).toBe(0);
       return;
     }
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-    const session = new URL(page.url()).pathname.split('/').at(-1)!;
+    const session = await launch(page, () => page.keyboard.press('Enter'));
     try {
       expect(launches).toBe(1);
       const pinned = await (await page.request.get(`/api/teams/${session}/brief`)).json();
@@ -133,9 +145,7 @@ for (const origin of ['project', 'grant'] as const) test(`a ${origin} draft stil
   await expect(dialog.getByRole('heading', { name: 'Save this brief as version 1 and pin it to the team?', exact: true })).toBeVisible();
   expect(prematureLaunches).toBe(0);
   await page.unroute('**/api/sessions');
-  await dialog.getByRole('button', { name: 'Save and launch', exact: true }).click();
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-  const session = new URL(page.url()).pathname.split('/').at(-1)!;
+  const session = await launch(page, () => dialog.getByRole('button', { name: 'Save and launch', exact: true }).click());
   try {
     expect((await (await page.request.get(`/api/teams/${session}/brief`)).json()).submitted.product).toBe('Keep this idea in memory');
   } finally { expect((await page.request.post(`/api/sessions/${session}/team/stop`, { headers })).ok()).toBeTruthy(); }
@@ -197,9 +207,7 @@ for (const action of ['retry', 'back'] as const) test(`saved launch failure can 
     await expect(page.getByRole('dialog')).toHaveCount(0);
     return;
   }
-  await dialog.getByRole('button', { name: 'Launch with saved brief', exact: true }).click();
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-  const session = new URL(page.url()).pathname.split('/').at(-1)!;
+  const session = await launch(page, () => dialog.getByRole('button', { name: 'Launch with saved brief', exact: true }).click());
   try {
     expect((await (await page.request.get(`/api/teams/${session}/brief`)).json()).version).toBe(3);
     expect((await (await page.request.get(`/api/projects/${id}/brief`)).json()).next_version).toBe(4);
@@ -218,9 +226,7 @@ test('Launch without the brief skips an older saved version and retains its newe
   await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
   await expect(dialog.getByRole('combobox', { name: 'Project brief version', exact: true })).toHaveValue('1');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Launch without the brief', exact: true }).click();
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-  const session = new URL(page.url()).pathname.split('/').at(-1)!;
+  const session = await launch(page, () => dialog.getByRole('button', { name: 'Launch without the brief', exact: true }).click());
   try {
     expect(await (await page.request.get(`/api/teams/${session}/brief`)).json()).toBeNull();
     expect((await (await page.request.get(`/api/projects/${id}/brief`)).json()).current_version).toBe(1);
@@ -290,10 +296,8 @@ for (const selection of ['latest', 'older', 'none'] as const) test(`grant displa
   await expect(choice).toHaveValue(String(expected));
   await dialog.getByRole('button', { name: /^Advanced/ }).click();
   const sent = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/sessions');
-  await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
+  const session = await launch(page, () => dialog.getByRole('button', { name: 'Launch', exact: true }).click());
   const granted = (await sent).postDataJSON().orchestrator.brief_version;
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
-  const session = new URL(page.url()).pathname.split('/').at(-1)!;
   try {
     expect(granted).toBe(expected);
     const pinned = await (await page.request.get(`/api/teams/${session}/brief`)).json();

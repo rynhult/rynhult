@@ -25,13 +25,23 @@ MARK_START, MARK_END = "\x02", "\x03"  # around matched words in snippets; the U
 
 class HistoryMixin:
     async def index_transcripts(self) -> None:
-        retry = self.__dict__.setdefault("_history_retry", {})  # acc_id -> (next try, delay): failures back off
+        retry = self.__dict__.setdefault("_history_retry", {})  # acc_id -> (next try, delay, read started)
         clock = time.monotonic()
         # Sessions still backing off are left out before the limit (Q11): otherwise PER_PASS newer sessions that can't
         # be read take every slot, every pass, and an older one that can is never reached.
-        cooling = [acc_id for acc_id, (until, _) in retry.items() if until > clock]
+        cooling = [acc_id for acc_id, (until, _, _) in retry.items() if until > clock]
         machine = func.coalesce(Session.team_host, Project.host, Session.deleted_project["host"].as_string(), "local")
         with self.db() as db:
+            if cooling:
+                # A preassigned native ID may be read before its CLI creates the transcript.
+                # New hooks/status are evidence to retry now, rather than hiding the first turn
+                # from search and export for the missing-file backoff (up to six hours).
+                changed = db.execute(select(Session.id, Session.activity_at, Session.status_at)
+                                     .where(Session.id.in_(cooling))).all()
+                for acc_id, activity_at, status_at in changed:
+                    if any(at is not None and at > retry[acc_id][2] for at in (activity_at, status_at)):
+                        retry.pop(acc_id)
+                cooling = [acc_id for acc_id in cooling if acc_id in retry]
             due = db.execute(
                 select(Session.id, Session.run_as, Session.provider, Session.native_id, Session.transcript_stamp,
                        machine, Session.indexed_at).outerjoin(Project, Session.project_id == Project.id)
@@ -58,7 +68,7 @@ class HistoryMixin:
                 result = {}
             if not result.get("found"):  # not read: try again later (1 min, doubling to 6 h), not marked as indexed
                 delay = min(max(retry.get(acc_id, (0, 30))[1] * 2, 60), 6 * 3600)
-                retry[acc_id] = (time.monotonic() + delay, delay)
+                retry[acc_id] = (time.monotonic() + delay, delay, started)
                 continue
             await write_in_thread(self._store_transcript, acc_id, result, started, indexed_at)
             retry.pop(acc_id, None)

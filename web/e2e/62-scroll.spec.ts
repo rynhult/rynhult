@@ -1,7 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect } from './fixtures';
+import { test } from './shell-state';
 import { AUTH_FILE } from './helpers';
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 for (const phone of [false, true]) {
   test(`long Host page keeps its shell in view (${phone ? 'phone safe areas' : 'desktop'})`, async ({ page }) => {
     if (phone) await page.setViewportSize({ width: 390, height: 844 });

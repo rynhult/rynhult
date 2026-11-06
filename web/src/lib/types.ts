@@ -5,6 +5,7 @@ export interface ProviderOption {
   choices: { value: string; label: string }[]; dangerous: (string | boolean)[];
 }
 export interface ProviderInfo {
+  automation_refusal?: import("../components/ClaudeAutomationNotice").AutomationRefusal | null;
   id: string; label: string; short: string; color: string; tier: "full" | "standard" | "basic"; preview: boolean;
   install: string; homepage: string; usage_url: string; login: "paste" | "device" | "link" | null;
   supports: string[]; options: ProviderOption[]; endpoint_styles: string[]; installed?: boolean | null;
@@ -96,6 +97,9 @@ export interface Run {
 }
 
 export interface SessionSummary {
+  owner?: string | null;
+  claude_auth?: "subscription" | "api_key";
+  auth?: { mode: string | null; automation_refusal?: import("../components/ClaudeAutomationNotice").AutomationRefusal | null };
   sleep_paused_at?: string | null;
   machine_offline?: boolean;
   automation?: import("../components/SessionAutomation").Automation;
@@ -205,6 +209,13 @@ export interface AuthState {
 }
 
 export interface AttentionItem {
+  permission_id?: string | null;
+  permission_input?: string | null;
+  permission_can_approve?: boolean;
+  permission_reason?: string | null;
+  permission_expires_at?: string;
+  /** Execution host from the already-authorized session or operational alert. */
+  host?: string | null;
   image_check?: { project_id: number; provider: string; model: string } | null;
   bulk_dismissible?: boolean;
   id: number;
@@ -243,6 +254,8 @@ export interface ToolPin {
 export interface ToolRequest extends ToolPin {
   operation: "install" | "remove"; reason: string; status: string; detail: string | null;
   resolved_version: string | null; created_at: string;
+  decided_by?: string | null;
+  decision?: { source: 'L' | 'C' | 'P'; reason: string; issuer?: string; lead_id?: string } | null;
 }
 
 export interface PublishReplaces { id: string; port: number | null; access: "public" | "internal" | null; project: string | null; decided_by: string | null }
@@ -354,7 +367,7 @@ export interface Catalog {
   deferred: { id: string; reason: string }[];
 }
 
-export interface HostLive { cpu_percent: number; cpu_count: number; load: number[]; memory: { total: number; used: number; percent: number }; swap_percent: number }
+export interface HostLive { measured_at?: number | null; cpu_percent: number; cpu_count: number; load: number[]; memory: { total: number; used: number; percent: number }; swap_percent: number }
 
 export interface HostView {
   live: HostLive;
@@ -437,6 +450,8 @@ export interface PullStatus {
 }
 
 export interface SessionChanges {
+  git_actions_allowed?: boolean;
+  fingerprint?: string;
   revision: string;
   git: boolean;
   base?: string | null;

@@ -7,18 +7,51 @@ import time
 import uuid
 
 from .. import providers
-from . import explanations
+from . import budgets, explanations
 from .broker_client import BrokerError
 from .compiler import LaunchInputs, compile_files
 from .models import AuditLog, Event, LaunchSpec, Observation, Project, Session, SessionRun
 from .supervisor_common import now
 
 
+def project_account(supervisor, project_id):
+    with supervisor.db() as db:
+        return db.get(Project, project_id).account
+
+
 class ExplanationRuns:
     async def launch_explanation(self, project_id: int, owner: str, provider: str, model: str,
-                                 cache_key: str, changes: dict, source_id: str) -> dict:
+                                 cache_key: str, changes: dict, source_id: str, *, claude_auth: str = "subscription") -> dict:
         from .supervisor import LaunchRefused
         prepared = explanations.prompt(changes)
+        from acc.broker.claude_auth import supplied_mode
+        from acc.providers.claude_auth import AUTH_ENV, DOCS, MESSAGE, credential_env
+
+        from .vault import plan
+
+        with self.db() as db:
+            source = db.get(Session, source_id)
+            source_project_id = source.project_id
+            if provider == 'claude':
+                available = plan(db, source.project_id, owner, False, self.catalog)
+                claude_auth = 'api_key' if any(k.variable in AUTH_ENV for k in available.keys) else 'subscription'
+            delivery = self.vault.deliver(db, source.project_id, owner, False, self.catalog, provider=provider, claude_auth=claude_auth) if provider == 'claude' else None
+            credentials = credential_env(delivery.env) if delivery else {}
+            key_ids = [key.id for key in delivery.plan.keys if key.variable in credentials] if delivery else []
+        note = None
+        if provider == 'claude' and supplied_mode(credentials) == 'unknown':
+            health = await self.broker.call('auth_health', account=project_account(self, project_id), host='local')
+            if not (health.get('codex') or {}).get('logged_in'):
+                raise LaunchRefused(f'{MESSAGE} {DOCS}')
+            provider, model = 'codex', ''  # Let Codex choose its own default model.
+            credentials = {}
+            key_ids = []
+            note = 'Using Codex because Claude helpers need a vault API key or configured cloud credentials.'
+        elif provider == 'claude':
+            note = 'Using Claude with API or cloud credentials supplied by Rynhult at launch.'
+        with self.db() as db:
+            if paused := budgets.paused(db, owner, provider, project_id=source_project_id):
+                raise LaunchRefused(f'Your budget pauses new {providers.get(provider).label} launches ({", ".join(paused)}).')
         acc_id = uuid.uuid4().hex[:12]
         inputs = LaunchInputs(provider=provider, model=model, permission_mode="plan", sandbox="read-only",
                               approval="never", options={"mode": "plan"} if provider in ("antigravity", "copilot")
@@ -35,12 +68,13 @@ class ExplanationRuns:
                      "changes": changes, "source_id": source_id}
         files = {**compiled.files, "prompt.txt": prepared, "explanation.json": json.dumps(spec_data)}
         value = {"status": "running", "revision": explanations.revision(changes), "helper_id": acc_id,
-                 "provider": provider, "model": model, "created_at": now().isoformat(), "steps": [],
+                 "provider": provider, "model": model, "provider_note": note, "created_at": now().isoformat(), "steps": [],
                  "input_summarised": "Large diff: summarised per file first" in prepared,
                  "diff_truncated": bool(changes.get("truncated"))}
         with self.db() as db:
             session = Session(id=acc_id, project_id=project_id, provider=provider, name="Explain these changes",
                               tmux_name=f"acc-explain-{acc_id}", native_id=native_id, owner=owner, run_as=account,
+                              vault_keys=key_ids, claude_auth=claude_auth,
                               workdir=f"{run_dir}/workspace", run_dir=run_dir,
                               launch_spec=LaunchSpec(provider=provider, inputs=inputs.as_dict(), files=files,
                                                      digest=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()),
@@ -54,7 +88,7 @@ class ExplanationRuns:
             name = session.tmux_name
         try:
             result = await self.broker.call("launch", account=account, host="local", acc_id=acc_id, tmux_name=name,
-                                            provider=provider, args=[], env={}, files=files,
+                                            provider=provider, args=[], env=credentials, files=files,
                                             cwd=f"{run_dir}/workspace", run_dir=run_dir)
         except BrokerError as error:
             with self.db() as db:
@@ -64,6 +98,8 @@ class ExplanationRuns:
                 db.commit()
             raise LaunchRefused(str(error)) from None
         with self.db() as db:
+            from . import claude_auth
+            claude_auth.store(db, db.get(Session, acc_id), result.get('auth_mode', 'unknown'))
             db.add(SessionRun(session_id=acc_id, reason="launch", pid=result.get("pid"), verified_at=now()))
             db.add(Event(session_id=acc_id, source="supervisor", kind="run_launch",
                          payload={"command": result.get("command"), "pid": result.get("pid")}))

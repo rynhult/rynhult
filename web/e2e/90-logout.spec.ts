@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { PASSWORD, freshStep, loadSecret, totp } from "./helpers";
 
 test("logout, then log in with password and a fresh code", async ({ page }) => {

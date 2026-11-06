@@ -33,7 +33,9 @@ class Walkthrough(BaseModel):
 
 
 def revision(changes: dict) -> str:
-    return hashlib.sha256(json.dumps({k: v for k, v in changes.items() if k != "revision"},
+    # The changes endpoint adds presentation/authority metadata after hashing.
+    # Reusing that response for a walkthrough must retain the same content identity.
+    return hashlib.sha256(json.dumps({k: v for k, v in changes.items() if k not in {"revision", "git_actions_allowed"}},
                                     sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 

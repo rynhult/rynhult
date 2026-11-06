@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle } from './helpers';
 

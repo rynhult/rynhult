@@ -153,6 +153,11 @@ def router(ctx: Context) -> APIRouter:
     async def save_connections(project_id: int, body: dict, who=Depends(ctx.principal)):
         with ctx.db() as db:
             project = ctx.project_for(db, who, project_id)
+            from .. import sources
+            try:
+                sources.require_legacy_rebindable(db, project)
+            except sources.Refused as error:
+                raise HTTPException(409, str(error)) from None
             try:
                 config = Connections.model_validate(body)
             except ValidationError:
@@ -187,6 +192,10 @@ def router(ctx: Context) -> APIRouter:
                 raise HTTPException(422, str(error)) from None
             project.remote_url = config.remote_url
             project.issue_sources = config.model_dump(exclude={"remote_url"}, exclude_none=True)
+            try:
+                sources.rebind_legacy_source(db, project, actor=who.username)
+            except sources.Refused as error:
+                raise HTTPException(409, str(error)) from None
             try:
                 for source in project.issue_sources:
                     source_key(db, project, source, who.username, ctx.supervisor.vault)

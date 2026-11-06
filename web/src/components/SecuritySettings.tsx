@@ -1,3 +1,6 @@
+import {useUnsavedDraft} from '../lib/useUnsaved';
+import {unsavedWork} from '../lib/unsaved';
+import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
 import {useEffect,useRef,useState} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {Link,useLocation,useNavigate} from 'react-router-dom';
@@ -9,7 +12,7 @@ import {SECURITY_COPY,securityAuditLabel,scopeEqual,scopeName,securityLink,useSe
 import type {Project} from '../lib/types';
 import {useConfirm} from './confirm';
 import {AlwaysEnforced,SecurityBadge} from './SecurityBadge';
-import {announce,Badge,Button,Card,CardHeader,Dialog,ErrorNote,Field,QueryState,Select} from './ui';
+import { announce, Badge, Button, Dialog, ErrorNote, Field, QueryState, Select } from './ui';
 
 type Preset='custom'|'unrestricted'|'restore';
 interface Draft {revision:number;scope:SecurityScope;initial:Record<string,boolean>;overrides:Record<string,boolean>;preset:Preset;choice:string}
@@ -88,11 +91,12 @@ function SecurityEditor({scope,registry,refreshRegistry,projects,projectsReady,c
   const confirm=useConfirm(),newSession=useNewSession();
   const key=JSON.stringify(scope), query=useSecurityPolicy(scope), client=useQueryClient(), sessions=useSessions(), offline=useOffline();
   const own=registry.policies.find(p=>scopeEqual(p.scope,query.data?.scope??scope));
-  const [draft,setDraft]=useState<Draft|undefined>(()=>cache.get(key));
+  const [draft,setDraft]=useState<Draft|undefined>(()=>cache.get(key)??unsavedWork.read<Draft>(`security:${key}`));
   const [review,setReview]=useState<Preview|null>(null),[verify,setVerify]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null),[saved,setSaved]=useState(false),[folderApplication,setFolderApplication]=useState<string|null>(null),[expired,setExpired]=useState(false);
   const reviewButton=useRef<HTMLSpanElement>(null);
   const effectiveStatus=useRef<HTMLDivElement>(null);
   const dirty=!!draft&&changed(draft);
+  useUnsavedDraft(`security:${key}`,'security','Security settings',dirty,draft,()=>{cache.delete(key);setDraft(undefined);});
   const confirmFolderRecovery=!!query.data?.can_confirm_folder_recovery&&!dirty;
   const changedElsewhere=!!draft&&(draft.revision!==registry.revision||!!query.data&&!scopeEqual(draft.scope,query.data.scope));
   const unknown=registry.registry.some(r=>!SECURITY_COPY[r.id]);
@@ -105,11 +109,6 @@ function SecurityEditor({scope,registry,refreshRegistry,projects,projectsReady,c
   };
   useEffect(()=>{if(!dirty&&!busy)adopt();},[query.data,registry,dirty,busy]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{if(draft)cache.set(key,draft);onDirty(dirty);},[draft,key,cache,dirty,onDirty]);
-  useEffect(()=>{
-    if(!dirty)return;
-    const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};
-    window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);
-  },[dirty]);
   useEffect(()=>{
     const check=()=>setExpired(!!review&&Date.parse(review.expires_at)<=Date.now());check();
     const timer=review?setTimeout(check,Math.max(0,Date.parse(review.expires_at)-Date.now())):undefined;

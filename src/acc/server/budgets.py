@@ -1,8 +1,7 @@
 """Usage budgets: a person's own limits on the plan usage windows ACC reads. Opt-in only.
 
 Nobody has a budget until they set one (Settings key "budget.<username>", absent by default), and nothing is ever
-applied for them. A budget is per usage window (Claude's 5-hour and 7-day windows, Codex's, Copilot's monthly AI
-credits):
+applied for them. A budget is per usage window (Claude's 5-hour and 7-day windows, Codex's):
 - "cap": warn once the window is past `limit` percent;
 - "pace": `limit` percent spread evenly over the window: warn when usage runs ahead of the time gone by.
 At the limit it notifies (an inbox item and a push), or also pauses new launches of that agent until the window
@@ -12,7 +11,6 @@ until the window resets.
 from __future__ import annotations
 
 import time
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -52,14 +50,6 @@ def _readings(db: DbSession) -> list[dict]:
                 label = "weekly window" if minutes >= 7 * 1440 else "5-hour window" if minutes <= 300 else f"{minutes // 60}-hour window"
                 out.append({"id": f"codex.{key}", "provider": "codex", "label": f"Codex {label}",
                             "used": float(w["used_percent"]), "resets_at": float(w["resets_at"]), "length": minutes * 60})
-    copilot = db.get(Observation, "copilot.usage")
-    credits = (copilot.value.get("credits") or {}) if copilot else {}
-    if credits and not credits.get("unlimited") and copilot.value.get("resets_at"):
-        resets = datetime.fromisoformat(copilot.value["resets_at"].replace("Z", "+00:00"))
-        start = resets.replace(year=resets.year - (resets.month == 1), month=(resets.month - 2) % 12 + 1)
-        out.append({"id": "copilot.credits", "provider": "copilot", "label": "Copilot AI credits",
-                    "used": round(100 - float(credits.get("percent_remaining", 100)), 2),
-                    "resets_at": resets.timestamp(), "length": (resets - start).total_seconds()})
     return out
 
 

@@ -128,7 +128,10 @@ async def test_profile_defaults_and_explicit_choices(api, project):
     assert {p["id"] for p in catalog["profiles"]} >= {"frontend", "qa", "security"}
 
 
-async def test_preview_matches_the_launched_command_byte_for_byte(api, project, env):
+@pytest.mark.claude_launch_auth  # exercise the real subscription command and preview
+async def test_preview_matches_the_launched_command_byte_for_byte(api, project, env, monkeypatch):
+    from acc.broker import claude_auth
+    monkeypatch.setattr(claude_auth, "probe", lambda *a, **kw: "subscription")
     body = {"project_id": project["id"], "provider": "claude", "name": "exact", "profile": "frontend", "model": "opus"}
     preview = (await api.post("/api/sessions/preview", json=body)).json()
     session = (await api.post("/api/sessions", json=body)).json()
@@ -140,6 +143,7 @@ async def test_preview_matches_the_launched_command_byte_for_byte(api, project, 
     actual = shlex.split(event["payload"]["command"])[1:]
     expected = [a.replace("<run-dir>", str(env["run_dir"] / session["id"])).replace("<tmux-name>", session["tmux_name"])
                  .replace("<session-uuid>", session["native_id"]) for a in preview["command"][1:]]
+    expected[expected.index("claude")] = env["broker"].providers["claude"]
     assert actual == expected
     # A renders role/capability context at each start; the saved spec deliberately
     # excludes it. Compare the provider-loaded runtime instructions instead.

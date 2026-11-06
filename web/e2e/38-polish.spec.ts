@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "./fixtures";
+import { test } from './shell-state';
 import { AUTH_FILE, demoSessions } from "./helpers";
 
-test.use({ storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
 
 // UX review NAV-9: while Rynhult isn't answering, the Inbox keeps the last items with a stale note, and buttons that would
 // change something are disabled with a reason, instead of failing after a click.

@@ -1,27 +1,32 @@
+import { Surface as Card, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCheck, Info, KeyRound, MoreHorizontal, OctagonAlert, TerminalSquare } from "lucide-react";
 import { api, post } from "../lib/api";
 import { ago } from "../lib/format";
 import type { AttentionItem } from "../lib/types";
-import { Badge, Button, Card, Empty, ErrorNote, Page, PageHeader, Popover, QueryState, Segmented } from "../components/ui";
+import { Badge, Button, Empty, ErrorNote, Popover, QueryState, Segmented } from "../components/ui";
 import { PublishActions, PublishSummary } from "../components/PublishRequest";
 import { OFFLINE_TITLE, providerLabel, useOffline, useProviderRegistry, useRole } from "../lib/queries";
 import { useConfirm } from "../components/confirm";
 import { sourceWords } from "../lib/words";
-import { ToolActions } from "../components/Tools";
+import { ToolActions, ToolDecision } from "../components/Tools";
 import { RiskLabel } from "../components/RiskLabel";
 import { groupInbox } from "../lib/order";
+
+import { useNewShell } from '../lib/uiShell';
+import { lazyImport } from '../lib/lazyImport';
+const ShellInbox = lazy(() => lazyImport(() => import('../components/shell/Inbox')));
 
 const ICON = { info: Info, warn: AlertTriangle, critical: OctagonAlert };
 const TONE = { info: "text-accent", warn: "text-wait", critical: "text-bad" };
 
 export { useAttention } from "../lib/queries";
 
-/** A session waiting on a prompt: the answer is in its terminal, never in the Inbox (owner decision 0008, Q2). */
+/** Hook-backed Claude permissions can receive an explicit one-shot human decision. */
 const PROMPTS = new Set(["needs_input"]);
 
 /** A fixed server-generated action; agent text never supplies URLs or request fields. */
@@ -92,6 +97,31 @@ function StopScopeHelper({ sessionId }: { sessionId: string }) {
   </div>;
 }
 
+function PermissionActions({ item }: { item: AttentionItem }) {
+  const queryClient = useQueryClient();
+  const offline = useOffline();
+  const reply = useMutation({
+    mutationFn: (decision: "allow" | "deny") => post(`/api/attention/${item.id}/permission`, { token: item.permission_id, decision }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["attention"] }),
+  });
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    if (!item.permission_expires_at) return;
+    const timer = setTimeout(() => setExpired(true), Math.max(0, Date.parse(item.permission_expires_at) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [item.permission_expires_at]);
+  return <div className="flex flex-wrap items-center gap-2">
+    {item.permission_input && <pre className="w-full max-h-80 overflow-auto whitespace-pre-wrap break-all">{item.permission_input}</pre>}
+    {item.permission_reason && <p>{item.permission_reason}</p>}
+    {expired ? <p>This request expired. Answer in the terminal.</p> : <>
+    {item.permission_can_approve && <Button size="sm" disabled={offline || reply.isPending || reply.isSuccess} onClick={() => reply.mutate("allow")}>Approve</Button>}
+    <Button size="sm" variant="danger" disabled={offline || reply.isPending || reply.isSuccess} onClick={() => reply.mutate("deny")}>Deny</Button>
+    </>}
+    {reply.isSuccess && <span role="status">{reply.variables === "allow" ? "Approved" : "Denied"}</span>}
+    <ErrorNote error={reply.error} />
+  </div>;
+}
+
 export function AttentionRow({ item }: { item: AttentionItem }) {
   const queryClient = useQueryClient();
   const registry = useProviderRegistry();
@@ -116,7 +146,7 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
     <div role={item.tool ? "region" : undefined} aria-label={item.tool ? `Tool request: ${item.tool.name}` : undefined}
       className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
       <Icon size={16} className={clsx("mt-0.5", open ? TONE[item.severity] : "text-faint")} aria-label={item.severity} />
-      <div className="min-w-0">
+      <div className="min-w-0 [overflow-wrap:anywhere]">
         <div className="flex flex-wrap items-center gap-2">
           <span className={clsx("font-medium", open ? "text-fg" : "text-muted")}>{item.title}</span>
           {/* Only the exception: a signal guessed from the screen rather than reported by a hook (UX review IN-2). */}
@@ -139,6 +169,7 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
         {item.session_id && (item.kind === 'team_expired' || item.kind === 'team_lifetime') && <Link to={`/sessions/${item.session_id}?tab=team#overview`} className="inline-flex min-h-11 items-center rounded-md border border-line-strong px-3 text-sm text-accent">
           {item.kind === 'team_expired' ? 'Resume team' : 'Review team time limit'}
         </Link>}
+        {item.permission_id && open && <PermissionActions key={item.permission_id} item={item} />}
         {item.session_id && (
           <Link to={`/sessions/${item.session_id}`} className={clsx("inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2.5 text-[12.5px] font-medium",
             prompt && open ? "bg-accent text-accent-ink hover:brightness-110" : "border border-line-strong bg-panel-2 text-fg hover:bg-panel-3")}>
@@ -146,6 +177,7 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
           </Link>
         )}
         {(item.kind === 'telemetry_report' || item.kind === 'telemetry_consent') && <Link to="/settings#telemetry" className="text-accent underline">Review privacy choices</Link>}
+        {item.kind === "phone_setup" && <Link to="/guide/User-Guide/Connect-Your-Phone" className="text-accent underline">Connect your phone</Link>}
         {item.kind === "machine_offline" && <Link to="/host" className="text-accent underline">Review machine</Link>}
         {item.kind === "backup" && <Link to="/host#host-backups" className="text-accent underline">Review backups</Link>}
         {item.persistent && !item.resolved_at && <Button size="sm" variant="ghost" onClick={() => snooze.mutate(snoozed ? 0 : 60)}
@@ -162,6 +194,7 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
             port_owner: publish?.port_owner, project: publish?.project }} />
         )}
         {item.tool && open && item.tool.status === "pending_approval" && <ToolActions request={item.tool} />}
+        {item.tool && <ToolDecision request={item.tool} />}
         {item.kind === "scope_change" && item.session_id && open && <StopScopeHelper sessionId={item.session_id} />}
         {item.kind === "replacement_held" && item.session_id && open && owner && <StopHeld sessionId={item.session_id} />}
         {/* Dismissing hides the notice; it never answers. On a prompt it sits behind ⋯, so it isn't mistaken for one. */}
@@ -182,6 +215,11 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
 }
 
 export function Inbox() {
+  const shell = useNewShell();
+  return shell ? <Suspense fallback={<p role="status">Loading Inbox…</p>}><ShellInbox /></Suspense> : <StandardInbox />;
+}
+
+function StandardInbox() {
   const queryClient = useQueryClient();
   const offline = useOffline();
   const { username } = useRole();

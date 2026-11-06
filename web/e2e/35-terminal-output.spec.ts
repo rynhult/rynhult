@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { AUTH_FILE, control, csrfHeaders, expectAxeClean, info, resetTerminalThrottle, sessionWithChanges, wikiShotPath } from "./helpers";
@@ -35,7 +35,12 @@ test("terminal output is selectable, refreshable and copyable without capturing 
   const writable = page.getByText("Read-write", { exact: true });
   const takeControl = page.getByRole("button", { name: "Take control", exact: true });
   await expect(writable.or(takeControl)).toBeVisible();
-  if (await takeControl.isVisible()) await takeControl.click();
+  if (await takeControl.isVisible()) {
+    await takeControl.click();
+    const dialog = page.getByRole('dialog', { name: 'Take terminal control' });
+    await dialog.getByLabel('Reason').selectOption('manual_handover');
+    await dialog.getByRole('button', { name: 'Take control', exact: true }).click();
+  }
   await expect(writable).toBeVisible();
   await input.focus();
   await page.keyboard.press("Tab");

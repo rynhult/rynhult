@@ -5,7 +5,8 @@ import { api, ApiError, post } from '../lib/api';
 import { useSingleMutation as useMutation } from '../lib/mutations';
 import { useConfirm } from '../components/confirm';
 import { FolderAccessSettings } from '../components/FolderAccessSettings';
-import { announce, Badge, Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, Input, Note, Page, PageHeader, QueryState, Select, buttonClass } from '../components/ui';
+import { announce, Badge, Button, Card, CardHeader, Dialog, Empty, ErrorNote, Field, Input, Note, QueryState, Select, buttonClass } from '../components/ui';
+import { ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
 
 type Scope = { kind: 'account'; machine: string; machine_id: string; account: string };
 type FolderAccount = { scope: Scope; state: string; stored_state: string; retry_available: boolean; allowed_folders: boolean; roots: string[]; revision: number; applied_revision: number;
