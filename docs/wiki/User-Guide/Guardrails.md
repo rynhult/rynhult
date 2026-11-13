@@ -13,7 +13,7 @@ isolation to rely on. Containers complement guardrails and backups; they don't r
 
 How well they work depends on the agent:
 - **Claude Code** and **Codex** call the guard before every tool. Rynhult records trust for its exact Codex hooks on reviewed CLI versions (see below); hooks awaiting review do not run.
-- **GitHub Copilot CLI** support is a preview that hasn't been tested against a real Copilot account yet. In a folder Copilot trusts, a repository's `.github/copilot/settings.json` or `settings.local.json`, or its Claude settings (`.claude/settings.json` or `settings.local.json`), can switch off Copilot's hooks, the guard included, so Rynhult won't start Copilot where the session's folder, or a folder above it, has such a file. It also won't start Copilot in a repository whose git settings move its working folder elsewhere (`core.worktree`), including Git config files saved with a UTF-8 byte-order mark, because Copilot would then read those files from that other folder. That means `disableAllHooks` set to anything but `false`, a non-empty `disabledHooks`, another hook setting, or a file Rynhult can't read as plain JSON. This applies to new sessions, resumes and restarts alike. The session then shows **Recovery needed** (under **Needs you**) with the file and the setting, the [Inbox](/User-Guide/Glossary#inbox) gets an item, and the audit log records `session.copilot_hooks_refused`. Remove that setting (or fix the file), then resume the session, or start a new one if it never started.
+- **GitHub Copilot CLI** support is a preview: sessions, hooks and sign-in have been checked with the real CLI; this does not qualify every account or permission flow. In a folder Copilot trusts, a repository's `.github/copilot/settings.json` or `settings.local.json`, or its Claude settings (`.claude/settings.json` or `settings.local.json`), can switch off Copilot's hooks, the guard included, so Rynhult won't start Copilot where the session's folder, or a folder above it, has such a file. It also won't start Copilot in a repository whose git settings move its working folder elsewhere (`core.worktree`), including Git config files saved with a UTF-8 byte-order mark, because Copilot would then read those files from that other folder. That means `disableAllHooks` set to anything but `false`, a non-empty `disabledHooks`, another hook setting, or a file Rynhult can't read as plain JSON. This applies to new sessions, resumes and restarts alike. The session then shows **Recovery needed** (under **Needs you**) with the file and the setting, the [Inbox](/User-Guide/Glossary#inbox) gets an item, and the audit log records `session.copilot_hooks_refused`. Remove that setting (or fix the file), then resume the session, or start a new one if it never started.
 - **Cursor**'s hooks are reported not to fire reliably on Linux.
 - **Antigravity** calls the guard like Claude Code does.
 - **OpenCode** calls the guard through Rynhult's plugin before every tool, including the tool calls it chains in Code Mode and MCP tools. A call the guard can't check is refused. A repository's own OpenCode settings can't switch the plugin off, and an agent can't add plugins or custom tools to the [project](/User-Guide/Glossary#project) (`.opencode/plugins/`, `.opencode/tools/`, or plugins and policies in `opencode.json`); its other OpenCode settings stay editable. If a future OpenCode version couldn't load the plugin, its shell commands are refused (they only run once Rynhult's plugin has checked them). The session would also never report starting, so Rynhult shows it as **hasn't started** in the Inbox instead of as healthy.
@@ -117,7 +117,7 @@ Owners change **Ask before account-wide tool changes** through **Settings → Se
 ![Owner-controlled tool approval settings per person and project](/.attachments/tools-policy.png)
 
 ### Codex hook review
-Rynhult installs and records trust for its own exact hook definitions on Codex 0.163.0 and 0.164.0, including on a fresh machine. Hooks you add, and modified groups containing Rynhult commands, still require Codex review. Rynhult preserves your other settings and never enables hooks you explicitly disabled.
+Rynhult installs and records trust for its own exact hook definitions on Codex 0.163.0, 0.164.0 and 0.167.1, including on a fresh machine. Hooks you add, and modified groups containing Rynhult commands, still require Codex review. Rynhult preserves your other settings and never enables hooks you explicitly disabled.
 
 A repository's own Codex settings can't switch hooks off: Rynhult starts Codex with hooks turned on, so a project
 `.codex/config.toml` with `[features] hooks = false` doesn't stop the guard. This also overrides turning Codex hooks
@@ -182,3 +182,39 @@ in the command is therefore followed wherever it is used: after `alias r='rm -rf
 `rm -rf /opt/example`. An alias the guard can't read word by word is refused when it is used: one with `;` or `&&`,
 one from a variable, or one ending in a space, which expands the next word too. Aliases from the account's shell
 startup files are not known to the guard.
+
+
+## Saved delegated permissions
+
+Security lists active and revoked saved permissions, including the exact action, team, issuer, constraints and expiry. **Revoke permission** stops new admissions even when delegation availability is Off. Already dispatched work may finish; revocation retains its history. Availability defaults Off and never creates consent. Account tool and recipe execution remains unqualified in this build.
+
+
+### Native team delegation boundary
+
+Native helpers share the lead's Unix account and can append to the lead's
+`events.jsonl`. They can therefore submit a delegated request as the lead, bounded
+by the person's consent and quotas. A lead-ID check does not isolate those helpers;
+separate per-session spool credentials are needed before wider delegation.
+Security shows refused delegated attempts, including missing consent, disabled
+availability, scope mismatch and exhausted allowances. Repeated refusals are
+recorded once per lead, action and fixed reason each minute. Interrupted image
+checks become **uncertain** after the lease plus probe deadline; they still count
+toward the quota, and are not retried automatically.
+
+### Enable and grant together
+
+In **Security → Saved delegated permissions**, the Delegated approvals form starts
+from the saved availability (Off unless explicitly chosen). An installation owner
+can enable availability. Choose your active local Build team and explicitly select
+port reservations, the team's exact-model synthetic image check, or a qualified
+reviewed install recipe. Review the proposed change, verify your identity, and use
+**Save delegation and permissions**. Availability and all selected permissions save
+together; a conflict keeps your draft for review. Nothing starts checked for you.
+
+Port reservations grant no publishing or firewall authority. Image checks send
+only the synthetic probe, never private references. Account recipe options remain
+unavailable until owner qualification on disposable hosts. An install permission
+names an exact recipe digest and command list, affects every project sharing the
+account, and grants no scripts, updates or removal. **Any process in this Unix
+account can use this consent.** The lead's approval does not isolate helpers.
+Revoking does not uninstall.

@@ -24,7 +24,7 @@ for (const phone of [false, true]) {
 
     test("a transient route chunk failure retries once without reloading", async ({ page }) => {
       await gotoLoadedPage(page, "/sessions", ["Sessions"], ["/api/sessions"]);
-      await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Sessions", exact: true, level: 1 })).toBeVisible();
       let attempts = 0;
       let navigations = 0;
       page.on("request", (request) => { if (request.isNavigationRequest()) navigations++; });
@@ -103,9 +103,9 @@ for (const phone of [false, true]) {
       expect(navigations).toBe(1);
     });
 
-    test("a failed shell chunk still exposes reload outside Suspense", async ({ page }) => {
+    test("a failed frame entry chunk still exposes reload outside Suspense", async ({ page }) => {
       let attempts = 0;
-      await page.route(/\/assets\/Layout-[^/]+\.js(?:\?.*)?$/, (route) => {
+      await page.route(/\/assets\/AppFrame-[^/]+\.js(?:\?.*)?$/, (route) => {
         attempts++;
         return route.fulfill({ status: 404, contentType: "text/plain", body: "Not Found" });
       });
@@ -124,7 +124,7 @@ for (const phone of [false, true]) {
       });
       const stylesheet = page.waitForResponse(response => /\/assets\/(?:Terminal|terminalHostLayer)-[^/]+\.css$/.test(new URL(response.url()).pathname)
         && response.status() === 200);
-      await gotoLoadedPage(page, `/sessions/${id}`, ["SessionPage", "Terminal"]);
+      await gotoLoadedPage(page, `/sessions/${id}`, ["SessionPage", "RegisteredTerminal"]);
       expect(await (await stylesheet).finished()).toBeNull();
       await expect(page.locator(".xterm-screen")).toBeVisible();
       expect(attempts).toBe(2);

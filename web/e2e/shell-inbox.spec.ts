@@ -24,10 +24,10 @@ function fixtures() {
 }
 async function arrange(page: Page, member = false) {
   const auth = await (await page.request.get('/api/auth/state')).json();
-  await page.route('**/api/auth/state', route => route.fulfill({ json: { ...auth,
+  await page.route('**/api/auth/state', route => route.fulfill({ json: { ...auth, person_id: member ? 'fixture-member' : 'fixture-owner',
     username: member ? 'casey' : auth.username, role: member ? 'member' : 'owner',
-    instance: { ...auth.instance, features: { ...auth.instance?.features, new_shell: true } } } }));
-  await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: true, person_id: member ? 'fixture-member' : 'fixture-owner' } }));
+    instance: { ...auth.instance, features: { ...auth.instance?.features } } } }));
+
   let items = fixtures();
   const posts: string[] = [];
   await page.route('**/api/attention**', async route => {

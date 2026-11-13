@@ -51,7 +51,8 @@ test('expanded launch copies commands and files without page overflow', async ({
   await page.setViewportSize({ width: 390, height: 844 });
   const { id } = await gitProject(page, `final-preview-${testInfo.project.name}-${testInfo.repeatEachIndex}`);
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(id));
   await openAdvanced(dialog);
   await dialog.getByRole('button', { name: 'Copy launch command', exact: true }).click();

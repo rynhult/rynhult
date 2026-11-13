@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "./fixtures";
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, sessionWithChanges } from "./helpers";
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, openAdvanced, sessionWithChanges } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -22,21 +22,22 @@ for (const phone of [false, true]) {
     test("action menus support arrow entry, typeahead, Escape and a named confirmation", async ({ page }, testInfo) => {
       const { slug: name } = await gitProject(page, `keyboard-menu-${phone ? "phone" : "desktop"}`);
       await page.goto("/projects");
-      const filter = page.getByRole("searchbox", { name: "Filter projects", exact: true });
+      const filter = page.getByRole("textbox", { name: "Find a project or repository", exact: true });
       await tabTo(page, filter);
       await page.keyboard.type(name);
+      await expect(filter).toHaveValue(name);
       const trigger = page.getByRole("button", { name: `Project actions for ${name}`, exact: true });
       await expect(page.getByRole("button", { name: /^Project actions for / })).toHaveCount(1);
       await tabTo(page, trigger);
       await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
       await page.keyboard.press("ArrowDown");
       const menu = page.getByRole("menu", { name: `Project actions for ${name}`, exact: true });
-      const archive = menu.getByRole("menuitem", { name: `Archive ${name}`, exact: true });
-      const remove = menu.getByRole("menuitem", { name: `Delete ${name}`, exact: true });
+      const archive = menu.getByRole("menuitem", { name: "Archive", exact: true });
+      const remove = menu.getByRole("menuitem", { name: "Delete", exact: true });
       await expect(archive).toBeFocused();
       await page.keyboard.press("End"); await expect(remove).toBeFocused();
       await page.keyboard.type("c");
-      await expect(page.getByRole("dialog", { name: "New session", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "New session", exact: true })).toHaveCount(0);
       await expect(menu).toBeVisible();
       await page.keyboard.press("Home");
       await page.keyboard.type("a"); await expect(archive).toBeFocused();
@@ -64,7 +65,9 @@ for (const phone of [false, true]) {
         ...projects, ...Array.from({ length: 24 }, (_, index) => ({ ...projects[0], id: 100000 + index, name: `Keyboard project ${index}` })),
       ] }) : route.continue());
       await page.goto("/sessions");
-      const trigger = page.getByRole("button", { name: "Jump to…", exact: true });
+      const headerTools = page.getByRole("button", { name: "Header tools", exact: true });
+      if (phone) await headerTools.click();
+      const trigger = page.getByRole("button", { name: "Go to…", exact: true });
       await tabTo(page, trigger); await page.keyboard.press("Enter");
       const palette = page.getByRole("dialog", { name: "Jump to…", exact: true });
       const input = palette.getByRole("combobox", { name: "Jump to…", exact: true });
@@ -83,7 +86,7 @@ for (const phone of [false, true]) {
       await page.keyboard.press("Tab"); await expect(input).toBeFocused();
       await page.keyboard.press("Shift+Tab"); await expect(search).toBeFocused();
       await expectAxeClean(page);
-      await page.keyboard.press("Escape"); await expect(trigger).toBeFocused();
+      await page.keyboard.press("Escape"); await expect(phone ? headerTools : trigger).toBeFocused();
       await page.evaluate(() => {
         const capture = (event: FocusEvent) => {
           if (!(event.target instanceof HTMLInputElement) || event.target.getAttribute("aria-controls") !== "palette-list") return;
@@ -92,6 +95,7 @@ for (const phone of [false, true]) {
         };
         document.addEventListener("focusin", capture);
       });
+      if (phone) { await headerTools.press("Enter"); await tabTo(page, trigger); }
       await page.keyboard.press("Enter"); await expect(input).toBeFocused();
       await expect(input).toHaveValue("");
       await expect(page.locator("html")).toHaveAttribute("data-palette-focus-value", "");
@@ -100,10 +104,10 @@ for (const phone of [false, true]) {
       await expect(input).toHaveValue("New session");
       await expect(palette.getByRole("option", { name: "New session", exact: true })).toHaveAttribute("aria-selected", "true");
       await page.keyboard.press("Enter");
-      const launch = page.getByRole("dialog", { name: "New session", exact: true });
+      const launch = page.getByRole("region", { name: "New session", exact: true });
       await expect(launch.getByRole("textbox", { name: "Task (optional)", exact: true })).toBeFocused();
       await page.keyboard.press("Escape");
-      await expect(launch).toHaveCount(0); await expect(trigger).toBeFocused();
+      await expect(launch).toHaveCount(0); await expect(page.locator("#shell-new-session")).toBeFocused();
     });
 
     test("nested forms keep their draft, trap Tab in the top dialog and restore each opener", async ({ page }, testInfo) => {
@@ -111,9 +115,10 @@ for (const phone of [false, true]) {
       await page.goto("/sessions");
       const trigger = page.getByRole("button", { name: "New session", exact: true }).first();
       await tabTo(page, trigger); await page.keyboard.press("Enter");
-      const launch = page.getByRole("dialog", { name: "New session", exact: true });
+      const launch = page.getByRole("region", { name: "New session", exact: true });
       const task = launch.getByRole("textbox", { name: "Task (optional)", exact: true });
       await expect(task).toBeFocused(); await page.keyboard.type("Keep my keyboard draft");
+      await openAdvanced(launch);
       const nestedTrigger = launch.getByRole("button", { name: "New project", exact: true });
       await tabTo(page, nestedTrigger); await page.keyboard.press("Enter");
       const nested = page.getByRole("dialog", { name: "New project", exact: true });
@@ -128,7 +133,7 @@ for (const phone of [false, true]) {
       await expect(nested).toHaveCount(0); await expect(nestedTrigger).toBeFocused();
       await expect(task).toHaveValue("Keep my keyboard draft");
       await page.keyboard.press("Escape");
-      await expect(launch).toHaveCount(0); await expect(trigger).toBeFocused();
+      await expect(launch).toHaveCount(0); await expect(page.locator("#shell-new-session")).toBeFocused();
     });
 
     if (phone) test("More is a keyboard menu and typeahead selects a hidden session tab", async ({ page, request }) => {
@@ -136,7 +141,7 @@ for (const phone of [false, true]) {
       const headers = await csrfHeaders(page);
       try {
         await page.goto(`/sessions/${id}?tab=files`);
-        const trigger = page.getByRole("button", { name: "More", exact: true });
+        const trigger = page.locator(".session-tab-line").getByRole("button", { name: "More", exact: true });
         await tabTo(page, trigger); await page.keyboard.press("ArrowUp");
         const menu = page.getByRole("menu", { name: "More", exact: true });
         await expect(menu.getByRole("menuitem", { name: "Setup", exact: true })).toBeFocused();

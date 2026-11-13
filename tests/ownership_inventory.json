@@ -59,8 +59,8 @@
     "source": "src/acc/server/api/auth.py",
     "handler": "logout",
     "principal": "owner/member / installation API token",
-    "ownership": "Revoke only the presented browser login cookie and its terminals; API token has no human login session.",
-    "audit": "GAP: no durable event identified in this operation; requires org audit coverage"
+    "ownership": "Revoke only the presented browser login cookie and its terminals; also cancel all live unconfirmed browser pairings for that person across sessions, preserving confirmed imports; API token has no human login session.",
+    "audit": "device.pairing_cancel for live unconfirmed browser pairings; no separate sign-out event"
   },
   {
     "method": "POST",
@@ -1105,8 +1105,8 @@
     "source": "src/acc/server/api/sessions.py",
     "handler": "message",
     "principal": "owner/member / installation API token",
-    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
-    "audit": "session.message (supervisor; current detail includes text, must redact before org export)",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects. Enrolled relay still refuses legacy person input; only a separately qualified installation-API service may use its exact durable delivery binding and existing Codex Chat or API-key Claude SDK owner. Current run/assignment/budgets/holder rechecked; no subscription service input or new writer.",
+    "audit": "session.message (supervisor; current detail includes text, must redact before org export); qualified relay uses relay.delivery.register/settled and immutable operation/cancellation receipts, with service actor/channel and previous person writer, without prompt text",
     "other_member_status": 404
   },
   {
@@ -1700,6 +1700,26 @@
   },
   {
     "method": "POST",
+    "path": "/api/push/presence",
+    "source": "src/acc/server/api/push.py",
+    "handler": "presence",
+    "principal": "signed-in browser person (owner/member; no installation API token)",
+    "ownership": "Only the authenticated person/login/tab lease; cannot set another person\u2019s presence. CSRF/Origin enforced; holding updates throttled, releases exempt.",
+    "audit": "none (ephemeral presence; no durable event)",
+    "other_member_status": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/push/preference",
+    "source": "src/acc/server/api/push.py",
+    "handler": "preference",
+    "principal": "signed-in browser person (owner/member; no installation API token)",
+    "ownership": "Only the authenticated person\u2019s push-while-active preference; no owner override to another person. CSRF/Origin enforced.",
+    "audit": "none (personal notification preference; existing push audit unchanged)",
+    "other_member_status": null
+  },
+  {
+    "method": "POST",
     "path": "/api/push/subscribe",
     "source": "src/acc/server/api/push.py",
     "handler": "subscribe",
@@ -2084,24 +2104,6 @@
     "principal": "owner/member / installation API token",
     "ownership": "Caller-specific setting key; no other person\u2019s preferences.",
     "audit": "GAP: no durable event identified in this operation; requires org audit coverage"
-  },
-  {
-    "method": "GET",
-    "path": "/api/preferences/ui-shell",
-    "source": "src/acc/server/api/settings_routes.py",
-    "handler": "get_ui_shell",
-    "principal": "owner/member / installation API token",
-    "ownership": "Caller-specific setting key and stable caller id; no other person\u2019s preferences.",
-    "audit": "none (presentation preference; no authority change)"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/preferences/ui-shell",
-    "source": "src/acc/server/api/settings_routes.py",
-    "handler": "put_ui_shell",
-    "principal": "owner/member / installation API token",
-    "ownership": "Caller-specific setting key and stable caller id; no other person\u2019s preferences.",
-    "audit": "none (presentation preference; no authority change)"
   },
   {
     "method": "GET",
@@ -3003,8 +3005,8 @@
     "path": "/api/sessions/{acc_id}/pull/merge",
     "source": "src/acc/server/api/pulls.py",
     "handler": "pull_merge",
-    "principal": "owner/member / installation API token",
-    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects. Explicit person confirmation and reviewed head SHA required; agents/orchestrators and installation principals refused.",
     "audit": "pr.merge",
     "other_member_status": 404
   },
@@ -3026,6 +3028,66 @@
     "principal": "owner/member / installation API token",
     "ownership": "Caller owns personal resource, or trusted installation owner; unrelated member receives 404. Personal project routes exclude group projects.",
     "audit": "pr.send_to_agent",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/pull/mergeable",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "mergeable",
+    "principal": "owner/member / installation API token",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Read-only readiness, including bounded commit summary; grants no push or merge authority.",
+    "audit": "none (read/preview; no durable access event)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/pull/mergeable/base",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "update_base",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Agents/orchestrators and installation principals cannot mutate. Base and push actions additionally require a trusted writable non-container worktree and retain Security/branch-protection checks.",
+    "audit": "pr.base",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/pull/mergeable/completed-rebase",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "push_completed_rebase",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Agents/orchestrators and installation principals cannot mutate. Base and push actions additionally require a trusted writable non-container worktree and retain Security/branch-protection checks.",
+    "audit": "pr.completed_rebase; pr.push_rebased",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/pull/mergeable/push/{ticket}",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "push_rebased",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Agents/orchestrators and installation principals cannot mutate. Base and push actions additionally require a trusted writable non-container worktree and retain Security/branch-protection checks.",
+    "audit": "pr.push_rebased",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/pull/mergeable/rerun",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "rerun_checks",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Agents/orchestrators and installation principals cannot mutate. Base and push actions additionally require a trusted writable non-container worktree and retain Security/branch-protection checks.",
+    "audit": "pr.rerun",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/pull/mergeable/feedback",
+    "source": "src/acc/server/api/pulls.py",
+    "handler": "guided_feedback",
+    "principal": "signed-in human owner/member (no installation API token)",
+    "ownership": "Caller owns the session in their own personal project, or is a trusted installation owner; unrelated member receives 404. Agents/orchestrators and installation principals cannot mutate. Base and push actions additionally require a trusted writable non-container worktree and retain Security/branch-protection checks.",
+    "audit": "pr.feedback_preview; pr.send_to_agent",
     "other_member_status": 404
   },
   {
@@ -3194,12 +3256,21 @@
   },
   {
     "method": "POST",
+    "path": "/api/device-pairing/preview",
+    "source": "src/acc/server/api/devices.py",
+    "handler": "preview",
+    "principal": "unauthenticated pairing-token holder",
+    "ownership": "Private address/Origin, enabled pairing, shared IP throttle; a live pending hashed token returns only installation name/address, person, label and desktop code; it does not consume the token.",
+    "audit": "none (read step; no durable access event)"
+  },
+  {
+    "method": "POST",
     "path": "/api/device-pairing/claim",
     "source": "src/acc/server/api/devices.py",
     "handler": "claim",
     "principal": "unauthenticated pairing-token holder",
-    "ownership": "Private address/Origin, enabled pairing and IP throttle; live pending hashed one-use token becomes claimed receipt; no signed-in identity required.",
-    "audit": "none (read/protocol step; no durable access event)"
+    "ownership": "Private address/Origin, enabled pairing and IP throttle; explicit phone_confirmed=true acknowledgement required; live pending hashed one-use token becomes claimed receipt; no signed-in identity required.",
+    "audit": "device.pairing_claim (phone_confirmed recorded)"
   },
   {
     "method": "POST",
@@ -3226,7 +3297,7 @@
     "handler": "start",
     "principal": "signed-in human owner/member (no installation API token)",
     "ownership": "Own pairing; private address/Origin, enabled pairing, recent verification and IP/person throttle; bounded pending capabilities.",
-    "audit": "GAP: no durable event identified in this operation; requires org audit coverage"
+    "audit": "device.pairing_start; device.pairing_cancel for replaced live unconfirmed browser pairings"
   },
   {
     "method": "POST",
@@ -3245,7 +3316,7 @@
     "handler": "renew",
     "principal": "signed-in human owner/member (no installation API token)",
     "ownership": "Private address/Origin, enabled pairing, recent verification and throttle; only caller-owned active unexpired device, including for owners.",
-    "audit": "GAP: no durable event identified in this operation; requires org audit coverage",
+    "audit": "device.pairing_start; device.pairing_cancel for replaced live unconfirmed browser pairings",
     "other_member_status": 404
   },
   {
@@ -4573,7 +4644,7 @@
     "source": "src/acc/server/api/settings_routes.py",
     "handler": "get_setup_level",
     "principal": "signed-in person (no installation API token)",
-    "ownership": "Caller-specific presentation only; no other person or Security setting.",
+    "ownership": "Caller-specific presentation and revisioned setup checklist only; no secrets, other person, resource creation or Security writes.",
     "audit": "none (presentation preference; no authority change)"
   },
   {
@@ -4582,7 +4653,7 @@
     "source": "src/acc/server/api/settings_routes.py",
     "handler": "put_setup_level",
     "principal": "signed-in person (no installation API token)",
-    "ownership": "Caller-specific presentation only; no other person or Security setting.",
+    "ownership": "Caller-specific presentation and revisioned setup checklist only; no secrets, other person, resource creation or Security writes.",
     "audit": "none (presentation preference; no authority change)"
   },
   {
@@ -4888,5 +4959,178 @@
     "ownership": "Bounded bulk action: members archive only their own authorized sessions; owners may archive all authorized sessions. Rechecks session authorization and stopped state per session.",
     "audit": "session.archive",
     "other_member_status": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/approvals/activity",
+    "source": "src/acc/server/api/approvals.py",
+    "handler": "activity",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Signed-in person sees consent-owned delegated operations and their owner-attributed refused attempts; owners may inspect other issuers only within an authorized explicit personal project. Group projects refuse; revoked and disabled history remains visible.",
+    "audit": "none (scoped read)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/approvals/configuration",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Signed-in human reads global delegation availability; selected team must be their own active native Build lead in a personal project. Group scopes refuse before field validation; only qualified recipe options are returned.",
+    "audit": "none (scoped read)",
+    "handler": "configuration",
+    "source": "src/acc/server/api/approvals.py"
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/configuration",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Recently verified human; owner required to change global availability. Every selected consent rechecks whole-account and live team authority. Expected configuration and Security revisions; enablement and grants commit atomically. Group scopes refuse before validation.",
+    "audit": "approval.configure; approval.grant",
+    "handler": "save_configuration",
+    "source": "src/acc/server/api/approvals.py"
+  },
+  {
+    "method": "GET",
+    "path": "/api/approvals/installs/{operation_id}",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Human issuer or installation owner with current whole-account authority over the personal local project; bounded manifest/journal pages and optional current rehash. Group and cross-account scopes refuse before field validation.",
+    "audit": "none (scoped read)",
+    "handler": "install_evidence",
+    "source": "src/acc/server/api/approvals.py",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/approvals/installs/{operation_id}/reconcile",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Recently verified human issuer or installation owner with current whole-account authority. Exact reviewed current footprint digest, unchanged person/Security snapshot and uncertain state; records only proved absence or matching installed footprint. No retry or consent bypass.",
+    "audit": "approval.reconcile; tool.result",
+    "handler": "reconcile_install",
+    "source": "src/acc/server/api/approvals.py",
+    "other_member_status": 403
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "snapshot",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Current private session authorization, current person/device admission; relay enrollment required. Receipts scoped to originating principal; cursors bind person/device/login, enrollment, run and epoch. Group roles give no private access. Off retains authorized history.",
+    "audit": "none (bounded read; no provider effect)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay/events",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "events",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Current private session authorization, current person/device admission; relay enrollment required. Receipts scoped to originating principal; cursors bind person/device/login, enrollment, run and epoch. Group roles give no private access. Off retains authorized history.",
+    "audit": "none (bounded read; no provider effect)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay/runs",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "runs",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Personal private session owner/member or trusted installation-owner override (including API read principal). Current person/device/login and private session authorization plus relay enrollment are required. Bounded retained-run metadata only; no native process identity, input claim, launch or mutation authority. Unrelated member receives404; group membership alone gives no private access. Off retains authorized reads.",
+    "audit": "none (bounded retained-run read; no provider mutation)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay/operations/{operation_id}",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "operation",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Current private session authorization, current person/device admission; relay enrollment required. Receipts scoped to originating principal; cursors bind person/device/login, enrollment, run and epoch. Group roles give no private access. Off retains authorized history.",
+    "audit": "none (bounded read; no provider effect)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay/terminal",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "terminal_read",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Personal session owner/member or trusted installation-owner override (including API read principal). Current person/device/login admission and negotiated observer attachment bound to enrollment, run and epoch; rechecked before and after a bounded existing-owned terminal read. Unrelated member receives404; group membership alone gives no private access. No native launch, input claim or mutation authority.",
+    "audit": "none (bounded observer read; no provider mutation)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{acc_id}/relay/ownership",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "ownership_read",
+    "principal": "signed-in person; service/API mutation authority is refused",
+    "ownership": "Personal session owner/member or trusted installation-owner person override. Current person/device/login admission and negotiated observer attachment bound to enrollment, run and history epoch; current switch authority is rechecked around a bounded observation of the existing Claude owner. Service/API principals are refused by that authority check; a person-shaped service principal gains no person authority. Unrelated member receives404; group membership alone gives no private access. No native launch, input claim or mutation authority.",
+    "audit": "none (bounded owner observation; no provider mutation)",
+    "other_member_status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/api/sessions/{acc_id}/relay",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "rpc",
+    "principal": "signed-in person or installation API principal",
+    "ownership": "Current private session authorization and relay enrollment before parsing; CSRF/Origin for people. Negotiated observer connections bound to login/device/run. No provider mutations qualified; all sends, registrations, decisions and terminal frames refuse.",
+    "audit": "none (observer negotiation and bounded read; provider mutations unavailable)",
+    "other_member_status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/api/session-relay/preference",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "preference",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Only the authenticated person preference; first write and updates serialize with revision CAS. No session or runtime effect.",
+    "audit": "none (personal view preference)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/session-relay/preference",
+    "source": "src/acc/server/api/session_relay.py",
+    "handler": "set_preference",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Only the authenticated person preference; first write and updates serialize with revision CAS. No session or runtime effect.",
+    "audit": "none (personal view preference)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/preferences/claude-subscription",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "get_claude_subscription",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Only the authenticated person consent, keyed by person ID and permanently retired username. Current notice required for acceptance; owner feature can prohibit use. No session launch or relaxation of legacy automation guards.",
+    "audit": "none (personal consent read)"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/preferences/claude-subscription",
+    "source": "src/acc/server/api/settings_routes.py",
+    "handler": "put_claude_subscription",
+    "principal": "signed-in human (no installation API token)",
+    "ownership": "Only the authenticated person consent, keyed by person ID and permanently retired username. Current notice required for acceptance; owner feature can prohibit use. No session launch or relaxation of legacy automation guards.",
+    "audit": "claude_subscription.accept / claude_subscription.revoke"
+  },
+  {
+    "method": "GET",
+    "path": "/api/sessions/{session_id}/permissions",
+    "source": "src/acc/server/api/session_permissions.py",
+    "handler": "inspect_permissions",
+    "principal": "signed-in person / installation API token",
+    "ownership": "Session owner or installation owner may inspect; another member receives 404. Native helpers remain explicitly uncapped.",
+    "audit": "none (read only)",
+    "other_member_status": 404
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/sessions/{session_id}/permissions",
+    "source": "src/acc/server/api/session_permissions.py",
+    "handler": "narrow_permissions",
+    "principal": "recently verified root-person browser; human owner for installation-owned roots",
+    "ownership": "Session visibility first (another member receives 404), then root-owner identity. Narrowing only; agents and installation tokens cannot mutate grants.",
+    "audit": "session.permissions.narrow",
+    "other_member_status": 404
   }
 ]

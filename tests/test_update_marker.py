@@ -61,9 +61,15 @@ printf '%s\\n' "$0" >> "{tmp_path}/installs"
         if argv[0] == 'systemctl':
             return subprocess.CompletedProcess(argv, 0)
         assert argv[:1] == ['bash']
+        if argv[1] == '-c':
+            # Host acceptance is simulated; installation still executes the real
+            # old data-path preflight under the actual maintenance hold.
+            assert argv[3] == 'acc-host-check'
+            return subprocess.CompletedProcess(argv, 0)
         return subprocess.run(argv, **kwargs)
 
-    job = Local(updates, source, data, '0.15.0-rc.2', {}, run=run)
+    job = Local(updates, source, data, '0.15.0-rc.2',
+                {'distro_acceptance': str(tmp_path / 'acceptance')}, run=run)
     result = job.apply()
     assert result['ok'] is (not fail_health), result
     if fail_health:

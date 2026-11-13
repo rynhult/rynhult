@@ -231,7 +231,9 @@ async def test_quota_reasons_do_not_borrow_foreign_person_readings_for_rejected_
         assert (await join(member,invite.json()['link'],'dana')).status_code==200
         with write_db(api.app.state.db) as db:
             own=db.get(Session,caller['id'])
-            own.owner,own.run_as='dana','dana-agent'
+            from acc.server.child_caps import transfer_owner
+            transfer_owner(db, [own], 'dana', '@api')
+            own.run_as='dana-agent'
             foreign=Project(slug='foreign-quota',name='Foreign quota',owner='blair',account='dana-agent',
                             host='worker',workspace_path='/tmp/foreign-quota')
             db.add(Session(id='foreign-quota',project=foreign,provider='claude',name='Foreign',

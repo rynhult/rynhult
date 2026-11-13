@@ -19,6 +19,7 @@ import hashlib
 import os
 import re
 import secrets
+import signal
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -257,6 +258,35 @@ class HttpBackend:
         self.git_dir, self.max_body, self.timeout = git_dir, max_body, timeout
         self.command = command
         self._slots = asyncio.Semaphore(BACKEND_SLOTS)
+        self._requests = set()
+        self._closed = False
+
+    async def close(self):
+        """Stop active requests before the server's event loop goes away."""
+        self._closed = True
+        requests = list(self._requests)
+        for request in requests:
+            request.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
+
+    @staticmethod
+    def _kill_group(process):
+        # Every backend has its own session. git execs/spawns CGI and pack helpers;
+        # killing only the Popen PID leaves those descendants behind.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    async def _reap(self, process, tasks=()):
+        self._kill_group(process)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # Drain pipe buffers after killing the group: wait() alone can remain
+        # blocked on a paused stdout/stderr transport after readers are cancelled.
+        await process.communicate()
+
 
     async def run(self, method: str, path_info: str, query: str, headers: dict[str, str], body) -> tuple[int, list, bytes]:
         """(status, headers, body). `body` is an async iterator of request chunks."""
@@ -271,14 +301,28 @@ class HttpBackend:
             env["HTTP_CONTENT_ENCODING"] = headers["content-encoding"]
         if headers.get("git-protocol"):
             env["GIT_PROTOCOL"] = headers["git-protocol"]
-        async with async_lease(git_lock(self.git_dir), timeout=self.timeout):
-            return await self._locked_run(method, path_info, query, headers, body, env)
+        if self._closed:
+            return 503, [], b"backup server is shutting down\n"
+        request = asyncio.current_task()
+        self._requests.add(request)
+        try:
+            async with async_lease(git_lock(self.git_dir), timeout=self.timeout):
+                return await self._locked_run(method, path_info, query, headers, body, env)
+        finally:
+            self._requests.discard(request)
 
     async def _locked_run(self, method, path_info, query, headers, body, env):
         async with self._slots:
-            process = await asyncio.create_subprocess_exec(
+            spawn = asyncio.create_task(asyncio.create_subprocess_exec(
                 *self.command, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, start_new_session=True)
+                stderr=asyncio.subprocess.PIPE, start_new_session=True))
+            try:
+                process = await asyncio.shield(spawn)
+            except BaseException:
+                # Cancellation during subprocess startup must still acquire and reap it.
+                process = await spawn
+                await self._reap(process)
+                raise
             too_large = False
 
             async def feed():
@@ -289,7 +333,7 @@ class HttpBackend:
                         seen += len(chunk)
                         if seen > self.max_body:
                             too_large = True
-                            process.kill()
+                            self._kill_group(process)
                             return
                         process.stdin.write(chunk)
                         await process.stdin.drain()
@@ -306,20 +350,22 @@ class HttpBackend:
                         data += chunk[:limit - len(data)]
                 return bytes(data)
 
+            tasks = [asyncio.create_task(work) for work in (
+                feed(), collect(process.stdout, MAX_RESPONSE + 1), collect(process.stderr, 8192), process.wait())]
             try:
-                _, out, err, _ = await asyncio.wait_for(asyncio.gather(
-                    feed(), collect(process.stdout, MAX_RESPONSE + 1), collect(process.stderr, 8192), process.wait()),
-                    self.timeout)
+                # This deadline includes reading request chunks, not just the CGI response.
+                _, out, err, _ = await asyncio.wait_for(asyncio.gather(*tasks), self.timeout)
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
                 log.warning("git backup: http-backend for %s ran over %gs; stopped", path_info, self.timeout)
                 return 504, [], b"backup push took too long\n"
-            except BaseException:
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
-                raise
+            finally:
+                # Even successful CGI exit can leave helpers in the request's process group.
+                cleanup = asyncio.create_task(self._reap(process, tasks))
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    await cleanup
+                    raise
         if too_large:
             return 413, [], f"a backup push is limited to {self.max_body >> 20} MiB\n".encode()
         if len(out) > MAX_RESPONSE:

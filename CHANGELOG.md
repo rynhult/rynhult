@@ -5,6 +5,101 @@ Rynhult follows [semantic versioning](https://semver.org). Stable tags use `vX.Y
 
 ## [Unreleased]
 
+- Send automatic presence only for people with push devices and on Inbox/session views; keep late heartbeat failures from redirecting the page. Preserve the running team lead’s bounded expiry wrap-up without extending launch or descendant authority.
+
+- Restore owner-broadcast delivery for machine-offline and other ownerless persistent/security alerts while retaining presence exemptions and bounded retries. Inventory browser-only personal push presence/preferences and regenerate the authorization reference.
+
+- Hold ordinary pushes while the person is active in the matching session or Inbox, then send one summary for unanswered held items; summarize bursts above three ordinary items per person, and send up to five critical alerts individually with one summary for the rest. Add a personal “Push even while I'm active” override, bounded transient-delivery retries, presence limits and installation-keyed relay Topics; payloads remain encrypted for each device. Sign-in security, backup and persistent alerts bypass presence and retain individual titles. Leave/hidden presence updates bypass the active-heartbeat throttle.
+
+- Isolate the open command palette from background controls, including the Overview review filters, and restore background interaction when it closes.
+
+- Restore the session-list query budget and defer stopped-session review notices until after machine stop reconciliation, preserving archived records and concurrent stop confirmation.
+
+- Share a 15-second GitHub refresh cooldown per repository, retain fork PRs in project views and CI alerts, and size the response cache for multi-project polling.
+
+- Bound final exit reads and GitHub ETags, batch session review evidence, reject fork PR matches and stale repository snapshots, and let an explicit GitHub Refresh bypass the minute cache.
+
+- Added Ready for review session and Inbox groups, Overview review/PR filters, and cached GitHub pull request lifecycle labels. Review notices are dismissible and do not send push alerts.
+
+- Preserve an explicit Team-stop gate cancellation reason when the source stops, and keep root-session guardrail previews identical to launched files. Retain immutable fixture lineage and verify session rows survive capability migration and schema round trips.
+
+- Preserve child parent-chain labels and root-person routing alongside approval cards, including card-based Push summaries. Fence stale tool workers before inspecting request capabilities and again at execution.
+
+- Restore same-transaction Team lineage binding and specific resume-preflight refusals. Validate fresh helpers against ancestor Security using their own frozen protections. Explicit Team deadline edits/resume renew only previously valid helper proofs, with digest changes audited; stale proofs and independently resumed expired sessions remain refused.
+
+- Rank Codex workspace-write with on-request/never at level 2 (edits without asking), retaining read-only/untrusted at lower levels and separate bypass authorization. Claude default leads now refuse those workspace-write helpers; acceptEdits leads may start on-request helpers. Refusals explain the required and permitted action levels.
+
+- Report MCPs dropped by parent intersection in helper start replies, Team member rows and start/creation audits. Migration 0092 normalizes legacy NULL owners to `@api` before lineage backfill and triggers. Omit unsupported OpenCode explanations from the picker with a short reason; keep the existing permission-level mapping unchanged.
+
+- Compare cross-provider child permissions using shared authority levels instead of requiring every child to be read-only; retain provider-specific bypass checks. Apply root-person browser authorization to batch previews and approvals. Refuse NULL lineage ownership, preserve stale proofs on transfer, retain digest formulas and avoid orphan launch specs; audit changed digests and require consent review. OpenCode explanation inputs now select the read-only plan agent.
+
+- Fix child-cap review regressions: explanations work with stopped sources, Files retains person access, and unrelated Security edits do not revoke child generations. Order provider permission modes and intersect custom endpoints. Transfer removed people's chains atomically with audited root ownership/proof updates; child tool approvals require the root person's browser. Preserve owners-only alerts and fail closed on unexpected cap-check errors.
+- Child-cap upgrade notes: retained legacy helpers without parent proofs require a new launch; saved delegated consent must be reviewed again. Capability evidence fences downgrade: restore the pre-upgrade backup or forward-repair.
+
+- Add explicit per-session requested/effective capability sets, inherited through immutable parent chains. Migration 0092 protects parent columns with database triggers. Managed launch/sub-run, broker, hook, install, port, publication and gateway checks enforce the ceiling and stop stale live generations after parent narrowing; unsupported executors fail closed.
+- Show structured root-person and parent-chain provenance on every approval surface, including publication cards. Provider-native helpers are explicitly shown as not capped or tracked; same-UID spool impersonation remains a documented limitation.
+- Inbox permission tokens, input and cards require the session provider’s own hook source; foreign-provider events never create approval controls. Batch reads remain bounded.
+
+- Reject forged approval-card snapshots from unsupported providers and malformed stored cards; keep Inbox usable when card data is invalid. Advisory classification also examines the command tail, and Push ignores blank lines in its additional-line count.
+
+- Harden approval cards against classifier backtracking and hidden Unicode/control text; show non-command tool input expanded, clearer shared hints and bounded Push summaries, and record an input hash with approval attempts.
+
+- Inbox CLI approval cards show wrapped commands, working directories, literal diffs with Show all, and advisory action labels; Push includes the command first line and label. Existing hook decisions and audit remain unchanged.
+
+- Completed-rebase checks accept Markdown line-break spaces and CRLF while still refusing leftover conflict markers. Push confirmation includes before/after commit counts and bounded rebased subjects beside the reviewed SHA.
+
+- Let **Push completed rebase** finish real conflict-resolved rebases using a one-hour server-held person/session/branch record, an unchanged remote lease, recorded-base ancestry and conflict-marker checks. Changed remote branches or expired/foreign records refuse safely.
+
+- Add person-confirmed **Push completed rebase** through the hardened transport, rechecking current PR/base ancestry and Security before issuing its ticket. Fallback instructions specify the session’s own Rynhult terminal and disable hooks.
+
+- Preserve remote-only PR commits before guided base updates; choose Merge base in while Block force pushes is on, bind the displayed mode to the click, and explain conflicted-rebase completion. Refuse detached Changes pushes, show hidden Git characters visibly, and retain feedback previews when automatic delivery refuses.
+
+- Add a guided **Make it mergeable** checklist to session PRs: hardened base updates, conflict previews, failed Actions reruns, bounded agent feedback and a separate person-confirmed merge. Rebased pushes require an explicit, expiring --force-with-lease action and respect Security switches; subscription Claude keeps manual copy/paste.
+
+- Pin Codex to reviewed 0.167.1 and qualify its account hook trust format. Preserve newer or non-release agent CLIs with an explicit KEPT result during deploy, while real installation or unreadable npm inventory failures still fail. Native Chat history on 0.167.1 remains unsupported pending rollout/provenance qualification.
+
+- Phone pairing distinguishes temporary preview failures from cancelled or used links, offers a preview retry, and discards capabilities after claim or leaving the page.
+
+- Phone QR pairing previews the installation, person and desktop match code before the phone requests pairing; phone acknowledgement is recorded on claim, and newer codes or sign-out anywhere cancel unconfirmed browser pairings while preserving confirmed downloads. Existing owner confirmation, one-use encrypted imports and individual device revocation still apply.
+
+- Keep the terminal provider label **Claude Code** for the unmodified CLI; **Claude Agent** names only the relay SDK Chat adapter and its subscription consent surfaces.
+
+- Integrate the relay observer HTTP API and personal view preference, with retained reads while Off, private actor projections, bounded retention and restart fencing. Person-only new Codex enrollment can use the pinned private broker runtime; native input remains unavailable pending qualification; team delivery and legacy recovery refuse relay sessions.
+
+- Add a default-off personal “Use my Claude subscription for Chat” risk acceptance, recorded and revocable on the server, with an owner Admin features kill switch. Legacy subscription automation guards remain in force.
+- Add the unqualified Claude Agent SDK adapter and L1 switch coordinator: verified old-owner exit before same-ID TUI/SDK resume, inline busy refusal, human approval replies and interrupts. Session relay stays default Off pending hub/broker integration and native qualification.
+
+- OSC 7501 observation drains terminal floods efficiently, preserves positive screen status and input waits without flapping, and keeps Inbox items intact; cached reports are cleared on process exit or pane adoption, with cleanup failures logged without interrupting session listing.
+
+- Sessions without provider hooks can report bounded OSC 7501 working, done, blocked and error status from terminal output; blocked never creates an approval.
+
+- Upgrade note: `approvals.enabled` now defaults Off for installations that never saved a choice. Their phase-one consents stop matching until delegation is explicitly switched on; saved choices are preserved.
+
+- Add default-off, consent-bound local next-free port reservations and bounded image checks, retained delegated activity in Inbox, and saved-permission revocation in Security. Account tool and recipe execution remains unqualified pending broker admission work.
+- Narrow session panes keep view tabs visible above wrapping terminal controls, including on phones.
+
+- Projects defaults to a compact sortable list with URL sorting and view selection, stacked phone rows and a phone sort selector; Cards retains source and location summaries and filters.
+- Single-session terminals offer temporary Expand, with Collapse or F6 then C to leave; Escape reaches the terminal program, while Grid keeps its own expansion behavior.
+- The phone terminal key bar adds a visibly pressed Ctrl toggle that modifies the next letter once and cancels on blur, visibility loss or after 10 seconds without a letter.
+- Delivery history, workspace promotion and optional terminal controls load on demand to keep terminal payloads within the existing budgets.
+
+- Working-view tabs identify their retained panels for assistive technology.
+
+- Touch working-view tabs, column selectors, Browse links and Security/feature switch labels have 44-pixel targets.
+
+- The compact launch Run selector stays available and keeps focus when switching to or from several agents.
+
+- Opening the session launcher keeps unsaved project briefs in place without a false leave warning.
+- Fast typing in the project directory keeps every character while its URL filters update.
+- Session and project tab keyboard focus follows retained views, and Inbox keeps an outage visible while retrying.
+- Inbox supports selecting notices or dismissing all notices on the shown page, with eight seconds to Undo. Decisions and approvals stay open.
+- Opening a session focuses its terminal on desktop; browser-tab returns, phones and open dialogs do not move focus there. Files deep links defer the terminal host.
+- Escape in New session and issue/PR launch forms returns to the workspace, preserving the typed draft.
+- Migration 0088 removes retired layout preferences and the old layout feature choice while preserving other settings.
+
+### Fixed
+- Owner-accepted unqualified Linux installs retain their package-manager acceptance for main, offline and node updates and rollback; host preflight refuses incompatible updates before backup or download.
+
 
 ## [0.15.0-rc.4] - 2026-11-05
 
@@ -821,3 +916,8 @@ The first versioned release: everything built from the first commit (2026-09-19)
 ### Operations
 - Inbox with verified signals only, Web Push notifications, and installation as an app.
 - Publishing through Caddy and Cloudflare DNS with approval; host health (disks, SMART, GPU, services, containers, agent accounts) for everyone; per-provider login health and plan usage; audit log; daily backups.
+
+- Add a default-off, qualification-fenced reviewed account extractor and durable
+  install journal (0091), plus one transactional Security enable/consent form for
+  ports, image checks and qualified recipe digests. No executor is qualified by
+  this build; registry version 2 requires fresh consent authority snapshots.

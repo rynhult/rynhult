@@ -135,7 +135,7 @@ MAX_SIGNATURE = 128  # base64 of a 64-byte Ed25519 signature is 88
 MAX_HANDSHAKES = 32  # sockets waiting for a hello at once; more are refused before accepting
 MAX_HANDSHAKES_PER_ADDRESS = 4  # of those from one address (D19: one host can't hold every slot)
 HELLO_TIMEOUT = 5.0  # seconds a node has to answer the challenge (a real one answers at once)
-KNOWN_CAPABILITIES = ("request-replies-v1", "preview-v1", HOST_CAPABILITY, "backup-v1", "git-backup-v1", "update", "rename-compat-1")  # what a node may say it can do; anything else is dropped
+KNOWN_CAPABILITIES = ("request-replies-v1", "preview-v1", HOST_CAPABILITY, "backup-v1", "git-backup-v1", "update", "rename-compat-1", "session-runtime-v1")  # what a node may say it can do; anything else is dropped
 MAX_TEXT = 64 * 1024  # a text frame from a node (its agent software state is the largest); longer ones are dropped
 
 

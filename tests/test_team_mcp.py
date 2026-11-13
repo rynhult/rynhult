@@ -45,6 +45,7 @@ def test_mcp_discovery_and_spool_call(tmp_path, command):
         'assign', 'give', 'select', 'selection_status',                                # slice 3
         'report',                                                    # slice 4
         'reserve', 'release', 'gate', 'gate_status', 'restack',      # slice 5
+        'delegated_image', 'delegated_install', 'delegated_port', 'delegated_status',   # delegated approvals
     }
     assert json.loads(replies[2]['result']['content'][0]['text']) == []
 
@@ -57,9 +58,10 @@ def test_document_tools_do_not_mislabel_writes_as_reads(tmp_path):
         env={'ACC_RUN_DIR': str(tmp_path), 'ACC_SESSION_ID': 'synthetic'}, timeout=8)
     assert result.returncode == 0, result.stderr
     tools = {t['name']: t for t in json.loads(result.stdout)['result']['tools']}
+    assert tools['delegated_status']['annotations']['readOnlyHint'] is True
     assert tools['brief']['annotations']['readOnlyHint'] is True
     assert tools['brief_documents']['annotations']['readOnlyHint'] is True
-    for name in ('brief_propose_documents', 'brief_share', 'brief_reference', 'report', 'plan_update'):
+    for name in ('delegated_image', 'delegated_port', 'brief_propose_documents', 'brief_share', 'brief_reference', 'report', 'plan_update'):
         assert tools[name]['annotations']['readOnlyHint'] is False, name
 
 
@@ -76,4 +78,4 @@ def test_guard_read_allow_list_matches_mcp_annotations(tmp_path):
     from acc.server.teams import TEAM_READ_TOOLS
     assert TEAM_READ_TOOLS == guard.READ_ONLY_TEAM_TOOLS == {t['name'] for t in tools if t['annotations']['readOnlyHint']}
     assert guard.PLAN_AUTO_TEAM_TOOLS <= {t['name'] for t in tools}
-    assert not guard.PLAN_AUTO_TEAM_TOOLS & {'merge', 'restack', 'gate', 'brief_share', 'brief_propose_documents'}
+    assert not guard.PLAN_AUTO_TEAM_TOOLS & {'delegated_port', 'delegated_image', 'merge', 'restack', 'gate', 'brief_share', 'brief_propose_documents'}

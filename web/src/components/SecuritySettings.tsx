@@ -1,3 +1,4 @@
+import {DelegatedConsents} from './DelegatedConsents';
 import {useUnsavedDraft} from '../lib/useUnsaved';
 import {unsavedWork} from '../lib/unsaved';
 import { SettingsCard as Card, SettingsCardHeader as CardHeader } from './shell/SettingsSurfaces';
@@ -71,6 +72,7 @@ export function SecuritySettings({owner}: {owner:boolean}) {
         <ErrorNote error={projects.error}/>{owner&&<><ErrorNote error={nodes.error}/><ErrorNote error={people.error}/></>}
       </div>
     </Card>
+    <DelegatedConsents key={key} projectId={scope.kind==='project'?scope.project_id:undefined}/>
     {owner?<QueryState query={registry}>{data=><SecurityEditor key={key} scope={scope} registry={data} refreshRegistry={()=>registry.refetch()} projects={projects.data??[]} projectsReady={!!projects.data&&!projects.error} cache={cache.current} onDirty={setDirty}/>}</QueryState>:
       !projects.data?<p className="text-sm text-muted">{projects.error?'Your project list is unavailable. Retry before choosing a scope.':'Loading your project access…'}</p>:selectedProject?<MemberSecurity scope={{kind:'project',project_id:selectedProject.id}}/>:<p className="text-sm text-muted">Choose one of your projects to see its effective protections. Other accounts and private policy metadata are not available here.</p>}
   </div>;

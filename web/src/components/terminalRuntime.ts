@@ -286,6 +286,7 @@ export function createTerminalRuntime({ host, sessionId, touch = false, compact 
     };
 
     return { xterm, socket: ws, resize, dispose, send,
+      setInputTransform(value?: (data: string) => string) { transformInput = value; },
       requestControl(take = false, reason = '', confirmPartial = false) { if (fencedRun && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'control', ...frameIdentity(), take, reason, confirm_partial: confirmPartial })); },
       releaseControl(confirmPartial = false) { if (fencedRun && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'release', ...frameIdentity(), confirm_partial: confirmPartial })); },
       refreshControl() { if (fencedRun && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'status' })); },

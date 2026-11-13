@@ -32,7 +32,7 @@ Healthy things are quiet: green dots and plain numbers. Amber means something ne
 
 ![Phone Running sessions keep machine names in their compact metadata row](/.attachments/board-machines-phone.png)
 
-The board follows your theme: the device's setting, or the **System** / **Light** / **Dark** button at the bottom of the sidebar ([Getting started](/User-Guide/Getting-Started)). In **System**, an open board changes immediately with the device's light/dark setting, without a refresh. An explicit **Light** or **Dark** stays put. Dark suits a wall display best.
+The board follows your theme: the device's setting, or the **System** / **Light** / **Dark** choice in the header account menu before opening the board ([Getting started](/User-Guide/Getting-Started)). In **System**, an open board changes immediately with the device's light/dark setting, without a refresh. An explicit **Light** or **Dark** stays put. Dark suits a wall display best.
 
 ![The status board at 1440x900](/.attachments/status-board-1440.png)
 

@@ -56,7 +56,7 @@ def test_machine_and_browser_identities_reach_only_their_routes(tmp_path):
             machine_paths = ['/api/nodes/connect', '/api/nodes/bundle', '/api/git/7.git/info/refs']
             browser_only = ['/', '/api/projects']
             nobody = ['/api/nodes/enroll', '/api/nodes/install.sh', '/api/nodes/ca', '/install.sh', '/bundle',
-                      '/pair-device', '/api/device-pairing/claim', '/preview/x']
+                      '/pair-device', '/api/device-pairing/claim', '/api/device-pairing/preview', '/preview/x']
             for path in machine_paths:
                 assert lab.request('machine', path=path) == 200, path
                 assert lab.request('browser', path=path) == 403, path

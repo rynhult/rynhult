@@ -109,7 +109,7 @@ WRITE_REDIRECTS = (">", ">>", ">|", "&>", "&>>", "<>", ">&")
 # Exact names, not a prefix/deny-list: future tools must not inherit Plan approval.
 # Planning/report control-plane exceptions remain explicit; implementation and new
 # document mutations (brief_propose_documents, brief_share) keep normal approval.
-READ_ONLY_TEAM_TOOLS = frozenset(('list', 'status', 'read', 'worklist', 'selection_status',
+READ_ONLY_TEAM_TOOLS = frozenset(('delegated_status', 'list', 'status', 'read', 'worklist', 'selection_status',
                                 'gate_status', 'plan', 'plan_version', 'brief', 'brief_documents'))
 PLAN_AUTO_TEAM_TOOLS = READ_ONLY_TEAM_TOOLS | frozenset((
     'start', 'message', 'stop', 'finish', 'worklist_add', 'worklist_update', 'worklist_ingest',
@@ -2221,6 +2221,17 @@ def load_policy(run_dir: str) -> tuple[dict, tuple[str, str] | None]:
         policy = None
     if not isinstance(policy, dict):
         return {}, (tampered[0], tampered[1].format("guardrails.json"))
+    if 'session-capabilities.json' in data:
+        try:
+            cap_proof = json.loads(data['session-capabilities.json'])
+            caps = cap_proof['effective']
+            if not isinstance(caps, dict):
+                raise ValueError('invalid capabilities')
+            policy = {**policy, '_caps': caps, 'parent_session_id': cap_proof.get('parent')}
+            if caps.get('installs') is not None:
+                policy['tool_approval'] = True
+        except (ValueError, KeyError, TypeError):
+            return {}, (tampered[0], tampered[1].format('session-capabilities.json'))
     return policy, None
 
 
@@ -2231,6 +2242,15 @@ class TooSlow(BaseException):
     """Raised by the deadline's alarm; a BaseException so no rule's own error handling swallows it."""
 
 
+def attributed(policy, verdict):
+    if verdict is None:
+        return None
+    parent = environment.get('ACC_PARENT_SESSION_ID') or policy.get('parent_session_id')
+    if isinstance(parent, str) and re.fullmatch(r'[a-z0-9]{8,32}', parent):
+        return verdict[0], f'limited by {parent}: {verdict[1]}'
+    return verdict
+
+
 def decide(policy: dict, broken, tool: str, args: dict, cwd: str, run_dir: str, deadline: float = DEADLINE):
     """(verdict, checker error): a check that runs past the deadline is refused, not let through."""
     def alarm(signum, frame):
@@ -2238,13 +2258,16 @@ def decide(policy: dict, broken, tool: str, args: dict, cwd: str, run_dir: str, 
     previous = signal.signal(signal.SIGALRM, alarm)
     signal.setitimer(signal.ITIMER_REAL, deadline)
     try:
-        return broken or check(policy, tool, args, cwd, run_dir), None
+        expiry = policy.get('_caps', {}).get('expires_at')
+        if expiry is not None and (type(expiry) is not int or datetime.now(timezone.utc).timestamp() >= expiry):
+            return attributed(policy, ('time_limit', 'session time limit ended')), None
+        return attributed(policy, broken or check(policy, tool, args, cwd, run_dir)), None
     except TooSlow:
-        return ("too_slow", "this command took Rynhult's guardrails too long to check, so it is refused; simplify it or "
-                "split it up"), None
+        return attributed(policy, ("too_slow", "this command took Rynhult's guardrails too long to check, so it is refused; simplify it or "
+                "split it up")), None
     except Exception as exc:  # a rule bug: refused (a crafted command must not switch the checks off), and recorded
-        return ("guard_error", "Rynhult's guardrails couldn't check this command, so it is refused; write it more simply or "
-                "split it up"), type(exc).__name__
+        return attributed(policy, ("guard_error", "Rynhult's guardrails couldn't check this command, so it is refused; write it more simply or "
+                "split it up")), type(exc).__name__
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)

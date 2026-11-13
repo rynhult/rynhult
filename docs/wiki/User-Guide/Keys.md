@@ -1,6 +1,6 @@
 # Keys
 
-Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project and explicitly choose **API key** for that session or schedule; this uses API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude sign-in and automation](/User-Guide/Host-and-Providers#claude-sign-in-and-automation).
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 

@@ -1,10 +1,10 @@
 import { expect } from "./fixtures";
 import { test } from './shell-state';
-import { AUTH_FILE, expectAxeClean, gitProject } from "./helpers";
+import { settingsNavigation, openAdvanced, AUTH_FILE, expectAxeClean, gitProject } from "./helpers";
 
 // UX declutter wave 1 (copy and naming): access and notification devices are named apart, old links still land, and
 // New session's name sits after Agent/Profile with short routine hints.
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 for (const width of [1440, 390]) {
   test.describe(`${width}px`, () => {
@@ -12,7 +12,7 @@ for (const width of [1440, 390]) {
 
     test("Settings names access and notification devices apart and keeps the old links", async ({ page }) => {
       await page.goto("/settings#all");
-      const index = page.getByRole("navigation", { name: "Settings sections" });
+      const index = await settingsNavigation(page);
       await expect(index.getByRole("link", { name: "Access devices", exact: true })).toBeVisible();
       await expect(index.getByRole("link", { name: "Notification devices", exact: true })).toBeVisible();
       await expect(index.getByRole("link", { name: "Your devices", exact: true })).toHaveCount(0);
@@ -30,7 +30,8 @@ for (const width of [1440, 390]) {
       const project = await gitProject(page, `w1-${width}`);
       await page.goto("/");
       await page.getByRole("button", { name: "New session", exact: true }).first().click();
-      const dialog = page.getByRole("dialog", { name: "New session" });
+      const dialog = page.getByRole("region", { name: "New session" });
+      await openAdvanced(dialog);
       await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(project.id));
       await expect(dialog.getByText("Sent once when the session starts. Without one, the agent waits for you.")).toBeVisible();
       const field = (role: "combobox" | "textbox", name: string) => dialog.getByRole(role, { name, exact: true });
@@ -40,7 +41,7 @@ for (const width of [1440, 390]) {
       expect(await top("combobox", "Profile")).toBeLessThan((await rename.boundingBox())!.y);  // W6: the name is a Rename row
       await rename.click();
       await field("textbox", "Name").fill("renamed-session");
-      await expectAxeClean(page, '[role="dialog"]');
+      await expectAxeClean(page, 'main');
     });
   });
 }

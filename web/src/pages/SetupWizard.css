@@ -1,0 +1,2 @@
+.setup-wizard button, .setup-wizard select, .setup-wizard a { min-height: 44px; }
+.setup-wizard { padding-bottom: env(safe-area-inset-bottom); }

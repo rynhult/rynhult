@@ -1,4 +1,4 @@
-import { wikiShotPath } from "./helpers";
+import { sessionWithChanges, wikiShotPath } from "./helpers";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures";
 import { createHash } from "node:crypto";
@@ -145,4 +145,23 @@ test("pull request tab: a server failure reads as words with Retry, the raw text
   fail = false;
   await alert.getByRole("button", { name: "Retry" }).click();
   await expect(alert).toHaveCount(0);
+});
+
+
+test('session header matches the PR head repository as well as its branch', async ({ page }) => {
+  const sid = await sessionWithChanges(page, 'review-head');
+  const session = await (await page.request.get(`/api/sessions/${sid}`)).json();
+  await page.route(`**/api/sessions/${sid}`, route => route.fulfill({ json: {
+    ...session, repo: 'Example/Demo', changes: { git: true, branch: 'feature', files: 1 },
+  } }));
+  await page.route(`**/api/projects/${session.project_id}/github`, route => route.fulfill({ json: {
+    pulls: [
+      { number: 99, title: 'Fork result', head: 'feature', head_repo: 'outsider/demo', lifecycle: 'approved', url: 'https://github.com/example/demo/pull/99' },
+      { number: 42, title: 'Own result', head: 'feature', head_repo: 'EXAMPLE/DEMO', lifecycle: 'checks_passed', url: 'https://github.com/example/demo/pull/42' },
+    ],
+  } }));
+  await page.goto(`/sessions/${sid}?tab=changes`);
+  await page.getByRole('button', { name: 'Session details' }).click();
+  await expect(page.getByRole('link', { name: /#42/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /#99/ })).toHaveCount(0);
 });

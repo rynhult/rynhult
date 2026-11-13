@@ -18,9 +18,10 @@ See [platform scope and native-app order](/User-Guide/Install#v10-platform-scope
 | [Deploying](/User-Guide/Deploying) | Draft small-team deployment: Linux server, private remote access, nodes, recovery and updates |
 | [Install on Windows](/User-Guide/Install-Windows) | Rynhult Setup for Windows 11: the main Rynhult or an additional machine |
 | [Install on a Mac](/User-Guide/Install-macOS) | Rynhult Setup for macOS: an additional machine |
+| [Moving from Conductor or Jules](/User-Guide/Moving-from-Conductor) | Keep existing folders and branches, export old work and start fresh sessions |
 | [Getting started](/User-Guide/Getting-Started) | First sign-in, the Get started list, the layout, your first session |
 | [Setup levels](/User-Guide/Setup-Levels) | Personal navigation, skippable setup and separate team/Security recommendations |
-| [New layout](/User-Guide/New-Layout) | Optional Preview shell, browsing without leaving work, Continue and next-reload opt-in |
+| [New layout](/User-Guide/New-Layout) | Application frame, browsing without leaving work, Continue and working columns |
 | [Glossary](/User-Guide/Glossary) | The words Rynhult uses, in plain language |
 | [Host and providers](/User-Guide/Host-and-Providers) | Signing your agents in (Providers), machine health and plan usage |
 | [Connect an agent](/User-Guide/Connect-an-Agent) | Installing and signing in an agent CLI where Rynhult can't install it: step by step per system |

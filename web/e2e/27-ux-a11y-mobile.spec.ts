@@ -20,7 +20,7 @@ const test = base.extend<{}, { ownedSession: string }>({
     }
   }, { scope: 'worker', timeout: 90_000 }],
 });
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 // UX plan WP5: all original routes, tabs, modal surfaces and empty Overview,
 // in both themes. One long sweep previously spent its 180s budget on earlier
@@ -33,7 +33,7 @@ for (const scheme of ["dark", "light"] as const) {
   });
   for (const tab of SESSION_TABS) test(`mobile axe: session ${tab || 'terminal'}, ${scheme}`, async ({ page, ownedSession }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await expectAxeCleanPage(page, `/sessions/${ownedSession}${tab}`, () => expect(page.getByRole("tablist")).toBeVisible());
+    await expectAxeCleanPage(page, `/sessions/${ownedSession}${tab}`, () => expect(page.getByRole("tablist", { name: "Session views", exact: true })).toBeVisible());
   });
   for (const surface of ['palette', 'new session', 'drawer', 'empty Overview']) {
     test(`mobile axe: ${surface}, ${scheme}`, async ({ page, ownedSession }) => {
@@ -46,15 +46,16 @@ for (const scheme of ["dark", "light"] as const) {
       }
       await expectAxeCleanPage(page, "/", async () => {
         if (surface === 'palette') {
-          await page.getByRole("button", { name: "Jump to…" }).click();
+          await page.getByRole("button", { name: "Header tools", exact: true }).click();
+          await page.getByRole("button", { name: "Go to…", exact: true }).click();
           await page.keyboard.type("se");
           await expect(page.getByRole("option").first()).toBeVisible();
         } else if (surface === 'new session') {
           await page.getByRole("button", { name: "New session" }).click();
-          await expect(page.getByRole("dialog")).toBeVisible();
+          await expect(page.getByRole("region", { name: "New session", exact: true })).toBeVisible();
         } else if (surface === 'drawer') {
-          await page.getByRole("button", { name: "Menu" }).click();
-          await expect(page.getByRole("dialog", { name: "Menu" })).toBeVisible();
+          await page.getByRole("button", { name: "More", exact: true }).click();
+          await expect(page.getByRole("dialog", { name: "Browse", exact: true })).toBeVisible();
         } else await expect(page.getByText("No projects yet.")).toBeVisible();
       });
     });
@@ -63,10 +64,10 @@ for (const scheme of ["dark", "light"] as const) {
 
 test("mobile: the drawer takes focus, keeps it, closes on Esc and gives it back to Menu", async ({ page }) => {
   await page.goto("/");
-  const menu = page.getByRole("button", { name: "Menu" });
+  const menu = page.getByRole("button", { name: "More", exact: true });
   await menu.focus();
   await page.keyboard.press("Enter");
-  const drawer = page.getByRole("dialog", { name: "Menu" });
+  const drawer = page.getByRole("dialog", { name: "Browse", exact: true });
   await expect(drawer).toBeVisible();
   await expect(menu).toHaveAttribute("aria-expanded", "true");
   expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
@@ -81,7 +82,7 @@ test("mobile: the drawer takes focus, keeps it, closes on Esc and gives it back 
   await expect(menu).toBeFocused();
   // A link inside closes it and navigates
   await menu.click();
-  await drawer.getByRole("link", { name: "Catalog" }).click();
+  await drawer.getByRole("button", { name: "Tools", exact: true }).click();
   await expect(page).toHaveURL(/\/catalog$/);
   await expect(drawer).toBeHidden();
 });

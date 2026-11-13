@@ -1,6 +1,6 @@
 import { loadPage } from './loaded-page';
 import { expect, test } from "./fixtures";
-import { AUTH_FILE } from "./helpers";
+import { openAdvanced, selectSettingsSection, AUTH_FILE } from "./helpers";
 
 // Break-it pass 9: careless use of tonight's UX waves (focused Settings, automatic session names, Overview links).
 test.use({ storageState: AUTH_FILE });
@@ -10,7 +10,8 @@ test("an emoji topic names the session with whole characters, and the launch pre
   page.on("response", response => { if (response.url().endsWith("/api/sessions/preview")) previews.push(response.status()); });
   await page.goto("/");
   await page.getByRole("button", { name: "New session", exact: true }).first().click();
-  const dialog = page.getByRole("dialog", { name: "New session" });
+  const dialog = page.getByRole("region", { name: "New session" });
+  await openAdvanced(dialog);
   await dialog.getByRole("radio", { name: "Local workspace" }).click();
   // 41 characters: cutting the name at 40 UTF-16 units used to leave half of the last emoji.
   const preview = page.waitForResponse(response => response.request().method() === "POST"
@@ -30,7 +31,7 @@ test("an emoji topic names the session with whole characters, and the launch pre
 
 test("Back while a Settings dialog is open keeps that dialog visible, with its draft and focus", async ({ page }) => {
   await page.goto("/settings#passkeys");
-  await page.locator("#settings-section").selectOption("dns");
+  await selectSettingsSection(page, 'dns');
   await page.getByRole("button", { name: "Add infrastructure credential" }).click();
   const dialog = page.getByRole("dialog", { name: "Add infrastructure credential" });
   await dialog.getByLabel("Credential name").fill("break-it-9 draft");

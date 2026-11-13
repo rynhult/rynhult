@@ -2,7 +2,7 @@ import { expect } from './fixtures';
 import { test } from './shell-state';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, wikiShotPath } from './helpers';
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const) {
   test(`owner feature panel at ${width}px in ${theme}`, async ({ page }, testInfo) => {
@@ -25,7 +25,10 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const)
       await expect(schedules).toBeFocused(); // saving never disables the focused switch
       await expect(panel.getByRole('status')).toHaveText('Saved: Scheduled sessions is off.');
       await expect.poll(async () => (await page.request.get('/api/schedules')).status()).toBe(404);
-      await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Schedules', exact: true })).toHaveCount(0);
+      await page.goto('/catalog');
+      await expect(page.getByRole('complementary', { name: 'Context sidebar' }).getByRole('link', { name: 'Schedules', exact: true })).toHaveCount(0);
+      await page.goto('/settings#admin-features');
+      await expect(panel.getByRole('heading', { name: 'Admin features' })).toBeVisible();
       await expect(panel.getByText('Core sessions', { exact: true })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expectAxeClean(page, '#admin-features');

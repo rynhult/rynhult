@@ -1,3 +1,4 @@
+import { projectWorkspace } from "./helpers";
 import { wikiShotPath } from "./helpers";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures";
@@ -13,7 +14,7 @@ test("tool requests show destination, approve pins version, reject does not inst
   // Own the session: the newest running session may belong to a demoted member
   // whose account no longer matches it, so tool requests from it are refused.
   const project = await page.request.post("/api/projects", { headers,
-    data: { slug: `tools-${Date.now()}`, name: "Tools demo", workspace_path: info().workspace, host: "local" } });
+    data: { slug: `tools-${Date.now()}`, name: "Tools demo", workspace_path: projectWorkspace(), host: "local" } });
   expect(project.ok()).toBe(true);
   const pid = (await project.json()).id;
   const trust = await page.request.post(`/api/projects/${pid}/trust`, { headers });

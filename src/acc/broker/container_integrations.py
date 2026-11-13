@@ -60,6 +60,15 @@ def start(config, session_id, container, provider, run_dir, *, env=None):
                        else snapshot(Path.home(), provider, session_id, container['generation']))
         egress = options['egress']
         policy = Policy(tuple(egress['deny_hosts']), tuple(egress['deny_networks'])) if egress else Policy()
+        caps_file = run_dir / 'session-capabilities.json'
+        if caps_file.exists():
+            from dataclasses import replace
+
+            from acc.session_capabilities import normalize
+            caps_proof = json.loads(caps_file.read_text())
+            caps = normalize(caps_proof['effective'])
+            policy = replace(policy, allow_hosts=tuple(caps['network']) if caps['network'] is not None else None,
+                             expires_at=caps['expires_at'], parent=caps_proof.get('parent'))
         gateway = Gateway(run_dir / '.acc-integrations.sock', session_id, container['generation'], provider,
                           credentials, policy, enabled=bool(egress), policy_digest=policy_digest(entry))
         with _lock:

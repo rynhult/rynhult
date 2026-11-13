@@ -25,7 +25,7 @@ _name = Path(sys.argv[0]).name
 provider = next((p for p in ("codex", "copilot", "antigravity", "cursor", "opencode", "gh") if p in _name), "claude")
 args = sys.argv[1:]
 if provider == "codex" and args == ["--version"]:
-    print("codex-cli 0.163.0")
+    print("codex-cli 0.167.1")
     sys.exit(0)
 if provider == "codex" and args == ["--help"]:
     print("Usage: codex [OPTIONS]\n  --no-alt-screen  Disable alternate screen mode")

@@ -4,19 +4,8 @@ import {expect,type Page} from '@playwright/test';
 import {AUTH_FILE,csrfHeaders,expectAxeClean,gitProject,info,PASSWORD,totp,verifyAgain,waitForSessionState} from './helpers';
 
 // The member journey saves a different person's shell preference.
-test.use({storageState:AUTH_FILE,presentationChanges:['layouts','ui_shell']});
-async function shell(page:Page,enabled=true) {
-  const put=async()=>{
-    const state=await(await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell',{headers:await csrfHeaders(page),data:{enabled:true,revision:state.revision}});
-  };
-  let result=await put();if(!result.ok()){await verifyAgain(page);result=await put();}
-  expect(result.ok(),await result.text()).toBeTruthy();
-  await preference(page,enabled);
-}
-async function preference(page:Page,enabled:boolean) {
-  expect((await page.request.put('/api/preferences/ui-shell',{headers:await csrfHeaders(page),data:{enabled}})).ok()).toBeTruthy();
-}
+test.use({storageState:AUTH_FILE,presentationChanges:['layouts',]});
+
 async function results(page:Page,prefix:string,foreignSession?:string) {
   const project=await gitProject(page,prefix);
   const response=await page.request.post('/api/sessions',{headers:await csrfHeaders(page),data:{project_id:project.id,provider:'claude',name:`${prefix} visible session`}});
@@ -57,18 +46,18 @@ async function matrix(page:Page,project:Awaited<ReturnType<typeof results>>,role
 }
 
 test('owner sees newest five indexed results, opens notes and the complete Knowledge view',async({page})=>{
-  test.setTimeout(90000);await shell(page);const project=await results(page,'cedar');
+  test.setTimeout(90000);const project=await results(page,'cedar');
   await matrix(page,project,'cedar');
 });
 test('member sees own results and never resolves another person’s private session',async({page,context})=>{
-  test.setTimeout(90000);await shell(page);
+  test.setTimeout(90000);
   const foreign=await results(page,'cedar-private');const ownerProject=foreign.id;const ownerSession=foreign.session;
   const account=`results-${crypto.randomUUID().slice(0,8)}-agent`;writeFileSync(`${info().state}/fixture-accounts/${account}`,'');
   const invite=await page.request.post('/api/users/invites',{headers:await csrfHeaders(page),data:{role:'member',account}});
   expect(invite.ok(),await invite.text()).toBeTruthy();const token=(await invite.json()).link.split('/').pop();await context.clearCookies();
   const begin=await page.request.post('/api/auth/invite/begin',{headers:{Origin:info().origin},data:{token}});
   const joined=await page.request.post('/api/auth/invite/complete',{headers:{Origin:info().origin},data:{token,username:`blair-results-${Date.now()}`,password:PASSWORD,code:totp((await begin.json()).totp_secret)}});
-  expect(joined.ok(),await joined.text()).toBeTruthy();await preference(page,true);
+  expect(joined.ok(),await joined.text()).toBeTruthy();
   expect((await page.request.get(`/api/projects/${ownerProject}/knowledge`)).status()).toBe(404);
   expect((await page.request.get(`/api/sessions/${ownerSession}`)).status()).toBe(404);
   const project=await results(page,'maple',ownerSession);
@@ -77,7 +66,7 @@ test('member sees own results and never resolves another person’s private sess
   await page.getByRole('tab',{name:'Recent results',exact:true}).click();expect(forbidden).toEqual([]);await expect(page.getByRole('region',{name:'Recent results',exact:true})).not.toContainText('cedar-private visible session');
 });
 test('empty, unavailable and retained results stay distinct; standard Overview stays unchanged',async({page})=>{
-  await shell(page);const project=await gitProject(page,'birch');await page.goto(`/projects/${project.id}?section=results`);
+  const project=await gitProject(page,'birch');await page.goto(`/projects/${project.id}?section=results`);
   const recent=page.getByRole('region',{name:'Recent results',exact:true});
   await expect(recent).toContainText('Nothing saved here yet');
   await page.route(`**/api/projects/${project.id}/knowledge`,route=>route.fulfill({status:503,json:{detail:'Fixture notes unavailable'}}));
@@ -88,5 +77,5 @@ test('empty, unavailable and retained results stay distinct; standard Overview s
   await page.route(`**/api/projects/${project.id}/knowledge`,route=>route.fulfill({status:503,json:{detail:'Fixture notes unavailable'}}));
   await recent.getByRole('button',{name:'Refresh results',exact:true}).click();
   await expect(recent).toContainText('Results unavailable');await expect(recent).toContainText('retained.md');await expect(recent).toContainText('Showing the last');await expectAxeClean(page);
-  await preference(page,false);await page.reload();await expect(recent).toHaveCount(0);
+  await page.reload();await expect(recent).toHaveCount(0);
 });

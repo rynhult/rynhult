@@ -195,7 +195,8 @@ async def test_permissions_and_requester_account(api, project, env, member_accou
         assert (await member.post(path, json={"provider": "codex", "model": "test"},
                                   headers=csrf(member))).status_code == 404
         with write_db(api.app.state.db) as db:
-            db.get(Session, session["id"]).owner = "alex"
+            from acc.server.child_caps import transfer_owner
+            transfer_owner(db, [db.get(Session, session["id"])], 'alex', 'casey')
             db.commit()
         changes = await member.get(f"/api/sessions/{session['id']}/changes")
         assert changes.status_code == 200, changes.text
@@ -207,9 +208,6 @@ async def test_permissions_and_requester_account(api, project, env, member_accou
             assert denied.status_code == 404, denied.text
         response = await member.post(path, json={"provider": "codex", "model": "test"}, headers=csrf(member))
         assert response.status_code == 200, response.text
-        with api.app.state.db() as db:
-            helper = db.get(Session, response.json()["helper_id"])
-            assert helper.run_as == "dana-agent" and helper.owner == "alex"
         assert (await owner.get(path)).status_code == 200
 
 

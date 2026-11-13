@@ -62,7 +62,11 @@ async def test_selected_start_refuses_changed_frozen_authority(api, env, project
         assert db.get(Team, caller['id']).started == 0
         # M17 rejects a removed agent/machine before claiming the selection; an owner change
         # reaches the claim's independent recheck and records a selection refusal. Neither launches.
-        assert db.get(selection.Selection, row['id']).state == ('refused' if change == 'owner' else 'proposed')
+        assert db.get(selection.Selection, row['id']).state == ('refused' if change == 'owner' else 'proposed'), {
+            'reply': reply, 'caller_state': db.get(Session, caller['id']).desired_state,
+            'caller_error': db.get(Session, caller['id']).last_error,
+            'audit': [(item.action, item.detail) for item in db.scalars(select(AuditLog).where(AuditLog.target == caller['id']))]}
+
         assert db.scalar(select(AuditLog).where(AuditLog.action == 'team.start')) is None
 
 
@@ -415,3 +419,18 @@ async def test_owner_reducing_capacity_during_prepare_stops_stale_plan_launches(
     monkeypatch.setattr(api.app.state.supervisor.broker, 'call', call)
     await scheduler.tick()
     assert [identifier for identifier, _ in machine.started] == [first, second]
+
+
+async def test_changed_owner_refuses_selection_even_when_execution_fence_wins(api, env, project):
+    caller, row = await proposal(api, env, project)
+    with write_db(api.app.state.db) as db:
+        lead_row = db.get(Session, caller['id'])
+        lead_row.owner = 'another-person'
+        lead_row.desired_state = 'stopped'  # deterministic ordering: reconciliation fenced the old owner first
+        db.commit()
+    reply = await request(api, env, caller, 'start', assignment=row['assignment_id'], selection=row['id'], name='Refused')
+    assert not reply['ok']
+    with api.app.state.db() as db:
+        assert db.get(selection.Selection, row['id']).state == 'refused'
+        assert db.get(Team, caller['id']).started == 0
+        assert db.scalar(select(AuditLog).where(AuditLog.action == 'team.start')) is None

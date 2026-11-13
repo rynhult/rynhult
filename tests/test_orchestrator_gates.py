@@ -723,3 +723,58 @@ def test_gate_checkout_uses_the_merged_git_hardening(tmp_path):
         assert list(marks.iterdir()) == []
     finally:
         gate_ops.gate_cleanup(cfg, job)
+
+
+async def test_delegated_gate_cannot_prepare_or_start_outside_session_capabilities(queue):
+    from test_session_capabilities import family
+
+    from acc.server.models import Session
+    from acc.server.session_caps import narrow
+    api, project, machine, scheduler = queue
+    root, child = family(api, project, {'network': []})
+    jid = add(api, project, 'acc/capped')
+    with write_db(api.app.state.db) as db:
+        db.get(gates.GateJob, jid).requested_by = 'session:' + child
+        db.commit()
+    await scheduler.tick()
+    assert jobs(api)[jid][0] == 'refused' and not machine.started
+    # A queued job cannot borrow authority removed before its dispatch check.
+    with write_db(api.app.state.db) as db:
+        narrow(db, db.get(Session, root), {'ports': []}, '@api')
+        db.commit()
+    again = add(api, project, 'acc/capped-again')
+    with write_db(api.app.state.db) as db:
+        db.get(gates.GateJob, again).requested_by = 'session:' + child
+        db.commit()
+    await scheduler.tick()
+    assert jobs(api)[again][0] == 'refused' and not machine.started
+
+
+async def test_running_delegated_gate_stops_on_next_poll_when_parent_narrows(queue):
+    from test_session_capabilities import family
+
+    from acc.server.models import Session
+    from acc.server.session_caps import narrow
+    api, project, machine, scheduler = queue
+    root, child = family(api, project, {})
+    jid = add(api, project, 'acc/capped-live')
+    with write_db(api.app.state.db) as db:
+        db.get(gates.GateJob, jid).requested_by = 'session:' + child
+        db.commit()
+    await scheduler.tick()
+    assert jobs(api)[jid][0] == 'running'
+    stops = []
+    original = machine.call
+
+    async def call(method, **params):
+        if method == 'gate_stop':
+            stops.append(params['job'])
+            machine.finished.add(params['job'])
+        return await original(method, **params)
+
+    api.app.state.supervisor.broker.call = call
+    with write_db(api.app.state.db) as db:
+        narrow(db, db.get(Session, root), {'ports': []}, '@api')
+        db.commit()
+    await scheduler.tick()
+    assert stops == [jid] and jobs(api)[jid][0] == 'cancelled'

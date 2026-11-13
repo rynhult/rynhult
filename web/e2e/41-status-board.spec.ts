@@ -245,7 +245,12 @@ test("the board follows the light theme too, and stays readable", async ({ page 
 
 test("Status board is in the owners' navigation; members get an explanation", async ({ page }) => {
   await page.goto("/host");
-  await page.getByRole("link", { name: "Status board" }).first().click();
+  await page.getByRole("navigation", { name: "Rail", exact: true }).getByRole("button", { name: "Tools", exact: true }).click();
+  const sidebar = page.getByRole("complementary", { name: "Context sidebar" });
+  await expect(sidebar.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
+  const boardLink = sidebar.getByRole("link", { name: "Status board", exact: true });
+  if (!await boardLink.isVisible()) await sidebar.getByText("More tools", { exact: true }).click();
+  await boardLink.click();
   await expect(page).toHaveURL(/\/board$/);
   await page.getByRole("link", { name: "Back to Rynhult" }).click();
   await expect(page).toHaveURL(/\/$/);

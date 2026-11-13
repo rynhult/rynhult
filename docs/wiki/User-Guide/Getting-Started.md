@@ -1,6 +1,9 @@
 # Getting started
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
+> Some illustrations predate the current frame and need refresh; use the written navigation and controls below.
+
+Coming from another agent workspace? See [Moving from Conductor or Jules](/User-Guide/Moving-from-Conductor) to continue in your existing folders and branches.
 
 ## Before you start
 - Rynhult is installed on your machine (see [Install](/User-Guide/Install)) and you can open it in a browser, for example at `https://rynhult.example.com`.
@@ -26,6 +29,7 @@ The first time Rynhult starts it has no users. It writes a one-time **setup toke
    ```
 3. Scan the QR code with an authenticator app (any TOTP app works).
 4. Choose a **Username** and a password (12 characters or more), enter the 6-digit code from the app, and select **Finish setup**.
+5. Copy or download the recovery codes, store them offline, then confirm **I saved the codes**. The setup checklist opens next.
 
 You are signed in. Later sign-ins use your username, password and a fresh code, or a [passkey enrolled in Settings](/User-Guide/People-and-Sign-in#add-and-manage-passkeys). An owner can require passkeys per role. Sessions last 14 days.
 
@@ -33,8 +37,7 @@ You are signed in. Later sign-ins use your username, password and a fresh code, 
 
 ## Choose what you see
 
-The [new layout](/User-Guide/New-Layout) is the only layout for everyone signed in.
-Classic is retired, including previously saved classic choices.
+The [application frame](/User-Guide/New-Layout) is the same for everyone signed in.
 
 Overview offers a compact **Choose what you see** prompt linking to
 **Settings → Setup level**. Choose a level there, or select **Dismiss** on the
@@ -46,12 +49,12 @@ See [Setup levels](/User-Guide/Setup-Levels).
 ## The layout
 The angular R mark identifies Rynhult on the sign-in screen, in the sidebar and in your installed app icon. Its ink follows the light or dark surface. The dark theme uses charcoal and slate surfaces with frost and periwinkle accents; the light theme uses snow and blue-grey surfaces with a deeper periwinkle accent. Amber still means attention, red means failure, and green means healthy.
 
-![The Rynhult layout: sidebar, top bar with Jump to, and the overview](/.attachments/overview.png)
+![Earlier Overview illustration; current rail and header controls are described below](/.attachments/overview.png)
 
-- **Sidebar.** The main pages, then every running session, one click away, grouped into **Needs you**, **Working**, **Unknown** and **Idle** (five each, then **+N more**). [Unknown](/User-Guide/Sessions#when-a-working-status-is-too-old) means working-hook evidence is too old. The dot beside the host name turns red if Rynhult cannot reach its broker (sessions can't be started or attached then).
-- **Top bar.** Where you are (breadcrumbs), a **Live** indicator that turns red when data stops updating, **Jump to…** (<kbd>⌘K</kbd> / <kbd>Ctrl K</kbd>) for pages, projects, sessions and commands, and **New session**. **Search** in the sidebar finds words in conversations; **Jump to…** also links to it.
-- **Guide.** The last item in the sidebar opens this documentation inside Rynhult.
-- **Theme.** Rynhult follows your device's light or dark setting (**System**). The button at the bottom of the sidebar cycles **System**, **Light** and **Dark**; Rynhult remembers a Light or Dark choice on that device, and **System** follows the device again, even when it changes while Rynhult is open.
+- **Rail and sidebar.** Choose a main area in the desktop rail; its contextual sidebar lets you browse projects, sessions and tools without replacing your working view. Setup level can simplify the entries you normally see.
+- **Header.** **Go to…** (<kbd>⌘K</kbd> / <kbd>Ctrl K</kbd>) opens navigation and commands. **Search conversations** finds conversation content; **Find project files** searches filenames. **New session** opens its form in the working area. Connection and security indicators stay in the header.
+- **Guide.** Open the Guide from **Tools**.
+- **Theme.** Open the account menu in the header to cycle **System**, **Light** and **Dark**. The device remembers your choice; System follows the device's appearance changes.
 
 The browser's theme colour follows the selected Rynhult surface too, including an
 explicit Light or Dark choice opposite to the device setting. The installed-app
@@ -59,7 +62,7 @@ launch splash remains charcoal; OS/browser chrome support can vary.
 
 ![The overview in the light theme](/.attachments/overview-light.png)
 
-- **Phone.** A tab bar at the bottom (Overview, [Inbox](/User-Guide/Glossary#inbox), Sessions, Projects) and the full menu behind the menu button. If Rynhult can't reach its broker or the network drops, a red banner shows under the top bar.
+- **Phone.** A bottom rail offers Overview, [Inbox](/User-Guide/Glossary#inbox), Sessions and Projects; **More** opens the Browse sheet with navigation and the contextual sidebar. If Rynhult can't reach its broker or the network drops, a red banner shows under the top bar.
 
 ![Rynhult on a phone](/.attachments/phone-overview.png)
 
@@ -73,9 +76,7 @@ Until you've done them, the Overview starts with a **Get started** list. Each st
 
 ![Get started on a new install](/.attachments/get-started.png)
 
-Under it, a one-line banner points to [Connect your phone](/User-Guide/Connect-Your-Phone): use Rynhult from your phone, with notifications when a session needs you. Select **×** (**Dismiss**) when you're done with it, or if you don't want it. It stays dismissed for you on every browser, and it never shows inside the installed phone app (opened from the home screen).
-
-![The Connect your phone banner](/.attachments/phone-banner.png)
+Follow [Connect your phone](/User-Guide/Connect-Your-Phone) to use Rynhult from your phone, with notifications when a session needs you.
 
 ## Your first session
 1. Select **New session**. If you have no project yet, select **New project** inside it; what you entered stays.
@@ -91,3 +92,12 @@ SQLite remains the default and needs no setup changes. An owner can opt into Pos
 Keep the connection URL and credentials in the root-only service configuration (`/etc/default/accd`, mode `0600`), never in an agent-readable file. PostgreSQL defaults to verified TLS, including hostname verification; configure the database CA rather than disabling verification when a certificate is refused.
 
 An existing installation requires an offline owner-run transfer from a trusted root shell with per-table row-count and checksum verification. The transfer CLI refuses member and agent accounts and never overwrites a populated target. Preserve the vault key and other files separately. Rynhult's current server-backup capture supports SQLite only; PostgreSQL needs independent database backups and restore drills. Ask the installation owner to follow the repository's `docs/POSTGRESQL.md` runbook before switching the setting. The dashboard and agent-session workflow stay the same.
+
+## Continue setup
+
+After saving first-run recovery codes, the setup checklist guides your level,
+protections, machine, provider, project, backups, updates and optional previews.
+Use **Continue setup / Review setup** on Overview or **Review setup** in
+Settings → Setup level to resume. Optional steps have **Finish later** and remain
+unfinished reminders. See [First-run checklist](/User-Guide/Install#first-run-checklist)
+for recovery after interruption, billing, backups and reviewed settings changes.

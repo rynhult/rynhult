@@ -36,6 +36,9 @@ def router(ctx: Context) -> APIRouter:
     async def terminal_reference(acc_id: str, who=Depends(ctx.principal)):
         with db() as s:
             target = ctx.session_for(s, who, acc_id)
+            from ..models import RelaySession
+            if s.get(RelaySession, acc_id):
+                raise HTTPException(409, 'Relay Terminal mediation is not qualified for this session.')
             run = run_identity(target)
             if run is None or not target.tmux_name:
                 raise HTTPException(409, "This session has no current terminal run.")
@@ -109,6 +112,13 @@ def router(ctx: Context) -> APIRouter:
                 await ws.accept()
                 await ws.close(code=4404)
                 return
+            from ..models import RelaySession
+            if session and s.get(RelaySession, acc_id):
+                # Even a read attach can emit native replies/resize. Until the
+                # proxy/TerminalHost is qualified, never enter the raw bridge.
+                await ws.accept()
+                await ws.close(code=4409, reason='Relay Terminal mediation is unavailable')
+                return
             tmux_name = session.tmux_name if session and session.management == "acc" else None
             if session and mode == "write":
                 from ...backup_activation import held
@@ -152,6 +162,9 @@ def router(ctx: Context) -> APIRouter:
                         target = ctx.session_for(s, Principal(current.user.username, current.user.role,
                             current.user.account or settings.default_account, current.user.id), acc_id)
                     except HTTPException:
+                        return False
+                    from ..models import RelaySession
+                    if s.get(RelaySession, acc_id):
                         return False
                     return bool(target.management == 'acc' and (run_id is None or (run_reference(target) == bound and target.tmux_name == tmux_name)) and (run is None or (
                         instance == ctx.terminal_instance and run_identity(target) == run

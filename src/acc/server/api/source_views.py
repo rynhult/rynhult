@@ -1,4 +1,6 @@
 """Authorized, read-only membership/location views. No preparation or launch."""
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 
@@ -37,9 +39,10 @@ def router(ctx: Context):
     def project_directory(q: str = Query('', max_length=200), source_owner: str | None = Query(None, max_length=36),
                           host_id: str | None = Query(None, max_length=36), offset: int = Query(0, ge=0, le=100000),
                           limit: int = Query(30, ge=1, le=100), projects_only: bool = False,
-                          include_archived: bool = True, who=Depends(ctx.principal)):
+                          include_archived: bool = True, sort: Literal['name', 'status', 'activity', 'runtime'] | None = None,
+                          direction: Literal['asc', 'desc'] = 'asc', who=Depends(ctx.principal)):
         with ctx.db() as db:
             return directory(db, who, q=q, source_owner=source_owner, host_id=host_id, offset=offset, limit=limit,
-                             projects_only=projects_only, include_archived=include_archived)
+                             projects_only=projects_only, include_archived=include_archived, sort=sort, direction=direction)
 
     return api

@@ -56,3 +56,26 @@
 
 .shell-project-page .shell-workbar-description { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .shell-project-page > [id^="project-tabs"] { margin-top: 0; }
+
+.shell-project-phone-sort { display: none; }
+.shell-project-list { min-width: 0; }
+.shell-project-list tbody th, .shell-project-list td { padding-top: 10px; padding-bottom: 10px; }
+.shell-project-list th:first-child { width: 32%; }
+.shell-project-list th:nth-child(2), .shell-project-list th:nth-child(3) { width: 23%; }
+.shell-project-list thead button { cursor: pointer; color: var(--text); }
+.shell-project-list thead button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.shell-directory-cards { display: block; min-width: 0; }
+.shell-directory-cards thead { display: none; }
+.shell-directory-cards tbody { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; }
+.shell-directory-cards tr { display: flex; flex-direction: column; padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+.shell-directory-cards tbody th:first-child, .shell-directory-cards td { display: block; width: auto; border: none; padding: 6px 0; }
+@media (max-width: 600px) {
+ .shell-project-phone-sort { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+ .shell-project-list, .shell-project-list tbody { display: block; }
+ .shell-project-list thead { display: none; }
+ .shell-project-list tr { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); padding: 10px 0; gap: 8px; }
+ .shell-project-list tbody th, .shell-project-list td { display: block; width: auto; border: none; padding: 0; }
+ .shell-project-list tbody th:first-child { width: auto; grid-column: 1 / -1; }
+ .shell-project-list td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 11px; }
+ .shell-project-list td:last-child { grid-column: 1 / -1; }
+}

@@ -1,3 +1,4 @@
+import { projectWorkspace } from "./helpers";
 import { expect, test } from "./fixtures";
 import { randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
@@ -33,7 +34,7 @@ test("Preview embeds an isolated demo app on project and session pages, includin
       if (!released.ok) throw new Error(await released.text(), { cause: error });
       throw error;
     }
-  }, { workspace: info().workspace, slug: `preview-${randomUUID().slice(0, 8)}` });
+  }, { workspace: projectWorkspace(), slug: `preview-${randomUUID().slice(0, 8)}` });
   let released = false;
   try {
     expect(setup.sid).toBeTruthy();
@@ -248,7 +249,7 @@ test("Preview reaches the demo machine over its link", async ({ page, context },
     const reservation = await fetch(`/api/projects/${project.id}/ports`, {method:'POST',headers,body:JSON.stringify({port:demoPort.port})});
     if (!reservation.ok) throw Error(await reservation.text());
     return {pid:project.id,port:demoPort.port};
-  }, { workspace: info().workspace, slug: `remote-preview-${randomUUID().slice(0, 8)}` });
+  }, { workspace: projectWorkspace(), slug: `remote-preview-${randomUUID().slice(0, 8)}` });
   let released = false;
   try {
     await page.goto(`${origin}/projects/${setup.pid}?tab=preview`);

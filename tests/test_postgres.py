@@ -193,7 +193,7 @@ def test_postgres_mutations_serialize_and_background_locks_fail_fast(postgres_ur
         engine.dispose()
 
 
-async def test_postgres_app_initializes_and_serves_database_reads(postgres_url, env):
+async def test_postgres_app_initializes_and_serves_database_reads(postgres_url, env, broker):
     from dataclasses import replace
 
     import httpx
@@ -218,7 +218,7 @@ async def test_postgres_app_initializes_and_serves_database_reads(postgres_url, 
             assert response.json() == []
             response = await client.post('/api/projects', json={
                 'slug': 'example', 'name': 'Example', 'workspace_path': str(env['workspaces'] / 'demo')})
-            assert response.status_code == 201
+            assert response.status_code == 201, response.text
             response = await client.get('/api/projects')
             assert [project['slug'] for project in response.json()] == ['example']
     finally:

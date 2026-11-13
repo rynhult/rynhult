@@ -380,14 +380,28 @@ registry and per-slice checks refuse access while Off, including explicit deploy
 signed-in person; installation API tokens are refused. Browser writes use the
 existing CSRF/Origin checks. The Setting key is `setup_level.<username>` (immutable,
 retired names are reserved). Its version-1 value contains `level` (integer 0–6 or
-null), `dismissed` (boolean) and `version`. No migration or environment flag is
+null), `dismissed` (boolean) and `version`, plus revision-checked `wizard` progress. No environment flag is
 needed. Unknown versions/levels fall back to the complete current layout.
 
 Missing preferences preserve current navigation and offer a dismissible setup
-card. Null means **Current layout · not yet chosen**. Choices only filter the new
+card. Null means **Current layout · not yet chosen**. Choices only filter the
 shell's rail and Tools after existing navigation authorization/feature filtering.
-More tools and direct routes remain available. The standard layout retains its
-existing navigation. Policy, grants, provider modes, team profiles, running
+More tools and direct routes remain available. Policy, grants, provider modes, team profiles, running
 sessions and feature switches are never written by this endpoint. Security
 recommendations link to the existing owner preview/apply flow. See
 [Setup levels](/User-Guide/Setup-Levels).
+
+
+`/setup/wizard` uses this same preference. Its version-1 wizard object holds
+`preset_version`, `revision`, step states/timestamps, selected machine/account
+binding, project id and recovery acknowledgement requirement. Writes supply the
+current revision; conflicting or unknown-version progress returns 409 for review.
+Fresh local enrollment requires recovery acknowledgement before later steps.
+Deferred steps stay unfinished. Checklist completion never substitutes for live
+machine, project, provider or permission checks at launch.
+
+Personal header presentation uses `GET/PUT /api/preferences/ui-header`. Working
+arrangements use `/api/projects/{project_id}/layouts/{device}/{viewport}` with
+revision-checked PUT and explicit `/reset`; file references come from the same
+project's `/layouts/file-refs`. These are presentation records, not authority or
+draft storage. There is one application frame and no stored frame selector.

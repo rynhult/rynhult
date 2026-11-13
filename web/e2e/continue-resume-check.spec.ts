@@ -1,3 +1,4 @@
+import { projectWorkspace } from "./helpers";
 import { expect, test, type Page, type Route } from './fixtures';
 import { AUTH_FILE, expectAxeClean, info } from './helpers';
 
@@ -23,13 +24,12 @@ const raced = 'The reviewed settings changed. Start a new session with the curre
 async function arrange(page: Page, member = false, shell = true) {
   const csrf = (await page.context().cookies()).find(c => /acc_csrf$/.test(c.name))!.value;
   const response = await page.request.post('/api/projects', { headers: { 'x-acc-csrf': csrf }, data: {
-    slug: `resume-${Date.now()}`, name: 'Cedar archive', workspace_path: info().workspace } });
+    slug: `resume-${Date.now()}`, name: 'Cedar archive', workspace_path: projectWorkspace() } });
   expect(response.ok()).toBeTruthy(); const project = await response.json();
   const auth = await (await page.request.get('/api/auth/state')).json();
-  await intercept(page, '**/api/auth/state', route => route.fulfill({ json: { ...auth,
+  await intercept(page, '**/api/auth/state', route => route.fulfill({ json: { ...auth, person_id: member ? 'fixture-member' : 'fixture-owner',
     role: member ? 'member' : 'owner', username: member ? 'casey' : auth.username,
-    instance: { ...auth.instance, features: { ...auth.instance?.features, new_shell: true } } } }));
-  await intercept(page, '**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: shell, person_id: member ? 'fixture-member' : 'fixture-owner' } }));
+    instance: { ...auth.instance, features: { ...auth.instance?.features } } } }));
   const session = { id: 'stopped-session', name: 'Restore preview', project_id: project.id, project: project.slug,
     provider: 'claude', desired_state: 'stopped', observed_state: 'stopped', management: 'acc',
     run_as: 'demo-agent', host: 'local', cwd: project.workspace_path, created_at: new Date().toISOString(),
@@ -133,10 +133,10 @@ test('checks are lazy, limited to visible authorized rows and at most four in fl
   expect(peak).toBeLessThanOrEqual(4); expect(state.posts).toEqual([]);
 });
 
-test('standard shell retains the existing Resume action without eligibility reads', async ({ page }) => {
+test('direct stopped-session list retains its existing Resume action', async ({ page }) => {
   const state = await arrange(page, false, false);
   await page.goto('/sessions?group=stopped');
-  await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeEnabled();
   expect(state.reads).toEqual([]); expect(state.posts).toEqual([]);
 });

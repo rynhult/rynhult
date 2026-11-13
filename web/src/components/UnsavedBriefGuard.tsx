@@ -19,6 +19,10 @@ export function UnsavedBriefGuard({ children }: { children: ReactNode }) {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
     const allowed = allowedPath.current === nextLocation.pathname;
     allowedPath.current = undefined;
+    // Opening the retained launcher keeps the project editor and its draft mounted.
+    const search = (value: string) => { const params = new URLSearchParams(value); params.delete('new-session'); return params.toString(); };
+    if (currentLocation.pathname === nextLocation.pathname && currentLocation.hash === nextLocation.hash
+      && search(currentLocation.search) === search(nextLocation.search)) return false;
     return !allowed && editors > 0
       && `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`
         !== `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`;

@@ -29,7 +29,7 @@ for (const width of [1440, 390]) {
             ({ name, kind: "text", size: 120, mtime: 1, too_large: false })) },
         }));
         await gotoAppPage(page, `/sessions/${session.id}?tab=handoffs`);
-        if (width === 390) await page.getByRole("button", { name: "Session details" }).click();
+        await page.getByRole("button", { name: "Session details" }).click();
         const outputs = page.getByRole("group", { name: "Session deliverables" });
         await expect(outputs.getByRole("link", { name: "1 handoff", exact: true })).toBeVisible();
         await expect(outputs.getByRole("link", { name: "2 artifacts", exact: true })).toBeVisible();
@@ -40,7 +40,7 @@ for (const width of [1440, 390]) {
         await expect(page).toHaveURL(/tab=artifacts$/);
         await expect(page.getByText("test-log.txt", { exact: true })).toBeVisible();
         await expect(page.getByText("review.txt", { exact: true })).toBeVisible();
-        if (width === 390) await expect(outputs).not.toBeVisible();
+        await expect(outputs).not.toBeVisible();
         artifactNames = [];
         const emptyArtifacts = page.waitForResponse(response => new URL(response.url()).pathname === `/api/sessions/${session.id}/artifacts` && response.request().method() === "GET");
         await page.reload();
@@ -62,7 +62,7 @@ for (const width of [1440, 390]) {
           }));
         }
         await gotoAppPage(page, `/sessions/${session.id}?tab=handoffs`);
-        if (width === 390) await page.getByRole("button", { name: "Session details" }).click();
+        await page.getByRole("button", { name: "Session details" }).click();
         const outputs = page.getByRole("group", { name: "Session deliverables" });
         await expect(outputs.getByRole("link", { name: "Handoffs unavailable", exact: true })).toBeVisible();
         await expect(outputs.getByRole("link", { name: "Artifacts unavailable", exact: true })).toBeVisible();

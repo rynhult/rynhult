@@ -127,10 +127,19 @@ def status(db: DbSession, username: str) -> dict:
     return out
 
 
-def paused(db: DbSession, username: str, provider: str, *, project_id=None, machine=None, account=None) -> list[str]:
+def paused(db: DbSession, username: str, provider: str, *, project_id=None, machine=None, account=None, policy=None) -> list[str]:
     """The windows of this agent where this person's budget asks to pause new launches (empty: go ahead)."""
+    # Without opt-in rules there is nothing to pause. Avoid usage-window scans
+    # and policy resolution on this common keystroke path; configured rules
+    # still use exactly the ordinary policy/eligibility/status checks below.
+    if not load(db, username).get('rules', {}):
+        return []
     from .security_settings import resolve
-    if not resolve(db, owner=username, project_id=project_id, machine=machine, account=account)['switches']['budget_checks']:
+    # A caller may supply its just-resolved policy within the same transaction.
+    # Never retain this result across an await or another database transaction.
+    if policy is None:
+        policy = resolve(db, owner=username, project_id=project_id, machine=machine, account=account)
+    if not policy['switches']['budget_checks']:
         return []
     labels = {w["id"]: w["label"] for w in windows(db)}
     return [labels.get(window_id, window_id) for window_id, s in status(db, username).items()

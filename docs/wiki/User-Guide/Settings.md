@@ -10,11 +10,11 @@ under **Account**, **Project** and owner-only **Installation**. Choose a project
 before opening its existing settings. Security links select the same scoped editor;
 Allowed folders remains the account-level root-list editor. Old bookmarks remain available.
 
-In the new layout, choose a section in the contextual sidebar; expand **Settings needing attention** for warning details and links. Section links and browser Back still open and focus their destination. **All sections** shows the full page without losing drafts. Section navigation uses button-styled links that preserve bookmarks and keyboard access. The **Remote access** button opens its dedicated page.
+Choose a section in the contextual sidebar; on a phone, **More** opens the Browse sheet with the same scoped links. Expand **Settings needing attention** for warning details and links. Section links and browser Back open and focus their destination while keeping form drafts. Existing `#all` bookmarks still show the full page. The **Remote access** link opens its dedicated page.
 
 **Settings needing attention** links to warnings or errors that need action. Admin feature badges such as **Needs verification** and **Needs qualification** stay on the Admin features panel; an unqualified Preview alone is not an action. Actual cleanup failures and failed changes still need attention. Updates stays in its own section (or All sections), even if an update check fails; its attention link opens the error there.
 
-Open **Settings** in the sidebar and choose **Updates** in **Settings section**. It shows the running version and build, release notes, check status,
+Open **Settings** and choose **Installation → Updates** in its contextual sidebar. It shows the running version and build, release notes, check status,
 backup and update controls, and the optional daily installation schedule. Members do not see this section.
 
 ![Illustrative update controls on 0.15.0-rc.1, with an example future stable release](/.attachments/updates-settings.png)
@@ -25,14 +25,13 @@ See [Updating Rynhult](/User-Guide/Updating) for update steps and recovery, [Key
 
 ## Layout
 
-The new layout is the only layout for everyone signed in. Classic is retired,
-including saved classic choices. Settings has no layout choice and Features
-has no New layout switch. Use Setup level to choose how much you see.
+Everyone uses the same application frame. Use Setup level to choose how much
+navigation you see. Settings and Features have no frame selector.
 See [New layout](/User-Guide/New-Layout).
 
 ## Personal appearance
 
-Choose **Appearance** in **Settings section** (under **Account** in the new layout). **Appearance mode** sets System, Light or Dark in this browser. Installed-theme cards reuse the existing validated **Preview** and **Apply to my account** flow; every signed-in person chooses only for themselves. Owners manage installations through **Manage themes in Catalog**. See [Community themes](/User-Guide/Themes).
+Choose **Account → Appearance** in Settings navigation. **Appearance mode** sets System, Light or Dark in this browser. Installed-theme cards reuse the existing validated **Preview** and **Apply to my account** flow; every signed-in person chooses only for themselves. Owners manage installations through **Manage themes in Catalog**. See [Community themes](/User-Guide/Themes).
 
 ## Remote access and your devices
 
@@ -215,7 +214,7 @@ Passkey changes are disabled while Rynhult is offline. The controls work again a
 
 ## Find a section
 
-Settings opens at **Passkeys**. Use the labelled **Settings section** chooser to focus one section: **Personal** holds your own access devices, passkeys, password, sign-ins, notifications and notification devices, keys, risk labels, Security and the old Guardrails link (and **Certificate** when it applies to you); owners also see **Instance** administration. **All sections** shows the full page and its grouped links for scanning. **Back to settings sections** returns to the chooser. Section links stay in the URL, so bookmarks, reload and the browser’s Back button work.
+Settings opens at **Passkeys**. Use the **Account**, **Project** and owner-only **Installation** links in the contextual sidebar, or in the phone **More** Browse sheet. Account links cover your access devices, passkeys, password, sign-ins, notifications, keys and appearance. Choose a project for project settings; owners also see installation administration. Native section dropdowns and the flat section index are retired. Existing `#all` links show the full page for scanning, and bookmarked section links, reload and browser Back still work.
 
 Switching sections keeps unsaved drafts while you remain on Settings. Warnings and errors from other sections remain in **Settings needing attention**, with links to their controls. A section with an error also opens so its error and controls remain available. Choosing a section does not save its form. Reloading with dirty settings asks for the browser’s leave-page confirmation. Save first: accepting it can discard the draft. See [Unsaved work and reload](/User-Guide/Sessions#unsaved-work-and-reload).
 
@@ -227,11 +226,8 @@ For Linux private-CA trust, download **rynhult-root.crt**, open a terminal in it
 
 See [DNS providers](/User-Guide/DNS-Providers) for Azure service-principal setup, Route 53 policies, legacy Publishing rollback and reviewed record adoption.
 
-![The labelled Settings section chooser and focused personal sign-in controls](/.attachments/settings-sections.png)
 
-![The Settings section chooser on a phone](/.attachments/settings-sections-phone.png)
 
-![All sections exposes the grouped Personal and Instance links](/.attachments/settings-all-sections.png)
 
 **Access devices** lists your paired browser identities; **Notification devices** lists the devices that
 receive alerts. Removing a notification device does not revoke access; revoking an access device also ends that

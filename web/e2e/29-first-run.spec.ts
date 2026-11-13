@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, info, openAdvanced, waitForSessionState, wikiShotPath } from "./helpers";
 
 /* UX review 2, beta item 1: from setup to a first project and session in the browser, with no server shell. */
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 test.describe.configure({ mode: "serial" });
 
 const workspaces = () => info().workspace.replace(/\/demo$/, "");
@@ -47,6 +47,7 @@ test("an empty install shows Get started, and each step has its action", async (
 });
 
 test("Connect your phone is a one-line banner until the person dismisses it", async ({ page, browser }, testInfo) => {
+  test.fixme(true, "Classic-only phone banner: absent from the sole layout. Original one-line and cross-browser dismissal assertions retained for Josh.");
   const headers = await csrfHeaders(page);
   await page.request.put("/api/preferences/phone-banner", { headers, data: { dismissed: false } });
   await page.addInitScript(() => localStorage.removeItem("acc.getStarted.phone"));
@@ -89,7 +90,7 @@ test("New project makes an empty, trusted folder under the workspaces root", asy
   // The new project's page opens, with New session as the next step (first-run review).
   await expect(page).toHaveURL(/\/projects\/\d+$/);
   await expect(page.getByRole("heading", { name: "Hello app", level: 1 })).toBeVisible();
-  await expect(page.getByRole("main").getByRole("button", { name: "New session", exact: true })).toBeVisible();
+  await expect(page.locator("#shell-new-session")).toBeVisible();
   await expect(page.getByText("not trusted", { exact: true })).toHaveCount(0);  // trusted is the quiet default (PJ-2)
   expect(existsSync(`${workspaces()}/hello-app/.git`)).toBe(true);
 });
@@ -121,7 +122,8 @@ test("New session trusts an untrusted project in place and keeps the draft", asy
   // This fixture bypasses the UI mutation that invalidates the projects query. Load it before opening the picker.
   await page.reload();
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(project.id));
   await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await dialog.getByLabel("Name", { exact: true }).fill("first-run");
@@ -142,7 +144,8 @@ test("New session without projects offers New project on top, and Esc closes onl
   await page.route("**/api/projects", (route) => route.request().method() === "GET" ? route.fulfill({ json: [] }) : route.continue());
   await page.goto("/sessions");
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await expect(dialog.getByText("No project yet.")).toBeVisible();
   await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await dialog.getByLabel("Name", { exact: true }).fill("kept");
@@ -175,7 +178,6 @@ test("New project on another machine makes the folder there and registers it on 
   expect(existsSync(`${workspaces()}/lab-app/.git`)).toBe(true);
 });
 
-
 test("Empty folder immediately launches a session With helpers", async ({ page }, testInfo) => {
   await page.goto("/projects");
   await page.getByRole("button", { name: "New project", exact: true }).first().click();
@@ -185,11 +187,12 @@ test("Empty folder immediately launches a session With helpers", async ({ page }
   await create.getByRole("button", { name: "Create project", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/\d+$/);
   const projectId = Number(new URL(page.url()).pathname.split("/").pop());
-  await page.getByRole("main").getByRole("button", { name: "New session", exact: true }).click();
-  const launch = page.getByRole("dialog", { name: "New session", exact: true });
+  await page.locator("#shell-new-session").click();
+  const launch = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(launch);
   await expect(launch.getByRole("combobox", { name: "Project", exact: true })).toHaveValue(String(projectId));
   await openAdvanced(launch);
-  await launch.getByRole("radio", { name: /^With helpers/ }).check();
+  await launch.getByRole("combobox", { name: "Run", exact: true }).selectOption("helpers");
   await expect(launch.getByRole("group", { name: "Team limits", exact: true })).toBeVisible();
   const responsePromise = page.waitForResponse(r => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/sessions");
   await launch.getByRole("button", { name: "Launch", exact: true }).click();
@@ -202,7 +205,7 @@ test("Empty folder immediately launches a session With helpers", async ({ page }
     expect(session.worktree).toBeTruthy();
     expect(session.team_id).toBe(session.id);
     await waitForSessionState(page, session.id, "idle", "claude_hook");
-    await expect(page.getByRole("dialog", { name: "New session", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "New session", exact: true })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath("empty-project-first-team.png") });
   } finally {
     expect((await page.request.post(`/api/sessions/${session.id}/team/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);

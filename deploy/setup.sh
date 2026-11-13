@@ -16,6 +16,7 @@
 #   ACC_DOCKER=no    skip rootless Docker for the owner (projects' compose stacks need it)
 #   ACC_OLLAMA=yes   also install Ollama, a local model server agents can run on (default: no)
 #   ACC_BACKUP=no    don't turn on the daily backup timer
+# --check checks host acceptance only, changes nothing and needs no root.
 # --dry-run prints the settings it would write and the steps it would take, and changes nothing (no root needed).
 # --unqualified-distro allows a test install on Fedora/RHEL (dnf) openSUSE (zypper) or Arch (pacman), not qualified yet:
 #   Podman for project stacks, Claude Code from Anthropic's pinned native release (docs/LINUX-DISTROS.md).
@@ -36,13 +37,14 @@ acc_compat_lib="$(dirname "$0")/acc-env.sh"
 
 APP=/srv/acc/app
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-YES=0 DRY='' UNQUALIFIED=''
+YES=0 DRY='' UNQUALIFIED='' CHECK=''
 for arg in "$@"; do
   case $arg in
     --yes|-y) YES=1 ;;
     --dry-run) DRY=1 ;;
+    --check) CHECK=1 ;;
     --unqualified-distro) UNQUALIFIED=1 ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -66,7 +68,7 @@ yes_no() { case ${1,,} in n|no|0|false|off) return 1 ;; *) return 0 ;; esac; }
 # A dry run reports what a real run would stop on, and goes on.
 check() { if [ -n "$DRY" ]; then info "WOULD FAIL: $1"; else die "$1"; fi; }
 [ -z "$DRY" ] || log "Dry run: nothing is changed"
-[ -n "$DRY" ] || [ "$(id -u)" = 0 ] || die "run as root: sudo $0 (or --dry-run)"
+[ -n "$CHECK" ] || [ -n "$DRY" ] || [ "$(id -u)" = 0 ] || die "run as root: sudo $0 (or --dry-run)"
 { command -v systemctl >/dev/null && [ -d /run/systemd/system ]; } || check "Rynhult needs systemd"
 # shellcheck source=deploy/lib/pkg.sh
 source "$REPO/deploy/lib/pkg.sh"
@@ -90,6 +92,9 @@ PRETTY_NAME=$(uname -s)
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 case $ARCH in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac  # the kernel's names where dpkg is absent
 case $ARCH in amd64|arm64) ;; *) check "unsupported architecture $ARCH (amd64 or arm64)" ;; esac
+
+# Host acceptance only: no settings, downloads, copying or service changes.
+[ -z "$CHECK" ] || exit 0
 
 # Rynhult's units run it from /srv/acc/app: set up from there (clone it there first if this checkout lives elsewhere).
 if [ "$REPO" != "$APP" ] && [ -n "$DRY" ]; then
@@ -370,6 +375,12 @@ if [ ! -f /etc/default/accd ]; then
   (umask 077; accd_settings > /etc/default/accd)
   chmod 0600 /etc/default/accd
   info "done"
+fi
+
+# Root-owned owner acceptance, bound to this host's package manager.
+if [ -n "${UNQUALIFIED:-}" ] && [ "${PKG:-}" != apt ]; then
+  install -o root -g root -m 0644 /dev/null /etc/acc-unqualified-distro
+  printf '%s\n' "$PKG" > /etc/acc-unqualified-distro
 fi
 
 # ------------------------------------------------------------------ install --

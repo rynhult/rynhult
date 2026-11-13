@@ -35,9 +35,10 @@ def test_sr4_01_private_paths_never_publish(source, name, channel):
             assert f'acc-test/{name}' not in tar.getnames()
 
 
-def test_sr4_02_stale_manifest_never_kills_another_runs_tmux(tmp_path):
+def test_sr4_02_stale_manifest_never_kills_another_runs_tmux(tmp_path, owned_tmux):
     from owned_tmux import cleanup, start_time
     socket = 'acc-test-sr4-' + uuid.uuid4().hex[:12]
+    owned_tmux.register(socket)
     subprocess.run(['tmux', '-L', socket, 'new-session', '-d', 'sleep 120'], check=True)
     server = int(subprocess.check_output(['tmux', '-L', socket, 'display-message', '-p', '#{pid}']))
     # A stale manifest PID need not match the current socket server's owning run.

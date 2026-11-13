@@ -20,7 +20,7 @@
       "roots": [
         "src/pages/Board.tsx",
         "@chunk:PersonalThemeRuntime",
-        "src/components/LayoutChoice.tsx"
+        "src/components/AppFrame.tsx"
       ],
       "js": {
         "raw": 438866,
@@ -36,10 +36,11 @@
     "session": {
       "roots": [
         "src/pages/SessionPage.tsx",
-        "src/components/Layout.tsx",
-        "src/components/LayoutChoice.tsx",
-        "src/components/Terminal.tsx",
-        "@chunk:PersonalThemeRuntime"
+        "src/components/shell/Shell.tsx",
+        "src/components/AppFrame.tsx",
+        "src/components/RegisteredTerminal.tsx",
+        "@chunk:PersonalThemeRuntime",
+        "@chunk:terminalHostLayer"
       ],
       "js": {
         "raw": 972314,
@@ -47,10 +48,11 @@
         "brotli": 279567
       },
       "css": {
-        "raw": 68488,
-        "gzip": 13262,
-        "brotli": 12173
-      }
+        "raw": 83803,
+        "gzip": 17090,
+        "brotli": 15839
+      },
+      "cssDecision": "Josh, Nov 5 2026: reviewed real new-layout frame CSS baseline, including touch targets; checker applies the unchanged 5% headroom rule. JS baselines unchanged."
     }
   }
 }

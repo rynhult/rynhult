@@ -166,9 +166,9 @@ def test_codex_mutations_prompt_only_in_readonly_team_launches(sandbox, approval
     assert config['default_tools_approval_mode'] == ('prompt' if readonly else 'approve')
     tools = listed(*config['args'])
     if readonly:
-        for name in ('brief', 'brief_documents', 'plan', 'list', 'report'):
+        for name in ('delegated_status', 'brief', 'brief_documents', 'plan', 'list', 'report'):
             assert config['tools'][name]['approval_mode'] == 'approve'
-        for name in ('brief_propose_documents', 'brief_share', 'brief_reference', 'plan_update', 'merge', 'gate'):
+        for name in ('delegated_port', 'delegated_image', 'delegated_install', 'brief_propose_documents', 'brief_share', 'brief_reference', 'plan_update', 'merge', 'gate'):
             assert config['tools'][name]['approval_mode'] == 'prompt'
         # Default prompt closes future names; every currently known mutation is
         # also explicit, overriding any account-level per-tool approval.

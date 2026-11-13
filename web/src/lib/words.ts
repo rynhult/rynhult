@@ -68,6 +68,8 @@ export const notificationWords = (raw: string) => NOTIFICATIONS[raw] ?? raw;
 
 /** An Audit row as a sentence (UX review AU-1): "alex opened api-refactor's terminal to type". The raw action stays in a
     tooltip. Unknown actions read "alex · project autostart · demo-api". */
+const approvalVerb = (verb: string) => (target: string) => `${verb} ${target}`;
+
 const AUDIT_VERBS: Record<string, (target: string, detail: Record<string, unknown>) => string> = {
   "device.pair": (_t, d) => `paired a browser for ${d.person ?? "a person"} (policy not applied)`,
   "device.rename": () => "renamed a paired browser",
@@ -139,14 +141,20 @@ const AUDIT_VERBS: Record<string, (target: string, detail: Record<string, unknow
   "node.check": () => 'checked all machines', "node.check_result": () => 'recorded machine check results',
   "node.add": (t) => `added machine ${t}`, "node.enroll": () => "joined as a machine", "node.remove": (t) => `removed machine ${t}`,
   "tool.approve": (t) => `approved tool ${t}`, "tool.reject": (t) => `rejected tool ${t}`,
-  "approval.grant": (t) => `recorded scoped consent ${t}`,
-  "approval.bind": (t) => `bound consent to active team ${t}`,
-  "approval.claim": (t) => `queued an approval admission claim ${t}`,
-  "approval.use": (t) => `consumed scoped consent for operation ${t}`,
-  "approval.revoke": (t) => `revoked scoped consent ${t}`,
-  "approval.shadow": (t) => `evaluated consent eligibility without executing ${t}`,
-  "approval.batch.preview": (t) => `reviewed exact pending requests ${t}`,
-  "approval.batch.use": (t) => `approved the reviewed request batch ${t}`,
+  "approval.configure": approvalVerb('saved delegation settings'),
+  "approval.recipe.publish": approvalVerb('published reviewed recipe'),
+  "approval.recipe.withdraw": approvalVerb('withdrew recipe'),
+  "approval.reconcile": approvalVerb('reconciled install'),
+  "approval.grant": approvalVerb('saved consent'),
+  "approval.bind": approvalVerb('bound consent to team'),
+  "approval.claim": approvalVerb('claimed consent'),
+  "approval.use": approvalVerb('used consent'),
+  "approval.refused": approvalVerb('refused delegated request for'),
+  "approval.result": approvalVerb('recorded result'),
+  "approval.revoke": approvalVerb('revoked consent'),
+  "approval.shadow": approvalVerb('checked consent eligibility'),
+  "approval.batch.preview": approvalVerb('previewed requests'),
+  "approval.batch.use": approvalVerb('approved exact requests'),
   "project.containers": (t, d) => `${d.enabled ? "switched" : "switched off"} containers for ${t}`,
   "containers.limits": (t) => `changed container limits for ${t}`,
   "containers.limits_default": (t) => `gave ${t} its default container limits`,

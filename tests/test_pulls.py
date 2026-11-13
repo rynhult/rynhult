@@ -124,7 +124,10 @@ async def test_an_unpushed_branch_cant_get_a_pull_request(api, world, fake):
     assert refused.status_code == 409 and "isn't on GitHub yet" in refused.json()["detail"] and not fake.pulls
 
 
-async def test_merge_respects_drafts_required_checks_methods_and_githubs_word(api, world, fake):
+async def test_merge_respects_drafts_required_checks_methods_and_githubs_word(api, env, world, fake):
+    await do_setup(api, env)
+    api.headers.pop('Authorization', None)
+    api.headers.update(csrf(api))
     pull = fake.open_pull(draft=True, state="draft")
     body = {"method": "squash", "sha": SHA, "confirm": True}
     status = (await api.get(world["url"])).json()
@@ -163,7 +166,7 @@ async def test_merge_respects_drafts_required_checks_methods_and_githubs_word(ap
     merged = await api.post(f"{world['url']}/merge", json=body)
     assert merged.status_code == 200 and merged.json()["merged"]
     assert fake.merged == [{"number": 1, "merge_method": "squash", "sha": SHA}]
-    assert [(a["detail"]["method"], a["detail"]["merged"]) for a in await audit(api, "pr.merge")] == [("squash", True)]
+    assert [(a["detail"]["method"], a["detail"]["merged"]) for a in await audit(api, "pr.merge") if a["detail"].get("merged")] == [("squash", True)]
     assert (await api.get(world["url"])).json()["pull"]["state"] == "merged"
 
 

@@ -28,12 +28,13 @@ test("Q13: switching projects reloads provider availability and models", async (
   } }));
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
   await page.getByRole("combobox", { name: "Project", exact: true }).selectOption("801");
   await expect(page.getByRole("combobox", { name: "Agent", exact: true }).locator('option[value="codex"]')).toHaveAttribute("disabled", "");
   await page.getByRole("combobox", { name: "Project", exact: true }).selectOption("802");
   await expect(page.getByRole("combobox", { name: "Agent", exact: true }).locator('option[value="codex"]')).not.toHaveAttribute("disabled");
   await page.getByRole("combobox", { name: "Agent", exact: true }).selectOption("codex");
-  await openAdvanced(page.getByRole("dialog"));  // the model list is under Advanced
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));  // the model list is under Advanced
   await expect(page.getByRole("combobox", { name: "Model", exact: true }).locator('option[value="node-model"]')).toHaveCount(1);
   await page.getByRole("combobox", { name: "Model", exact: true }).selectOption("node-model");
   await page.getByRole("combobox", { name: "Project", exact: true }).selectOption("801");

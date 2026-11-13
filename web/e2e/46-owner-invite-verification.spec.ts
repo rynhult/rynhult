@@ -1,8 +1,8 @@
 import { expect } from './fixtures';
 import { test } from './shell-state';
-import { AUTH_FILE, PASSWORD, csrfHeaders, freshStep, loadSecret, totp } from './helpers';
+import { selectSettingsSection, AUTH_FILE, PASSWORD, csrfHeaders, freshStep, loadSecret, totp } from './helpers';
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 test('inviting an owner asks for fresh verification first, whatever the passkey policy', async ({ page }) => {
   test.slow();
@@ -23,13 +23,13 @@ test('inviting an owner asks for fresh verification first, whatever the passkey 
   await page.getByRole('button', { name: 'Create invite link' }).click();
   await expect(page.getByText('Verify your sign-in again in Settings → Passkeys, then try again within five minutes.')).toBeVisible();
   await expect(page.locator('code').filter({ hasText: '/invite/' })).toHaveCount(0);
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
+  await selectSettingsSection(page, 'passkeys');
   await freshStep(page);
   await page.getByLabel('Verification password', { exact: true }).fill(PASSWORD);
   await page.getByLabel('Verification authenticator code', { exact: true }).fill(totp(loadSecret()));
   await page.getByRole('button', { name: 'Verify with password and authenticator' }).click();
   await expect(page.getByText('Verified for five minutes.')).toBeVisible();
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('people');
+  await selectSettingsSection(page, 'people');
   await role.selectOption('owner');
   const created = page.waitForResponse(response => response.url().endsWith('/api/users/invites') && response.request().method() === 'POST');
   let inviteId: number | undefined;

@@ -320,9 +320,9 @@ PROVIDER = OpenCode(
     options=(
         Option("permissions", "Permissions", choices=(
             ("commands", "Ask before commands"), ("all", "Ask before commands and edits"),
-            ("auto", "Approve everything not denied ⚠")), default="commands", dangerous=("auto",),
+            ("auto", "Approve everything not denied ⚠")), default="commands", permission_order=("all", "commands", "auto"), permission_levels=(1, 2, 4), dangerous=("auto",),
             help="Rynhult's guardrails apply in every mode"),
-        Option("agent", "Primary agent", choices=(("build", "Build"), ("plan", "Plan (read-only)")), default="build"),
+        Option("agent", "Primary agent", choices=(("build", "Build"), ("plan", "Plan (read-only)")), default="build", permission_order=("plan", "build"), permission_levels=(0, 1)),
     ),
     hook_events=HOOK_EVENTS,
 )

@@ -6,7 +6,7 @@ test.use({ storageState: AUTH_FILE });
 
 test("an unknown session says so and leads back", async ({ page }) => {
   await page.goto("/sessions/0123456789ab");
-  await expect(page.getByText("There's no session here")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This saved view can’t be opened" })).toBeVisible();
   await expect(page.getByText("no such session")).toHaveCount(0);
   await expectAxeClean(page);
   await page.getByRole("link", { name: "Back to sessions" }).click();
@@ -15,7 +15,7 @@ test("an unknown session says so and leads back", async ({ page }) => {
 
 test("an unknown project says so and leads back", async ({ page }) => {
   await page.goto("/projects/987654");
-  await expect(page.getByText("There's no project here")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This saved view can’t be opened" })).toBeVisible();
   await page.getByRole("link", { name: "Back to projects" }).click();
   await expect(page).toHaveURL(/\/projects$/);
 });

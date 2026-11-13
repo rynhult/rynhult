@@ -213,3 +213,59 @@ def test_custom_data_directory_is_refused_before_backup(tmp_path):
     settings.write_text('RYNHULT_DATA_DIR=/different/data\n')
     with pytest.raises(ValueError, match='standard data directory'):
         offline_upgrade.configure_environment(settings, tmp_path / 'missing', tmp_path / 'data')
+
+
+@pytest.fixture(autouse=True)
+def accepted_update_host(monkeypatch):
+    # Transaction fixtures model source/data changes independently of the execution host.
+    monkeypatch.setattr("acc.update_helper.Transaction.preflight", lambda self, source: None)
+    monkeypatch.setattr("acc.update_helper.Transaction.distro_flags", lambda self: [])
+
+
+def test_offline_cli_handles_rollback_preflight_timeout(tmp_path, monkeypatch, capsys):
+    import subprocess
+
+    from acc import offline_upgrade as offline
+
+    original_path = Path
+    def scratch_path(value):
+        if str(value).startswith('/srv/acc/'):
+            return tmp_path / original_path(value).name
+        return original_path(value)
+    monkeypatch.setattr(offline, 'Path', scratch_path)
+    monkeypatch.setattr(offline.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(offline, 'configure_environment', lambda *a: None)
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired('preflight', 30)
+    monkeypatch.setattr(offline, 'rollback', timeout)
+    assert offline.main(['--rollback', 'a' * 32, '--yes']) == 1
+    assert 'Upgrade/recovery refused' in capsys.readouterr().out
+
+
+def test_offline_rollback_checkout_guard_precedes_preflight(release, monkeypatch):
+    offline, _, source, data = release
+    job, _ = job_for(release)
+    assert job.apply()['ok']
+    monkeypatch.setattr(offline, 'checkout_blocks_update', lambda *a, **kw: True)
+    monkeypatch.setattr(type(job), 'distro_flags', lambda self: pytest.fail('acceptance before guard'))
+    monkeypatch.setattr(type(job), 'preflight', lambda *a: pytest.fail('preflight before guard'))
+    with pytest.raises(ValueError, match='git checkout'):
+        offline.rollback(job.root, source, data, job.id, {}, transaction_class=type(job))
+
+
+def test_offline_rollback_timeout_precedes_backup_and_hold(release, monkeypatch):
+    import subprocess
+    offline, _, source, data = release
+    job, events = job_for(release)
+    assert job.apply()['ok']
+    events.clear()
+    def timeout(*args):
+        raise subprocess.TimeoutExpired('preflight', 30)
+    monkeypatch.setattr(type(job), 'preflight', timeout)
+    with pytest.raises(subprocess.TimeoutExpired):
+        offline.rollback(job.root, source, data, job.id, {}, transaction_class=type(job), run=job.run)
+    assert events == []
+    assert job.previous.is_dir()
+    assert bundle.version_of(source) == '0.15.0-rc.2'
+    with sqlite3.connect(data / 'acc.db') as db:
+        assert db.execute('select value from marker').fetchone()[0] == 2

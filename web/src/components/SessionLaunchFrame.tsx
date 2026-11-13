@@ -12,7 +12,11 @@ export function SessionLaunchFrame({workspace, recovery=false, ...props}: Compon
   }, [workspace,props.open]);
   if(!workspace)return <Dialog {...props}/>;
   if(!props.open)return null;
-  return <section ref={frame} aria-labelledby={id} className="min-h-full min-w-0 bg-panel text-fg">
+  return <section data-testid="session-launch-frame" onKeyDown={event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !event.nativeEvent.isComposing && !document.querySelector('[role="dialog"], dialog[open]')) {
+      event.preventDefault(); event.stopPropagation(); props.onClose();
+    }
+  }} ref={frame} aria-labelledby={id} className="min-h-full min-w-0 bg-panel text-fg">
     <header className="border-b border-line px-6 py-4"><h1 id={id} className="text-lg font-semibold">{props.title}</h1></header>
     <div className={`mx-auto ${recovery ? 'max-w-5xl' : 'max-w-3xl'} space-y-6 px-6 py-8`}>
       {props.description && <p className="text-sm text-muted">{props.description}</p>}

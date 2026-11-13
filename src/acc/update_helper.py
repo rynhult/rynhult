@@ -76,6 +76,7 @@ class Transaction:
         self.new_source = None
         self.activated = False
         self.install_started = False
+        self._distro_flags = None
         self.state = {
             "id": self.id,
             "version": target,
@@ -162,8 +163,53 @@ class Transaction:
             raise
         self.activated = True
 
+    def distro_flags(self):
+        """Only root's recorded acceptance can authorize an unqualified update."""
+        if self._distro_flags is not None:
+            return self._distro_flags
+        path = Path(self.config.get("distro_acceptance", "/etc/acc-unqualified-distro"))
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            self._distro_flags = []
+            return self._distro_flags
+        with os.fdopen(fd) as file:
+            info = os.fstat(file.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError("Unsafe unqualified distro acceptance record; ask the owner to repair it")
+            accepted = file.read(32).strip()
+        # Match setup's manager priority, using its library and a fixed privileged PATH.
+        result = self.run(
+            ["bash", "-c", 'source "$1"; pkg_manager', "acc-host-check",
+             str(self.source / "deploy/lib/pkg.sh")],
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}, capture_output=True, timeout=30,
+        )
+        manager = result.stdout.decode().strip()
+        if accepted not in {"dnf", "zypper", "pacman"} or result.returncode or manager != accepted:
+            raise ValueError("Host package manager differs from the accepted test install; ask the owner to review setup")
+        self._distro_flags = ["--unqualified-distro"]
+        return self._distro_flags
+
+    def preflight(self, source):
+        # Mirror setup's early systemd/manager/architecture refusal. Older retained
+        # installers predate --check, so do not require that flag for rollback.
+        flags = self.distro_flags()
+        try:
+            self.command(["bash", "-c", '\n'.join([
+                'export PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+                'source "$1"',
+                'command -v systemctl >/dev/null && [ -d /run/systemd/system ] || exit 1',
+                'manager=$(pkg_manager) || exit 1',
+                'case "$manager:${2:-}" in apt:*|dnf:--unqualified-distro|zypper:--unqualified-distro|pacman:--unqualified-distro) ;; *) exit 1 ;; esac',
+                'arch=$(dpkg --print-architecture 2>/dev/null || uname -m)',
+                'case "$arch" in amd64|arm64|x86_64|aarch64) ;; *) exit 1 ;; esac',
+            ]), "acc-host-check", source / "deploy/lib/pkg.sh", *flags])
+        except (ValueError, subprocess.SubprocessError) as error:
+            raise ValueError("Update refused: host check failed or timed out; this host needs systemd, amd64/arm64 and a supported package manager; "
+                             "unqualified distros need the owner's recorded --unqualified-distro acceptance") from error
+
     def install(self, source):
-        self.command(["bash", source / "deploy/setup.sh", "--yes"])
+        self.command(["bash", source / "deploy/setup.sh", "--yes", *self.distro_flags()])
 
     def health(self):
         deadline = time.monotonic() + self.config.get("health_timeout", 120)
@@ -225,6 +271,16 @@ class Transaction:
 
     def apply(self):
         from .maintenance import update_hold
+        try:
+            if checkout_blocks_update(self.source, require_root_owned=True):
+                raise ValueError(GIT_MESSAGE)
+            # Snapshot owner acceptance before maintenance; rollback must not reopen it.
+            self.distro_flags()
+            self.preflight(self.source)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            self.state.update(ok=False, detail=str(error)[:300], running=False, finished_at=time.time())
+            self.save()
+            return self.state
         with update_hold(self.data):
             return self._apply()
 
@@ -235,6 +291,7 @@ class Transaction:
             version(self.target)
             self.step("backup", self.backup)
             self.new_source = self.step("download", self.download)
+            self.preflight(self.new_source)
             self.step("activate", self.activate)
             self.install_started = True
             self.step("install", lambda: self.install(self.source))
@@ -341,7 +398,7 @@ class NodeTransaction(Transaction):
 
     def install(self, source):
         # --update: keep the node's configured agent accounts; never create a default one (no SUDO_USER here)
-        self.command(["bash", source / "deploy/node/install.sh", "--update"])
+        self.command(["bash", source / "deploy/node/install.sh", "--update", *self.distro_flags()])
 
     def health(self):
         deadline = time.monotonic() + self.config.get("health_timeout", 120)
@@ -428,7 +485,7 @@ def main():
                     result = Transaction(root, source, data, target,
                                          {**config, 'allow_unsigned': request.get('allow_unsigned', False)}).apply()
                 write_json(root / "results" / f"{path.stem}.json", result, group)
-            except (ValueError, OSError):
+            except (ValueError, OSError, subprocess.SubprocessError):
                 write_json(
                     root / "state.json", {"ok": False, "running": False, "detail": "Invalid update request"}, group
                 )

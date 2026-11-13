@@ -175,6 +175,9 @@ async def test_group_roles_never_open_any_legacy_private_route(preview_switch, g
                 query = {'q': 'README'}
             if path.endswith('/compare'):
                 query = {'left': 'a', 'right': 'b'}
+            if path in {'/api/sessions/{acc_id}/relay/terminal', '/api/sessions/{acc_id}/relay/ownership'}:
+                # Exercise private-session authorization, not missing query validation.
+                query = {'expectedRunId': '1', 'attachmentId': 'foreign-observer'}
             body = next((b for k, b in BODIES.items() if url.endswith(k)), {})
             response = await client.request(method, url, params=query, json=body if method != 'GET' else None, headers=csrf(client))
             assert response.status_code == expected, (role, method, path, response.status_code, response.text[:200])
@@ -182,6 +185,8 @@ async def test_group_roles_never_open_any_legacy_private_route(preview_switch, g
             response = await client.request(method, path, json={} if method != 'GET' else None, headers=csrf(client))
             switched_off = preview_switch == 'preview off' and path_feature(path) == 'orchestrator'
             assert response.status_code in ((404,) if switched_off else (403, 422)), (role, path, response.status_code)
+        for path in ('/api/approvals/consents', '/api/approvals/activity'):
+            assert (await client.get(path, params={'project_id': w['group_project']['id']})).status_code == 404
         for path in ('/api/sessions', '/api/attention', '/api/publish', '/api/workspaces', '/api/projects'):
             assert (await client.get(path)).json() == [], (role, path)
         assert (await client.get('/api/search', params={'q': 'groupprivatecanary'})).json()['results'] == []

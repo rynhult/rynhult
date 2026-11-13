@@ -22,7 +22,7 @@ tests/test_dns_wave2.py:private-key:11
 tests/test_security_review_dns_w2.py:generic-api-key:11
 tests/test_security_review_dns_w2.py:private-key:12
 # Deliberate log-redaction and telemetry-scrubber canaries.
-tests/test_pulls.py:github-pat:175
+tests/test_pulls.py:github-pat:178
 tests/test_telemetry.py:aws-access-token:572
 tests/test_telemetry.py:aws-access-token:594
 # Synthetic values in redaction/scrubber tests (Oct 29): fake AWS-format keys and a fake secret that the tests

@@ -99,9 +99,9 @@ for (const theme of ['dark', 'light'] as const) test(`stateful data stays contai
     // Retain an ordinary launcher draft alongside the server-side resources.
     await page.goto('/projects');
     await page.getByRole('button', { name: 'New session', exact: true }).first().click();
-    const launcher = page.getByRole('dialog', { name: 'New session', exact: true });
+    const launcher = page.getByRole('region', { name: 'New session', exact: true });
     await launcher.getByRole('textbox', { name: 'Task (optional)', exact: true }).fill('Review ' + 'long/path/'.repeat(20));
-    await launcher.getByRole('button', { name: 'Close', exact: true }).click();
+    await launcher.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     page.on('dialog', dialog => dialog.accept());
     const failures: object[] = [];
     for (const width of [320, 390]) {

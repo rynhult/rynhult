@@ -10,12 +10,12 @@ test('With helpers shows an editable brief kickoff and keeps the person’s prom
   } });
   expect(saved.ok()).toBe(true);
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await openAdvanced(dialog);
   const task = dialog.getByRole('textbox', { name: 'Task (optional)', exact: true });
   await expect(task).toHaveValue('');
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(task).toHaveValue(/Read the pinned project brief v1 with the brief tool/);
   await expect(task).not.toHaveValue(/brief_read/);
   await expect(task).toHaveValue(new RegExp(slug));
@@ -39,13 +39,13 @@ test('With helpers shows an editable brief kickoff and keeps the person’s prom
 test('With helpers without a brief starts discovery and Once stays empty', async ({ page }) => {
   const { id } = await gitProject(page, 'lead-no-brief');
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await openAdvanced(dialog);
   const task = dialog.getByRole('textbox', { name: 'Task (optional)', exact: true });
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(task).toHaveValue(/no accepted brief/);
   await expect(task).toHaveValue(/success/);
-  await dialog.getByRole('radio', { name: /^Once/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('once');
   await expect(task).toHaveValue('');
 });

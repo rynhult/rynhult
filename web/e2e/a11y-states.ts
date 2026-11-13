@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test, type Page, type Locator } from "./fixtures";
 import { AUTH_FILE, AXE_PAGES, expectAxeClean } from "./helpers";
 
 // WCAG 2.2 AA beyond the default view (roadmap status 2026-10-25, item 6): 27-ux-a11y scans every page as it first
@@ -46,16 +46,18 @@ async function holdRequests(page: Page) {
 }
 
 /** Open every details element and press every collapsed disclosure that is not a dialog or menu opener. */
-async function expandEverything(page: Page) {
-  await page.evaluate(() => document.querySelectorAll("details").forEach((details) => { details.open = true; }));
-  const collapsed = page.locator('button[aria-expanded="false"]:not([aria-haspopup]):visible');
+async function expandEverything(page: Page, scope: Locator = page.getByRole("main")) {
+  const details = scope.locator("details");
+  await details.evaluateAll(nodes => nodes.forEach(node => { (node as HTMLDetailsElement).open = true; }));
   for (let pass = 0; pass < 3; pass++) {
-    const count = await collapsed.count();
-    if (!count) break;
-    for (let index = count - 1; index >= 0; index--) {
-      await collapsed.nth(index).click({ timeout: 2000 }).catch(() => undefined);
+    // Snapshot elements: expanding one disclosure changes the collapsed locator's indices.
+    const collapsed = await scope.locator('button[aria-expanded="false"]:not([aria-haspopup]):visible').elementHandles();
+    if (!collapsed.length) break;
+    for (const button of collapsed) {
+      await button.click({ timeout: 2000 });
+      await button.dispose();
     }
-    await page.evaluate(() => document.querySelectorAll("details").forEach((details) => { details.open = true; }));
+    await details.evaluateAll(nodes => nodes.forEach(node => { (node as HTMLDetailsElement).open = true; }));
   }
 }
 
@@ -108,7 +110,7 @@ export function a11yStateTests(device: "desktop" | "phone") {
         await page.getByRole("button", { name: button, exact: true }).first().click();
         const opened = page.getByRole("dialog", { name: dialog });
         await expect(opened, `${button} on ${path}`).toBeVisible();
-        await expandEverything(page);
+        await expandEverything(page, opened);
         await expectAxeClean(page);
         // Fragment-only navigation keeps Settings mounted; dismiss before opening the next form.
         await opened.getByRole("button", { name: /^(Close|Cancel)$/ }).first().click();
@@ -116,7 +118,7 @@ export function a11yStateTests(device: "desktop" | "phone") {
       }
       if (device === "phone") {
         await page.goto("/");
-        await page.getByRole("button", { name: "Menu" }).click();
+        await page.getByRole("button", { name: "More", exact: true }).click();
         await expect(page.getByRole("dialog")).toBeVisible();
         await expectAxeClean(page);
       }

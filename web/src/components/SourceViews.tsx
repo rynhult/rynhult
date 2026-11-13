@@ -1,6 +1,5 @@
 import { useId } from 'react';
 import type { ReactNode } from 'react';
-import { useNewShell } from '../lib/uiShell';
 import { useProjectSourceView, type DirectoryFilters, type LocationRow, type ProjectSourceView, type SourceDirectory, type SourceRow } from '../lib/sourceViews';
 import { ago } from '../lib/format';
 import { Badge, Button, Field, QueryState, Select } from './ui';
@@ -34,7 +33,7 @@ const targeting = 'Location preparation and choosing a different launch target a
 
 export function ProjectSources({ projectId, groupId }: { projectId: number; groupId?: string }) {
   const query = useProjectSourceView(projectId, groupId);
-  const shell = useNewShell(); if (!shell) return null;
+
   return <Surface title="Sources" meta={query.data && `Visible repositories: ${query.data.counts.repositories} · memberships: ${query.data.membership_count}`}>
     <QueryState query={query} errorTitle="Couldn't read sources and working locations.">{view => <>
       {view.audience_mismatch && <p role="status" className="px-5 py-3 text-[13px] text-muted">{audienceNotice}</p>}
@@ -51,7 +50,7 @@ export function ProjectSources({ projectId, groupId }: { projectId: number; grou
 }
 export function ProjectWorkingLocations({ projectId, groupId }: { projectId: number; groupId?: string }) {
   const query = useProjectSourceView(projectId, groupId);
-  const shell = useNewShell(); if (!shell) return null;
+
   return <Surface title="Working locations" meta={query.data && `Visible working locations: ${query.data.counts.locations} · registrations: ${query.data.registration_count}`}>
     <QueryState query={query} errorTitle="Couldn't read sources and working locations.">{view => <>
       {view.audience_mismatch && <p role="status" className="px-5 py-3 text-[13px] text-muted">{audienceNotice}</p>}
@@ -66,7 +65,7 @@ export function ProjectWorkingLocations({ projectId, groupId }: { projectId: num
  * Facets are intentionally page-visible; retain selected options outside the current page.
  */
 export function SourceDirectoryFilters({ data, value, onChange }: { data: SourceDirectory; value: DirectoryFilters; onChange: (value: DirectoryFilters) => void }) {
-  const shell = useNewShell(); if (!shell) return null;
+
   return <fieldset className="flex min-w-0 flex-wrap gap-3"><legend className="sr-only">Filter project sources and working locations</legend>
     <Field label="Source owner"><Select value={value.source_owner ?? ''} onChange={e => onChange({ ...value, source_owner: e.target.value, offset: 0 })}>
       <option value="">All source owners</option>{value.source_owner && !data.facets.source_owners.some(row => row.id === value.source_owner) && <option value={value.source_owner}>Selected source owner</option>}
@@ -80,7 +79,7 @@ export function SourceDirectoryFilters({ data, value, onChange }: { data: Source
 }
 /** Render inside the directory's repository/location cells; counts never describe hidden placements. */
 export function SourceDirectorySummary({ view, kind }: { view: ProjectSourceView; kind: 'repositories' | 'locations' }) {
-  const shell = useNewShell(); if (!shell) return null;
+
   return <div className="min-w-0 text-[13px] [overflow-wrap:anywhere]"><p>{view.counts[kind]} visible {kind === 'repositories' ? 'repositories' : 'working locations'} · {kind === 'repositories' ? `${view.membership_count} memberships` : `${view.registration_count} registrations`}</p>
     {view.audience_mismatch && <p className="text-xs text-muted">{audienceNotice}</p>}
     {kind === 'repositories' ? view.repositories.slice(0, 3).map(row => <SourceIdentity key={row.membership_id} source={row} />) : view.locations.slice(0, 3).map(row => <p key={row.id} className="text-xs text-muted">{row.host} · {row.account} · {row.path} · {row.location_id.slice(0, 8)}</p>)}

@@ -336,3 +336,22 @@ test('unknown inherited-object fragments fall back to Overview', async ({ page }
     await expect(page.getByRole('button', { name: 'Plan', exact: true })).toHaveAttribute('aria-expanded', 'false');
   }
 });
+
+
+test('helper MCP narrowing is visible beside the team member on desktop and phone', async ({ page }) => {
+  const snapshot = await (await page.request.get(`/api/sessions/${id}/team`)).json();
+  const source = await (await page.request.get(`/api/sessions/${id}`)).json();
+  const helper = { ...source, id: 'mcp-narrowed-helper', name: 'Frontend helper', team_id: id,
+    parent_session_id: id, team_depth: 1, dropped_mcps: ['playwright', 'chrome-devtools'], verification: null };
+  await page.route(`**/api/sessions/${id}/team`, route => route.fulfill({ json: {
+    ...snapshot, members: [...snapshot.members, helper],
+  } }));
+  await page.goto(`/sessions/${id}?tab=team#settings`);
+  await expandTeamPanels(page);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const row = page.getByRole('row').filter({ has: page.getByText('↳ Frontend helper', { exact: true }) });
+    await expect(row.getByText('MCPs unavailable under parent limit: playwright, chrome-devtools', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+});

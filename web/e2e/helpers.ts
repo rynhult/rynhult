@@ -1,6 +1,6 @@
 import { environmentValue } from "../../src/acc/env.mjs";
 import { createHmac, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { expect, test, type Page } from "./fixtures";
 import type AxeBuilder from "@axe-core/playwright";
 
@@ -10,6 +10,11 @@ export const PASSWORD = "e2e correct horse battery staple";
 
 export const info = () => JSON.parse(readFileSync(`${BASE}/info.json`, "utf8")) as
   { state: string; setup_token_path: string; run_dir: string; workspace: string; origin: string };
+
+/** A test-owned folder: registration rejects aliases of an existing project. */
+export function projectWorkspace() {
+  return mkdtempSync(`${info().workspace}/project-`);
+}
 
 function base32(secret: string): Buffer {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -281,12 +286,12 @@ export async function expectAxeCleanPage(page: Page, url: string, ready?: () => 
 }
 
 /** A git project with an uncommitted change and a session in its checkout, so Changes and Files have rows. */
-export async function sessionWithChanges(page: Page, prefix: string) {
+export async function sessionWithChanges(page: Page, prefix: string, provider = 'claude') {
   const { id, folder, headers } = await gitProject(page, prefix);
   writeFileSync(`${folder}/app.py`, "print('hello')\nprint('changed')\n");
   writeFileSync(`${folder}/README.md`, "# Demo\n\nA new file.\n");
   const created = await page.request.post("/api/sessions", { headers,
-    data: { project_id: id, provider: "claude", name: `${prefix.slice(0, 7)}-${randomUUID().replaceAll("-", "")}` } });
+    data: { project_id: id, provider, name: `${prefix.slice(0, 7)}-${randomUUID().replaceAll("-", "")}` } });
   if (!created.ok()) throw new Error(`session creation failed (${created.status()}): ${await created.text()}`);
   const session = await created.json();
   return session.id as string;
@@ -297,7 +302,27 @@ export const fileRow = (path: string, verb: "Open" | "Toggle" = "Open") =>
   new RegExp(`^${verb} ${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(, (new|modified|ignored))?$`);
 
 /** New session keeps model, permissions, run mode, worktree and the command preview under Advanced (UX WP7). */
+/** Session secondary views use the existing overflow on compact layouts. */
+export async function selectSessionView(page: Page, name: string) {
+  // Counts are part of the accessible name (for example "Changes 2").
+  const label = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: \\d+)?$`);
+  const views = page.getByRole('tablist', { name: 'Session views', exact: true });
+  await expect(views).toBeVisible();
+  const tab = views.getByRole('tab', { name: label });
+  if (await tab.isVisible()) { await tab.click(); return; }
+  await page.locator('.session-tab-line').getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('menuitem', { name: label }).click();
+}
+
 export async function openAdvanced(scope: import("@playwright/test").Locator) {
+  await expect(scope).toBeVisible();  // Lazy launch regions can mount after the header click resolves.
+  if (await scope.locator('summary').filter({ hasText: 'Model and working location' }).count()) {
+    for (const name of ['Model and working location', 'Permissions and limits', 'More options']) {
+      const summary = scope.locator('summary').filter({ hasText: name });
+      if (await summary.count() && !await summary.evaluate(node => (node.parentElement as HTMLDetailsElement).open)) await summary.click();
+    }
+    return;
+  }
   const button = scope.getByRole("button", { name: /^Advanced/ });
   if (await button.getAttribute("aria-expanded") !== "true") await button.click();
 }
@@ -355,4 +380,44 @@ export async function expandTeamPanels(page: Page) {
 export async function settleSession(page: import('@playwright/test').Page, id: string) {
   const response = await page.request.post(`/e2e-test/sessions/${id}/settle`);
   expect(response.ok(), await response.text()).toBeTruthy();
+}
+
+/** Exercise the shared Terminal primitive where it remains available: expanded Grid. */
+export async function openGridTerminal(page: Page, id: string) {
+  await page.goto(`/grid?ids=${id}`);
+  await expect(page.locator('.xterm-helper-textarea')).toBeAttached();
+  const expanded = page.getByRole('dialog', { name: 'Expanded terminal', exact: true });
+  if (!await expanded.isVisible()) await page.getByRole('button', { name: 'Expand terminal', exact: true }).click();
+  await expect(expanded).toBeVisible();
+}
+
+/** Settings navigation lives in the scoped sidebar, or the phone Browse sheet. */
+export async function settingsNavigation(page: Page) {
+  await expect(page.getByRole('banner', { name: 'Workspace header', exact: true })).toBeVisible();
+  const openSheet = page.getByRole('dialog', { name: 'Browse', exact: true });
+  if (await openSheet.isVisible()) return openSheet;
+  const phone = page.getByRole('navigation', { name: 'Phone rail', exact: true });
+  if (await phone.isVisible()) {
+    await phone.getByRole('button', { name: 'More', exact: true }).click();
+    const sheet = page.getByRole('dialog', { name: 'Browse', exact: true });
+    await expect(sheet.getByRole('region', { name: 'Account settings', exact: true })).toBeVisible();
+    return sheet;
+  }
+  const sidebar = page.getByRole('complementary', { name: 'Context sidebar', exact: true });
+  await expect(sidebar.getByRole('region', { name: 'Account settings', exact: true })).toBeVisible();
+  return sidebar;
+}
+
+export async function selectSettingsSection(page: Page, section: string) {
+  const navigation = await settingsNavigation(page);
+  const direct = navigation.locator(`a[href="/settings#${section}"]`);
+  const link = await direct.count() ? direct : navigation.locator(`a[href$="#${section}"]`).last();
+  await link.click();
+}
+
+export async function settingsSectionIds(page: Page) {
+  const navigation = await settingsNavigation(page);
+  const ids = await navigation.locator('a[href*="/settings"]').evaluateAll(links => [...new Set(links.map(link => new URL((link as HTMLAnchorElement).href).hash.slice(1)).filter(Boolean))]);
+  if (await page.getByRole('dialog', { name: 'Browse', exact: true }).isVisible()) await navigation.getByRole('button', { name: 'Close', exact: true }).click();
+  return ids.filter(id => id !== 'project-settings');
 }

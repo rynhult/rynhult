@@ -1,0 +1,4 @@
+{"type": "session_meta", "payload": {"id": "11111111-1111-4111-8111-111111111111", "cli_version": "0.167.1"}}
+{"type": "dynamic_tools_updated", "payload": {"thread_id": "11111111-1111-4111-8111-111111111111", "tools": []}}
+{"type": "response_item", "payload": {"type": "message", "role": "user", "id": "user-fixture", "content": [{"type": "input_text", "text": "Private harness context"}], "internal_chat_message_metadata_passthrough": {"turn_id": "turn-fixture", "content_item_kinds": ["unknown"], "content_item_metadata": [{"provenance": {"type": "harness", "hook": false}}]}}}
+{"type": "response_item", "payload": {"type": "message", "role": "assistant", "id": "reply-fixture", "content": [{"type": "output_text", "text": "Unqualified reply"}]}}

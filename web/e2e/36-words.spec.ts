@@ -1,3 +1,4 @@
+import { selectSessionView } from './helpers';
 import { expect, test } from "./fixtures";
 import { AUTH_FILE, sessionWithChanges } from "./helpers";
 
@@ -12,18 +13,18 @@ test("Activity, Setup, Audit and Catalog speak in words", async ({ page }) => {
   await expect(page.getByText("run_launch")).toHaveCount(0);
   await expect(page.getByText("Started", { exact: true }).first()).toHaveAttribute("title", "run_launch");
 
-  await page.getByRole("tab", { name: "Setup" }).click();
+  await selectSessionView(page, 'Setup');
   await expect(page.getByRole("heading", { name: "How this session was set up" })).toBeVisible();
   await expect(page.getByText("Accept edits").first()).toBeVisible();
 
-  // Viewing the terminal twice writes two attaches; Audit shows one sentence for them.
+  // Run-bound terminals attach read-only, then claim control explicitly. Two reads fold into one sentence.
   await page.goto(`/sessions/${id}`);
   await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
   await page.reload();
   await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
   await page.goto("/audit");
   await page.getByRole("combobox", { name: "Type" }).selectOption({ label: "Terminals" });
-  const row = page.getByText(`opened ${session.name}'s terminal to type`, { exact: false });
+  const row = page.getByText(`opened ${session.name}'s terminal to watch`, { exact: false });
   await expect(row).toHaveCount(1);
   await expect(page.getByText(/times that day/).first()).toBeVisible();
   await expect(page.getByText("terminal.attach")).toHaveCount(0);

@@ -35,7 +35,7 @@ export function Explanation({ session, revision, onClose, onReference, onRefresh
   });
   const agents = useQuery({
     queryKey: ["explanation-agents", session.id],
-    queryFn: () => api<{ agents: { id: string; label: string }[] }>(`/api/sessions/${session.id}/explanation/agents`),
+    queryFn: () => api<{ agents: { id: string; label: string }[]; unavailable?: { id: string; label: string; reason: string }[] }>(`/api/sessions/${session.id}/explanation/agents`),
   });
   const choices = agents.data?.agents ?? [];
   const chosen = choices.some(a => a.id === provider) ? provider : "";
@@ -109,6 +109,9 @@ export function Explanation({ session, revision, onClose, onReference, onRefresh
                   {choices.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
                 </Select>
               </Field>
+              {agents.data?.unavailable?.map(agent => <p key={agent.id} className="text-xs text-muted">
+                {agent.label}: {agent.reason}
+              </p>)}
               <Field label="Explanation model" hint="Choose a model available to this CLI account.">
                 <Input name="explanation-model" autoComplete="off" value={model} maxLength={160}
                   onChange={e => setModel(e.target.value)} placeholder="Model ID…" required />

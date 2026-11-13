@@ -86,7 +86,7 @@ class SessionIn(BaseSessionIn):
         return self
 
     def inputs(self, catalog=None):
-        return BaseSessionIn.model_validate(self.model_dump(exclude={'task'}, exclude_unset=True)).inputs(catalog)
+        return BaseSessionIn.model_validate(self.model_dump(exclude={'task', 'session_relay'}, exclude_unset=True)).inputs(catalog)
 
 
 class ExplainIn(BaseModel):
@@ -110,8 +110,15 @@ def router(ctx: Context) -> APIRouter:
             rows = s.scalars(ctx.scope(select(Session), Session, who).order_by(Session.created_at.desc()).options(
                 selectinload(Session.project), selectinload(Session.launch_spec), selectinload(Session.placement))).all()
             from .. import claude_auth
+            from ..models import RelaySession
             modes = claude_auth.modes(s, rows)
-            return json_list([session_out(x, offline_hosts=offline, auth_modes=modes) for x in rows],
+            relay_ids = set(s.scalars(select(RelaySession.session_id).where(
+                RelaySession.session_id.in_([row.id for row in rows])))) if rows else set()
+            from ..review_state import session_review_signals
+            # Session.project is already selectin-loaded above; do not spend another
+            # query on the same projects on every list poll.
+            review = session_review_signals(s, rows, projects={row.project_id: row.project for row in rows if row.project})
+            return json_list([session_out(x, offline_hosts=offline, auth_modes=modes, relay_sessions=relay_ids, review_signals=review[x.id]) for x in rows],
                              request.headers.get("if-none-match"))
 
     def standalone_profile(body: SessionIn) -> None:
@@ -199,8 +206,9 @@ def router(ctx: Context) -> APIRouter:
         return launch_machines.scope(ctx, who, body.project_id, body.machine)
 
     @api.post("/api/sessions/preview")
-    async def preview_session(body: SessionIn, who=Depends(ctx.principal)):
+    async def preview_session(body: SessionIn, request: Request, who=Depends(ctx.principal)):
         """Exactly what Launch would run (paths that depend on the new id shown as <run-dir>)."""
+        relay_launch(body, request_resolve(request))
         if body.topic is not None and body.project_id is not None:
             raise HTTPException(422, 'topic is for local workspaces; did you mean task?')
         from ..admin_features import launch_refusal, require
@@ -213,6 +221,7 @@ def router(ctx: Context) -> APIRouter:
         body = development_target(body, who)
         no_worktree_for_workspace(body)
         selected_account, selected_host = machine_scope(body, who)
+        await relay_target(body, selected_account, selected_host)
         target_repo = launch_machines.repository(ctx, who, body.project_id, selected_host) if body.project_id and body.machine else None
         body = await default_team_grant(body, who)
         prepared = await issue_inputs(body, who)
@@ -311,6 +320,12 @@ def router(ctx: Context) -> APIRouter:
                 args = build_args(inputs, run_dir="<run-dir>", tmux_name="<tmux-name>",
                                   native_id=providers.get(inputs.provider).preview_native_id(), resume=False,
                                   files=files)
+                if body.session_relay:
+                    if inputs.provider == 'claude':
+                        from ..session_relay.claude_public import preview_args
+                        args = preview_args(inputs, files)
+                    else:
+                        args = providers.get('codex').relay_args(inputs, files=files)
             except (CompileError, vault.VaultError) as error:
                 raise HTTPException(422, str(error))
             preview_command = [providers.get(inputs.provider).executable, *args]
@@ -328,8 +343,54 @@ def router(ctx: Context) -> APIRouter:
                     "inputs": inputs.as_dict(), "standalone": bool(body.topic or body.workspace),
                     "not_delivered": not_delivered(inputs, supervisor.catalog)}
 
+    def request_resolve(request):
+        from ..session_relay.runtime import RequestResolver
+        return RequestResolver(ctx, request)
+
+    def relay_launch(body, resolve=None):
+        if getattr(body, 'session_relay', False):
+            from ..admin_features import require
+            require(ctx.settings, 'session_relay')
+            from ..session_relay import claude_public
+            from ..session_relay.exclusive_public import CLAUDE_LAUNCH_QUALIFIED
+            if body.provider == 'claude' and CLAUDE_LAUNCH_QUALIFIED is not True:
+                raise HTTPException(409, 'Claude relay launch is not qualified. This session was not started.')
+            qualified_provider = body.provider == 'codex' or (body.provider == 'claude' and claude_public.PUBLIC_CLAUDE_QUALIFIED is True)
+            if (resolve is None or not qualified_provider or body.automation or body.orchestrator
+                    or body.initial_prompt or body.task or body.issue_source or body.endpoint):
+                raise HTTPException(409, 'Relay launches require a person and a qualified new session without automation or initial input.')
+            person, actor = resolve()
+            from acc.session_relay.protocol import ActorKind
+            if actor.kind is not ActorKind.PERSON:
+                raise HTTPException(403, 'A person sign-in is required for relay enrollment.')
+            if body.provider == 'claude':
+                from .. import claude_subscription
+                from ..admin_features import Features
+                if body.options or body.remote_control or body.permission_mode not in ('default', 'acceptEdits', 'plan'):
+                    raise HTTPException(409, 'This Claude configuration is not qualified for relay enrollment.')
+                with db() as current:
+                    if body.claude_auth == 'subscription' and not claude_subscription.allowed(current, person.user_id, Features(ctx.settings)):
+                        raise HTTPException(409, 'Claude subscription relay requires your existing explicit subscription approval.')
+
+    async def relay_target(body, account, host):
+        if not body.session_relay:
+            return
+        try:
+            ready = await broker.call('relay_probe', account=account, host=host,
+                **({'provider':'claude'} if body.provider=='claude' else {}))
+        except BrokerError:
+            ready = {}
+        from acc.broker.claude_owner import CLI_DIGEST as claude_digest
+        if (ready.get('available') is not True or body.provider=='claude' and
+                (ready.get('provider')!='claude' or ready.get('cliDigest')!=claude_digest)):
+            raise HTTPException(409, f'This {providers.get(body.provider).label} installation is not qualified for relay enrollment.')
+
     async def launch_session(body: SessionIn, who, schedule_run_id: str | None = None,
-                             multirun_entry: tuple[str, int] | None = None):
+                             multirun_entry: tuple[str, int] | None = None, relay_resolve=None):
+        # No legacy fallback for an explicit relay opt-in.
+        relay_launch(body, relay_resolve)
+        if body.session_relay and (schedule_run_id or multirun_entry):
+            raise HTTPException(409, 'Relay enrollment is only available to a person starting a new session.')
         host, folder = 'local', None
         if body.workspace:
             path = str(local_root(who) / body.workspace)
@@ -341,12 +402,12 @@ def router(ctx: Context) -> APIRouter:
             folder = local_workspace.topic_folder(body.topic, workspace_folders(who))
             path = str(local_root(who) / folder)
         else:
-            return await _launch_session(body, who, schedule_run_id, multirun_entry)
+            return await _launch_session(body, who, schedule_run_id, multirun_entry, relay_resolve=relay_resolve)
         return await supervisor.workspace_operations.run(path,
-            lambda: _launch_session(body, who, schedule_run_id, multirun_entry, folder), host, kind="launch")
+            lambda: _launch_session(body, who, schedule_run_id, multirun_entry, folder, relay_resolve), host, kind="launch")
 
     async def _launch_session(body: SessionIn, who, schedule_run_id: str | None = None,
-                             multirun_entry: tuple[str, int] | None = None, workspace_name: str | None = None):
+                             multirun_entry: tuple[str, int] | None = None, workspace_name: str | None = None, relay_resolve=None):
         from ..admin_features import launch_refusal
         if problem := launch_refusal(ctx.settings, automation=body.automation, orchestrator=body.orchestrator,
                                      schedule=bool(schedule_run_id), multirun=bool(multirun_entry)):
@@ -363,6 +424,7 @@ def router(ctx: Context) -> APIRouter:
         body = development_target(body, who)
         no_worktree_for_workspace(body)
         selected_account, selected_host = machine_scope(body, who)
+        await relay_target(body, selected_account, selected_host)
         if body.machine:
             try:
                 installed = await broker.call("installed_providers", account=selected_account, host=selected_host)
@@ -514,12 +576,19 @@ def router(ctx: Context) -> APIRouter:
                                              root=root, name=f"{slug}-{suffix}",
                                              branch=f"acc/{name}-{suffix}" + ("/work" if limits is not None else ""))
             try:
+                relay_options = {}
+                if body.session_relay:
+                    from ..session_relay.runtime import manager
+                    runtime = manager(ctx)
+                    relay_options['relay_launch'] = (runtime.new_exclusive_launch(relay_resolve) if body.provider == 'claude'
+                        else runtime.new_launch(relay_resolve))
                 acc_id = await supervisor.create_session(project_id, inputs, body.name, who.username, workdir=workdir,
                                                          owner=who.username, worktree=worktree, orchestrator=limits,
                                                          schedule_run_id=schedule_run_id, multirun_entry=multirun_entry,
                                                          container=container, automation_policy=body.automation,
                                                          machine=selected_host if body.machine else None, checkout_repo=checkout_repo,
-                                                         personal_task=body.task if personal_task else None, claude_auth=body.claude_auth)
+                                                         personal_task=body.task if personal_task else None, claude_auth=body.claude_auth,
+                                                         permissions=body.permissions, **relay_options)
             except Exception:
                 if worktree:  # nothing will use it: don't leave an empty worktree behind
                     await broker.call("remove_worktree", account=account, host=host, repo=repo, path=worktree["path"])
@@ -557,8 +626,8 @@ def router(ctx: Context) -> APIRouter:
     ctx.launch_session = launch_session
 
     @api.post("/api/sessions", status_code=201)
-    async def create_session(body: SessionIn, who=Depends(ctx.principal)):
-        return await launch_session(body, who)
+    async def create_session(body: SessionIn, request: Request, who=Depends(ctx.principal)):
+        return await launch_session(body, who, relay_resolve=request_resolve(request))
 
     @api.post("/api/sessions/external", status_code=201)
     def register_external(body: ExternalSessionIn, who=Depends(ctx.owner)):
@@ -737,6 +806,8 @@ def router(ctx: Context) -> APIRouter:
                 github = pulls.BrokerGitHub(broker, where['account'], where['host'])
                 state = await broker.call('session_git', **where, action='status')
                 branch = state['branch']
+                if not branch:
+                    raise HTTPException(409, 'Finish or abort the rebase/merge first; HEAD is detached.')
                 audit_detail.update(branch=branch, repo=repo, remote_host='github.com')
                 info = await pulls.call(github, 'GET', f'repos/{repo}')
                 code, protection = await github.request('GET', f"repos/{repo}/branches/{quote(branch, safe='')}")
@@ -795,10 +866,15 @@ def router(ctx: Context) -> APIRouter:
             health = await broker.call("auth_health", account=who.account, host="local")
         except BrokerError as error:
             raise refused(error)
-        return {"agents": [{"id": p.id, "label": p.label} for p in providers.PROVIDERS.values()
-                           if (p.id != 'claude' or claude_available) and (
-                               (health.get(p.id) or {}).get("logged_in") or p.id == 'claude' and (
-                                   supplied_mode(credentials) != 'unknown' or (health.get('codex') or {}).get('logged_in')))]}
+        from acc.broker.explain import SUPPORTED_PROVIDERS
+        available = [p for p in providers.PROVIDERS.values()
+                     if (p.id != 'claude' or claude_available) and (
+                         (health.get(p.id) or {}).get("logged_in") or p.id == 'claude' and (
+                             supplied_mode(credentials) != 'unknown' or (health.get('codex') or {}).get('logged_in')))]
+        return {"agents": [{"id": p.id, "label": p.label} for p in available if p.id in SUPPORTED_PROVIDERS],
+                "unavailable": [{"id": p.id, "label": p.label, "reason": "Read-only explanation runner is not supported."}
+                                for p in available if p.id not in SUPPORTED_PROVIDERS]}
+
 
     @api.post("/api/sessions/{acc_id}/explanation")
     async def create_explanation(acc_id: str, body: ExplainIn, who=Depends(ctx.principal)):
@@ -1429,6 +1505,7 @@ def router(ctx: Context) -> APIRouter:
             return [{"key": o.key, "value": o.value, "source": o.source, "observed_at": o.observed_at}
                     for o in s.scalars(select(Observation))]
 
-    from . import multiruns
+    from . import multiruns, session_permissions
+    api.include_router(session_permissions.router(ctx))
     api.include_router(multiruns.router(ctx, launch_session, preview_session, session_changes))
     return api

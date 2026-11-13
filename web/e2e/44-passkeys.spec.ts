@@ -42,6 +42,7 @@ test('passkey enrollment, discoverable login, rename and removal on desktop and 
   await page.screenshot({ path: wikiShotPath(testInfo, 'settings-passkeys-phone.png') });
   await page.setViewportSize({ width: 1440, height: 900 });
   await card.screenshot({ path: wikiShotPath(testInfo, 'settings-passkeys.png') });
+  await page.getByRole('button', { name: /^Account:/ }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
@@ -82,6 +83,7 @@ test('offline recovery works after the virtual authenticator is lost', async ({ 
   expect(code.length).toBeGreaterThan(40);
   await dialog.getByRole('button', { name: 'I saved the code' }).click();
   await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+  await page.getByRole('button', { name: /^Account:/ }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.getByRole('button', { name: 'Lost your passkeys?' }).click();
@@ -96,6 +98,6 @@ test('offline recovery works after the virtual authenticator is lost', async ({ 
   await expect(page.getByText('Recovery code: not created.', { exact: false })).toBeVisible();
   // Recovery is a critical Inbox item for the person and every owner (security review PK-05).
   await page.goto('/inbox');
-  await expect(page.getByText('alex recovered sign-in with an offline recovery code', { exact: true })).toBeVisible();
-  await expect(page.getByText('Their passkeys and sign-ins were removed.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Inbox item details', exact: true }).getByRole('heading', { name: 'alex recovered sign-in with an offline recovery code', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Inbox item details', exact: true }).getByText('Their passkeys and sign-ins were removed.', { exact: false })).toBeVisible();
 });

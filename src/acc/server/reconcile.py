@@ -5,6 +5,7 @@ Mixed into acc.server.supervisor.Supervisor; methods use its state (self.db, sel
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,11 @@ def stale_snapshot(error: OperationalError) -> bool:
 
 class ReconcileMixin:
     async def reconcile(self) -> None:
+        from .db import write_in_thread
+        from .session_relay.maintenance import recover as recover_relay
+        await write_in_thread(recover_relay, self)
+        from .delegated_execution import recover
+        await recover(self)
         await self._recover_attempts()
         async with self._lock:
             with self.db() as db:
@@ -66,6 +72,8 @@ class ReconcileMixin:
                                                                   Session.management == "acc").options(
                     selectinload(Session.project), selectinload(Session.placement), selectinload(Session.launch_spec))))
                 ids = [session.id for session in sessions]
+                from .models import RelaySession
+                relay_ids = set(db.scalars(select(RelaySession.session_id).where(RelaySession.session_id.in_(ids))))
                 keys = {session.id: (host_of(session), session.run_as) for session in sessions}
                 quiet = {session.id: session.tmux_name for session in sessions if settled_stop(session)}
                 held = self._replacement_held(db)
@@ -104,6 +112,13 @@ class ReconcileMixin:
                 with self.db() as db:
                     session = db.get(Session, acc_id)
                     if session is None or session.management != "acc":
+                        continue
+                    if acc_id in relay_ids:
+                        runtime = getattr(self, 'relay_manager', None)
+                        active = runtime.runs.get(acc_id) if runtime else None
+                        if session.desired_state == 'running' and (active is None or active.peer.closed):
+                            self._recovery_needed(db, session, 'Relay runtime disconnected; explicit relay recovery is required.')
+                            db.commit()
                         continue
                     key = (host_of(session), session.run_as)
                     if key not in panes:
@@ -209,6 +224,22 @@ class ReconcileMixin:
             log.exception('orchestrator: attempt recovery failed; retrying on a later pass')
 
     async def _reconcile_one(self, db: DbSession, session: Session, pane: dict | None, *, spool_pending=False) -> None:
+        if session.desired_state == 'running' and session.management == 'acc':
+            from .session_caps import Refused, check_execution
+            try:
+                check_execution(db, session, True)  # allow only the existing lead expiry wrap-up
+            except Exception as error:
+                session.desired_state = 'stopped'
+                session.last_error = str(error) if isinstance(error, Refused) else 'Capability check failed; execution refused (see server log).'
+                if not isinstance(error, Refused):
+                    from .pulls import clean, redact
+                    try:
+                        reason = clean(redact(f'{type(error).__name__}: {error}',
+                                              self.vault.redactor(db, session.vault_keys)))[:300]
+                    except Exception:
+                        reason = 'Error details unavailable (redaction failed)'
+                    # A raw traceback would repeat the unredacted exception.
+                    log.error('session %s: capability check failed; stopping execution: %s', session.id, reason)
         if session.project is None:
             return  # detached, archived history has no workspace to reconcile
         from .models import Observation
@@ -236,6 +267,11 @@ class ReconcileMixin:
             if not held:
                 return
             await self._reconcile_workspace(db, session, pane, spool_pending=spool_pending)
+            if session.desired_state != 'running':
+                # Notice queries can autoflush pending auth/stop writes. Run them only
+                # after the broker kill, using this persisted session's identity.
+                from .review_state import sync_notice
+                sync_notice(db, session)
 
     async def _reconcile_workspace(self, db: DbSession, session: Session, pane: dict | None, *, spool_pending=False) -> None:
         if "explanation.json" in session.launch_spec.files:
@@ -252,12 +288,17 @@ class ReconcileMixin:
             session.last_output_at = datetime.fromtimestamp(pane["last_output"], timezone.utc)
 
         if session.desired_state != "running":
+            if session.desired_state == "stopped" and session.observed_state == "exited":
+                await self._check_changes(db, session)
             if pane and not pane["dead"]:
                 await self.broker.call("kill", account=session.run_as, host=host_of(session),
                                        **kill_params(session, self.settings))
                 pane["dead"] = True  # killed: a stale-snapshot retry (_retry_stop) must not kill again
             if session.container:
                 containers.revoke_grant(self.settings, session.id)
+            if session.desired_state == 'stopped' and (session.last_error or '').startswith(('limited by ', 'session capability:')):
+                self._close_run(session, end_reason='permission_narrowed')
+                self._set_state(db, session, 'stopped', 'supervisor')
             if session.team_stop_pending:
                 session.team_stop_pending = False
             if session.multirun_stop_pending:
@@ -278,13 +319,22 @@ class ReconcileMixin:
 
         if pane and not pane["dead"]:
             if run is None:  # alive but untracked, e.g. accd restarted: adopt it
-                run = SessionRun(session=session, reason="adopted", pid=pane.get("pid"), verified_at=now())
+                if pane.get('osc7501'):
+                    db.commit()
+                    await self.broker.call('clear_osc_status', account=session.run_as, host=host_of(session),
+                                           tmux_name=session.tmux_name)
+                    pane['osc7501'] = None
+                run = SessionRun(session=session, reason="adopted", pid=pane.get("pid"), started_at=now(), verified_at=now())
                 db.add(run)
             await self._check_started(db, session, run, pane)
-            working = await self._check_prompt(db, session)
+            # Approval screens must always be checked, even after a script reports status.
+            screen_status = await self._check_prompt(db, session)
+            osc = not screen_status and self._check_osc_status(db, session, run, pane)
             await self._check_changes(db, session)
-            if not working:
+            if not screen_status and not osc:
                 self._check_quiet(db, session)
+            from .review_state import sync_notice
+            sync_notice(db, session)
             await self._check_automation(db, session)
             if session.project.group_id:
                 from sqlalchemy import delete
@@ -340,6 +390,7 @@ class ReconcileMixin:
             if pane is not None and states.is_user_exit(run.exit_status, run.exit_signal):
                 session.desired_state = "stopped"
                 self._set_state(db, session, "exited", "tmux")
+                await self._check_changes(db, session)
                 db.add(AuditLog(actor="supervisor", action="session.user_exit", target=session.id,
                                 detail={"end_reason": run.end_reason}))
                 return
@@ -361,6 +412,9 @@ class ReconcileMixin:
         from .admin_features import enabled
         if not enabled(self.settings, 'automation'):
             return
+        from .models import RelaySession
+        if db.get(RelaySession, session.id):
+            return  # relay automation must pass through the hub, never legacy keys
         from sqlalchemy import text
 
         from . import automation
@@ -451,15 +505,52 @@ class ReconcileMixin:
             if remote.get("bridge_session_id"):
                 session.remote_url = f"https://claude.ai/code/{remote['bridge_session_id']}"
 
+    def _check_osc_status(self, db: DbSession, session: Session, run: SessionRun, pane: dict) -> bool:
+        """Status only: never raise attention or authorize an action. Hooks win for this run."""
+        value = pane.get('osc7501')
+        mapping = {'working': 'active', 'done': 'idle', 'blocked': 'waiting_input', 'error': 'idle'}
+        if value not in mapping or session.observed_state not in states.LIVE_STATES:
+            return False
+        source = session.status_source or ''
+        if source.endswith('_hook') or (session.observed_state == 'waiting_input' and source != 'osc7501'):
+            return False
+        # A run's hook evidence changes only when its spool advances. Retain the
+        # result across ORM transactions, and discard it when that run closes.
+        cache = self.__dict__.setdefault('_osc_hook_seen', {})
+        key = (run.id, run.started_at)
+        seen = cache.get(session.id)
+        if seen is None or seen[0] != key or (not seen[2] and seen[1] != session.spool_offset):
+            has_hook = db.scalar(select(Event.id).where(
+                Event.session_id == session.id, Event.ts >= run.started_at,
+                Event.source.endswith('_hook', autoescape=True)).limit(1)) is not None
+            seen = cache[session.id] = (key, session.spool_offset, has_hook)
+        if seen[2]:
+            return False
+        # Even an unexpected pending item must not be resolved by a script.
+        if session.observed_state == 'waiting_input' and attention._open(db, f'needs_input:{session.id}'):
+            return False
+        state = mapping[value]
+        error = 'Script reported an error (OSC 7501)'
+        activity = error if value == 'error' else None
+        if session.status_source != 'osc7501' or session.observed_state != state or session.activity != activity:
+            session.activity, session.activity_at = activity, now()
+            if value == 'error':
+                session.last_error = error
+            elif session.last_error == error:
+                session.last_error = None
+            self._set_state(db, session, state, 'osc7501')
+        return True
+
     async def _check_prompt(self, db: DbSession, session: Session) -> bool:
         """A provider with no permission hook: its approval prompt on screen means "needs you" (status from the screen);
         once the prompt is gone, it is working again. Claude also exposes background work after its Stop hook.
-        A terminal turn error means idle with its error as activity."""
+        A terminal turn error means idle with its error as activity. Return whether this pass has positive
+        screen evidence (a prompt, work, or an idle/error footer), even if the state was already correct."""
         provider = providers.get(session.provider)
         if (not provider.prompt_patterns and provider.id != "claude"
                 or session.observed_state not in ("active", "idle", "waiting_input")):
             return False
-        if session.observed_state == "waiting_input" and session.status_source != "screen":
+        if session.observed_state == "waiting_input" and session.status_source not in ("screen", "osc7501"):
             return False  # a hook said so; a hook will say when it's answered
         db.commit()  # never hold the write lock while waiting for the broker (see _start)
         screen = await self.broker.call("screen_prompt", account=session.run_as, host=host_of(session), tmux_name=session.tmux_name,
@@ -467,7 +558,7 @@ class ReconcileMixin:
         prompt = screen["prompt"]
         if prompt:
             prompt = self.vault.redactor(db, session.vault_keys).text(prompt)
-        if prompt is not None and (session.observed_state != "waiting_input"
+        if prompt is not None and (session.observed_state != "waiting_input" or session.status_source != "screen"
                                    or (not provider.screen_prompt_command and session.activity != prompt[:200])):
             prompt = prompt or "a command"
             attention.raise_item(db, f"needs_input:{session.id}", kind="needs_input", source="screen",
@@ -475,7 +566,7 @@ class ReconcileMixin:
                                  risk=dict(risk_labels.DEFAULT))
             session.activity, session.activity_at = (f"Asking to run {prompt}" if provider.screen_prompt_command else prompt)[:200], now()
             self._set_state(db, session, "waiting_input", "screen")
-        elif prompt is None and session.observed_state == "waiting_input":
+        elif prompt is None and session.observed_state == "waiting_input" and session.status_source == "screen":
             if not provider.screen_prompt_command:
                 session.activity, session.activity_at = None, now()
             if session.activity and session.activity.startswith("Asking to run "):  # approved: the command runs now
@@ -504,18 +595,28 @@ class ReconcileMixin:
         if (provider.id == "claude" and session.observed_state == "idle"
                 and not screen.get("idle") and session.activity and " background " in session.activity):
             session.activity, session.activity_at = None, now()
-        return working
+        return prompt is not None or working or screen.get("idle") is not None
 
     async def _check_changes(self, db: DbSession, session: Session) -> None:
         """Refresh the summary of what changed in its workspace: every changes_interval while it works, less often
         while idle."""
         if session.management == "external":
             return
+        stale = session.status_at and (not session.changes_at or session.changes_at < session.status_at)
+        if session.observed_state == 'exited':
+            if not stale:
+                return
+            # A final reading is useful once, not a permanent poll of an abandoned checkout.
+            run_id = session.runs[-1].id if session.runs else None
+            attempted = self.__dict__.setdefault('_exit_changes_attempted', {})
+            if attempted.get(session.id) == (run_id,):
+                return
+            attempted[session.id] = (run_id,)
         every = self.settings.changes_interval * (1 if session.observed_state in ("active", "waiting_input") else 6)
         checked = self.__dict__.setdefault("_changes_checked", {})  # in memory: no database write per check
         last = checked.get(session.id)
         fresh_activity = last is not None and session.activity_at is not None and session.activity_at > last[1]
-        if last is not None and time.monotonic() - last[0] < every and not fresh_activity:
+        if session.observed_state != 'exited' and last is not None and time.monotonic() - last[0] < every and not fresh_activity and not (session.status_at and session.status_at > last[1]):
             return  # nothing new since the last look (a tool event, e.g. an edit, makes it look again)
         checked[session.id] = (time.monotonic(), now())
         params = dict(account=session.run_as, host=host_of(session), path=session.cwd, base=session.base_commit)
@@ -527,7 +628,7 @@ class ReconcileMixin:
         except BrokerError:
             return  # e.g. the folder is gone; the next check tries again
         summary = self.vault.redactor(db, session.vault_keys).deep(summary)
-        if summary != session.changes:  # written only when something changed
+        if summary != session.changes or (session.status_at and (not session.changes_at or session.changes_at < session.status_at)):
             session.changes, session.changes_at = summary, now()
 
     def _check_quiet(self, db: DbSession, session: Session) -> None:
@@ -552,6 +653,10 @@ class ReconcileMixin:
     async def _attempt_resume(self, db: DbSession, session: Session, pane: dict | None) -> None:
         from .admin_features import enabled
         if not enabled(self.settings, 'automation'):
+            return
+        from .models import RelaySession
+        if db.get(RelaySession, session.id):
+            self._recovery_needed(db, session, 'This relay session requires explicit qualified recovery; automatic legacy resume is unavailable.')
             return
         if session.recovery_attempts >= len(self.settings.retry_backoff):
             self._recovery_needed(db, session, session.last_error or "Rynhult tried to resume the session several times and gave up. Resume it to try again.")
@@ -604,6 +709,8 @@ class ReconcileMixin:
         self._recovery_needed(db, session, message)
 
     async def _start(self, db: DbSession, session: Session, reason: str, personal_task: str | None = None) -> None:
+        from .session_relay.hub import refuse_legacy
+        refuse_legacy(db, session.id)  # all starts, including schedule/lifecycle callers
         resume = reason != "launch"
         host, account = host_of(session), session.run_as
         home = str(self.settings.account_home(account))
@@ -630,6 +737,12 @@ class ReconcileMixin:
                 has_remote = facts.get('has_remote') if type(facts.get('has_remote')) is bool else None
             except Exception:
                 pass  # Unknown is never permission to publish.
+        from .session_caps import effective
+        scoped_sandbox = any(effective(db, session)[key] is not None for key in ('folders', 'network', 'installs', 'ports'))
+        db.commit()
+        cap_protocol = None
+        if scoped_sandbox:
+            cap_protocol = (await self.broker.call('ping', account=account, host=host)).get('session_capabilities')
         image_model = await image_capabilities.live_model(self, image_session, image_inputs)
         # A PostgreSQL repeatable-read snapshot can retain a revoked grant even when
         # its session write commits successfully. Drop it AND cached ORM authority.
@@ -734,6 +847,17 @@ class ReconcileMixin:
             automated = bool(session.team_id or scheduled or session.automation and (
                 session.automation.get('pending_configuration') or session.automation.get('autoresume')
                 or session.automation.get('goal')))
+            from .security_settings import check_generation
+            try:
+                check_generation(db, session)
+                from . import session_caps
+                applied_caps = session_caps.wire(db, session)
+                if any(applied_caps['effective'][key] is not None for key in ('folders', 'network', 'installs', 'ports')) and cap_protocol != 1:
+                    raise ValueError('The execution broker cannot enforce session capabilities; update it before launching this restricted session.')
+                materialized[session_caps.FILE] = json.dumps(applied_caps, sort_keys=True)
+                session.cap_effective = applied_caps['effective']
+            except ValueError as error:
+                raise CompileError(str(error)) from None
             if session.container:
                 # Final synchronous barrier: queued/restored sessions, resumes and retries all pass here.
                 # Existing live panes never come through here. No await between this check and dispatch.
@@ -749,11 +873,6 @@ class ReconcileMixin:
                                            materialized, container_limits, automated=automated)
                 except (OSError, ValueError) as error:
                     raise CompileError(f"Rynhult couldn't prepare the session's container ({error}).") from None
-            from .security_settings import Conflict, check_generation
-            try:
-                check_generation(db, session)
-            except Conflict as error:
-                raise CompileError(str(error)) from None
             db.commit()
             result = await self.broker.call("launch", account=account, host=host_of(session),
                                             **{**launch, "files": materialized, "automated": automated}, env={**environment, **delivery.env})

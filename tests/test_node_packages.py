@@ -1190,7 +1190,8 @@ def test_the_broker_env_test_knob_only_works_in_a_dry_run():
 def test_the_node_updater_runs_the_installer_in_update_mode(tmp_path):
     from acc.update_helper import NodeTransaction
     commands = []
-    job = NodeTransaction(tmp_path / "updates", tmp_path / "app", tmp_path / "data", "0.13.0", {},
+    job = NodeTransaction(tmp_path / "updates", tmp_path / "app", tmp_path / "data", "0.13.0",
+                          {"distro_acceptance": str(tmp_path / "acceptance")},
                           run=lambda argv, **_: commands.append(argv) or subprocess.CompletedProcess(argv, 0))
     job.install(tmp_path / "new")
     assert commands == [["bash", str(tmp_path / "new/deploy/node/install.sh"), "--update"]]

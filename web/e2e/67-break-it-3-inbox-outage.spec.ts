@@ -8,7 +8,11 @@ async function recoverAfterRetry(page: Page, status: Locator) {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.exposeFunction('inboxRetryDispatched', () => { requested = true; });
-  const retry = status.getByRole('button', { name: 'Retry Inbox', exact: true });
+  await status.click();
+  const main = page.getByRole('main');
+  const failure = main.getByRole('alert').or(main.getByRole('status').filter({ hasText: 'Showing the last data received' }));
+  await expect(failure).toBeVisible();
+  const retry = main.getByRole('button', { name: 'Refresh Inbox', exact: true });
   await retry.evaluate(button => button.addEventListener('click', () => {
     void (window as Window & { inboxRetryDispatched: () => Promise<void> }).inboxRetryDispatched();
   }, { once: true }));
@@ -21,9 +25,9 @@ async function recoverAfterRetry(page: Page, status: Locator) {
   try {
     await retry.click();
     await expect(retry).toBeDisabled();
-    await expect(status).toContainText('Inbox unavailable');
+    await expect(failure).toBeVisible();
     release();
-    await expect(status).toBeHidden();
+    await expect(main.getByText('Nothing needs you right now.', { exact: true })).toBeVisible();
   } finally {
     release();
   }
@@ -35,8 +39,8 @@ for (const theme of ['dark', 'light'] as const) for (const width of [1440, 390])
   await page.route(/\/api\/attention(?:\?.*)?$/, route =>
     route.fulfill({ status: 503, json: { detail: 'Test Inbox temporarily unavailable' } }));
   await page.goto('/');
-  const status = page.getByRole('region', { name: 'Inbox status' });
-  await expect(status).toContainText('Inbox unavailable', { timeout: 10000 });
+  const status = page.getByRole('navigation', { name: width === 390 ? 'Phone rail' : 'Rail', exact: true }).getByRole('button', { name: /^Inbox/ });
+  await expect(status).toHaveAccessibleName(/Inbox.*unavailable/i, { timeout: 10000 });
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeInViewport();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await status.boundingBox())!.height).toBeLessThanOrEqual(96);
@@ -46,7 +50,7 @@ for (const theme of ['dark', 'light'] as const) for (const width of [1440, 390])
   await recoverAfterRetry(page, status);
 });
 
-test('collapsing ordinary notices never hides a later Inbox refresh failure', async ({ page }) => {
+test('an ordinary notice count never hides a later Inbox refresh failure', async ({ page }) => {
   let failed = false;
   const at = new Date().toISOString();
   await page.route(/\/api\/attention(?:\?.*)?$/, route => failed
@@ -57,12 +61,11 @@ test('collapsing ordinary notices never hides a later Inbox refresh failure', as
       acked_at: null, resolved_at: null, snoozed_until: null, publish_id: null, persistent: null,
     }] }));
   await page.goto('/');
-  const status = page.getByRole('region', { name: 'Inbox status' });
-  await expect(status).toContainText('Inbox (1)');
-  await status.getByRole('button', { name: 'Collapse other notices' }).click();
-  await expect(status).toBeHidden();
+  const status = page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: /^Inbox/ });
+  await expect(status).toHaveAccessibleName('Inbox, 1 open');
+  // Classic banner collapse has no counterpart; the fixed rail keeps the count visible.
   failed = true;
-  await expect(status).toContainText('Inbox unavailable', { timeout: 10000 });
-  await expect(status.getByRole('link')).toHaveText('Inbox (1) · stale');
+  await expect(status).toHaveAccessibleName(/count may be out of date/, { timeout: 10000 });
+  await expect(status).toHaveAccessibleName(/Inbox, 1 open, count may be out of date/);
   await recoverAfterRetry(page, status);
 });

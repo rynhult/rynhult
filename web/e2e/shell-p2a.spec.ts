@@ -2,19 +2,10 @@ import { expect, type Page } from '@playwright/test';
 import { test } from './shell-state';
 import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, gitProject, verifyAgain, sessionWithChanges, expectAxeClean, info, PASSWORD, totp, freshStep, loadSecret } from './helpers';
-test.use({ presentationChanges: ['layouts', 'ui_shell', 'admin_features'], storageState: AUTH_FILE });
-async function enable(page: Page) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-  };
-  let result = await put();
-  if (result.status() === 403 && (await result.json()).detail?.startsWith('Verify your sign-in')) { await verifyAgain(page); result = await put(); }
-  expect(result.ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-}
+test.use({ presentationChanges: ['layouts', 'admin_features'], storageState: AUTH_FILE });
+
 test('Files keeps the same editor, draft and selection across keyboard moves, Fill and phone fallback', async ({ page }) => {
-  await enable(page);
+
   const project = await gitProject(page, 'cedar-columns');
   const created = await page.request.post(`/api/files/project/${project.id}`, { headers: await csrfHeaders(page), data: { action: 'create', path: 'notes.txt', content: 'First line\nSecond line\n' } });
   expect(created.ok()).toBeTruthy();
@@ -45,7 +36,7 @@ test('Files keeps the same editor, draft and selection across keyboard moves, Fi
 });
 
 test('session terminal claims free control and moves/fills without reconnecting; closing releases clean control but never stops', async ({ page, context }) => {
-  test.slow(); await enable(page);
+  test.slow();
   const id = await sessionWithChanges(page, 'column-terminal');
   const sockets: string[] = []; const input: string[] = []; const mutations: string[] = [];
   page.on('request', request => { if (request.method() !== 'GET') mutations.push(new URL(request.url()).pathname); });
@@ -113,7 +104,7 @@ test('session terminal claims free control and moves/fills without reconnecting;
 });
 
 test('phone brand and host never overlap at 320–390px in either theme', async ({ page }) => {
-  await enable(page);
+
   await page.goto('/projects');
   for (const width of [320, 360, 390]) for (const colorScheme of ['light', 'dark'] as const) {
     await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ colorScheme });
@@ -128,14 +119,14 @@ test('phone brand and host never overlap at 320–390px in either theme', async 
 });
 
 for (const role of ['owner', 'member']) test(`${role}: three columns, pointer/keyboard resize, phone fallback and local restoration pass axe in both themes`, async ({ page, context }) => {
-  test.setTimeout(180000); await enable(page);
+  test.setTimeout(180000);
   if (role === 'member') {
     const account = `columns-${Date.now()}-agent`; mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
     const invite = await page.request.post('/api/users/invites', { headers: await csrfHeaders(page), data: { role: 'member', account } });
     expect(invite.ok()).toBeTruthy(); const token = (await invite.json()).link.split('/').pop(); await context.clearCookies();
     const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
     expect((await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-columns-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } })).ok()).toBeTruthy();
-    await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
   }
   const project = await gitProject(page, `cedar-${role}`);
   for (const path of ['one.txt', 'two.txt', 'three.txt']) expect((await page.request.post(`/api/files/project/${project.id}`, { headers: await csrfHeaders(page), data: { action: 'create', path, content: path } })).ok()).toBeTruthy();
@@ -193,7 +184,7 @@ for (const role of ['owner', 'member']) test(`${role}: three columns, pointer/ke
 });
 
 test('Files retains the base and draft through navigation, storage failure and a concurrent disk edit', async ({ page }) => {
-  await enable(page); const project = await gitProject(page, 'cedar-conflict');
+   const project = await gitProject(page, 'cedar-conflict');
   for (const path of ['draft.txt', 'other.txt']) expect((await page.request.post(`/api/files/project/${project.id}`, { headers: await csrfHeaders(page), data: { action: 'create', path, content: 'Original' } })).ok()).toBeTruthy();
   await page.addInitScript(() => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) { if (key.startsWith('ryn-layout-pending:')) throw new DOMException('quota', 'QuotaExceededError'); return original.call(this, key, value); }; });
   await page.goto(`/projects/${project.id}?tab=files&file=draft.txt`);
@@ -213,7 +204,7 @@ test('Files retains the base and draft through navigation, storage failure and a
 });
 
 test('restored unauthorized references are neutral until explicit recheck', async ({ page }) => {
-  await enable(page); const project = await gitProject(page, 'cedar-unavailable');
+   const project = await gitProject(page, 'cedar-unavailable');
   expect((await page.request.post(`/api/files/project/${project.id}`, { headers: await csrfHeaders(page), data: { action: 'create', path: 'private-notes.txt', content: 'Sensitive fixture text' } })).ok()).toBeTruthy();
   await page.goto(`/projects/${project.id}?tab=files&file=private-notes.txt`);
   await expect(page.getByRole('textbox', { name: 'File content' })).toBeVisible();
@@ -234,7 +225,7 @@ test('restored unauthorized references are neutral until explicit recheck', asyn
 });
 
 test('read-only Chat shares working columns with one retained terminal and pauses hidden follow', async ({ page }) => {
-  await enable(page);
+
   const featureState = await (await page.request.get('/api/admin-features')).json();
   const originalChat = featureState.features.find((row: { id: string; enabled: boolean }) => row.id === 'chat').enabled;
   try {
@@ -272,7 +263,7 @@ test('read-only Chat shares working columns with one retained terminal and pause
 });
 
 test('Round 2: archived history is directly readable and workspace Files without a session explains its next step', async ({ page }) => {
-  await enable(page); const id = await sessionWithChanges(page, 'cedar-history');
+   const id = await sessionWithChanges(page, 'cedar-history');
   expect((await page.request.post(`/api/sessions/${id}/archive`, { headers: await csrfHeaders(page) })).ok()).toBeTruthy();
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${id}`)).json()).observed_state).toBe('archived');
   await page.goto(`/sessions/${id}`);
@@ -283,7 +274,7 @@ test('Round 2: archived history is directly readable and workspace Files without
   await expect(page.getByText('Open Files from the workspace card to choose its folder.')).toBeVisible();
 });
 
-for (const shell of ['new', 'standard']) test(`Round 2: ${shell} sign-out removes private paths from every device-layout scope`, async ({ browser }) => {
+for (const shell of ['direct', 'reload']) test(`Round 2: ${shell} sign-out removes private paths from every device-layout scope`, async ({ browser }) => {
   test.setTimeout(90000);
   // An independent login session keeps this sign-out from ending other specs' shared setup session.
   const context = await browser.newContext({ baseURL: info().origin });
@@ -291,7 +282,7 @@ for (const shell of ['new', 'standard']) test(`Round 2: ${shell} sign-out remove
   try {
     await freshStep(fresh);
     expect((await fresh.request.post('/api/auth/login', { headers: { Origin: info().origin }, data: { username: 'alex', password: PASSWORD, code: totp(loadSecret()) } })).ok()).toBeTruthy();
-    await enable(fresh); const project = await gitProject(fresh, 'cedar-cleanup');
+     const project = await gitProject(fresh, 'cedar-cleanup');
     expect((await fresh.request.post(`/api/files/project/${project.id}`, { headers: await csrfHeaders(fresh), data: { action: 'create', path: 'private-notes.txt', content: 'Fixture' } })).ok()).toBeTruthy();
     await fresh.goto(`/projects/${project.id}?tab=files&file=private-notes.txt`);
     await expect(fresh.getByRole('textbox', { name: 'File content' })).toBeVisible();
@@ -304,13 +295,9 @@ for (const shell of ['new', 'standard']) test(`Round 2: ${shell} sign-out remove
     await expect(fresh.getByRole('textbox', { name: 'File content' })).toBeVisible();
     await expect.poll(stored).toEqual([]);
     await seeded([pending(scope.person, 99999998)]);
-    if (shell === 'standard') {
-      await fresh.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(fresh), data: { enabled: false } });
-      await fresh.reload(); await fresh.getByTitle('Sign out', { exact: true }).click();
-    } else {
-      await fresh.getByRole('button', { name: /^Account:/ }).click();
-      await fresh.getByRole('button', { name: 'Sign out', exact: true }).click();
-    }
+    if (shell === 'reload') await fresh.reload();
+    await fresh.getByRole('button', { name: /^Account:/ }).click();
+    await fresh.getByRole('button', { name: 'Sign out', exact: true }).click();
     await expect(fresh).toHaveURL(/\/login$/);
     // A late protected read can cause a full navigation after the router reaches /login.
     // Wait for the destination document, not just its URL, before evaluating storage.
@@ -320,9 +307,8 @@ for (const shell of ['new', 'standard']) test(`Round 2: ${shell} sign-out remove
   } finally { await context.close(); }
 });
 
-
-test('Round 2: explicit handover preserves partial input across new and standard shells and hidden release', async ({ page, context }) => {
-  test.setTimeout(120000); await enable(page); const id = await sessionWithChanges(page, 'cedar-handover');
+test('Round 2: explicit handover preserves partial input across reload and hidden release', async ({ page, context }) => {
+  test.setTimeout(120000);  const id = await sessionWithChanges(page, 'cedar-handover');
   await page.goto(`/sessions/${id}`);
   await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   const sent: string[] = []; let busy = true;
@@ -364,26 +350,25 @@ test('Round 2: explicit handover preserves partial input across new and standard
     await other.getByRole('button', { name: 'Release control', exact: true }).click();
     await other.getByRole('dialog', { name: 'Release with partial input?' }).getByRole('button', { name: 'Release without clearing' }).click();
     await expect(other.getByRole('button', { name: 'Release hidden control', exact: true })).toHaveCount(0);
-    // The same person reclaims the released prompt in the standard shell without clearing or replaying it.
-    expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } })).ok()).toBeTruthy();
+    // The same person reclaims the released prompt after reload without clearing or replaying it.
+
     await other.reload();
-    await expect(other.getByText('Read-write', { exact: true })).toBeVisible();
+    await expect(other.getByText('You control this terminal', { exact: true })).toBeVisible();
     await expect(other.getByRole('dialog', { name: 'Take terminal control' })).toHaveCount(0);
     expect(sent).toEqual(before);
     await other.locator('.xterm-helper-textarea').focus(); await other.keyboard.press('Enter');
     await expect.poll(() => existsSync(`${info().run_dir}/${id}/fake.received`) ? readFileSync(`${info().run_dir}/${id}/fake.received`, 'utf8') : '').toBe('unfinished\n');
-  } finally { await other.close(); await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } }); }
+  } finally { await other.close();  }
 });
 
-test('Round 2: standard-shell Status board stays outside the frame', async ({ page }) => {
-  await enable(page);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } })).ok()).toBeTruthy();
+test('Round 2: cold Status board stays outside the frame', async ({ page }) => {
+
   try {
     await page.goto('/board');
     await expect(page.getByRole('heading', { name: 'Machines', exact: true })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0);
+    await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toHaveCount(0);
     await expect(page.locator('.shell-header, .shell-sidebar')).toHaveCount(0);
     await page.goto('/sessions');
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true, level: 1 })).toBeVisible();
-  } finally { await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } }); }
+  } finally {  }
 });

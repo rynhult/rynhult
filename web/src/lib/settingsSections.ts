@@ -1,2 +1,2 @@
-export const PERSONAL = ['Appearance', 'Setup level', 'Access devices', 'Passkeys', 'Sign-in security', 'Password', 'Sign-ins', 'Notifications', 'Notification devices', 'Keys', 'Risk labels', 'Guardrails', 'Security', 'Certificate'];
+export const PERSONAL = ['Claude Agent', 'Appearance', 'Setup level', 'Access devices', 'Passkeys', 'Sign-in security', 'Password', 'Sign-ins', 'Notifications', 'Notification devices', 'Keys', 'Risk labels', 'Guardrails', 'Security', 'Certificate'];
 export const INSTANCE = ['Admin features', 'Remote access', 'Usage and bug reports', 'Updates', 'Publishing', 'People', 'Company sign-in', 'DNS', 'Issue sources', 'Tool approvals', 'Budgets', 'Selection allow-lists', 'Image access', 'Container limits'];

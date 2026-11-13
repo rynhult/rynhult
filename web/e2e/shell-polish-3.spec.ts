@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { test } from './shell-state';
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, waitForSessionState } from './helpers';
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, selectSessionView, waitForSessionState } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 
@@ -255,9 +255,9 @@ test('session keeps one compact line plus tabs and all details, delivery and ter
   }
 });
 
-test.describe('standard layout', () => {
-  test.use({ shellLayout: 'standard' });
-  test('standard session keeps its desktop secondary tabs', async ({ page }) => {
+test.describe('sole layout navigation', () => {
+  test.use({ });
+  test('secondary session views remain reachable through More', async ({ page }) => {
     const project = await gitProject(page, 'legacy-session-tabs');
     const made = await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'Cedar standard tabs' } });
     expect(made.ok()).toBeTruthy(); const session = await made.json();
@@ -265,13 +265,13 @@ test.describe('standard layout', () => {
       await waitForSessionState(page, session.id, 'idle');
       await page.goto(`/sessions/${session.id}`);
       const tabs = page.getByRole('tablist', { name: 'Session views' });
-      for (const name of ['Setup', 'Activity', 'Handoffs']) await expect(tabs.getByRole('tab', { name, exact: true })).toBeVisible();
+      for (const name of ['Setup', 'Activity', 'Handoffs']) { await selectSessionView(page, name); await expect(tabs.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true'); }
     } finally { expect((await page.request.post(`/api/sessions/${session.id}/stop`, { headers: await csrfHeaders(page) })).ok()).toBeTruthy(); }
   });
   test('retains the existing notice row and navigation', async ({ page }) => {
     await page.route('**/api/attention*', route => route.fulfill({ json: [notice(1), notice(2)] }));
     await page.goto('/projects');
-    await expect(page.getByRole('region', { name: 'Inbox status' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Inbox status' })).toHaveCount(0);
+    await expect(page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: 'Inbox, 2 open', exact: true })).toBeVisible();
   });
 });

@@ -4,16 +4,29 @@ from __future__ import annotations
 import secrets
 import time
 from threading import Lock
+from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 
 from ... import __version__
-from .. import admin_features, auth, passkeys
+from .. import admin_features, auth, devices, passkeys
 from ..db import WRITE_INTENT
-from ..models import AuditLog, AuthSession, Invite, OIDCProvider, Passkey, PasskeyChallenge, RecoveryCode, User
+from ..models import (
+    AuditLog,
+    AuthSession,
+    Invite,
+    OIDCProvider,
+    Passkey,
+    PasskeyChallenge,
+    PushSubscription,
+    RecoveryCode,
+    Setting,
+    User,
+)
 from ..orchestrator.switch import enabled as orchestrator_enabled
+from ..setup_wizard import initial
 from .context import Context
 from .schemas import InviteBeginIn, InviteCompleteIn, LoginIn, PasswordIn, SetupBeginIn, SetupCompleteIn
 from .users import account_refusal
@@ -56,6 +69,12 @@ def router(ctx: Context) -> APIRouter:
                 request.state.cookie_authenticated = True
                 role, account, method = record.user.role, record.user.account, record.method  # survive a best-effort rollback
                 step_up = record.step_up and not record.passkey_verified
+            # Eligibility is a read; do not flush the best-effort last-seen
+            # update while another SQLite writer holds the database.
+            with s.no_autoflush:
+                push_presence_enabled = bool(record and not step_up
+                    and settings.features.enabled('notifications')
+                    and s.scalar(select(PushSubscription.id).where(PushSubscription.username == username).limit(1)))
             provider = s.get(OIDCProvider, 1) if settings.organizations_enabled else None
             sso = bool(provider and provider.enabled and provider.issuer and provider.client_id)
             try:
@@ -65,10 +84,15 @@ def router(ctx: Context) -> APIRouter:
         out = {"setup_required": setup_required, "authenticated": username is not None, "username": username,
                "sso": sso}  # whether the sign-in page offers company sign-in (organizations mode, turned on by an owner)
         if record is not None:
+            # Keep the existing opaque identity so browser-local arrangements survive
+            # retirement of the layout preference endpoint. Reserved usernames
+            # prevent reassignment when SQLite recycles a numeric User.id.
+            out["person_id"] = str(uuid5(NAMESPACE_URL, f"urn:rynhult:ui-shell:{username}"))
             out["role"] = role
             out["sign_in_method"] = method or "local"
             out["step_up_required"] = step_up  # signed in with the company, but a passkey check must come first
             out["account"] = account or settings.default_account
+            out["push_presence_enabled"] = push_presence_enabled
         if username and not out.get("step_up_required"):  # how this installation names itself (not shown before login)
             out["instance"] = {"host": settings.host_label, "agent_user": settings.agent_user,
                                "wildcard_zone": settings.wildcard_zone, "version": __version__,
@@ -133,6 +157,8 @@ def router(ctx: Context) -> APIRouter:
             session_token, csrf = ctx.create_login_session(s, user, request, verified=True)
             codes = auth.generate_recovery_codes(s, user)
             s.add(AuditLog(actor=user.username, action="auth.recovery_codes_created", target=user.username))
+            s.merge(Setting(key=f'setup_level.{user.username}', value={
+                'version': 1, 'level': None, 'dismissed': False, 'wizard': initial(fresh=True)}, updated_by=user.username))
             s.add(AuditLog(actor=user.username, action="auth.setup", target=user.username))
             s.commit()
             auth.ensure_setup_token(s, settings.setup_token_path)  # deletes the token file
@@ -217,8 +243,12 @@ def router(ctx: Context) -> APIRouter:
     async def logout(request: Request, response: Response, who: str = Depends(actor)):
         token = request.cookies.get(ctx.session_cookie)
         with db() as s:
+            s.scalar(select(User).where(User.username == who).with_for_update())
+            cancelled = devices.cancel_person_pairings(s, who, 'sign-out')
             auth.end_session(s, token)
             s.commit()
+        for pairing_id in cancelled:
+            ctx.device_imports.pop(pairing_id)
         await ctx.close_terminals(auth.digest(token or ""))  # terminals opened with this login close now
         response.delete_cookie(ctx.session_cookie, path="/", secure=settings.cookie_secure, httponly=True, samesite="strict")
         response.delete_cookie(ctx.csrf_cookie, path="/", secure=settings.cookie_secure, samesite="strict")

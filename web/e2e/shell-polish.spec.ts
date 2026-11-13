@@ -4,12 +4,11 @@ import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain, waitForSessionState } from './helpers';
 
 // The member journey intentionally saves its own shell choice.
-test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts', 'ui_shell'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts'] });
 for (const role of ['owner', 'member']) test(`${role}: project navigation, compact header and edge resizing with keyboard in both themes`, async ({ page, context }) => {
   test.slow();
   await verifyAgain(page);
   const features = await (await page.request.get('/api/admin-features')).json();
-  expect((await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: features.revision } })).ok()).toBeTruthy();
   if (role === 'member') {
     const account = `polish-${Date.now()}-agent`;
     mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
@@ -18,7 +17,7 @@ for (const role of ['owner', 'member']) test(`${role}: project navigation, compa
     const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
     expect((await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-polish-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } })).ok()).toBeTruthy();
   }
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
   await page.request.put('/api/preferences/ui-header', { headers: await csrfHeaders(page), data: { order: ['machine_load', 'plan_usage', 'go_to', 'conversation_search', 'file_search'], hidden: [] } });
   const project = await gitProject(page, `polish-${role}`);
   const made = await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'Review cedar notes' } });
@@ -113,8 +112,7 @@ test('Project menu reads real P4 sources and drops the previous project on navig
   test.slow(); // Real verification, two source registrations and three document loads.
   await verifyAgain(page);
   const features = await (await page.request.get('/api/admin-features')).json();
-  expect((await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: features.revision } })).ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const first = await gitProject(page, 'menu-cedar');
   const second = await gitProject(page, 'menu-birch');
   for (const [project, remote] of [[first, 'https://example.com/cedar/menu-source.git'], [second, 'https://example.com/birch/other-source.git']] as const) {

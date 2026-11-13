@@ -258,10 +258,12 @@ def router(ctx: Context) -> APIRouter:
         items = s.scalars(select(AttentionItem).where(AttentionItem.owner == name, AttentionItem.resolved_at.is_(None))).all()
         if resources == "transfer":
             groups = s.scalars(select(MultiRun).where(MultiRun.owner == name)).all()
-            for row in (*projects, *sessions, *keys, *items, *groups):
+            from ..child_caps import transfer_owner
+            for row in (*keys, *items, *groups):
                 row.owner = to
             for request in s.scalars(select(PublishRequest).where(PublishRequest.owner == name)):
                 request.owner = to
+            transfer_owner(s, sessions, to, to, projects=projects)
         else:
             for project in projects:
                 project.archived, project.compose_autostart = True, False

@@ -3,21 +3,10 @@ import { expect, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain } from './helpers';
 
-test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts', 'ui_shell', 'ui_header'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts', 'ui_header'] });
 const order = ['machine_load', 'plan_usage', 'go_to', 'conversation_search', 'file_search'];
 const defaults = { order, hidden: [] };
-async function rollout(page: Page, enabled = true) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled, revision: state.revision } });
-  };
-  let result = await put();
-  if (enabled && result.status() === 403 && (await result.json()).detail?.startsWith('Verify your sign-in')) {
-    await verifyAgain(page); result = await put();
-  }
-  expect(result.ok()).toBeTruthy();
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } });
-}
+
 async function savePreference(page: Page, value = defaults) {
   expect((await page.request.put('/api/preferences/ui-header', { headers: await csrfHeaders(page), data: value })).ok()).toBeTruthy();
 }
@@ -35,7 +24,7 @@ async function shot(page: Page, name: string) {
 }
 
 for (const role of ['owner', 'member']) test(`${role} can reorder, hide and reset only optional modules at 1440/390 light/dark; server preference follows the person`, async ({ page, context }) => {
-  test.slow(); await rollout(page); await savePreference(page);
+  test.slow();  await savePreference(page);
   if (role === 'member') {
     await page.request.put('/api/preferences/ui-header', { headers: await csrfHeaders(page), data: { order, hidden: order } });
     await page.goto('/projects');
@@ -45,7 +34,7 @@ for (const role of ['owner', 'member']) test(`${role} can reorder, hide and rese
     const token = (await invite.json()).link.split('/').pop(); await context.clearCookies();
     const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
     expect((await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-header-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } })).ok()).toBeTruthy();
-    await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
     expect(await (await page.request.get('/api/preferences/ui-header')).json()).toEqual(defaults);
   }
   const project = await gitProject(page, `header-${role}`);
@@ -97,14 +86,14 @@ for (const role of ['owner', 'member']) test(`${role} can reorder, hide and rese
   const second = await context.newPage(); await second.goto('/projects');
   await expect(second.getByRole('button', { name: 'Customize header', exact: true })).toBeVisible();
   await expect(second.getByRole('button', { name: 'Go to…', exact: true })).toHaveCount(0); await second.close();
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } });
-  await page.reload(); await expect(page.getByRole('button', { name: 'Jump to…', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Customize header', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Header tools', exact: true })).toHaveCount(0);
+
+  await page.reload(); await tools(page);
+  await expect(page.getByRole('button', { name: 'Go to…', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Customize header', exact: true })).toBeVisible();
 });
 
 test('hiding file search and closing phone overflow preserve its explicitly selected project', async ({ page }) => {
-  await rollout(page); await savePreference(page);
+   await savePreference(page);
   const working = await gitProject(page, 'cedar-working'); const target = await gitProject(page, 'birch-target');
   await page.goto(`/projects/${working.id}`); await page.getByRole('button', { name: 'Find project files', exact: true }).click();
   const search = page.getByRole('dialog', { name: 'Find project files', exact: true });
@@ -117,7 +106,7 @@ test('hiding file search and closing phone overflow preserve its explicitly sele
 });
 
 test('phone overflow stays inside the viewport without scrolling the shell sideways', async ({ page }) => {
-  await rollout(page); await savePreference(page);
+   await savePreference(page);
   const project = await gitProject(page, 'cedar-header');
   await page.setViewportSize({ width: 390, height: 900 }); await page.goto(`/projects/${project.id}`);
   await tools(page);
@@ -131,7 +120,7 @@ test('phone overflow stays inside the viewport without scrolling the shell sidew
 });
 
 test('failed preference reads and writes stay visible and never claim saved changes', async ({ page }) => {
-  await rollout(page); await savePreference(page);
+   await savePreference(page);
   await page.route('**/api/preferences/ui-header', route => route.fulfill({ status: 503, json: { detail: 'Preference storage is unavailable.' } }));
   await page.goto('/projects');
   await expect(page.getByText('Header preferences unavailable. Using defaults.')).toBeVisible({ timeout: 15000 });
@@ -150,7 +139,7 @@ test('failed preference reads and writes stay visible and never claim saved chan
 });
 
 test('an offline browser does not queue a header save or trap the editor', async ({ page, context }) => {
-  await rollout(page); await savePreference(page); await page.goto('/projects'); await customize(page);
+   await savePreference(page); await page.goto('/projects'); await customize(page);
   await editor(page).getByRole('checkbox', { name: 'Go to…', exact: true }).uncheck();
   await context.setOffline(true); await editor(page).getByRole('button', { name: 'Save header', exact: true }).click();
   await expect(editor(page)).toContainText('Header not saved');
@@ -160,7 +149,7 @@ test('an offline browser does not queue a header save or trap the editor', async
 });
 
 test('hiding all optional modules retains critical controls, owner authority and shortcuts', async ({ page }) => {
-  await rollout(page);
+
   await page.request.put('/api/preferences/ui-header', { headers: await csrfHeaders(page), data: { order, hidden: order } });
   await page.route('**/api/security/effective*', async route => {
     const response = await route.fetch(); const policy = await response.json();

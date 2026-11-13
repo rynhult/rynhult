@@ -418,6 +418,13 @@ class NodeLink:
             raise ConnectionError(f"{account!r} is not a valid account name.")
         return await self._open_payload({'account': account})
 
+    async def open_session_runtime(self, account: str):
+        if self.closed or not ACCOUNT.fullmatch(account):
+            raise ConnectionError('Session runtime machine is unavailable.')
+        if 'session-runtime-v1' not in self.info.get('capabilities', []):
+            raise ConnectionError('Node update required for session runtime.')
+        return await self._open_payload({'type': 'session-runtime-v1', 'account': account})
+
     async def open_backup(self, target_id, installation_id):
         if 'backup-v1' not in self.info.get('capabilities', []):
             raise ConnectionError('Node update required for backup targets')

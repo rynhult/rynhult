@@ -34,8 +34,13 @@ def required(db, owner: str | None, project_id: int | None) -> bool:
 
 
 def out(row) -> dict:
+    from sqlalchemy.orm import object_session
+
+    from .session_caps import attribution
+    db = object_session(row)
+    lineage = attribution(db.get(Session, row.session_id)) if db and getattr(row, 'session_id', None) else {}
     return {c.name: getattr(row, c.name) for c in row.__table__.columns} | {
-        "destination": tooling.destination(row.manager, row.account)}
+        "destination": tooling.destination(row.manager, row.account), **lineage}
 
 
 class Tools:
@@ -64,11 +69,26 @@ class Tools:
             session = db.get(Session, r.session_id)
             if session is None or session.owner != r.owner or session.run_as != r.account or session.host != r.host:
                 raise ToolRefused("the session's person, account or machine changed; ask again")
+            from .session_caps import authorize
+            try:
+                authorize(db, session, 'installs', r.manager)
+            except ValueError as error:
+                raise ToolRefused(str(error)) from None
 
     _valid_person = validate_person
 
     def _new(self, db, *, owner, account, host, manager, name, version, operation, reason,
              session_id=None, project_id=None) -> str:
+        if session_id:
+            from .child_caps import Refused, chain, check
+            caller = db.get(Session, session_id)
+            try:
+                check(db, caller)
+                parents = chain(db, caller)
+            except Refused as error:
+                raise ToolRefused(str(error)) from None
+            if parents:
+                owner = parents[-1].owner
         tooling.validate(manager, name, version)
         if operation not in tooling.OPERATIONS or not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
             raise ToolRefused("use install/remove and a reason of 1-500 characters", 422)
@@ -110,7 +130,7 @@ class Tools:
         if session_id:
             from .approvals import audit, digest, evaluate_tool, tool_payload
             caller = db.get(Session, session_id)
-            if caller.team_id:
+            if caller.team_id and not caller.parent_session_id:
                 result = evaluate_tool(db, r, caller.team_id)
                 audit(db, 'system', 'shadow', r.id, result | {
                     'digest': digest(tool_payload(r)), 'executed': False})
@@ -146,12 +166,24 @@ class Tools:
 
     can_see = can_see_actor
 
-    def decide(self, rid: str, actor: str, approve: bool):
+    @staticmethod
+    def validate_root_approver(db, r, actor, *, browser_session=False):
+        session = db.get(Session, r.session_id) if r.session_id else None
+        if session is not None and session.parent_session_id:
+            from .child_caps import chain
+            chain(db, session)
+            root = session.root_owner or API_PRINCIPAL
+            if (not browser_session or actor == API_PRINCIPAL or actor.startswith('session:')
+                    or (actor != root if root != API_PRINCIPAL else Tools._role(db, actor) != 'owner')):
+                raise ToolRefused(f'limited by {session.parent_session_id}: only the root person in a signed-in browser may approve', 403)
+
+    def decide(self, rid: str, actor: str, approve: bool, *, browser_session=False):
         with self.db() as db:
             r = db.get(ToolRequest, rid)
             if r is None or not self.can_see(db, r, actor):
                 raise ToolRefused("no such request", 404)
             if approve:
+                self.validate_root_approver(db, r, actor, browser_session=browser_session)
                 self._valid_person(db, r)
             status = "approved" if approve else "rejected"
             claimed = db.execute(update(ToolRequest).where(ToolRequest.id == rid,
@@ -226,12 +258,27 @@ class Tools:
         self._result(rid, result)
 
     async def _carry(self, r):
+        fence(self.db)  # refuse stale background workers before reading request authority
+        cap_proof = None
+        if r.session_id:
+            from .session_caps import authorize
+            with self.db() as db:
+                session = db.get(Session, r.session_id)
+                if session is None:
+                    raise ToolRefused('the installing session no longer exists')
+                cap_proof = {'effective': authorize(db, session, 'installs', r.manager),
+                             'parent': session.parent_session_id}
+                if any(value is not None for value in cap_proof['effective'].values()):
+                    # Legacy managers may execute arbitrary dependency/lifecycle
+                    # code. Only the reviewed extractor can prove confinement.
+                    raise ToolRefused(f'limited by {session.parent_session_id or session.id}: legacy installer cannot enforce scoped session capabilities; a qualified reviewed extractor is required')
         fence(self.db)  # background work: its approval's request has already drained
         if r.manager not in tooling.SYSTEM:
             client = self.brokers.fresh(r.account, r.host, timeout=self.timeout + 30)
             try:
                 return await client.call("tool_change", manager=r.manager, name=r.name,
-                                         version=r.version, operation=r.operation)
+                                         version=r.version, operation=r.operation,
+                                         **({"capabilities": cap_proof} if cap_proof is not None else {}))
             finally:
                 await client.close()
         payload = {"id": r.id, "action": "tool", "manager": r.manager, "name": r.name,

@@ -1,3 +1,4 @@
+import { projectWorkspace } from "./helpers";
 import { wikiShotPath } from "./helpers";
 import { expect, test } from "./fixtures";
 import { AUTH_FILE, info } from "./helpers";
@@ -10,7 +11,7 @@ test.beforeEach(async ({ page }) => {
   const csrf = (await page.context().cookies()).find((c) => c.name === "acc_csrf")!.value;
   const headers = { "X-ACC-CSRF": csrf, Origin: info().origin };
   const project = await page.request.post("/api/projects", { headers,
-    data: { slug: `activity-${Date.now()}`, name: "Activity demo", workspace_path: info().workspace } });
+    data: { slug: `activity-${Date.now()}`, name: "Activity demo", workspace_path: projectWorkspace() } });
   const pid = (await project.json()).id;
   await page.request.post(`/api/projects/${pid}/trust`, { headers });
   const session = await page.request.post("/api/sessions", { headers, data: { project_id: pid, provider: "claude", name: "Activity demo" } });

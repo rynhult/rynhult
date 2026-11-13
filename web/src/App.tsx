@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
 import { useWorkingView } from "./lib/workingView";
 import { Feature } from "./components/Feature";
 import { useQuery } from "@tanstack/react-query";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, parsePath, useLocation } from "react-router-dom";
 import { desktopBuild } from "./lib/desktop";
 import { api } from "./lib/api";
 import type { AuthState } from "./lib/types";
@@ -17,9 +16,10 @@ const DesktopExecution = import.meta.env.VITE_DESKTOP === "1"
   : () => null;
 
 const OwnersOnly = lazy(() => lazyImport(() => import("./components/OwnersOnly")));
-const LayoutChoice = lazy(() => lazyImport(() => import("./components/LayoutChoice")));
+const AppFrame = lazy(() => lazyImport(() => import("./components/AppFrame")));
 const HighAvailability = lazy(() => lazyImport(() => import("./pages/HighAvailability")).then((m) => ({ default: m.HighAvailability })));
 const WorkspaceFiles = lazy(() => lazyImport(() => import("./pages/WorkspaceFiles")).then((m) => ({ default: m.WorkspaceFiles })));
+const SetupWizard = lazy(() => lazyImport(() => import("./pages/SetupWizard")).then(m => ({ default: m.SetupWizard })));
 const Overview = lazy(() => lazyImport(() => import("./pages/Overview")).then((m) => ({ default: m.Overview })));
 const AllowedFolders = lazy(() => lazyImport(() => import("./pages/AllowedFolders")));
 const Projects = lazy(() => lazyImport(() => import("./pages/Projects")).then((m) => ({ default: m.Projects })));
@@ -78,8 +78,6 @@ function AppContent() {
   const enrolling = location.pathname === '/setup' || location.pathname.startsWith('/invite/');
   const auth = useQuery({ queryKey: ["auth"], queryFn: () => api<AuthState>("/api/auth/state"),
     staleTime: enrolling ? Infinity : 2000, refetchOnWindowFocus: !enrolling, refetchOnReconnect: !enrolling });
-  const [choice, setChoice] = useState<import('./components/LayoutChoice').Choice | null>(null);
-  useEffect(() => { if (!auth.data?.authenticated) setChoice(null); }, [auth.data?.authenticated]);
   // Only the first health result gates routing; failed background polls keep the current page mounted.
   if (health.isPending && !health.isFetched) return <main id="main" tabIndex={-1} aria-label="Content" className="grid h-full place-items-center text-sm text-muted">Loading…</main>;
   if (health.data?.ha && (health.data.ha.role === "standby" || location.pathname === "/ha")) {
@@ -95,16 +93,16 @@ function AppContent() {
   if (desktopBuild && location.pathname === "/") return <Navigate to="/projects" replace />;
   return (
     <Routes>
-      <Route path="/setup" element={setup_required ? <Setup /> : <Navigate to="/" replace />} />
+      <Route path="/setup" element={setup_required ? <Setup /> : <Navigate to="/setup/wizard" replace />} />
       <Route path="/login" element={authenticated ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/invite/:token" element={<InviteAccept />} />
       <Route path="*" element={
-        <LayoutChoice username={username ?? ""} available={true} choice={choice} choose={setChoice}>
+        <AppFrame username={username ?? ""} key={username} personId={auth.data.person_id ?? null} presenceEnabled={auth.data.push_presence_enabled === true}>
           {desktopBuild && <Suspense fallback={null}><DesktopExecution /></Suspense>}
           <Suspense fallback={<RouteLoading />}>
           <PageRoutes />
           </Suspense>
-        </LayoutChoice>
+        </AppFrame>
       } />
     </Routes>
   );
@@ -113,7 +111,8 @@ function AppContent() {
 function PageRoutes() {
   const working = useWorkingView();
   return (
-          <Routes location={working?.href}>
+          <Routes location={working ? { ...parsePath(working.href), state: working.navigationState, key: working.intent ?? working.key } : undefined}>
+            <Route path="/setup/wizard" element={<SetupWizard />} />
             <Route path="/board" element={<Board />} />
             <Route path="/" element={<Overview />} />
             <Route path="/projects" element={<Projects />} />

@@ -2,7 +2,7 @@ import { expect } from "./fixtures";
 import { test } from './shell-state';
 import { AUTH_FILE, expectAxeClean, routeDemoSessions } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 // UX review SL-1 and NAV-1 (owner decision 0008, Q1): what needs you comes first, and the counts agree.
 test("sessions list: the session that needs you is first, under the same headings as the Overview", async ({ page }) => {
@@ -23,8 +23,10 @@ test("sessions list: the session that needs you is first, under the same heading
 test("needs-you counts agree: sidebar, Overview stat and the filtered list", async ({ page }) => {
   await routeDemoSessions(page);
   await page.goto("/");
-  const sidebarGroup = page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: /^Needs you/ });
-  await expect(sidebarGroup).toContainText("1");
+  await page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: 'Sessions', exact: true }).click();
+  const sidebarGroup = page.getByRole('complementary', { name: 'Context sidebar' }).getByRole('link', { name: /^Needs you/ });
+  await expect(sidebarGroup).toContainText('1');
+  await page.goto('/');
   // The Overview stat is a count and a link; the names are in the list right below it (UX declutter D03).
   const stat = page.getByRole("main").getByRole("link", { name: /^Needs you/ });
   await expect(stat).not.toContainText("api-refactor");
@@ -47,7 +49,9 @@ test("inbox badge counts every open item, and the Inbox groups them by type", as
   await page.route("**/api/attention?scope=open", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(items) }));
   await page.route("**/api/attention", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(items) }));
   await page.goto("/inbox");
-  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: /Inbox/ })).toContainText("3");
-  await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveText([/^Waiting sessions/, /^Alerts/, /^Notes/]);
+  await expect(page.getByRole("navigation", { name: "Rail", exact: true }).getByRole("button", { name: /^Inbox/ })).toContainText("3");
+  const sidebar = page.getByRole('complementary', { name: 'Context sidebar' });
+  for (const category of ['Decisions · 1', 'Blocked work · 1', 'Failures · 1']) await expect(sidebar.getByRole('link', { name: category, exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Inbox items' }).getByRole('listitem')).toHaveCount(3);
   await expectAxeClean(page, "main");
 });

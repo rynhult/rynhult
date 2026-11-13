@@ -53,3 +53,37 @@ one view at a time and retains the wider arrangement. Moving or filling either
 view keeps its resource. Chat remains read-only; opening Terminal starts as an
 observer and does not take input control. Column arrangements follow the personal project/device layout described in
 Working columns; Chat messages and reading history are not saved across reloads.
+
+## Shared-session preview
+
+The separate **session relay** preview is off by default and requires a new
+session's **Use shared Chat and Terminal** checkbox. Existing sessions keep the
+reader described above. Availability also depends on the qualified server and
+provider adapter; the preview client alone does not enable a provider.
+
+For an opted-in session, the panel and Grid tile offer the same **Chat** and
+**Terminal** selector. A qualified shared-live Codex connection changes views
+without restarting the agent. With a qualified Claude handoff, selecting the other
+view while idle preserves the conversation and replaces the provider process.
+A busy session explains why it cannot switch; select again after it is idle.
+Settings → Appearance lets each person choose the initial view for future opens.
+Opening a view or changing this preference never sends a message or switches the
+execution owner.
+
+Chat offers Send, queued-message cancellation, Interrupt when supported, and a
+Review decision card. For example, an artificial decision might ask whether to
+read `example.txt`; choose an offered answer deliberately. Reading a card does
+not answer it. A receipt marked **Delivery unknown** means the message might
+already have arrived: check the conversation before sending again. Reconnection
+does not resend messages or decision answers. An unavailable shared Terminal
+connection is shown inline until its mediated route is qualified.
+
+The current integrated build supports retained hub reads and the personal view
+preference. With the preview flag on, a signed-in person can opt a new Codex
+session into enrollment on the pinned Codex installation. Unsupported builds,
+API-token launches and automated launches refuse. Enrollment starts one private
+runtime; it does not qualify writable Chat or Terminal. Provider sends, decision
+replies, native Terminal and automatic recovery remain unavailable. Enrolled
+sessions are excluded from automatic workstation sleep until safe relay
+suspend/resume is qualified; explicit Stop still fences the run. Team messages
+and scheduled relay launch requests refuse instead of typing into Terminal.

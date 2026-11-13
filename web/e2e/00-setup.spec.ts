@@ -48,6 +48,9 @@ test("first run: setup token, password and authenticator enrolment", async ({ pa
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(recovery).toBeVisible();
   await page.getByRole('button', { name: 'I saved the codes', exact: true }).click();
+  await expect(page).toHaveURL(/\/setup\/wizard$/);
+  await expect(page.getByRole('heading', { name: 'Choose level', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Go to Overview', exact: true }).click();
   await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
   await page.context().storageState({ path: AUTH_FILE });
 });

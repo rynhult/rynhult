@@ -1,3 +1,4 @@
+import { ParentChain } from './ParentChain';
 import { Surface as Card, SurfaceHeader as CardHeader } from './shell/PagePrimitives';
 import { Link } from 'react-router-dom';
 import { useSingleMutation as useMutation } from "../lib/mutations";
@@ -89,6 +90,7 @@ export function ToolsCard({ machine, account }: { machine?: string; account?: st
                 {requests.map((r) => <li key={r.id} className="break-words text-xs text-muted">
                   {r.operation} {r.name} <Badge tone={r.status === "failed" ? "bad" : "neutral"}>{r.status.replaceAll("_", " ")}</Badge>
                   {" "}{r.resolved_version ?? r.version ?? "latest"} · {ago(r.created_at)}
+                  <ParentChain chain={r.parent_chain} owner={r.root_owner} />
                   <ToolDecision request={r} />
                   {r.detail && <p>{r.detail}</p>}
                 </li>)}

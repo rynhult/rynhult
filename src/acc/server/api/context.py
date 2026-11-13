@@ -158,6 +158,29 @@ class Context:
         self.actor(request)
         return request.state.principal
 
+    def relay_principal(self, db, request: Request) -> Principal:
+        """Revalidate a person's relay action in its existing short transaction.
+
+        This uses the ordinary login/device verifier and CSRF rules without
+        opening a nested SQLite worker transaction or committing its caller.
+        """
+        if request.headers.get('authorization'):
+            raise HTTPException(403, 'A person sign-in is required for relay actions.')
+        record = auth.lookup_session(db, request.cookies.get(self.session_cookie),
+            allow_step_up=False, edge_fingerprint=getattr(request.state, 'edge_fingerprint', None),
+            native=getattr(request.state, 'edge_native', False), bind=False)
+        if record is None:
+            raise HTTPException(401, 'Sign in to continue.')
+        if request.method in UNSAFE:
+            if not self.origin_ok(request.headers.get('origin')):
+                raise HTTPException(403, 'Open Rynhult at its own address, then try again.')
+            if not secrets.compare_digest(request.headers.get(CSRF_HEADER, '').encode(), record.csrf.encode()):
+                raise HTTPException(403, 'Reload the page and try again.', headers={'X-ACC-CSRF-Error': 'mismatch'})
+        request.state.cookie_authenticated = True
+        request.state.session_hash = record.token_hash
+        return Principal(record.user.username, record.user.role,
+                         record.user.account or self.settings.default_account, record.user.id)
+
     async def close_terminals(self, session_hash: str) -> None:
         """Close every terminal opened with one login (it was logged out or revoked)."""
         for ws in list(self.terminals.pop(session_hash, ())):

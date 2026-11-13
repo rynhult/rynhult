@@ -1,4 +1,4 @@
-import { test, expect, chooseLayout, type Page } from './fixtures';
+import { test, expect, type Page } from './fixtures';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, info, sessionWithChanges, verifyAgain, PASSWORD, totp } from './helpers';
@@ -52,19 +52,17 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark'] as const)
   await expect(page.locator('.xterm')).toHaveCount(1);
   const original = await page.locator('.xterm-helper-textarea').elementHandle();
   if (width === 1440) {
-    await page.getByRole('button', { name: 'Show Chat beside terminal', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Chat · Read-only' })).toBeFocused();
-    const separator = page.getByRole('separator', { name: 'Terminal and Chat split' });
+    await page.getByRole('button', { name: 'Open Chat beside terminal', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Chat · Read-only' })).toBeVisible();
+    const separator = page.getByRole('separator', { name: 'Resize columns 1 and 2' });
+    const before = await separator.getAttribute('aria-valuenow');
     await separator.focus(); await page.keyboard.press('ArrowRight');
-    await expect(separator).not.toHaveAttribute('aria-valuenow', '60');
-    await page.getByRole('button', { name: 'Reset split' }).click();
-    await expect(separator).toHaveAttribute('aria-valuenow', '60');
-    await expect(page.getByRole('region', { name: 'Session terminal', exact: true })).toBeVisible();
+    await expect(separator).not.toHaveAttribute('aria-valuenow', before!);
+    await expect(page.locator('[data-registered-terminal]')).toBeVisible();
   } else {
-    await expect(page.getByRole('button', { name: 'Show Chat beside terminal', exact: true })).toBeDisabled();
-    await expect(page.getByText('Two panes need a wider window.')).toBeVisible();
-    await page.getByRole('tab', { name: 'Chat', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Session terminal', exact: true })).toBeHidden();
+    // Narrow windows use the same retained views in one complete column.
+    await page.getByRole('tab', { name: 'Chat', exact: true }).first().click();
+    await expect(page.locator('[data-registered-terminal]')).toBeHidden();
     await expect(page.getByRole('separator')).toHaveCount(0);
   }
   await expect(messages(page).locator('[data-chat-item]')).toHaveCount(40);
@@ -80,7 +78,7 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark'] as const)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath(`chat-${width}-${theme}.png`) });
   await page.getByRole('button', { name: 'Open Terminal', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Terminal', exact: true }).first()).toHaveAttribute('aria-selected', 'true');
   expect(await original!.evaluate(node => node === document.querySelector('.xterm-helper-textarea'))).toBe(true);
   expect(sockets).toBe(1);
   // The already-running xterm may answer device/color queries. Chat controls
@@ -96,6 +94,7 @@ test('pagination, follow upserts and new-message affordance preserve the reader�
   expect(await page.locator('.xterm').count()).toBe(0); // deep-linked read-only Chat never claims a terminal
   await messages(page).evaluate(el => { el.scrollTop = 0; });
   const anchor = messages(page).locator('[data-chat-item]').first();
+  await expect(messages(page)).toBeVisible();
   const identity = await anchor.getAttribute('data-chat-item'); const before = (await anchor.boundingBox())!.y;
   await page.getByRole('button', { name: 'Load earlier', exact: true }).click();
   await expect(messages(page).locator('[data-chat-item]')).toHaveCount(60);
@@ -156,7 +155,7 @@ test('real backend: owner and authorized member can read only their permitted na
     const headers = { Origin: info().origin };
     const begin = await member.request.post('/api/auth/invite/begin', { headers, data: { token } });
     const joined = await member.request.post('/api/auth/invite/complete', { headers, data: { token, username, password: PASSWORD, code: totp((await begin.json()).totp_secret) } }); expect(joined.ok()).toBe(true);
-    await chooseLayout(member, false);
+
     const view = await member.newPage();
     const memberCsrf = (await member.cookies()).find(cookie => cookie.name === 'acc_csrf')!.value;
     const own = await member.request.post('/api/sessions', { headers: { ...headers, 'X-ACC-CSRF': memberCsrf }, data: { project_id: detail.project_id, provider: 'claude', name: 'Member Chat fixture' } }); expect(own.ok(), await own.text()).toBe(true);
@@ -172,14 +171,14 @@ test('real backend: owner and authorized member can read only their permitted na
     expect((await (await member.request.get('/api/auth/state')).json()).role).toBe('member');
     expect((await member.request.get(`/api/sessions/${ownerSession}/chat`)).status()).toBe(404);
     await view.goto(`/sessions/${ownerSession}?tab=chat`);
-    await expect(view.getByText("There's no session here")).toBeVisible();
+    await expect(view.getByRole('heading', { name: 'This saved view can’t be opened' })).toBeVisible();
     await expect(view.getByText('Owner source: synthetic only')).toHaveCount(0);
     await view.goto(`/sessions/${ownId}?tab=chat`);
     await expect(messages(view).getByText('Member source: synthetic only')).toBeVisible();
     await expectAxeClean(view);
     await member.request.post(`/api/sessions/${ownId}/stop`, { headers: { ...headers, 'X-ACC-CSRF': memberCsrf } });
   } finally {
-    try { await chooseLayout(member, true); }
+    try {  }
     finally { await member.close(); }
   }
 });
@@ -189,26 +188,23 @@ test('hidden Chat pauses following; responsive collapse and full-tab return reta
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.clock.install();
   await page.goto(`/sessions/${id}`);
-  await page.getByRole('button', { name: 'Show Chat beside terminal', exact: true }).click();
+  await page.getByRole('button', { name: 'Open Chat beside terminal', exact: true }).click();
   await expect(messages(page).locator('[data-chat-item]')).toHaveCount(40);
   await page.getByRole('heading', { name: 'Chat · Read-only' }).focus();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('separator')).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true })).toBeFocused();
-  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
-  await expect(messages(page)).toBeVisible();
+  await expect(messages(page)).toBeVisible(); // focused Chat stays visible when columns collapse
   await page.getByRole('button', { name: 'Open Terminal', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true })).toBeFocused();
+  await expect(page.locator('[data-view-tab][aria-selected=true]')).toHaveAttribute('data-view-tab', `session:${id}:terminal`);
   await expect(messages(page)).toBeHidden();
   const follows = data.follows;
   await page.clock.fastForward(10_000);
   expect(data.follows).toBe(follows);
   await expect(page.locator('.xterm')).toHaveCount(1);
   data.state = 'offline';
-  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+  await page.getByRole('tab', { name: 'Chat', exact: true }).first().click();
   await expect(page.getByText('Machine offline. Retained messages may be stale; Chat updates resume after a retry.')).toBeVisible();
 });
-
 
 test('unsupported Chat never attaches a terminal until the person opens it', async ({ page }) => {
   const id = await make(page), data = await mocked(page, id);
@@ -221,7 +217,7 @@ test('unsupported Chat never attaches a terminal until the person opens it', asy
   await expect(page.locator('.xterm')).toHaveCount(0);
   expect(sockets).toEqual([]);
   await page.getByRole('button', { name: 'Open Terminal', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Terminal', exact: true }).first()).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.xterm')).toHaveCount(1);
   expect(sockets).toHaveLength(1);
 });
@@ -230,7 +226,7 @@ test('a source established after startup reveals Chat without a page reload or a
   const id = await make(page), data = await mocked(page, id);
   data.state = 'unknown'; data.rows = [];
   await page.goto(`/sessions/${id}`);
-  await expect(page.getByRole('tab', { name: 'Terminal', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Terminal', exact: true }).first()).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Chat', exact: true })).toHaveCount(0);
   await expect.poll(() => data.probes).toBe(1);
   data.state = 'ready'; data.rows = [row(1)];
@@ -245,7 +241,7 @@ test('review UI-1/UI-2: hostile Markdown stays bounded and leaves the same Termi
   data.rows=[row(1,'*a'.repeat(60000)),row(2,'~a'.repeat(60000)),row(3,'> '.repeat(8000))];
   await page.goto(`/sessions/${id}`);
   const original=await page.locator('.xterm-helper-textarea').elementHandle();
-  await page.getByRole('button',{name:'Show Chat beside terminal',exact:true}).click();
+  await page.getByRole('button',{name:'Open Chat beside terminal',exact:true}).click();
   await expect(page.getByText('Message shown as plain text within Chat’s formatting safety limits.')).toHaveCount(3);
   expect(await original!.evaluate(node=>node===document.querySelector('.xterm-helper-textarea'))).toBe(true);
   await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('terminal still alive');
@@ -256,7 +252,7 @@ test('review UI-2: message and panel error boundaries cannot unmount the Termina
   const id=await make(page),data=await mocked(page,id);data.rows=[row(1,'[trigger](https://example.com)')];
   await page.addInitScript(()=>{const original=String.prototype.indexOf;String.prototype.indexOf=function(search:string,position?:number){if(String(this)==='[trigger](https://example.com)')throw Error('controlled message rendering failure');return original.call(this,search,position);};});
   await page.goto(`/sessions/${id}`);const field=await page.locator('.xterm-helper-textarea').elementHandle();
-  await page.getByRole('button',{name:'Show Chat beside terminal',exact:true}).click();
+  await page.getByRole('button',{name:'Open Chat beside terminal',exact:true}).click();
   await expect(page.getByText('Formatting unavailable. Showing plain text.')).toBeVisible();
   expect(await field!.evaluate(node=>node===document.querySelector('.xterm-helper-textarea'))).toBe(true);
   await page.evaluate(()=>{const original=Element.prototype.getBoundingClientRect;Element.prototype.getBoundingClientRect=function(){if(this.getAttribute('aria-label')==='Chat messages')throw Error('controlled Chat layout failure');return original.call(this);};});
@@ -351,7 +347,6 @@ test('review UI-14: reader capacity is explained without claiming access was rev
   await page.getByRole('button',{name:'Open Terminal',exact:true}).click();
   await expect(page.locator('.xterm')).toHaveCount(1);
 });
-
 
 test('Chat Off hides its entry and neither probes nor attaches a linked terminal', async ({ page }) => {
   const id = await make(page);

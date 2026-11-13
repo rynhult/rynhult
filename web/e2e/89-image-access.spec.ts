@@ -35,7 +35,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({width,height:900});
     const action={project_id:42,provider:'claude',model:'synthetic-vision'};
     let requests=0;
-    await page.route('**/api/attention?*',route=>route.fulfill({json:[{
+    await page.route(url => url.pathname === '/api/attention',route=>route.fulfill({json:[{
       id:98765,kind:'image_check',severity:'warn',source:'image access',verified:true,
       title:'Check image access',detail:'This model is not yet checked. A short read-only check may use provider quota.',
       created_at:new Date().toISOString(),updated_at:new Date().toISOString(),resolved_at:null,acked_at:null,
@@ -46,7 +46,8 @@ for (const width of [1440, 390]) {
       await route.fulfill({json:{image_input:true,checked_at:1234567890,evidence:{outcome:'pass'}}});
     });
     await page.goto('/inbox');
-    const button=page.getByRole('button',{name:'Check image access',exact:true});
+    await page.getByRole('list', {name:'Inbox items'}).getByRole('button', {name:/Check image access/}).click();
+    const button=page.getByRole('region',{name:'Inbox item details'}).getByRole('button',{name:'Check image access',exact:true});
     await expect(button).toBeVisible();
     await button.focus(); await page.keyboard.press('Enter');
     await expect(page.getByRole('status').filter({hasText:'Verified · pass'})).toBeVisible();

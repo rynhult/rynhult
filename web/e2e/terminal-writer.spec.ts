@@ -1,13 +1,11 @@
 import { test, expect } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, info, sessionWithChanges, waitForSessionState } from './helpers';
-import { setShellFeature } from './shell-state';
 
-test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'ui_shell', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'layouts'] });
 
 for (const failedLayout of [false, true]) test(`session Terminal claims free control and sends input (layout failure ${failedLayout})`, async ({ page, context }) => {
-  await setShellFeature(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const id = await sessionWithChanges(page, 'writer-regression');
   await waitForSessionState(page, id, 'idle');
   if (failedLayout) await page.route('**/layouts/**', route => route.fulfill({ status: 500, json: { detail: 'Fixture layout failure' } }));
@@ -43,9 +41,8 @@ for (const failedLayout of [false, true]) test(`session Terminal claims free con
   }
 });
 
-for (const enabled of [false, true]) test(`Name and Rename are in the main New session form (new layout ${enabled})`, async ({ page }) => {
-  await setShellFeature(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } })).ok()).toBeTruthy();
+for (const enabled of [true]) test(`Name and Rename are in the main New session form (new layout ${enabled})`, async ({ page }) => {
+
   await page.goto('/');
   await page.getByRole('button', { name: /^New session/ }).first().click();
   const form = page.getByRole(enabled ? 'region' : 'dialog', { name: 'New session', exact: true });
@@ -67,8 +64,7 @@ for (const enabled of [false, true]) test(`Name and Rename are in the main New s
 });
 
 test('a restored free terminal observes until its session tab is explicitly opened', async ({ page }) => {
-  await setShellFeature(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const id = await sessionWithChanges(page, 'restored-observer');
   await waitForSessionState(page, id, 'idle');
   const session = await (await page.request.get(`/api/sessions/${id}`)).json();
@@ -97,8 +93,7 @@ test('a restored free terminal observes until its session tab is explicitly open
 
 test('hidden terminals evict at the cap and preserve partial input in one toolbar chip', async ({ page }) => {
   test.setTimeout(120_000);
-  await setShellFeature(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const ids: string[] = [];
   const visit = async (id: string) => {
     await page.evaluate(id => { history.pushState({ key: crypto.randomUUID() }, '', `/sessions/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, id);
@@ -143,8 +138,7 @@ test('hidden terminals evict at the cap and preserve partial input in one toolba
 });
 
  test('open Terminal rechecks a restarted run and claims free control automatically', async ({ page }) => {
-  await setShellFeature(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const id = await sessionWithChanges(page, 'restart-control');
   await waitForSessionState(page, id, 'idle');
   try {
@@ -164,12 +158,11 @@ test('hidden terminals evict at the cap and preserve partial input in one toolba
 });
 
 test('another person holds control in one inline toolbar chip', async ({ page, otherOwner: other }) => {
-  await setShellFeature(page, true);
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
   const id = await sessionWithChanges(page, 'other-controller');
   try {
     const controller = await other.newPage();
-    await controller.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(controller), data: { enabled: true } });
+
     await waitForSessionState(page, id, 'idle');
     await controller.goto(`/sessions/${id}`);
     await expect(controller.getByText('You control this terminal', { exact: true })).toBeVisible();
@@ -185,8 +178,7 @@ test('another person holds control in one inline toolbar chip', async ({ page, o
 
 test('own paste-upload partial input is reclaimed after reload; another person still confirms', async ({ page, context, otherOwner: other }) => {
   test.slow();
-  await setShellFeature(page, true);
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
   const id = await sessionWithChanges(page, 'partial-reclaim');
   try {
     await waitForSessionState(page, id, 'idle');
@@ -202,7 +194,7 @@ test('own paste-upload partial input is reclaimed after reload; another person s
     await writer.close();  // the path waits in the prompt without Enter
 
     const person = await other.newPage();
-    await person.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(person), data: { enabled: true } });
+
     await person.goto(`/sessions/${id}`);
     await expect(person.getByText('Read-only terminal', { exact: true })).toBeVisible();
     await expect(person.locator('[data-terminal-unsent-chip]')).toHaveCount(1);

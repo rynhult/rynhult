@@ -47,6 +47,8 @@ class IssueRef(BaseModel):
 
 
 class SessionIn(BaseModel):
+    permissions: dict | None = None
+    session_relay: bool = Field(False, strict=True)
     claude_auth: Literal["subscription", "api_key"] = "subscription"
     project_id: int | None = None  # None with a topic: a local workspace (Researcher, Council)
     topic: str | None = Field(None, max_length=80)
@@ -75,6 +77,12 @@ class SessionIn(BaseModel):
     skills: list[str] | None = Field(None, max_length=200)  # None = the profile's defaults
     agents: list[str] | None = Field(None, max_length=200)
     mcps: list[str] | None = Field(None, max_length=200)
+
+    @field_validator('permissions')
+    @classmethod
+    def _permissions(cls, value):
+        from ...session_capabilities import normalize
+        return normalize(value) if value is not None else None
 
     @field_validator("name")
     @classmethod
@@ -122,7 +130,7 @@ class SessionIn(BaseModel):
 
     def inputs(self, catalog=None) -> LaunchInputs:
         fields = self.model_dump(exclude={"project_id", "topic", "workspace", "name", "confirm_dangerous", "skills", "agents", "mcps",
-                                          "worktree", "machine", "clone_on_machine", "budget_ok", "orchestrator", "issue_source", "automation", "claude_auth"})
+                                          "worktree", "machine", "clone_on_machine", "budget_ok", "orchestrator", "issue_source", "automation", "claude_auth", "session_relay", "permissions"})
         fields = {k: (v or None) if isinstance(v, str) and k in ("model", "effort", "initial_prompt", "profile", "endpoint") else v
                   for k, v in fields.items()}
         profile = catalog.profiles.get(self.profile or "") if catalog else None
@@ -344,17 +352,24 @@ class BackupIn(BaseModel):
 
 
 def session_out(session: Session, detail: bool = False, ssh_host: str = "", offline_hosts: set[str] | None = None,
-                auth_modes: dict[str, str] | None = None) -> dict:
+                auth_modes: dict[str, str] | None = None, relay_sessions: set[str] | None = None, review_signals: dict | None = None) -> dict:
     evidence_at = max((t for t in (session.status_at, session.activity_at) if t is not None), default=session.created_at)
     stale_hook = (session.observed_state == "active" and (session.status_source or "").endswith("_hook")
                   and (utcnow() - evidence_at).total_seconds() >= 600)
     from sqlalchemy.orm import object_session
 
     from .. import claude_auth
+    from ..models import RelaySession
     auth_db = object_session(session)
     auth = claude_auth.public(auth_db, session, auth_modes) if auth_db or auth_modes is not None else {'mode': 'unknown', 'automation_refusal':
         claude_auth.detail(session.project_id) if session.provider == 'claude' else None}
+    from ..review_state import linked_pull, ready_for_review
+    review = review_signals if review_signals is not None else {
+        'ready_for_review': ready_for_review(session, auth_db), 'pull_lifecycle': linked_pull(auth_db, session)}
     out = {
+        **review,
+        'dropped_mcps': json.loads(session.launch_spec.files.get('guardrails.json', '{}')).get('dropped_mcps', []),
+        'session_relay': session.id in relay_sessions if relay_sessions is not None else bool(auth_db and auth_db.get(RelaySession, session.id)),
         'auth': auth,
         'claude_auth': session.claude_auth,
         "machine_offline": machine_offline(session, session.host, offline_hosts),
@@ -375,6 +390,8 @@ def session_out(session: Session, detail: bool = False, ssh_host: str = "", offl
         "permission_mode": session.launch_spec.inputs.get("permission_mode"),
         "management": session.management, "run_as": session.run_as, "external_unit": session.external_unit,
         "owner": session.owner,
+        'parent_chain': session.parent_chain or [], 'root_owner': session.root_owner,
+        'native_helpers_capped': False,
         "multirun_id": session.multirun_id,
         "team_stop_pending": session.team_stop_pending, "team_id": session.team_id, "parent_session_id": session.parent_session_id, "team_depth": session.team_depth,
         "workdir": session.workdir, "standalone": bool(session.workdir), "cwd": session.cwd,
@@ -423,7 +440,8 @@ def publish_out(r: PublishRequest, *, is_owner: bool = False) -> dict:
     result = {k: getattr(r, k) for k in ("id", "action", "host", "port", "access", "project_id", "session_id",
                                        "requested_by", "reason", "status", "zone_name", "detail", "decided_by",
                                        "created_at", "decided_at", "completed_at")} | {
-        "replaces": context.get("replaces"), "port_owner": context.get("port_owner")}
+        "replaces": context.get("replaces"), "port_owner": context.get("port_owner"),
+              "parent_chain": context.get("parent_chain", []), "root_owner": context.get("root_owner")}
     outcome = context.get('outcome')
     if is_owner:
         return result | {'target_ip': context.get('target_ip'), 'outcome': outcome}

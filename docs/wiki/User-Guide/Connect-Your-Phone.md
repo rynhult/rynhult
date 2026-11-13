@@ -41,7 +41,7 @@ In the app, open **Settings**, select **Turn on notifications**, allow them, the
 **Then:** on the Overview, dismiss the **Connect your phone** banner with **×** (the installed app never shows it).
 
 ## Answering from the phone
-A notification opens the item in the **[Inbox](/User-Guide/Glossary#inbox)**. **Answer in terminal** opens the session with the key bar: ⏎, Esc, ^C and the arrows are first, and **More keys** has the rest. Tapping a key sends it without opening the on-screen keyboard (if the keyboard is already open, it stays open); tap the terminal itself to type, or **Ctrl**, which opens it for the key to combine.
+A notification opens the item in the **[Inbox](/User-Guide/Glossary#inbox)**. **Answer in terminal** opens the session with the key bar: ⏎, Esc, ^C and the arrows are first, and **More terminal keys** has the rest. Tapping a key sends it without opening the on-screen keyboard (if the keyboard is already open, it stays open); tap the terminal itself to type, or **Ctrl**, which opens it for the key to combine. Ctrl stays visibly pressed until the next letter sends Ctrl+letter once; tap Ctrl again to cancel. It also cancels on blur, loss of browser visibility or after 10 seconds without a letter. The fixed keys remain available. **Expand** fills the browser window with the terminal; **Collapse** returns (or press F6, then C); Esc goes to the terminal program, and reload does not remember expansion.
 
 ## Troubleshooting
 | What happens | Why | Fix |
@@ -72,3 +72,20 @@ The disabled-by-default [device pairing preparation](/User-Guide/Remote-Access)
 now creates one-use client identity imports on the LAN after owner confirmation.
 It does not enable [remote access](/User-Guide/Glossary#remote-access) or change the server trust download described
 above. Physical phone/browser qualification remains pending.
+
+## Pair a phone with a QR code
+
+When an owner has enabled LAN pairing, verify your sign-in and open **Settings →
+Access devices**. Enter a device name and select **Pair a phone**. Scan the QR on
+that phone using the private address you already use. The link lasts five minutes
+and works once. A newer code, or signing out anywhere (including another browser
+or the phone), cancels that person's QR pairing in progress. Once an owner has
+confirmed it, the download stays available until its own expiry.
+
+Before requesting pairing, compare the installation address, person and desktop
+match code on both screens. Confirm the checkbox on the phone only when all match.
+Then an owner reads the phone's separate matching code and confirms issuance on
+the trusted screen. Follow [device pairing](/User-Guide/Remote-Access#pair-a-browser)
+for the encrypted identity import and individual revocation. Pairing does not
+sign you in or turn on public access. Last connection is shown when observed;
+an unobserved connection stays unknown.

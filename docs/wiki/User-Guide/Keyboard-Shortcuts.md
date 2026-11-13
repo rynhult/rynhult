@@ -12,10 +12,13 @@
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Move between tabs (a session's Terminal, Changes, Files…; Catalog; a project). A tab row is one stop for <kbd>Tab</kbd> |
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Select a choice in segmented filters (Show, Order, Where it runs). Each group is one Tab stop; arrows wrap |
 | <kbd>Space</kbd> / <kbd>Enter</kbd> | Toggle a focused catalog chip; Tab moves between independent chips |
-| <kbd>F6</kbd> / <kbd>Shift F6</kbd> | Leave a session's terminal forwards to its output controls, or backwards to Skip terminal. Use Fn if your keyboard assigns media keys. Inside the terminal, Tab and Shift+Tab go to the agent |
-| <kbd>F6</kbd>, then <kbd>C</kbd> | In an expanded terminal, focus the slim bar then collapse. Esc stays with the program; native browser full screen uses its own exit key |
+| <kbd>F6</kbd> / <kbd>Shift F6</kbd> | Return from a working terminal to its view tab. Grid's separate terminal uses F6/Shift F6 for its output controls/Skip terminal. Use Fn if your keyboard assigns media keys. Inside the terminal, Tab and Shift+Tab go to the agent |
+| <kbd>F6</kbd>, then <kbd>C</kbd> | In an expanded Grid terminal, focus the slim bar then collapse. Esc stays with the program; native browser full screen uses its own exit key |
 | <kbd>⌘C</kbd> (Mac) / <kbd>Ctrl Shift C</kbd> (Windows/Linux) | Copy the terminal selection. Ctrl+C still goes to the program. See the platform comparison below |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> | In **Changes**, with a file's diff focused: pick a line, then comment on it |
+
+While **Jump to…** is open, background controls are unavailable to keyboard and
+screen-reader navigation. Closing it restores background interaction.
 
 In the [new layout's working columns](/User-Guide/New-Layout#arrange-your-working-views):
 
@@ -35,9 +38,9 @@ Terminal selection works on both platforms:
 | --- | --- | --- |
 | Select when the program captures the mouse | **⌥ Option + drag** | **Shift + drag** |
 | Copy selected text | **⌘C** | **Ctrl+Shift+C** |
-| Select without a modifier | **Select text** button | **Select text** button |
+| Select without a modifier | **Open as text** | **Open as text** |
 
-An unmodified drag in mouse mode shows a dismissible hint once per terminal view.
+In Grid, an unmodified drag in mouse mode shows a dismissible hint once per terminal view.
 It is announced politely without moving focus. The hint's **Select text** action
 opens the same selectable output view as the terminal controls.
 
@@ -46,7 +49,7 @@ opens the same selectable output view as the terminal controls.
 **Jump to…** navigates; it does not show full-text results. To find words in
 transcripts, choose **Search conversation content**, or type words and choose
 **Search conversations for “…”**. Both open [Search](/User-Guide/Search).
-The **Jump to…** button remains in the top bar on Search. Shortcuts are unchanged.
+The **Go to…** button remains in the header on Search. Shortcuts are unchanged.
 Inside it, <kbd>Tab</kbd> and <kbd>Shift Tab</kbd> stay between the search field
 and **Search conversation content**. Home and End still move the text cursor.
 Reopening starts a fresh query; choosing **New session** moves focus to its form.
@@ -55,7 +58,7 @@ On a phone, the navigation-arrow button opens the same **Jump to…**:
 
 ![Phone Jump to with navigation choices and a persistent Search conversation content link](/.attachments/command-palette-phone.png)
 
-On a phone, **Menu** opens the full navigation as a panel: focus moves into it and stays there until you choose a page or press <kbd>Esc</kbd>, then returns to **Menu**.
+On a phone, **More** opens the **Browse** sheet: focus moves into it and stays there until you choose a page or press <kbd>Esc</kbd>, then returns to **More**.
 
 Action menus include a project's or workspace's **Actions**, a session's phone
 actions and the session tab row's **More**. Enter or Space opens a menu; arrows,
@@ -77,7 +80,7 @@ Clicking a dialog's backdrop keeps keyboard focus inside while it remains open,
 including while a provider login is starting.
 
 Segmented radio choices use one Tab stop. Arrow keys select the adjacent choice; Home and End select the first and last. Focusable code and table regions can scroll with the keyboard. Diff regions retain Up/Down line selection and Enter to comment; tapping the full line opens the same editor.
-Before the terminal grid, **Skip terminal** appears on keyboard focus and bypasses it for **Screen reader output**, **Open as text** and **Copy recent output**. See [Reading recent output as text](/User-Guide/Sessions#reading-recent-output-as-text).
+Before a Grid terminal, **Skip terminal** appears on keyboard focus and bypasses it for **Screen reader output**, **Open as text** and **Copy recent output**. See [Reading recent output as text](/User-Guide/Sessions#reading-recent-output-as-text).
 
 ## Accessibility
 
@@ -100,4 +103,4 @@ these manual checks are still open:
 If something is hard to use with assistive technology, report it as described in
 [Usage and bug reports](/User-Guide/Usage-and-Bug-Reports).
 
-![F6 focuses the expanded terminal bar; C collapses](/.attachments/terminal-expanded-session-desktop.png)
+![Earlier session-terminal expansion illustration; current working tabs use Fill working panel](/.attachments/terminal-expanded-session-desktop.png)

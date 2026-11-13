@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
 
@@ -158,10 +158,8 @@ pre[aria-label="Selectable terminal text"]::selection { background: #abb6ff; col
 /* Paths in prose may wrap; fenced code keeps its exact local scroll surface. */
 .wiki-prose :not(pre) > code { overflow-wrap: anywhere; }
 
-/* Delivery uses the existing phone metadata row, without hiding the session name
-   or header actions. Hidden metadata still sizes that row, so polling never fits xterm. */
+/* Delivery controls retain touch-sized targets on phones. */
 @media (width < 48rem) {
-  .session-heading:has(.session-delivery-indicator) .phone-session-meta { visibility: hidden; }
   .session-delivery-indicator button { height: 1.5rem; padding-inline: .375rem; }
   @media (pointer: coarse) {
     .session-delivery-indicator button { height: 2.75rem; }

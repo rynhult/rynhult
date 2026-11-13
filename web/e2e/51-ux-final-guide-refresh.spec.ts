@@ -1,7 +1,7 @@
 import { expect } from './fixtures';
 import { test } from './shell-state';
 import {AUTH_FILE,gitProject,routeDemoSessions,sessionWithChanges,wikiShotPath,expectAxeClean} from './helpers';
-test.use({storageState: AUTH_FILE, shellLayout: 'standard'});
+test.use({storageState: AUTH_FILE, });
 test('refresh changed Guide screens with artificial projects and certificate data',async({page},testInfo)=>{
  test.setTimeout(90000);await gitProject(page,'guide-review');await routeDemoSessions(page);
  await page.route('**/api/attention',r=>r.fulfill({json:[{id:9001,kind:'needs_input',severity:'warn',source:'claude_hook',verified:true,title:'api-refactor needs you: permission to run tests',detail:null,session_id:'aaaaaaaaaaa6',session_name:'api-refactor',project:'demo-api',created_at:new Date(Date.now()-1800000).toISOString(),updated_at:new Date(Date.now()-1800000).toISOString(),acked_at:null,resolved_at:null,publish_id:null}]}));
@@ -26,7 +26,7 @@ for(const theme of ['dark','light'] as const) for(const width of [390,1440]) tes
 test('member section index lists existing cards and private-CA trust has exact Copy',async({page,context})=>{
  await context.grantPermissions(['clipboard-read','clipboard-write']);let privateCa=false;
  await page.route('**/api/auth/state',async r=>{const data=await(await r.fetch()).json();await r.fulfill({json:{...data,role:'member',instance:{...data.instance,private_ca:privateCa}}});});
- await page.goto('/settings#all');const index=page.getByRole('navigation',{name:'Settings sections'});await expect(index.getByRole('link',{name:'Certificate',exact:true})).toHaveCount(0);
+ await page.goto('/settings#all');const index=page.getByRole('complementary',{name:'Context sidebar',exact:true});await expect(index.getByRole('link',{name:'Certificate',exact:true})).toHaveCount(0);
  privateCa=true;await page.reload();await index.getByRole('link',{name:'Certificate',exact:true}).click();await page.getByRole('button',{name:'Copy Linux trust command'}).click();
  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe('sudo cp rynhult-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates');
  await expectAxeClean(page,'#certificate');

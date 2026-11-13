@@ -163,7 +163,7 @@ async def test_members_projects_never_use_the_owners_github_token(api, env):
     seen = []
 
     class FakeGitHub:
-        async def snapshot(self, repo):
+        async def snapshot(self, repo, heads=()):
             seen.append(repo)
             return {"fetched_at": 0, "repo": {"default_branch": "main"}, "runs": [], "pulls": []}
     supervisor._github = FakeGitHub()

@@ -267,3 +267,69 @@ async def test_backup_eof_ack_cannot_enable_half_close_on_broker_channel(link):
         writer.write_eof()
     writer.close()
     await writer.wait_closed()
+
+
+async def test_session_runtime_channel_is_typed_and_requires_node_capability(link):
+    import json
+    with pytest.raises(ConnectionError, match='update required'):
+        await link.open_session_runtime('agent')
+    link.info['capabilities'] = ['session-runtime-v1']
+    opening = asyncio.create_task(link.open_session_runtime('agent'))
+    await asyncio.sleep(0)
+    channel_id = max(link._channels)
+    await link.flush()
+    payload = [payload for kind, cid, payload in link.wire.frames() if kind == b'o' and cid == channel_id][-1]
+    assert json.loads(payload) == {'type': 'session-runtime-v1', 'account': 'agent'}
+    link.receive(frame(b'k', channel_id))
+    reader, writer = await opening
+    link.close()
+    assert await reader.read() == b''
+    with pytest.raises(ConnectionError):
+        writer.write(b'stale mutation')
+
+
+async def test_fresh_relay_client_uses_typed_link_and_reenrolls_after_eof(link, tmp_path):
+    import json
+
+    from acc.server.broker_client import Brokers
+
+    current = [link]
+    hub = SimpleNamespace(get=lambda host: current[0])
+    brokers = Brokers(tmp_path / 'unused', None, 'agent', 'services', hub=hub)
+
+    async def enroll(active):
+        client = brokers.fresh('agent', 'pc')
+        opening = asyncio.create_task(client.session_runtime({'version': 2}))
+        await asyncio.sleep(0)
+        cid = max(active._channels)
+        await active.flush()
+        payload = [body for kind, channel, body in active.wire.frames() if kind == b'o' and channel == cid][-1]
+        assert json.loads(payload) == {'type': 'session-runtime-v1', 'account': 'agent'}
+        active.receive(frame(b'k', cid))
+        await asyncio.sleep(0)
+        active.receive(frame(b'd', cid, b'{"id":1,"ok":true,"result":{"version":2}}\n'))
+        reader, writer = await opening
+        return cid, reader, writer
+
+    # Failed first enrollment never falls back to an ordinary account channel.
+    with pytest.raises(ConnectionError, match='update required'):
+        await brokers.fresh('agent', 'pc').session_runtime({'version': 2})
+    assert not link._channels
+    link.info['capabilities'] = ['session-runtime-v1']
+    old_id, reader, writer = await enroll(link)
+    link.close()
+    assert await reader.read() == b''
+    with pytest.raises(ConnectionError):
+        writer.write(b'delayed mutation')
+    wire = Wire()
+    fresh = NodeLink('n1', 'pc', wire.send, {'capabilities': ['session-runtime-v1']}, ['agent'])
+    fresh.wire = wire
+    current[0] = fresh
+    try:
+        _, fresh_reader, fresh_writer = await enroll(fresh)
+        link.receive(frame(b'd', old_id, b'old result\n'))
+        assert not fresh_reader._buffer
+        fresh_writer.write(b'fresh operation\n')
+        await fresh_writer.drain()
+    finally:
+        fresh.close()

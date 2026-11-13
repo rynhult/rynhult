@@ -1,6 +1,6 @@
 # Orchestrator
 
-Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project and explicitly choose **API key** for that session or schedule; this uses API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude sign-in and automation](/User-Guide/Host-and-Providers#claude-sign-in-and-automation).
 
 Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 They illustrate earlier layouts; the rc.1 brief, run modes and new result states are described in the text.
@@ -31,7 +31,7 @@ strong security boundary from each other.
    The machine defaults to the project's registered machine. Choosing a different
    one uses an existing accessible checkout, or asks you to choose **Clone on …**
    before launching; see [New session](/User-Guide/New-Session#choose-another-machine).
-2. Under **Advanced → Run**, choose **With helpers**. It starts as **Once**.
+2. Under **Agent or team → Run**, choose **With helpers**. It starts as **Once**.
    The lead gets its own [worktree](/User-Guide/Glossary#worktree).
 3. Set **At once**, **In total**, **Depth**, **Hours**, **Machines**, and the allowed
    helper agents, [profiles](/User-Guide/Glossary#profile) and permission modes.
@@ -367,7 +367,7 @@ Unsaved brief text is kept for this browser tab: after a reload or Back the form
 This recovery is local to the tab, not a saved database version. The lead cannot
 read it.
 
-Under **New session → Advanced → With helpers**, **Project brief version**
+Under **New session → Agent or team → Run → With helpers**, **Project brief version**
 defaults to the latest saved version. Review the displayed version before
 **Launch**, or choose an earlier saved version or **None**. The footer keeps the
 chosen version visible even when Advanced is closed. Unsaved changes are not
@@ -991,3 +991,94 @@ It does not yet enable a lead to install account tools or finish into main
 automatically. A tool permission cannot authorize main, and main merge and remote
 push require separate explicit consent. Missing verified tests/review, group
 approvals or a qualified finalization path keep the action with the person.
+
+## Parent permission limits
+
+Managed children receive the intersection of what they request and their parent's
+current grant. This covers delivered MCPs, Security protections, project folders,
+network egress, account installs, host ports, providers/models and time. A
+read-only parent cannot start a writer. Refusals say **limited by <parent session>**.
+If the helper requested MCPs that its parent does not have, the start reply lists
+those dropped MCPs. Team members show **MCPs unavailable under parent limit**
+beside that helper, and the start/creation audit records the names. The helper
+starts with only the intersected MCP set.
+
+The session API accepts an optional `permissions` object. `null` leaves a dimension
+unconstrained by that grant; `[]` denies it. Existing machine, account, project and
+Security checks still apply.
+
+| Field | Values |
+|---|---|
+| `folders` | Project-data roots; `workspace` means the managed checkout. Absolute roots may further narrow a grant, but extra roots are never automatically mounted. |
+| `network` | Exact HTTPS destination hostnames/IP literals. Machine exclusions and public-address checks still win. |
+| `installs` | Account-install manager names, such as `npm`. This does not approve an installation or restrict ordinary project-local dependencies. |
+| `ports` | Allowed host port numbers for managed reservations/publication. It creates neither a listener nor a published route. |
+| `providers` | Provider IDs from the person's frozen choices. |
+| `models` | Exact `provider:model` pairs; a restricted unpinned/default model refuses. |
+| `expires_at` | Absolute UTC Unix timestamp; the earliest ancestor/team deadline wins. |
+
+Requested and current effective sets are inspectable at
+`GET /api/sessions/{id}/permissions`. The root person's recently verified browser
+can narrow them with `PATCH` and `{ "permissions": { ... } }`. Agents and
+installation tokens cannot use that mutation, and it cannot widen the current
+set. The recorded parent chain cannot be reassigned, including through database
+updates. When an instance owner removes a person and chooses **Transfer**, the
+whole transferred chain belongs to the new owner in one audited operation; its
+links stay unchanged. Only parent proofs that were valid before transfer are
+refreshed; stale children still need a new generation. Root launch specs/digests
+stay unchanged. A refreshed child's proof changes its launch digest using the
+same formula, recorded in the transfer audit. Review bound consents again after
+transfer. Current Security and capability limits still apply.
+
+Provider permission modes cannot become looser in a child. Across providers,
+Rynhult compares shared levels: **read-only → asks → edits without asking → auto
+→ bypass**. A child may use its parent's level or a lower one. Codex
+`workspace-write` with `on-request` or `never` is level 2 (**edits without asking**).
+Claude `default` (level 1) cannot start that helper; Claude `acceptEdits` (level 2)
+can start the `on-request` helper. Codex read-only remains level 0 and
+`workspace-write` with `untrusted` remains level 1. Full-access remains level 4.
+Codex `never` still requires its separate provider-specific bypass authorization;
+ranking it at level 2 does not approve it or transfer bypass flags across providers.
+A refusal names the child's required level and the parent's permitted level. A custom endpoint must match the
+parent's or be unset. Person-launched explanations retain source limits while allowing a
+stopped source. Read-only Codex explanations deny escalation and never wait for
+an approval prompt. OpenCode is omitted from explanation choices because its
+read-only explanation runner is unsupported; the picker shows that reason. Your Files view uses your own access permissions, independently
+of the agent's folder cap and whether its parent is running.
+
+Native execution cannot enforce finite folder, egress, account-install or host
+port sets, so these launches refuse and require a qualified container. Containers
+retain their isolated checkout, offline network namespace and optional bounded
+HTTPS gateway. Legacy installers that run dependency/lifecycle code refuse scoped
+grants; this change does not qualify a new installer. An unavailable executor
+never causes a broader native fallback, including for explanation sub-runs.
+
+Changing a parent's grant fences its saved descendants. Launch, resume and managed
+operations recheck it; the next supervisor reconciliation requests stop for live
+children. A gate checks again at its next poll. Start a new child generation with
+the narrowed grant. An offline stop remains unconfirmed until the machine answers,
+and already dispatched work cannot be recalled.
+
+An expired Team session requires the person's explicit Team resume or deadline
+change; resuming the individual session cannot bypass its expired grant. Those
+Team operations renew previously valid helper proofs and audit the changes.
+Helpers with stale or missing proofs remain refused and need a new launch.
+A new helper compiled to satisfy an ancestor's current tighter Security policy
+can start even when that ancestor's older saved provider settings cannot resume.
+
+Child approval requests go to the root session's person in **Inbox** and **Push**.
+Tool and publication cards show their full parent chain and owning person; leads
+cannot answer them or use saved install consent to approve a child request.
+Individual and batch child tool approvals require the root person's signed-in
+browser; both batch preview and approval recheck this. Installation
+tokens cannot approve. For an API-owned root a signed-in instance owner approves.
+Publication approval remains with a signed-in **instance owner**, who need not be
+the root person. Explicit owners-only operational alerts stay with instance owners.
+A Security edit elsewhere does not stop your children; scope-relevant grant
+changes and expiry still apply. Unexpected capability-check errors stop execution
+with a refusal reason recorded.
+
+**Provider-native helpers are not capped or tracked by Rynhult.** They have no
+separate managed grant record, and native sessions sharing an account are not a
+strong security boundary. Session **Details** also shows this limitation. Choose
+managed helpers when you need enforced parent limits and visible lineage.

@@ -22,8 +22,8 @@ HOOK_EVENTS = ("SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequ
                "PreToolUse", "PostToolUse")
 
 
-# Reviewed against rust-v0.163.0 and rust-v0.164.0 only. See docs/research/codex-hook-trust.md.
-HOOK_TRUST_VERSIONS = {"codex-cli 0.163.0", "codex-cli 0.164.0"}
+# Reviewed against rust-v0.163.0, rust-v0.164.0 and rust-v0.167.1 only. See docs/research/codex-hook-trust.md.
+HOOK_TRUST_VERSIONS = {"codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.167.1"}
 HOOK_LABELS = dict(zip(HOOK_EVENTS, ("session_start", "session_end", "user_prompt_submit", "permission_request",
                                     "stop", "interrupt", "pre_tool_use", "post_tool_use")))
 
@@ -264,6 +264,31 @@ class Codex(Provider):
         # folder, and Codex then skips the guard. Only the command line outranks that layer, so this goes last.
         return args + ["-c", "features.hooks=true"]
 
+    def relay_args(self, inputs, *, files, extra=()):
+        """Private stdio owner only; reuse the frozen legacy compiler's overrides.
+
+        No resume/TUI/remote-control flags. Thread selection is a reviewed adapter
+        handshake. Qualification must pin these arguments with the executable.
+        """
+        legacy = self.args(inputs, run_dir='', tmux_name='', native_id=None,
+                           resume=False, files=files, extra=extra)
+        overrides = []
+        index = 0
+        mapping = {'--sandbox': 'sandbox_mode', '--ask-for-approval': 'approval_policy', '--model': 'model'}
+        while index < len(legacy):
+            argument = legacy[index]
+            if argument == '--no-alt-screen':
+                index += 1
+                continue
+            if argument == '-c':
+                overrides.extend(['-c', legacy[index + 1]])
+            elif argument in mapping:
+                overrides.extend(['-c', mapping[argument] + '=' + json.dumps(legacy[index + 1])])
+            else:
+                raise CompileError('unsupported relay launch argument')
+            index += 2
+        return ['app-server', '--listen', 'stdio://', *overrides]
+
     def env(self, inputs, catalog, run_dir="", files=None, endpoint_key=None, native_id=None):
         env = mcp_secrets(inputs, catalog)
         if endpoint_of(files):  # Codex reads the endpoint's key from this variable (env_key); local servers ignore it
@@ -401,10 +426,10 @@ PROVIDER = Codex(
         # Words, not Codex's flags (UX review R6); the values stay Codex's own.
         Option("sandbox", "What it can change", choices=(
             ("workspace-write", "Can edit the project"), ("read-only", "Read only"), ("danger-full-access", "Full access (no sandbox) ⚠")),
-            default="workspace-write", dangerous=("danger-full-access",)),
+            default="workspace-write", permission_order=("read-only", "workspace-write", "danger-full-access"), permission_levels=(0, 1, 4), dangerous=("danger-full-access",)),
         Option("approval", "When it asks", choices=(
             ("on-request", "Asks when it needs to"), ("untrusted", "Asks before most commands"), ("never", "Never asks ⚠")),
-            default="on-request", dangerous=("never",)),
+            default="on-request", permission_order=("untrusted", "on-request", "never"), permission_levels=(1, 2, 2), dangerous=("never",)),
     ),
     # The whole startup review dialog (tui/src/startup_hooks_review.rs): the heading on its own line, the count, then
     # its choices. A line a session prints that merely mentions the heading is not it.

@@ -25,6 +25,7 @@ import runpy as _compat_runpy
 import stat as _compat_stat
 from pathlib import Path as _CompatPath
 
+
 def _compat_reader(relative):
     # Root runs most of these helpers: load only a reader owned like this script that no one else can change,
     # and never fall back past an installed reader that fails the check. Exit 2 also makes acc-guard block.
@@ -90,7 +91,7 @@ CATALOG: dict[str, dict] = {
                "repository": "acc-claude-apt-repo",
                "note": "From Anthropic's signed apt repository (added on first install, pinned key). Held between Rynhult updates."},
     "codex": {"label": "Codex", "method": "npm", "package": "@openai/codex", "bin": "codex", "mac_ok": True,
-              "pin": "0.163.0", "note": "Rynhult qualified target: Codex 0.163.0 (docs/PROVIDERS.md)."},
+              "pin": "0.167.1", "note": "Rynhult qualified target: Codex 0.167.1 (docs/PROVIDERS.md)."},
     "copilot": {"label": "GitHub Copilot CLI", "method": "npm", "package": "@github/copilot", "bin": "copilot",
                 "pin": "1.0.103", "note": "Rynhult target: Copilot 1.0.103; preview, needs Node.js 22+ (docs/PROVIDERS.md).", "mac_ok": True},
     "antigravity": {"label": "Google Antigravity CLI", "method": "manifest", "bin": "agy", "dest": "/usr/local/bin/agy",
@@ -137,6 +138,10 @@ class Refused(Exception):
     pass
 
 
+class Kept(Refused):
+    """The installed CLI is preserved; deploy may continue, requests still report refusal."""
+
+
 def open_url(url: str, timeout: float):
     """HTTPS GET with Rynhult's User-Agent (some vendors' CDNs refuse Python's default one)."""
     return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "acc-packages"}), timeout=timeout)
@@ -158,10 +163,19 @@ def must(result: subprocess.CompletedProcess, what: str) -> str:
 def npm_installed() -> dict[str, str]:
     result = run(["npm", "ls", "-g", "--json", "--depth=0"], timeout=120)
     try:
-        deps = json.loads(result.stdout or "{}").get("dependencies") or {}
-    except ValueError:
-        return {}
-    return {name: info.get("version") for name, info in deps.items() if isinstance(info, dict)}
+        data = json.loads(result.stdout)
+        if result.returncode or not isinstance(data, dict) or "error" in data:
+            raise ValueError()
+        deps = data.get("dependencies", {})
+        if not isinstance(deps, dict):
+            raise ValueError()
+        if any(not isinstance(info, dict) or not isinstance(info.get("version"), str)
+               or not info["version"] for info in deps.values()):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise Refused("could not determine installed version: npm ls failed or returned invalid package JSON; "
+                      "refusing to assume no installed packages") from None
+    return {name: info["version"] for name, info in deps.items()}
 
 
 def installed_version(spec: dict, npm: dict[str, str] | None = None) -> str | None:
@@ -525,9 +539,15 @@ def add_apt_repository(spec: dict) -> None:
 
 def install(spec: dict) -> str:
     """Install the catalog target (exact npm pin, supported line, or opted-in upstream)."""
+    if spec["method"] == "npm" and shutil.which("npm") is None:
+        raise Refused("npm isn't installed on this machine: install Node.js 22 or newer first")
+    if spec.get("pin"):
+        installed = installed_version(spec)
+        if installed and (not re.fullmatch(r"\d+\.\d+\.\d+", installed)
+                          or _version_key(installed) > _version_key(spec["pin"])):
+            raise Kept(f"Refusing to downgrade {spec['label']}: installed {installed}, catalog pin {spec['pin']}. "
+                       "Installed CLI left unchanged; review the catalog pin before retrying.")
     if spec["method"] == "npm":
-        if shutil.which("npm") is None:
-            raise Refused("npm isn't installed on this machine: install Node.js 22 or newer first")
         must(run(["npm", "install", "-g", "--ignore-scripts", "--no-audit", "--no-fund", f"{spec['package']}@{spec['pin']}"]),
              "npm install")
     elif spec["method"] == "apt":
@@ -731,12 +751,14 @@ def main(argv: list[str]) -> int:
         failed = 0
         for name in argv[1:]:
             try:
-                detail, ok = act(state, name, "install"), True
+                detail, ok, status = act(state, name, "install"), True, "ok"
+            except Kept as error:
+                detail, ok, status = str(error), False, "KEPT"
             except (Refused, OSError, subprocess.TimeoutExpired) as error:
-                detail, ok, failed = str(error), False, failed + 1
+                detail, ok, status, failed = str(error), False, "FAILED", failed + 1
             record(state, name, "install", ok, detail)
             save_state(state)
-            print(name, "ok" if ok else "FAILED", detail)
+            print(name, status, detail)
         return 1 if failed else 0
     for path in (ROOT / "results").glob("*.json") if (ROOT / "results").is_dir() else ():
         if time.time() - path.stat().st_mtime > 3600:

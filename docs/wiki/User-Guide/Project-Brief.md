@@ -1,7 +1,7 @@
 # Project brief
 
 Start with an idea, or describe one feature of an existing product. Open the project's **Project brief** section,
-or expand **Add a project brief** while granting a new team its limits under **New session → Advanced → With helpers**.
+or expand **Add a project brief** while granting a new team its limits under **New session → Agent or team → Run → With helpers**.
 The brief belongs to the project, so you can reuse it for later teams.
 
 In **New project**, the optional **What do you want to build? (starts your project brief)**
@@ -33,7 +33,7 @@ explanation; a Save attempt focuses **Product or feature**. Leaving with unsaved
    Use **Download REF-n** to retrieve the original. Extraction reads document bodies only, so supply important
    headers, footnotes or embedded-object content separately. Large PDFs are bounded to 200 pages and an output limit;
    a notice asks the lead to check omitted content. Text extraction is capped at 200,000 characters per file.
-3. To **Draft the brief from these documents**, start **New session → Advanced → With helpers**, leaving **Task** empty.
+3. To **Draft the brief from these documents**, start **New session → Agent or team → Run → With helpers**, leaving **Task** empty.
    The lead's kickoff asks it to read the documents, propose supported brief fields and cite the file and extracted
    page or section for every field. It then asks focused clarifying questions as working-list decision cards.
    When a proposal is newer than the saved brief (or there is no saved brief), the form and Team **Overview**
@@ -80,7 +80,7 @@ assigned to them by the lead with **brief_share** from the pinned brief. Sharing
 
 ## Save a draft when launching
 
-With **New session → Advanced → With helpers**, **Launch** checks for a draft in this tab with
+With **New session → Agent or team → Run → With helpers**, **Launch** checks for a draft in this tab with
 **Product or feature** filled in, including one edited only on the project page. It opens an in-page
 step: **Save this brief as version N and pin it to the team?**
 

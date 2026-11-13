@@ -1,0 +1,13 @@
+{
+  "schema": "codex-app-server-r1-fixture-1",
+  "provenance": "Synthetic minimal subset checked against official app-server documentation 2026-11-10; not a captured CLI schema or native qualification.",
+  "source": "https://learn.chatgpt.com/docs/app-server",
+  "research_cli": "0.163.0 (research only; not qualified)",
+  "initialize": {"clientInfo":{"name":"rynhult","title":"Rynhult","version":"1"}},
+  "submit": {"threadId":"native1","input":[{"type":"text","text":"hello","text_elements":[]}]},
+  "accepted": {"turn":{"id":"native-turn1","status":"inProgress"}},
+  "interrupt": {"threadId":"native1","turnId":"native-turn1"},
+  "interrupted_reply": {},
+  "forbidden_native": ["thread/start", "thread/resume", "thread/fork", "config/value/write", "turn/steer", "account/login/start", "item/commandExecution/requestApproval"],
+  "guard_denial": {"tool":"Bash","args":{"command":"git push --force origin topic"},"rule":"force_push"}
+}

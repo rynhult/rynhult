@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import { AUTH_FILE, control, gitProject, gotoAppPage, info, waitForSessionState } from "./helpers";
+import { AUTH_FILE, control, gitProject, gotoAppPage, info, openAdvanced, waitForSessionState } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -42,7 +42,8 @@ test("project fixture prefixes are reusable without sharing a checkout or projec
   expect(second.id).not.toBe(first.id);
   expect(second.folder).not.toBe(first.folder);
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "New session", exact: true })
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
+  await expect(page.getByRole("region", { name: "New session", exact: true })
     .getByRole("combobox", { name: "Project", exact: true })).toContainText(second.slug);
 });
 

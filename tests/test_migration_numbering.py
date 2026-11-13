@@ -31,7 +31,6 @@ DOCUMENTED_GAPS: dict[int, str] = {
 }
 declared_revision = runpy.run_path(str(SCRIPT))["declared_revision"]
 
-
 def check_migration_graph(repo, documented_gaps=None):
     errors = []
     file_numbers, revisions = defaultdict(list), defaultdict(list)
@@ -80,21 +79,17 @@ def check_migration_graph(repo, documented_gaps=None):
             errors.append("Next free migration number unavailable: " + suggestion.stderr.strip())
         raise AssertionError("\n".join(errors))
 
-
 def test_migration_graph_has_one_head_and_unique_gapless_or_documented_numbers():
     check_migration_graph(ROOT, DOCUMENTED_GAPS)
 
-
 def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
-
 
 def write_revision(repo, number, parent=None, *, name="change", revision=None):
     path = repo / VERSIONS / f"{number}_{name}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"revision = {revision or number!r}\ndown_revision = {parent!r}\n")
     return path
-
 
 @pytest.fixture
 def repository(tmp_path):
@@ -106,14 +101,11 @@ def repository(tmp_path):
     git(tmp_path, "commit", "-m", "Initial migration")
     return tmp_path
 
-
 def run_number(repo):
     return subprocess.run([sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True)
 
-
 def git_state(repo):
     return (git(repo, "symbolic-ref", "HEAD"), git(repo, "status", "--porcelain"), git(repo, "show-ref"))
-
 
 def test_next_number_includes_main_other_local_branches_and_uncommitted_files(repository):
     repo = repository
@@ -146,7 +138,6 @@ def test_next_number_includes_main_other_local_branches_and_uncommitted_files(re
     assert result.stdout == "0009\n"
     assert git_state(repo) == before
 
-
 def test_next_number_reserves_declared_revision_even_when_filename_is_wrong(repository):
     repo = repository
     git(repo, "switch", "-c", "misnumbered")
@@ -160,13 +151,11 @@ def test_next_number_reserves_declared_revision_even_when_filename_is_wrong(repo
     assert result.returncode == 0, result.stderr
     assert result.stdout == "0013\n"
 
-
 def test_next_number_reports_git_failure_without_a_success_number(tmp_path):
     result = run_number(tmp_path)
     assert result.returncode != 0
     assert not result.stdout
     assert "not a git repository" in result.stderr.lower()
-
 
 @pytest.mark.parametrize("metadata", [
     "revision = '0002'\nrevision = '0012'\n",
@@ -179,7 +168,6 @@ def test_next_number_refuses_ambiguous_metadata_instead_of_guessing(repository, 
     assert result.returncode != 0
     assert not result.stdout
     assert path.name in result.stderr
-
 
 @pytest.mark.parametrize("problem,expected", [
     ("duplicate_revision", ["revision 0002", "0002_first.py", "0003_second.py"]),
@@ -211,16 +199,18 @@ def test_graph_guard_explains_conflicts_and_suggests_next_free_number(repository
     next_free = "0002" if problem == "empty_chain" else "0004"
     assert f"Next free migration number across local branches and worktree: {next_free}" in message
 
-
 def test_graph_guard_accepts_an_explicitly_documented_gap(repository):
     write_revision(repository, "0003", "0001")
     check_migration_graph(repository, {2: "Reserved by an abandoned parallel migration; never deployed."})
 
-
 def test_integrated_orchestrator_lanes_have_one_ordered_head():
     from acc.server.db import alembic_config
     script = ScriptDirectory.from_config(alembic_config('sqlite://'))
-    assert script.get_heads() == ['0087']
+    assert script.get_heads() == ['0093']
+    assert script.get_revision('0090').down_revision == '0089'
+    assert script.get_revision('0091').down_revision == '0090'
+    assert script.get_revision('0092').down_revision == '0091'
+    assert script.get_revision('0093').down_revision == '0092'
     assert [(script.get_revision(revision).revision, script.get_revision(revision).down_revision)
-            for revision in ('0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081', '0082', '0083', '0084', '0085', '0086', '0087')] == [
-                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077'), ('0079', '0078'), ('0080', '0079'), ('0081', '0080'), ('0082', '0081'), ('0083', '0082'), ('0084', '0083'), ('0085', '0084'), ('0086', '0085'), ('0087', '0086')]
+            for revision in ('0074', '0075', '0076', '0077', '0078', '0079', '0080', '0081', '0082', '0083', '0084', '0085', '0086', '0087', '0088', '0089', '0090', '0091', '0092', '0093')] == [
+                ('0074', '0073'), ('0075', '0074'), ('0076', '0075'), ('0077', '0076'), ('0078', '0077'), ('0079', '0078'), ('0080', '0079'), ('0081', '0080'), ('0082', '0081'), ('0083', '0082'), ('0084', '0083'), ('0085', '0084'), ('0086', '0085'), ('0087', '0086'), ('0088', '0087'), ('0089', '0088'), ('0090', '0089'), ('0091', '0090'), ('0092', '0091'), ('0093', '0092')]

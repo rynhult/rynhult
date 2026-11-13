@@ -52,9 +52,9 @@ def router(ctx: Context):
             raise refused(error) from None
 
     @api.post("/requests/{request_id}/approve")
-    async def approve(request_id: str, who=Depends(ctx.principal)):
+    async def approve(request_id: str, request: Request, who=Depends(ctx.principal)):
         try:
-            service.decide(request_id, who.username, True)
+            service.decide(request_id, who.username, True, browser_session=bool(getattr(request.state, 'session_hash', None)))
         except ValueError as error:
             raise refused(error) from None
         return {"ok": True}

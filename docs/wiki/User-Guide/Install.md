@@ -1,7 +1,7 @@
 # Install
 
-For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
-for the signed in-place rc.2 procedure, main first and then nodes.
+For an existing rc.1 deployment, start with [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1),
+then follow [Updating Rynhult](/User-Guide/Updating) for subsequent signed releases, main first and then nodes.
 
 How to put Rynhult on a computer. Every computer is one of two things:
 
@@ -9,9 +9,8 @@ How to put Rynhult on a computer. Every computer is one of two things:
 - an **additional machine** (a *[node](/User-Guide/Glossary#machine-node)*): it runs [sessions](/User-Guide/Glossary#session) for an existing main Rynhult, which you keep using as the one dashboard. Using machines once they're added is in [Nodes](/User-Guide/Nodes).
 
 After browser setup, Rynhult opens in the [new layout](/User-Guide/New-Layout).
-The new layout is the only layout, including after upgrades; classic is retired.
-The compact Overview prompt links to **Settings → Setup level**
-and can be dismissed without choosing a level. See [Getting started](/User-Guide/Getting-Started).
+Everyone uses the same application frame, including after upgrades.
+The optional Overview checklist links to **Review setup** and **Settings → Setup level**. See [Getting started](/User-Guide/Getting-Started).
 
 ## v1.0 platform scope
 
@@ -435,3 +434,50 @@ To restore the main Rynhult's node bundle from its source checkout, run:
 ```sh
 sudo deploy/install.sh
 ```
+
+## First-run checklist
+
+After creating the owner account and authenticator, copy or download the recovery
+codes and confirm that you saved them offline. The signed-in setup wizard then
+opens at **Choose level**. If setup was interrupted before you saved the codes,
+open **Review setup** in Overview and use the authenticated recovery workflow to
+create and save a replacement set. Do not create another owner.
+
+Choose **1 · Hobbyist** unless another level fits your normal navigation.
+Levels 0–6 change guidance only: all eleven protections are recommended On;
+no level applies Security settings or enables features. Levels 4–6 use the
+small-team flow. V1 does not enable enterprise identity, automatic provisioning,
+delegated administration or automatic failover.
+
+The checklist links to existing workflows for machines, provider sign-in and
+keys, projects and optional people, backups and updates. Save each resource in
+its own screen, then return and confirm the checklist step. After an interruption,
+select the resource already created instead of creating it again. A confirmation
+records your review; launch still checks current readiness and effective project
+keys. Subscription sign-in and API billing are separate; keys need explicit
+project grants.
+
+Only fresh owner/authenticator setup and saving its recovery codes are required.
+Existing people can defer the optional recovery review without claiming codes
+were saved; company-only accounts use company recovery. Every other
+infrastructure step offers **Finish later**, with the consequence shown. Deferred
+steps stay unfinished in Overview and the final summary. **Continue setup /
+Review setup** in Overview or **Settings → Setup level → Review setup** reopens
+the first pending step. Progress belongs to your signed-in person and follows you
+between browsers. Conflicting saves reload the latest progress for review.
+Back does not undo saved changes.
+
+Use **Settings → Security** to inspect guardrails and scoped exceptions. Any
+change is a separate reviewed diff applied by an owner with reauthentication.
+Re-running setup or changing level preserves hand-made settings, inherited
+values, child overrides and feature locks. Preview feature changes start
+unselected and require individual confirmation; skipping preserves current
+choices. There is no layout selection.
+
+Prefer an off-machine backup target, then USB. A folder or installer timer copy
+on the same disk does not protect against disk loss. Check target configuration,
+a successful capture and possession of the saved recovery kit separately.
+For updates, inspect the configured repository and installer eligibility; an
+untagged development checkout retains its manual update path. The wizard neither
+installs updates nor opts into automatic or unsigned updates. **Start first
+session** opens the normal session dialog for an explicit launch.

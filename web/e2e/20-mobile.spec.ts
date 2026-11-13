@@ -3,7 +3,7 @@ import { test } from './shell-state';
 import { randomUUID } from "node:crypto";
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, routeDemoSessions, shot } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 let sessionId: string | undefined;
 test.afterEach(async ({ page }) => {
@@ -37,8 +37,16 @@ test("mobile: overview, session terminal with key bar, inbox", async ({ page }, 
   await shot(page, testInfo.project.name, "overview");
   await page.goto(`/sessions/${sid}`);
   await expect(page.getByRole("button", { name: "Esc" })).toBeVisible();  // touch key bar
-  await page.getByRole("button", { name: "More keys" }).click();
-  await expect(page.getByRole("button", { name: "Ctrl" })).toHaveAttribute("aria-pressed", "false");
+  await page.locator("summary").filter({ hasText: "More terminal keys" }).click();
+  await expect(page.getByRole("button", { name: "Ctrl U (clear line)", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ctrl D", exact: true })).toBeVisible();
+  const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true });
+  await expect(ctrl).toBeEnabled();
+  await ctrl.click(); await expect(ctrl).toHaveAttribute('aria-pressed', 'true');
+  await ctrl.click(); await expect(ctrl).toHaveAttribute('aria-pressed', 'false');
+  await ctrl.click();
+  await page.locator('.xterm-helper-textarea').press('l');
+  await expect(ctrl).toHaveAttribute('aria-pressed', 'false');
   await shot(page, testInfo.project.name, "terminal");
   await page.goto("/inbox");
   await shot(page, testInfo.project.name, "inbox");
@@ -76,7 +84,7 @@ test("mobile: Overview puts the sessions that need you before health and machine
   expect(links.indexOf("All sessions")).toBeLessThan(links.indexOf("All machines"));
 });
 
-test("mobile: the Overview keeps the Inbox count in a compact line above the page", async ({ page }) => {
+test("mobile: the phone rail keeps the Inbox count compact while Overview stays visible", async ({ page }) => {
   await routeDemoSessions(page);
   const now = new Date().toISOString();
   const items = [{ id: 9, kind: "needs_input", severity: "warn", title: "api-refactor needs your input", source: "claude_hook", verified: true,
@@ -84,8 +92,9 @@ test("mobile: the Overview keeps the Inbox count in a compact line above the pag
     updated_at: now, acked_at: null, resolved_at: null, publish_id: null }];
   await page.route("**/api/attention", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(items) }));
   await page.goto("/");
-  const status = page.getByRole("region", { name: "Inbox status" });
-  await expect(status.getByRole("link", { name: "Inbox (1)" })).toBeInViewport();
+  const status = page.getByRole("navigation", { name: "Phone rail", exact: true }).getByRole("button", { name: /^Inbox/ });
+  await expect(status).toHaveAccessibleName("Inbox, 1 open");
+  await expect(status).toBeInViewport();
   expect((await status.boundingBox())!.height).toBeLessThanOrEqual(64);
   await expect(page.getByRole("main").getByRole("heading", { name: "Overview", exact: true })).toBeInViewport();
 });
@@ -108,7 +117,9 @@ test("mobile: Enter is on screen, and the terminal starts near the top", async (
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   const terminal = (await page.locator(".xterm").boundingBox())!;
-  expect(terminal.y).toBeLessThan(250);  // the header's 44 px touch targets (phone pass) cost ~20 px
+  // The current frame adds working-view chrome; keep terminal content in the first half-screen.
+  expect(terminal.y).toBeLessThan(page.viewportSize()!.height / 2);
+  await expect(enter).toBeInViewport();
   // Interrupt and Stop are behind "⋯" on touch, never next to each other in the header
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
   await page.getByRole("button", { name: /^Actions for / }).click();
@@ -121,15 +132,15 @@ test("mobile: Enter is on screen, and the terminal starts near the top", async (
 test("mobile: a deep-linked tab is on screen, and the others are under More", async ({ page }) => {
   const id = await liveSession(page);
   await page.goto(`/sessions/${id}?tab=activity`);
-  const tab = page.getByRole("tab", { name: "Activity" });
+  const tab = page.getByRole("tablist", { name: "Session views", exact: true }).getByRole("tab", { name: "Activity", exact: true });
   await expect(tab).toHaveAttribute("aria-selected", "true");
   const inside = async (name: string) => {
-    const box = (await page.getByRole("tab", { name }).boundingBox())!;
+    const box = (await page.getByRole("tablist", { name: "Session views", exact: true }).getByRole("tab", { name, exact: true }).boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   };
   await inside("Activity");
-  await page.getByRole("button", { name: "More" }).click();
+  await page.locator(".session-tab-line").getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("menu", { name: "More" }).getByRole("menuitem", { name: /Setup/ }).click();
   await expect(page).toHaveURL(/\?tab=spec$/);
   await inside("Setup");
@@ -153,7 +164,7 @@ test("mobile: axe on the session header and tabs", async ({ page }) => {
   const id = await liveSession(page);
   for (const tab of ["", "?tab=preview", "?tab=activity", "?tab=handoffs", "?tab=spec", "?tab=changes", "?tab=files"]) {
     await page.goto(`/sessions/${id}${tab}`);
-    await expect(page.getByRole("tablist")).toBeVisible();
-    await expectAxeClean(page, tab ? "main" : "main header");
+    await expect(page.getByRole("tablist", { name: "Session views", exact: true })).toBeVisible();
+    await expectAxeClean(page, tab ? "main" : ".shell-session-heading, .session-tab-line");
   }
 });

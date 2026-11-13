@@ -55,6 +55,8 @@ def router(ctx):
 
     def validate(db, body, who, existing=None):
         launch = body.launch
+        if launch.session_relay:
+            raise HTTPException(409, 'Scheduled relay launches require a qualified hub transport.')
         if launch.topic or launch.workspace or launch.project_id is None or launch.budget_ok:
             raise HTTPException(422, 'A schedule needs a project and can\'t go past a budget limit. Choose a project, then save again.')
         project = ctx.project_for(db, who, launch.project_id)

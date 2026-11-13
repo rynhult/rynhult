@@ -759,15 +759,11 @@ async def test_launch_failure_before_session_exists_notifies_assignment_creator(
 async def test_report_wakes_coordinating_parent_not_root_lead(v2, project, env):
     from test_team import lead, request
 
-    from acc.server.models import Session
     owner = await lead(v2, project, env)
     parent = (await assigned_start(v2, env, owner, name='Coordinator', task='Coordinate'))['result']
-    helper = (await assigned_start(v2, env, owner, name='Reporter', task='A task'))['result']
+    helper = (await assigned_start(v2, env, parent, name='Reporter', task='A task'))['result']
     sup = v2.app.state.supervisor
     await delivery.stop_worker(sup)
-    with sup.db() as db:
-        db.get(Session, helper['id']).parent_session_id = parent['id']
-        db.commit()
     result = await request(v2, env, helper, 'report', status='blocked', summary='Need help')
     assert result['ok'], result
     with sup.db() as db:

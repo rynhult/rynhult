@@ -222,3 +222,11 @@ External configuration, workspaces, external services and node updates are not
 rolled back. Check `/api/health` and the browser again. Keep the staging kit,
 previous source and backup until the release is accepted; remove them only after
 a separate administrator review of recovery needs and disk space.
+
+The reviewed account-install build adds migration 0091 after session relay 0090,
+and capability registry
+version 2. Older saved consent snapshots require fresh review. Delegation still
+defaults Off, and no extractor fingerprint is qualified by the upgrade. Existing
+person-approved tool requests keep their person path. Retained reviewed recipe
+bytes or install journals block downgrade; restore a consistent pre-upgrade backup
+or forward-repair rather than discarding evidence.

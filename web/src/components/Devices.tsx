@@ -11,7 +11,7 @@ import { announce, Badge, Button, Dialog, Empty, ErrorNote, Field, Input, Loadin
 
 interface Device { id: string; person: string; label: string; kind: string; status: string; expires_at: string; last_seen_at: string | null; previous_authority?: boolean }
 interface State { devices: Device[]; pairing_enabled: boolean; policy_pending: boolean }
-interface Pairing { id: string; label: string; link: string; qr_svg: string; expires_at: string }
+interface Pairing { id: string; label: string; link: string; qr_svg: string; expires_at: string; desktop_code: string }
 interface Detail { status: string; password: string | null }
 
 /** The owner types the code read from the receiving device: Rynhult never shows it here, and one wrong entry cancels. */
@@ -64,6 +64,7 @@ export function PairingDialog({ pairing, close, owner }: { pairing: Pairing | nu
     footer={<Button onClick={close}>Close pairing</Button>}>
     {pairing && <div className="space-y-4">
       <img alt="One-use device pairing QR code" width={240} height={240} src={`data:image/svg+xml,${encodeURIComponent(pairing.qr_svg)}`} />
+      <p className="text-sm text-fg">Desktop match code: <code>{pairing.desktop_code}</code>. Check that the phone displays this code, your person and this installation before requesting pairing.</p>
       <Field label="One-use pairing link"><Input readOnly value={pairing.link} autoComplete="off" spellCheck={false} /></Field>
       <p className="text-sm text-muted">Keep this link private. On the new device select Request pairing, then ask an owner to confirm the device in Remote access.</p>
       {detail?.status === 'claimed' && <p className="text-sm text-fg">The new device shows a six-digit matching code. {owner ? 'Type it below from that screen.' : 'Read it to an owner from that screen.'} If it shows an error instead, close this pairing.</p>}
@@ -101,7 +102,7 @@ export function Devices({ owner, registry = false }: { owner: boolean; registry?
       <QueryState query={query} loading={<LoadingRows rows={2} />}>{data => <>
         <Feature name="remote_access"><form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); void run(async () => { setPairing(await post<Pairing>('/api/devices/pairings', { label: name })); announce('Pairing link created.'); }); }}>
           <Field label="Device name"><Input name="device-name" autoComplete="off" value={name} onChange={e => setName(e.target.value)} maxLength={100} required /></Field>
-          <Button type="submit" disabled={blocked || !data.pairing_enabled} title={offline ? OFFLINE_TITLE : !data.pairing_enabled ? 'An owner must allow LAN pairing in Remote access.' : undefined}>Pair device</Button>
+          <Button type="submit" disabled={blocked || !data.pairing_enabled} title={offline ? OFFLINE_TITLE : !data.pairing_enabled ? 'An owner must allow LAN pairing in Remote access.' : undefined}>Pair a phone</Button>
         </form></Feature>
         {!data.devices.length ? <Empty icon={Laptop}>No paired devices yet.</Empty> : <ul className="divide-y divide-line">{data.devices.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
           <div className="min-w-0"><p className="break-words text-sm text-fg">{d.label} <Badge>{d.status === 'revoked' && data.policy_pending ? 'Revocation pending' : d.status}</Badge></p>

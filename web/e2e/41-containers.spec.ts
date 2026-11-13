@@ -1,7 +1,8 @@
+import { selectSessionView } from './helpers';
 import { expect, test } from "./fixtures";
 import { existsSync, renameSync } from "node:fs";
 import path from "node:path";
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, openAdvanced, wikiShotPath } from "./helpers";
+import { AUTH_FILE, openAdvanced, csrfHeaders, expectAxeClean, gitProject, info, wikiShotPath } from "./helpers";
 
 // Containers are a Preview that needs a qualified host. The e2e server records a passing qualification report for its
 // host at start (tests/e2e_server.py, qualify_containers): the real record and check, its own uid standing in for root.
@@ -65,12 +66,13 @@ test("container Orchestrator launch retains isolation when the test launcher is 
   await page.getByRole("checkbox", { name: "Run this project's new sessions in containers" }).check();
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await dialog.getByRole('button', { name: 'Rename', exact: true }).click();  // the name is suggested until renamed
   await dialog.getByLabel('Name', { exact: true }).fill('Taylor boxed lead');
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(id));
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   const created = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/sessions'));
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
   const response = await created;
@@ -81,7 +83,7 @@ test("container Orchestrator launch retains isolation when the test launcher is 
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${session.id}`)).json()).last_error)
     .toContain("the container launcher isn't reachable");
   await expect(page).toHaveURL(new RegExp(`/sessions/${session.id}$`));
-  await page.getByRole('tab', { name: 'Setup', exact: true }).click();
+  await selectSessionView(page, 'Setup');
   // Setup names the container with its Preview badge (containers-preview-label) and the account's limits (r4).
   await expect(page.getByText("with its account's container limits", { exact: false })).toContainText("Preview");
   await expect(page.getByText('private checkout', { exact: false }).first()).toBeVisible();
@@ -121,13 +123,14 @@ for (const width of [1440, 390]) {
       const { id, headers } = await gitProject(page, `preview-${width}-${theme}-${Date.now()}`);
       expect((await page.request.post(`/api/projects/${id}/containers`, { headers, data: { enabled: true } })).ok()).toBe(true);
       await page.goto(`/projects/${id}`);
-      await page.getByRole("main").getByRole("button", { name: "New session", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+      await page.locator('#shell-new-session').click();
+      const dialog = page.getByRole("region", { name: "New session", exact: true });
+      await openAdvanced(dialog);
       await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
       await expect(dialog.getByText("Container session", { exact: false })).toContainText("Preview");
-      await expectAxeClean(page, '[role="dialog"]');
+      await expectAxeClean(page, 'main');
       await dialog.screenshot({ path: testInfo.outputPath('container-preview-dialog.png') });
-      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await dialog.getByRole("button", { name: "Back to workspace", exact: true }).click();
       const record = qualificationRecord();
       renameSync(record, `${record}.away`);
       try {

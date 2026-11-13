@@ -42,3 +42,23 @@ def response_from(line: bytes, request_id: int, *, attach: bool = False) -> dict
     if not valid:
         raise ValueError("malformed broker answer")
     return value
+
+
+def runtime_request_from(line: bytes) -> dict:
+    """Private session-runtime v1, inside the authenticated broker/node channel.
+
+    grant is an opaque main-authenticated single-operation credential. Its verifier
+    reconstructs the operation from server-held registration, never from native
+    client fields. This is a broker file schema, not a public ry/ protocol change.
+    """
+    if len(line) > 1 << 20:
+        raise ValueError('runtime frame too large')
+    request = request_from(line)
+    if request.keys() != {'id', 'version', 'method', 'params'} or request['version'] != 1 or type(request['version']) is not int:
+        raise ValueError('unsupported runtime version')
+    fields = {'dispatch': {'grant'}, 'receipt': {'operation_id'}}.get(request['method'])
+    params = request['params']
+    if fields is None or params.keys() != fields or not all(
+            type(value) is str and 0 < len(value) <= 4096 for value in params.values()):
+        raise ValueError('invalid runtime request')
+    return request

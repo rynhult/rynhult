@@ -28,7 +28,8 @@ async def test_l7_a_helper_starts_while_nothing_changed(api, project, env):
 async def test_l7_the_owners_removal_or_lost_access_stops_helper_launches(api, project, env):
     x = await lead(api, project, env)
     with write_db(api.app.state.db) as s:
-        s.get(Session, x['id']).owner = 'riley'  # a member's team; riley has no account (removed)
+        from acc.server.child_caps import transfer_owner
+        transfer_owner(s, [s.get(Session, x['id'])], 'riley', '@api')  # removed person's retained team
         s.commit()
     reply = await request(api, env, x, 'start', name='A', agent='claude', task='work')
     assert not reply['ok'] and 'no longer has an account' in reply['error']

@@ -88,7 +88,8 @@ async def working(grouped):
     with write_db(w['owner'].app.state.db) as s:
         session = s.get(Session, w['session']['id'])
         session.project_id = w['group_project']['id']
-        session.owner = 'alex'
+        from acc.server.child_caps import transfer_owner
+        transfer_owner(s, [session], 'alex', '@api')
         session.run_as = s.query(User).filter_by(username='alex').one().account  # alex's own agent account
         binding = s.get(Placement, session.placement_id)
         binding.project_id, binding.person, binding.account = session.project_id, 'alex', session.run_as

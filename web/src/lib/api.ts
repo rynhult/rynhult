@@ -104,6 +104,12 @@ export const isNotFound = (error: unknown) => error instanceof ApiError && error
 
 export const post = <T,>(path: string, json: unknown = {}) => api<T>(path, { json });
 
+/** Ephemeral updates keep CSRF recovery without navigating or disturbing private view state on a late 401. */
+export const postInBackground = (path: string, json: unknown) => csrfFetch(path, {
+  method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(json),
+});
+
 /** Secret-bearing exports bypass query/mutation result caches and are downloaded directly. */
 export async function downloadFile(path: string, filename: string, json: unknown): Promise<void> {
   const response = await csrfFetch(path, {method:'POST', credentials:'same-origin', cache:'no-store',

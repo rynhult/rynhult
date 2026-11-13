@@ -38,6 +38,7 @@ from .ingest import IngestMixin, read_spool_file, spool_path
 from .issue_sources import IssueSources
 from .machine_presence import connected, evaluate, sleep_due, transition
 from .models import (
+    API_PRINCIPAL,
     AuditLog,
     Event,
     Group,
@@ -126,6 +127,9 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         self._deferred: list[tuple] = []
         self._autostart_done = False
         self.push = None  # set by the app (Web Push); notifications are skipped without it
+        from .push_presence import Presence
+        self.push_presence = Presence()
+        self._push_lock = asyncio.Lock()
         self._push_cursor: int | None = None
         self._host_backoff: dict[str, tuple[int, float]] = {}  # remote spools: host -> (failures, skip until)
         self.vault = vault.Vault(settings.vault_key_path)
@@ -199,7 +203,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                              multirun_entry: tuple[str, int] | None = None, container: bool = False,
                              group_checkout: str | None = None, group_task: str | None = None, automation_policy: dict | None = None,
                              machine: str | None = None, checkout_repo: str | None = None,
-                             personal_task: str | None = None, claude_auth: str = "subscription") -> str:
+                             personal_task: str | None = None, claude_auth: str = "subscription",
+                             relay_launch=None, permissions: dict | None = None, parent_session_id: str | None = None) -> str:
         from .admin_features import launch_refusal
         if problem := launch_refusal(self.settings, automation=automation_policy, orchestrator=orchestrator or team_member,
                                      schedule=bool(schedule_run_id), multirun=bool(multirun_entry)):
@@ -324,11 +329,6 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             except sources.Refused as error:
                 raise LaunchRefused(str(error)) from None
             account = where[1]  # sessions run as the account that owns the project's folder
-            try:  # refused before anything is recorded: two keys with one variable, an MCP key it can't have
-                key_plan = vault.plan(db, project.id, owner or project.owner, (where[0] != "local"), self.catalog,
-                           inputs.mcps).claude_auth(inputs.provider, claude_auth)
-            except vault.VaultError as error:
-                raise LaunchRefused(str(error)) from None
             if orchestrator:
                 try:
                     # A schedule launches as its owner's principal, but no person is present: brief as context only.
@@ -346,13 +346,52 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 inputs = security_settings.launch_inputs(inputs, effective_security)
             except ValueError as error:
                 raise LaunchRefused(str(error)) from None
+            from . import child_caps
+            policy = guardrails.policy(db, (worktree or {}).get("path") or workdir or project.workspace_path,
+                                      owner or project.owner, project.id, project.private_workspace,
+                                      machine=where[0], account=account)
+            parent = None
+            parent_id = parent_session_id or (team_member or {}).get('parent_session_id')
+            if actor.startswith('session:') and parent_id != actor.removeprefix('session:'):
+                raise LaunchRefused('session launches require their authenticated parent')
+            if parent_id:
+                parent = db.get(Session, parent_id)
+                if parent is None or parent.project_id != project.id or (parent.owner or API_PRINCIPAL) != (owner or project.owner or API_PRINCIPAL):
+                    raise LaunchRefused('child launch parent is outside the owner/project scope')
+            if team_member and parent is None:
+                raise LaunchRefused('child launch requires its authenticated parent')
+            if parent:
+                if parent.management != 'acc':
+                    raise LaunchRefused(f'limited by {parent.id}: external source has no qualified managed grant')
+                if parent.container and not container:
+                    raise LaunchRefused(f'limited by {parent.id}: a container parent cannot launch a native child')
+                try:
+                    inputs, policy = child_caps.constrain(db, parent, inputs, policy)
+                except child_caps.Refused as error:
+                    raise LaunchRefused(str(error)) from None
+            from ..session_capabilities import meet, normalize
+            from .session_caps import effective as current_capabilities
+            requested_caps = normalize(permissions)
+            launch_caps = meet(requested_caps, current_capabilities(db, parent)) if parent else requested_caps
+            if launch_caps['installs'] is not None:
+                # Scoped install grants never inherit an exemption that would
+                # let a raw manager command skip the typed execution boundary.
+                policy['tool_approval'] = True
+                policy['security']['switches']['tool_install_check'] = True
+            policy['parent_session_id'] = parent.id if parent else None
+            try:  # refused before anything is recorded: two keys with one variable, an MCP key it can't have
+                key_plan = vault.plan(db, project.id, owner or project.owner, (where[0] != "local"), self.catalog,
+                           inputs.mcps).claude_auth(inputs.provider, claude_auth)
+            except vault.VaultError as error:
+                raise LaunchRefused(str(error)) from None
             compiled = compile_files(inputs, layout["hook_path"], layout["statusline_path"],
                                      catalog=self.catalog, agent_home=layout["home"],
                                      codex_plugins=self.codex_plugins(account),
-                                     endpoint=self.endpoint_info(db, inputs.endpoint),
-                                     guardrails=guardrails.policy(db, (worktree or {}).get("path") or workdir
-                                                                  or project.workspace_path,
-                                                                  owner or project.owner, project.id, project.private_workspace, machine=where[0], account=account))
+                                     endpoint=self.endpoint_info(db, inputs.endpoint), guardrails=policy)
+            if parent:
+                from dataclasses import replace
+                files = {**compiled.files, child_caps.FILE: json.dumps(child_caps.proof(db, parent), sort_keys=True)}
+                compiled = replace(compiled, files=files, digest=child_caps.digest(files))
             if orchestrator or team_member:
                 from dataclasses import replace
                 compiled = replace(compiled, files=team_files(compiled.files, inputs.provider, layout["hook_path"],
@@ -390,7 +429,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             acc_id = group_checkout if group else (intent.reserved_session_id if intent else (team_member or {}).get('attempt_id') or uuid.uuid4().hex[:12])
             safe = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]", "-", name.lower())).strip("-")[:30] or project.slug  # tmux: ASCII only
             session = Session(
-                id=acc_id, project=project, provider=inputs.provider, name=name, claude_auth=claude_auth,
+                id=acc_id, project=project, project_id=project.id, provider=inputs.provider, name=name, claude_auth=claude_auth,
                 tmux_name=f"acc-attempt-{acc_id}" if (team_member or {}).get("attempt_id") else f"acc-{safe}-{acc_id[:8]}", launch_spec=spec,
                 native_id=providers.get(inputs.provider).new_native_id() if providers.get(inputs.provider).session_id == "assigned" else None,
                 desired_state="running", observed_state="starting", workdir=workdir, run_as=account,
@@ -404,6 +443,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 for key, value in team_member.items():
                     if key != 'attempt_id':
                         setattr(session, key, value)
+            if parent:
+                session.parent_session_id = parent.id
             if multirun_entry:
                 from .models import MultiRunEntry
                 session.multirun_id = multirun_entry[0]
@@ -424,6 +465,15 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 except project_briefs.Refused as error:
                     raise LaunchRefused(str(error)) from None
                 db.add(AuditLog(actor=actor, action="team.grant", target=acc_id, detail=orchestrator))
+            from . import session_caps
+            caps_file = session_caps.attach(db, session, permissions)
+            files = {**session.launch_spec.files, session_caps.FILE: caps_file}
+            session.launch_spec.files = files
+            session.launch_spec.digest = child_caps.digest(files)
+            try:
+                session_caps.admit_launch(db, session)
+            except ValueError as error:
+                raise LaunchRefused(str(error)) from None
             binding = db.scalar(select(Placement).where(
                 Placement.project_id == project.id, Placement.person == session.owner,
                 Placement.host == where[0], Placement.account == session.run_as, Placement.path == session.cwd))
@@ -476,8 +526,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             db.add(AuditLog(actor=actor, action="session.create", target=acc_id,
                             detail={"project": project.slug, "provider": inputs.provider, "digest": compiled.digest,
                                     "machine": where[0], "account": account,
+                                    "dropped_mcps": policy.get("dropped_mcps", []),
                                     **({"workdir": workdir} if workdir else {}),
                                     **({"worktree": worktree["path"], "branch": worktree["branch"]} if worktree else {})}))
+            if relay_launch is not None:
+                relay_launch.reserve(db, session)
             db.commit()
             cwd, host = session.cwd, session.host
         # From here the session exists and owns its folder (and worktree): a failure is the session's to show and
@@ -494,10 +547,22 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                     session = db.get(Session, acc_id)
                     # A person can cancel while trust_workspace is in flight.
                     if session.desired_state == "running":
-                        await self._start(db, session, reason="launch", personal_task=personal_task)
+                        if relay_launch is not None:
+                            db.commit()
+                            await relay_launch.launch(acc_id)
+                        else:
+                            await self._start(db, session, reason="launch", personal_task=personal_task)
                     db.commit()
         except Exception:  # including an unavailable broker: the session shows it and reconcile retries
             log.exception("launch of %s failed after it was recorded; reconcile takes over", acc_id)
+            if relay_launch is not None:
+                with self.db() as db:
+                    from .session_relay import store as relay_store
+                    relay_store.seal(db, relay_store.lock(db, acc_id))
+                    failed = db.get(Session, acc_id)
+                    failed.desired_state = 'stopped'
+                    failed.last_error = 'Relay launch did not finish; explicit relay recovery is required.'
+                    db.commit()
         finally:
             self._launching.discard(acc_id)
         return acc_id
@@ -559,6 +624,14 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                     db.add(AuditLog(actor=actor, action="session.archive", target=acc_id))
                     db.commit()
                     return
+                # Seal in the same transaction as Stop intent, after validity and
+                # sleep checks. Rollback leaves both untouched. Sleep is disabled
+                # for relay until same-run suspend/recovery is qualified.
+                from .models import RelaySession
+                from .session_relay import store as relay_store
+                if db.get(RelaySession, acc_id):
+                    relay_store.seal(db, relay_store.lock(db, acc_id))
+                relay_enrolled = db.get(RelaySession, acc_id) is not None
                 member = bool(session.team_id or session.project.group_id)  # retain capacity until broker confirms group stop
                 multirun = bool(session.multirun_id)
                 if member:
@@ -585,7 +658,12 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 db.commit()  # and no write lock is held while the broker works (reconcile waits on self._lock)
             confirmed = False
             try:
-                await self.broker.call("kill", account=account, host=host, **kill)
+                if relay_enrolled:
+                    runtime = getattr(self, 'relay_manager', None)
+                    if runtime is None or not await runtime.stop(acc_id):
+                        raise BrokerError('Relay owner exit is not confirmed; explicit recovery is required.')
+                else:
+                    await self.broker.call("kill", account=account, host=host, **kill)
                 confirmed = True
                 with self.db() as db:
                     session = self._get(db, acc_id)
@@ -669,6 +747,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         return None
 
     def _check_resume(self, db: DbSession, session: Session, actor: str, *, check_capacity: bool = True) -> None:
+        from .session_relay.hub import refuse_legacy
+        refuse_legacy(db, session.id)
         from .sources import session_problem
         if problem := session_problem(db, session):
             raise LaunchRefused(problem)
@@ -680,11 +760,6 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             raise LaunchRefused(f"Rynhult didn't start this session, so it can't resume it. Start it where it was started ({session.external_unit}).")
         if session.project.private_workspace and not json.loads(session.launch_spec.files.get("guardrails.json", "{}" )).get("local_only"):
             raise LaunchRefused("This workspace is now a Development workspace, so this session can't resume. Start a new session in it.")
-        from .security_settings import Conflict, check_generation
-        try:
-            check_generation(db, session)
-        except Conflict as error:
-            raise LaunchRefused(str(error)) from None
         if session.desired_state == "archived":
             from ..backup_activation import resume_permitted
             if not resume_permitted(db, session, consume=False):
@@ -718,6 +793,12 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 group_board.reserve(db, db.get(Group, session.project.group_id), consume=False)
         from .orchestrator import planning
         planning.require_resume(db, session)
+
+        from .security_settings import Conflict, check_generation
+        try:
+            check_generation(db, session)
+        except Conflict as error:
+            raise LaunchRefused(str(error)) from None
 
     async def _resume(self, acc_id: str, actor: str) -> None:
         """Manual resume: same conversation only. Resets the retry budget."""
@@ -780,6 +861,9 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             db.commit()
 
     async def interrupt(self, acc_id: str, actor: str) -> None:
+        from .session_relay.hub import refuse_raw_input
+        with self.db() as db:
+            refuse_raw_input(db, acc_id)
         await self.cancel_automation(acc_id)
         with self.db() as db:
             session = self._get(db, acc_id)
@@ -815,9 +899,19 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
     async def send_text(self, acc_id: str, actor: str, text: str) -> dict | None:
         """Type a message into a running session's prompt and submit it (review feedback from the Changes tab)."""
         from . import claude_auth
+        from .models import RelaySession
         from .orchestrator import delivery
+        from .session_relay.hub import refuse_raw_input
+        with self.db() as db:
+            self._get(db, acc_id)
+            relay = db.get(RelaySession, acc_id) is not None
+        if relay and actor == '@api' and delivery.enabled():
+            result = delivery.enqueue(self, acc_id, actor, text, relay_service=True)
+            delivery.start_worker(self)
+            return result
         with self.db() as db:
             session = self._get(db, acc_id)
+            refuse_raw_input(db, acc_id)
             if session.management == 'external':
                 raise LaunchRefused("Rynhult didn't start this session, so it can't type into it.")
             if not delivery.enabled() and session.observed_state not in ('active', 'waiting_input', 'idle'):
@@ -1035,6 +1129,9 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
 
     async def _sleep_ready(self, db: DbSession, session: Session) -> bool:
         """Fail closed: refresh the screen, output and hooks under the stop/resume lock."""
+        from .models import RelaySession
+        if db.get(RelaySession, session.id):
+            return False
         node = db.scalar(select(Node).where(Node.name == session.host))
         if not sleep_due(session, node, now()) or not connected(self.broker, session.host):
             return False
@@ -1075,6 +1172,8 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
             db.commit()
 
     async def run(self) -> None:
+        from .delegated_execution import recover
+        await recover(self)
         # HA reuses this object on promotion; another main may have enabled goals
         # since construction. Stay conservative before/during every worker start.
         self._automation_index_valid = False
@@ -1175,6 +1274,9 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
                 if loop.time() - last_infrastructure >= 60:
                     last_infrastructure = loop.time()
                     await stage("infrastructure_retention", self.purge_infrastructure)
+                    from .session_relay.maintenance import maintain, reconcile_decisions
+                    await stage("relay_retention", lambda: joined_thread(maintain, self))
+                    await stage("relay_decision_evidence", lambda: reconcile_decisions(self))
                 await stage("ingest", self.ingest_pass)
                 if loop.time() - last_containers >= self.settings.container_audit_interval:
                     last_containers = loop.time()
@@ -1229,6 +1331,7 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
     def _close_run(self, session: Session, end_reason: str) -> None:
         run = self._open_run(session)
         if run:
+            self.__dict__.get('_osc_hook_seen', {}).pop(session.id, None)
             run.ended_at = now()
             run.end_reason = run.end_reason or end_reason
 
@@ -1239,9 +1342,11 @@ class Supervisor(TeamMixin, PollingMixin, IngestMixin, ReconcileMixin, HistoryMi
         elif previous != 'idle' or session.idle_since is None:
             session.idle_since = now()
         if previous != state:
-            db.add(Event(session_id=session.id, source=source, kind="state", payload={"from": previous, "to": state}))
+            db.add(Event(session_id=session.id, source=source, kind="state", verified=source != "osc7501",
+                         payload={"from": previous, "to": state}))
             session.observed_state = state
-            self._attention_on_transition(db, session, previous, state)
+            if source != "osc7501":  # script status must not resolve pending input/recovery attention
+                self._attention_on_transition(db, session, previous, state)
             orchestrator.state_changed(db, session, previous, state)  # orchestrator v2 slices' listeners
             if state in ("stopped", "exited", "archived") and session.project_id is not None:
                 self.backup_soon(session.project_id)  # its commits go to the backup now, not in 15 minutes

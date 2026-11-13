@@ -50,3 +50,9 @@
 .shell-terminal-panel .registered-terminal-slot { flex: 1; min-height: 320px; }
 
 .working-notice { align-self: center; max-width: 16rem; margin-inline: 6px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 12px; color: var(--wait); font-size: var(--shell-meta-size); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+@media (pointer: coarse) {
+  .working-tabs button, .working-toolbar select, .working-empty a { min-width: 44px; min-height: 44px; }
+  .working-toolbar select { height: 44px; }
+  .working-empty a { display: inline-flex; align-items: center; }
+}

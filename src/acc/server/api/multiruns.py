@@ -5,7 +5,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
@@ -38,6 +38,7 @@ class MultiRunIn(BaseModel):
     clone_on_machine: bool = False
     name: str = Field(min_length=1, max_length=40)
     initial_prompt: str = Field(min_length=1, max_length=20000)
+    permissions: dict | None = None
     runs: list[RunChoice] = Field(min_length=2, max_length=5)
 
     @model_validator(mode="after")
@@ -51,7 +52,7 @@ class MultiRunIn(BaseModel):
         return [SessionIn.model_validate({
             **choice.model_dump(exclude_unset=True), "name": self.name.strip(),
             "project_id": self.project_id, "initial_prompt": self.initial_prompt, "worktree": True,
-            "machine": self.machine, "clone_on_machine": self.clone_on_machine,
+            "machine": self.machine, "clone_on_machine": self.clone_on_machine, "permissions": self.permissions,
         }) for choice in self.runs]
 
 
@@ -81,9 +82,13 @@ def router(ctx: Context, launch_session, preview_session, session_changes) -> AP
         owners_project = project is not None and (project.owner in (None, API_PRINCIPAL) or
             s.scalar(select(User.role).where(User.username == project.owner)) == "owner")
         github = s.get(Observation, f"github.{project.id}") if owners_project and not project.private_workspace else None
+        from ..review_state import session_review_signals
+        entry_rows = entries(s, group.id)
+        sessions = {entry.session_id: ctx.session_for(s, who, entry.session_id) for entry in entry_rows if entry.session_id}
+        review = session_review_signals(s, list(sessions.values()))
         runs = []
-        for entry in entries(s, group.id):
-            session = ctx.session_for(s, who, entry.session_id) if entry.session_id else None
+        for entry in entry_rows:
+            session = sessions.get(entry.session_id)
             usage = s.get(Observation, f"claude.statusline.{session.id}") if session else None
             branch = ((session.changes or {}).get("branch") or session.worktree_branch) if session else None
             ci = None
@@ -92,7 +97,7 @@ def router(ctx: Context, launch_session, preview_session, session_changes) -> AP
                       "error": github.value.get("error"),
                       "run": next((r for r in github.value.get("runs", []) if r.get("branch") == branch), None)}
             runs.append({"position": entry.position, "choice": entry.choice, "error": entry.error,
-                         "session": session_out(session) if session else None,
+                         "session": session_out(session, review_signals=review[session.id]) if session else None,
                          "usage": {"cost": usage.value.get("cost"), "context_window": usage.value.get("context_window"),
                                    "source": usage.source, "observed_at": usage.observed_at} if usage else None,
                          "ci": ci})
@@ -115,7 +120,7 @@ def router(ctx: Context, launch_session, preview_session, session_changes) -> AP
             return group_out(s, group_for(s, who, group_id), who)
 
     @api.post("/api/multiruns", status_code=201)
-    async def start_group(body: MultiRunIn, who=Depends(ctx.principal)):
+    async def start_group(body: MultiRunIn, request: Request, who=Depends(ctx.principal)):
         launches = body.launches()
         with db() as s:
             project = ctx.project_for(s, who, body.project_id)
@@ -125,7 +130,7 @@ def router(ctx: Context, launch_session, preview_session, session_changes) -> AP
         for launch in launches:
             try:
                 inputs = launch.inputs(supervisor.catalog)
-                await preview_session(launch, who)
+                await preview_session(launch, request=request, who=who)
             except (CompileError, KeyError, ValueError) as error:
                 raise HTTPException(422, str(error)) from None
             if providers.get(inputs.provider).dangerous(inputs) and not launch.confirm_dangerous:

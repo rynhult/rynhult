@@ -28,6 +28,19 @@ def orchestrator_preview(monkeypatch):
 # (owner-only).
 # POST /api/sessions and preview accept claude_auth; ownership and refusal classes are unchanged.
 MATRIX = {
+    ('POST', '/api/push/presence'): None,  # members update only their own browser presence (exercised below)
+    ('POST', '/api/push/preference'): None,  # members update only their own push preference (exercised below)
+    ('GET', '/api/sessions/{session_id}/permissions'): 404,
+    ('PATCH', '/api/sessions/{session_id}/permissions'): 404,
+    ('GET', '/api/approvals/installs/{operation_id}'): 404,
+    ('POST', '/api/approvals/installs/{operation_id}/reconcile'): 403,
+    ('POST', '/api/sessions/{acc_id}/relay'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay/events'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay/runs'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay/operations/{operation_id}'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay/terminal'): 404,
+    ('GET', '/api/sessions/{acc_id}/relay/ownership'): 404,
     ('POST', '/api/sessions/{acc_id}/git/{action}'): 404,
     ('GET', '/api/sessions/{acc_id}/inbox-permissions'): 404,
     ('PUT', '/api/sessions/{acc_id}/inbox-permissions'): 404,
@@ -273,6 +286,12 @@ MATRIX = {
     ("POST", "/api/sessions/{acc_id}/pull/merge"): 404,
     ("POST", "/api/sessions/{acc_id}/pull/feedback"): 404,
     ("POST", "/api/sessions/{acc_id}/pull/feedback/{preview}/send"): 404,
+    ('GET', '/api/sessions/{acc_id}/pull/mergeable'): 404,
+    ('POST', '/api/sessions/{acc_id}/pull/mergeable/base'): 404,
+    ('POST', '/api/sessions/{acc_id}/pull/mergeable/completed-rebase'): 404,
+    ('POST', '/api/sessions/{acc_id}/pull/mergeable/push/{ticket}'): 404,
+    ('POST', '/api/sessions/{acc_id}/pull/mergeable/rerun'): 404,
+    ('POST', '/api/sessions/{acc_id}/pull/mergeable/feedback'): 404,
     ("POST", "/api/workspaces/{folder}/delete"): 404,
     ("POST", "/api/workspaces/{folder}/development"): 403,
     ("GET", "/api/wiki/{kind}/{key}"): 404,
@@ -398,6 +417,8 @@ async def _idle(api, acc_id):
 
 
 def fill(path: str, w: dict) -> str:
+    if path.endswith("/permissions"):
+        path = path.replace("{session_id}", w["session"]["id"])
     if path == "/api/sessions/{acc_id}/git/{action}":
         path = path.replace("{action}", "commit")
     path = path.replace('{consent_id}', 'a' * 32).replace('{batch_id}', 'b' * 32)
@@ -412,6 +433,9 @@ def fill(path: str, w: dict) -> str:
 
 
 BODIES = {
+    '/permissions': {'permissions': {'ports': []}},
+    '/pull/mergeable/base': {'mode': 'merge'},
+    '/pull/mergeable/completed-rebase': {'sha': 'a' * 40, 'confirm': True},
     '/git/commit': {'message': 'Review changes', 'fingerprint': 'a' * 64},
     '/inbox-permissions': {'enabled': False},
     '/permission': {'token': 'a' * 32, 'decision': 'deny'},
@@ -459,6 +483,10 @@ async def test_member_cannot_reach_anything_of_the_owners(two):
             query = {"q": "README"}
         if path.endswith("/compare"):
             query = {"left": "a", "right": "b"}
+        if path in {'/api/sessions/{acc_id}/relay/terminal', '/api/sessions/{acc_id}/relay/ownership'}:
+            # Structurally valid observer inputs must reach private-session
+            # authorization; an unrelated member still receives opaque404.
+            query = {'expectedRunId': '1', 'attachmentId': 'foreign-observer'}
         body = next((b for k, b in BODIES.items() if url.endswith(k)), {})
         if url.startswith('/api/groups/'):
             body = {"revision": 1, "role": "member", "name": "Demo", "slug": "demo-group", "owners": [1],
@@ -697,3 +725,22 @@ async def test_member_publication_outcomes_stay_private_through_current_and_audi
         db.commit()
     assert address not in json.dumps((await member.get('/api/publish?view=audit')).json())
     assert address in json.dumps((await api.get('/api/publish?view=audit')).json())
+
+
+async def test_personal_push_routes_allow_members_only_for_their_own_browser(two):
+    from acc.server.models import Setting
+
+    member = two['member']
+    supervisor = two['owner'].app.state.supervisor
+    body = {'tab': 'member-tab', 'scope': '/inbox', 'idle_ms': 0, 'active': True, 'username': 'casey'}
+    assert (await member.post('/api/push/presence', json=body, headers=csrf(member))).status_code == 200
+    assert supervisor.push_presence.watching('alex', None)
+    assert not supervisor.push_presence.watching('casey', None)
+    assert (await member.post('/api/push/preference', json={'always': True, 'username': 'casey'},
+                              headers=csrf(member))).status_code == 200
+    with supervisor.db() as db:
+        assert db.get(Setting, 'push.active.alex').value == {'always': True}
+        assert db.get(Setting, 'push.active.casey') is None
+    assert (await member.post('/api/push/presence', json=body)).status_code == 403  # CSRF still required
+    assert (await two['owner'].post('/api/push/presence', json=body)).status_code == 403  # installation token
+    assert (await two['owner'].post('/api/push/preference', json={'always': True})).status_code == 403

@@ -400,7 +400,8 @@ def notify_accept(db, supervisor, project_id, number):
             Team.stopped.is_(False), or_(Team.expires_at.is_(None), Team.expires_at > utcnow()))):
         delivery.enqueue_in_transaction(db, supervisor, lead, 'supervisor',
             f'Your person accepted project brief version {number}. Read the current brief and plan before continuing. '
-            f'Review: /projects/{project_id}#project-brief. This notice does not change your pinned scope or run mode.')
+            f'Review: /projects/{project_id}#project-brief. This notice does not change your pinned scope or run mode.',
+            relay_service=True, notice_family='project_brief')
 
 
 def view(db, project_id, history_before=None, review_version=None):

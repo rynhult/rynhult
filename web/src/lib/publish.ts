@@ -2,7 +2,7 @@
    IN-1, PB-1). Pure functions, no React, so they can be unit tested. */
 import type { PublishRequest } from "./types";
 
-export type PublishFacts = Pick<PublishRequest, "host" | "port" | "access" | "action" | "replaces"> &
+export type PublishFacts = Pick<PublishRequest, "parent_chain" | "root_owner"> & Pick<PublishRequest, "host" | "port" | "access" | "action" | "replaces"> &
   Partial<Pick<PublishRequest, "port_owner" | "requested_by" | "reason">> & { project?: string | null };
 
 export const where = (access: string | null) => (access === "public" ? "the public internet" : "private networks only");

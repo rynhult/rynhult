@@ -155,3 +155,25 @@ async def test_relay_close_does_not_interrupt_preview_finalizers(tmp_path):
     await entered.wait()
     await relay.aclose()
     assert cleaned.is_set()
+
+
+async def test_session_runtime_close_aborts_instead_of_draining_old_mutations(tmp_path):
+    class Socket:
+        async def send(self, data):
+            pass
+    class RuntimeChannel:
+        session_runtime = True
+        aborted = False
+        def abort(self):
+            self.aborted = True
+        def finish(self):
+            raise AssertionError('relay mutations must not drain after close')
+    relay = Relay(Socket(), tmp_path)
+    channel = RuntimeChannel()
+    relay.channels[1] = channel
+    try:
+        await relay.handle(frame(b'c', 1))
+        assert channel.aborted
+        assert not relay.channels and not relay.draining
+    finally:
+        await relay.aclose()

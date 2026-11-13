@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { AUTH_FILE, csrfHeaders, gitProject } from './helpers';
+import { AUTH_FILE, csrfHeaders, gitProject, openAdvanced } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 for (const width of [1440, 390]) {
@@ -19,8 +19,10 @@ for (const width of [1440, 390]) {
       }
       await page.goto('/');
       await page.getByRole('button', { name: 'New session', exact: true }).first().click();
-      const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+      const dialog = page.getByRole('region', { name: 'New session', exact: true });
+      await openAdvanced(dialog);
       await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(project.id));
+      await openAdvanced(dialog);
       await dialog.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('claude');
       const signin = dialog.getByRole('combobox', { name: 'Claude sign-in', exact: true });
       await expect(signin).toHaveValue('subscription');
@@ -37,7 +39,7 @@ for (const width of [1440, 390]) {
       await signin.selectOption('subscription');
       await expect(delivered).not.toContainText('Example Claude billing');
       await expect(delivered).toContainText('Example other key');
-      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     } finally {
       for (const id of keys) await page.request.delete(`/api/vault/keys/${id}`, { headers });
     }

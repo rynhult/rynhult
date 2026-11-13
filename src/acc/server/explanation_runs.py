@@ -10,7 +10,7 @@ from .. import providers
 from . import budgets, explanations
 from .broker_client import BrokerError
 from .compiler import LaunchInputs, compile_files
-from .models import AuditLog, Event, LaunchSpec, Observation, Project, Session, SessionRun
+from .models import API_PRINCIPAL, AuditLog, Event, LaunchSpec, Observation, Project, Session, SessionRun
 from .supervisor_common import now
 
 
@@ -55,18 +55,37 @@ class ExplanationRuns:
         acc_id = uuid.uuid4().hex[:12]
         inputs = LaunchInputs(provider=provider, model=model, permission_mode="plan", sandbox="read-only",
                               approval="never", options={"mode": "plan"} if provider in ("antigravity", "copilot")
-                              else {"mode": "ask"} if provider == "cursor" else {})
+                              else {"mode": "ask"} if provider == "cursor" else {"agent": "plan"} if provider == "opencode" else {})
         with self.db() as db:
             project = db.get(Project, project_id)
             account = project.account
         layout = await self.layout("local", account)
         run_dir = f"{layout['run_dir'].rstrip('/')}/{acc_id}"
+        from . import child_caps, guardrails, session_caps
+        with self.db() as db:
+            source = db.get(Session, source_id)
+            if source is None or (source.owner or API_PRINCIPAL) != (owner or API_PRINCIPAL):
+                raise LaunchRefused('Explanation source is outside the parent owner/project scope.')
+            try:
+                if source.management != 'acc':
+                    raise LaunchRefused(f'limited by {source.id}: external source has no qualified managed grant')
+                if source.container:
+                    raise LaunchRefused(f'limited by {source.id}: no qualified container explanation executor is available; native fallback refused')
+                policy = guardrails.policy(db, f'{run_dir}/workspace', owner, project_id,
+                                           source.project.private_workspace, machine='local', account=account)
+                inputs, policy = child_caps.constrain(db, source, inputs, policy, explanation=True)
+                policy['explanation_only'] = True
+                policy['parent_session_id'] = source.id
+                parent_proof = child_caps.proof(db, source)
+            except ValueError as error:
+                raise LaunchRefused(str(error)) from None
         compiled = compile_files(inputs, layout["hook_path"], layout["statusline_path"], catalog=self.catalog,
-                                 agent_home=layout["home"], guardrails={"explanation_only": True})
+                                 agent_home=layout["home"], guardrails=policy)
         native_id = str(uuid.uuid4()) if providers.get(provider).session_id == "assigned" else None
         spec_data = {"provider": provider, "model": model, "native_id": native_id, "cache_key": cache_key,
                      "changes": changes, "source_id": source_id}
-        files = {**compiled.files, "prompt.txt": prepared, "explanation.json": json.dumps(spec_data)}
+        files = {**compiled.files, "prompt.txt": prepared, "explanation.json": json.dumps(spec_data),
+                 child_caps.FILE: json.dumps(parent_proof, sort_keys=True)}
         value = {"status": "running", "revision": explanations.revision(changes), "helper_id": acc_id,
                  "provider": provider, "model": model, "provider_note": note, "created_at": now().isoformat(), "steps": [],
                  "input_summarised": "Large diff: summarised per file first" in prepared,
@@ -79,6 +98,14 @@ class ExplanationRuns:
                               launch_spec=LaunchSpec(provider=provider, inputs=inputs.as_dict(), files=files,
                                                      digest=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()),
                               desired_state="running", observed_state="starting")
+            session.parent_session_id = source_id
+            try:
+                files[session_caps.FILE] = session_caps.attach(db, session)
+                session.launch_spec.files = dict(files)
+                session.launch_spec.digest = child_caps.digest(files)
+                session_caps.admit_launch(db, session)
+            except ValueError as error:
+                raise LaunchRefused(str(error)) from None
             db.add(session)
             db.merge(Observation(key=cache_key, value=value, source="explanation", observed_at=time.time()))
             db.add(AuditLog(actor=owner, action="session.explain", target=source_id,
@@ -87,10 +114,15 @@ class ExplanationRuns:
             db.commit()  # reservation survives a disconnect; never repeat a possibly delivered launch
             name = session.tmux_name
         try:
+            with self.db() as db:
+                current = db.get(Session, acc_id)
+                # Reservation committed before dispatch; recheck the current
+                # parent after publication rather than borrowing its old read.
+                files[session_caps.FILE] = json.dumps(session_caps.wire(db, current), sort_keys=True)
             result = await self.broker.call("launch", account=account, host="local", acc_id=acc_id, tmux_name=name,
                                             provider=provider, args=[], env=credentials, files=files,
                                             cwd=f"{run_dir}/workspace", run_dir=run_dir)
-        except BrokerError as error:
+        except (BrokerError, ValueError) as error:
             with self.db() as db:
                 session = db.get(Session, acc_id)
                 self._finish_explanation(db, session, {**value, "status": "error",

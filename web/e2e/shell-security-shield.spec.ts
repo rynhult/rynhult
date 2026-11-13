@@ -4,13 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { securityUrl, type SecurityPolicy, type SecurityScope } from '../src/lib/security';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain } from './helpers';
 
-test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts', 'ui_shell'], viewport: { width: 1440, height: 900 } });
-async function enable(page: Page) {
-  await verifyAgain(page);
-  const flags = await (await page.request.get('/api/admin-features')).json();
-  expect((await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: flags.revision } })).ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-}
+test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts'], viewport: { width: 1440, height: 900 } });
+
 const cases = [
   { id: 'on', words: 'Current protections On', icon: 'shield-check' },
   { id: 'unrestricted', words: 'Unrestricted', icon: 'shield-alert' },
@@ -61,7 +56,7 @@ async function shot(page: Page, name: string) {
 
 for (const theme of ['light', 'dark'] as const) test(`owner security shield states at 1440 ${theme}`, async ({ page }) => {
   test.setTimeout(180000);
-  await enable(page); await page.emulateMedia({ colorScheme: theme });
+   await page.emulateMedia({ colorScheme: theme });
   const policies = await policySamples(page);
   let sample: Sample = 'on';
   let release!: () => void;
@@ -120,7 +115,7 @@ for (const theme of ['light', 'dark'] as const) test(`owner security shield stat
 });
 
 test('cached Unrestricted and older-session warnings stay readable when policy and connection fail', async ({ page }) => {
-  test.slow(); await enable(page);
+  test.slow();
   const policies = await policySamples(page);
   let failed = false; let offline = false;
   await page.route('**/api/security/effective*', async route => {
@@ -153,7 +148,7 @@ test('cached Unrestricted and older-session warnings stay readable when policy a
 });
 
 test('S-4: arriving from another route lands on the Security heading after Settings loads', async ({ page }) => {
-  await enable(page); await page.goto('/projects');
+   await page.goto('/projects');
   await page.locator('#shell-header').getByRole('link', { name: /^Security:/ }).click();
   await expect(page).toHaveURL(/#security$/);
   const heading = page.getByRole('heading', { name: 'Security', exact: true });
@@ -162,7 +157,7 @@ test('S-4: arriving from another route lands on the Security heading after Setti
 });
 
 test('S-1: an offline project machine keeps the current policy state and says which thing is offline', async ({ page }) => {
-  test.slow(); await enable(page);
+  test.slow();
   const project = await gitProject(page, 'cedar-machine');
   await page.route('**/api/projects', async route => {
     const response = await route.fetch();
@@ -176,8 +171,8 @@ test('S-1: an offline project machine keeps the current policy state and says wh
   await page.unrouteAll({ behavior: 'wait' });
 });
 
-test('project shield keeps the reviewed project destination and legacy layout keeps its full badge', async ({ page }) => {
-  test.slow(); await enable(page);
+test('project and account shields keep their reviewed destinations', async ({ page }) => {
+  test.slow();
   const project = await gitProject(page, 'cedar-shield');
   const policies = await policySamples(page, project);
   await page.route('**/api/security/effective*', async route => {
@@ -194,20 +189,19 @@ test('project shield keeps the reviewed project destination and legacy layout ke
   await page.route('**/api/security/effective*', async route => {
     await route.fulfill({ json: samplePolicy(policies(route.request().url()), 'unrestricted') });
   });
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } })).ok()).toBeTruthy();
+
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme }); await page.goto('/projects');
-    const badge = page.getByRole('button', { name: /^Unrestricted/ });
-    await expect(badge).toContainText('Unrestricted');
-    await expect(page.getByRole('link', { name: /^Security:/ })).toHaveCount(0);
-    await badge.click(); await expect(page.getByRole('dialog', { name: 'Security protections' })).toBeVisible();
-    await page.keyboard.press('Escape');
+    const shield = page.locator('#shell-header').getByRole('link', { name: /^Security:.*Unrestricted/ });
+    await expect(shield).toHaveAttribute('href', /security_scope=account&machine=local&account=agent#security$/);
+    await shield.click();
+    await expect(page).toHaveURL(/security_scope=account&machine=local&account=agent#security$/);
   }
   await page.unrouteAll({ behavior: 'wait' });
 });
 
 test('member header has no security shield or policy inventory requests in either theme', async ({ page, context }) => {
-  test.slow(); await enable(page);
+  test.slow();
   const account = `shield-${Date.now()}-agent`;
   mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
   const invited = await page.request.post('/api/users/invites', { headers: await csrfHeaders(page), data: { role: 'member', account } });
@@ -215,7 +209,7 @@ test('member header has no security shield or policy inventory requests in eithe
   await context.clearCookies();
   const begun = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
   expect((await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `robin-${Date.now()}`, password: PASSWORD, code: totp((await begun.json()).totp_secret) } })).ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const reads: string[] = [];
   page.on('request', r => { if (new URL(r.url()).pathname === '/api/security/effective') reads.push(r.url()); });
   for (const theme of ['light', 'dark'] as const) {
@@ -225,4 +219,19 @@ test('member header has no security shield or policy inventory requests in eithe
     await expectAxeClean(page); await shot(page, `member-${theme}`);
   }
   expect(reads).toEqual([]);
+});
+
+test('classic layout keeps its full Security badge and modal', async ({ page }) => {
+  test.fixme(true, 'The classic full Security badge/modal is replaced by the scoped header shield; owner review required.');
+  const project = await gitProject(page, 'classic-shield');
+  const policies = await policySamples(page, project);
+  await page.route('**/api/security/effective*', route => route.fulfill({ json: samplePolicy(policies(route.request().url()), 'unrestricted') }));
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme }); await page.goto('/projects');
+    const badge = page.getByRole('button', { name: /^Unrestricted/ });
+    await expect(badge).toContainText('Unrestricted');
+    await expect(page.getByRole('link', { name: /^Security:/ })).toHaveCount(0);
+    await badge.click(); await expect(page.getByRole('dialog', { name: 'Security protections' })).toBeVisible();
+    await page.keyboard.press('Escape');
+  }
 });

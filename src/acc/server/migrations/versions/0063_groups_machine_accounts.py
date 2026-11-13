@@ -33,6 +33,17 @@ def downgrade():
     if reserved:
         raise RuntimeError(f'{reserved} group machine account binding(s) reserve agent accounts; downgrading below 0063 '
                            'would lose them for good. Keep this version, or delete those rows deliberately first.')
+    # 0084 intentionally retains compatibility identities across shallow
+    # downgrades. Below this revision their legacy FK targets disappear too;
+    # remove the retained dependents first, in reflected dependency order.
+    from acc.server.source_schema_v1 import TABLES
+
+    db = op.get_bind()
+    retained = set(TABLES) & set(sa.inspect(db).get_table_names())
+    if retained:
+        metadata = sa.MetaData()
+        metadata.reflect(db, only=sorted(retained))
+        metadata.drop_all(db, tables=[metadata.tables[name] for name in sorted(retained)])
     with op.batch_alter_table('placement') as batch:
         batch.drop_constraint('fk_placement_machine_account', type_='foreignkey')
         batch.drop_column('machine_account_id')

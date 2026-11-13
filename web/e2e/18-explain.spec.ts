@@ -54,11 +54,17 @@ test("explain explicitly launches one helper, navigates steps and reuses the rev
   };
   try {
     writeFileSync(`${workspace}/app.py`, "one\nTWO\n");
+    await page.route(`**/api/sessions/${sid}/explanation/agents`, route => route.fulfill({ json: {
+      agents: [{ id: 'claude', label: 'Claude Code' }],
+      unavailable: [{ id: 'opencode', label: 'OpenCode', reason: 'Read-only explanation runner is not supported.' }],
+    } }));
     await page.goto(`/sessions/${sid}?tab=changes`);
-    await page.getByRole("tab", { name: /Changes/ }).click();
+    await page.getByRole("tablist", { name: "Session views", exact: true }).getByRole("tab", { name: /Changes/ }).click();
     const before = (await helpers()).length;
     await page.getByRole("button", { name: "Explain these changes", exact: true }).click();
     await expect(page.getByRole("button", { name: "Generate walkthrough" })).toBeVisible();
+    await expect(page.getByLabel('Explanation agent').locator('option[value="opencode"]')).toHaveCount(0);
+    await expect(page.getByText('OpenCode: Read-only explanation runner is not supported.', { exact: true })).toBeVisible();
     expect((await helpers()).length).toBe(before);
     await page.getByLabel("Explanation model").fill("sonnet");
     await generateWalkthrough();
@@ -81,7 +87,7 @@ test("explain explicitly launches one helper, navigates steps and reuses the rev
     await page.screenshot({ path: wikiShotPath(testInfo, "sessions-explain-changes-phone.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.reload();
-    await page.getByRole("tab", { name: /Changes/ }).click();
+    await page.getByRole("tablist", { name: "Session views", exact: true }).getByRole("tab", { name: /Changes/ }).click();
     await page.getByRole("button", { name: "Explain these changes", exact: true }).click();
     await expect(panel.getByText("Step 1 of 2")).toBeVisible();
     expect((await helpers()).length).toBe(before + 1);

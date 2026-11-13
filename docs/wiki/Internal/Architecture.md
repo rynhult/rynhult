@@ -42,6 +42,18 @@ the unreleased desktop spike have separate boundaries below and in
 - **Least privilege.** The dashboard user can't run shells; agent accounts have no admin rights and can't read ACC's database or secrets; only root helpers touch Caddy, in fixed ways; accd changes Publishing DNS through the purpose-bound provider and ownership checks. Encrypted backup-server capture/restic runs unprivileged as `acc`; the legacy daily backup remains a root helper.
 - **Observable.** Hooks and tmux process state are preferred evidence. Provider-specific terminal-screen heuristics fill gaps and are identified as inferred. Working hooks silent for ten minutes become **Unknown**, rather than keeping old activity current; see [stale status](/User-Guide/Sessions#when-a-working-status-is-too-old).
 
+## Browser frame and working views
+
+`App.tsx` routes through the lazy `AppFrame` and `components/shell/Shell.tsx`.
+The frame supplies rail navigation, contextual browsing and a retained
+`WorkingArea`; a cold Board view bypasses Shell. Session terminals use
+`RegisteredTerminal` with `TerminalOwner`, `ViewRegistry` and `TerminalHostLayer`.
+File editors use `DocumentRegistry`. Their in-memory resources survive column
+moves and navigation within the frame. Saved personal layouts store references
+and sizes, and recheck authorization on restore; they do not persist drafts or
+terminal control. See [Components](/Internal/Components) and
+[View registry](/Internal/View-Registry).
+
 ## Terminal message submission
 
 `POST /api/sessions/{id}/message` routes the provider id through the supervisor to the broker's `send_text` operation. The broker inserts literal text once, waits 200 ms, and sends Enter. After 300 ms it captures only the cursor row, not transcript history. The provider checks that row for pending text or a paste placeholder; Enter is retried at most twice, without retyping the message.

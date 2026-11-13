@@ -23,10 +23,11 @@ class Feature:
     config: str = ''
     env: str = ''
 
-
 FEATURES = {
+    'session_relay': Feature('Session relay', 'Opt-in session relay preview; runtime qualification is required.',
+                             False, preview=True, sensitive=True),
+    'claude_subscription_chat': Feature('Claude subscription Chat', 'Allow people to accept the account risk of using their Claude subscription for Chat.', True, True, True),
     'chat': Feature('Chat', 'Read qualified native conversation history; Terminal remains available.', False),
-    'new_shell': Feature('New layout', 'The new layout is always on.', True, preview=True, sensitive=True),
     'multirun': Feature('Multi-run', 'Compare several agent runs for the same task.'),
     'schedules': Feature('Scheduled sessions', 'Start saved sessions at chosen times; Off pauses dispatch.'),
     'automation': Feature('Auto-resume and goals', 'Continue goals and recover sessions automatically.'),
@@ -57,7 +58,6 @@ CONFIG_FEATURES = {feature.config: key for key, feature in FEATURES.items() if f
 KEY = 'admin_features'
 CURRENT = ContextVar('admin_features', default=None)
 
-
 class Features:
     def __init__(self, settings, choices=None):
         self.settings = settings
@@ -85,8 +85,6 @@ class Features:
         return self.configured(key) is not None
 
     def enabled(self, key):
-        if key == 'new_shell':
-            return True
         configured = self.configured(key)
         return configured if configured is not None else self.choices.get(key, FEATURES[key].default)
 
@@ -100,8 +98,7 @@ class Features:
 
     def rows(self):
         return [dict(id=key, label=f.label, description=f.description, enabled=self.enabled(key),
-                     preview=f.preview, sensitive=f.sensitive, locked=self.locked(key)) for key, f in FEATURES.items() if key != 'new_shell']
-
+                     preview=f.preview, sensitive=f.sensitive, locked=self.locked(key)) for key, f in FEATURES.items()]
 
 class RuntimeSettings(Settings):
     """Settings-compatible view of availability; qualification remains on the original.
@@ -152,22 +149,18 @@ class RuntimeSettings(Settings):
             return defined.__get__(self)
         return getattr(original, name)
 
-
 def enabled(settings, key):
     features = getattr(settings, 'features', None)
     return features.enabled(key) if features else Features(settings).enabled(key)
-
 
 def current(key, fallback=True):
     features = CURRENT.get()
     return features.enabled(key) if features else fallback
 
-
 def require(settings, key):
     from fastapi import HTTPException
     if not enabled(settings, key):
         raise HTTPException(409, f'{FEATURES[key].label} is turned off in Admin features.')
-
 
 def launch_refusal(settings, *, automation=None, orchestrator=None, schedule=False, multirun=False, group=False):
     checks = [('automation', bool(automation and (automation.get('autoresume') or automation.get('goal')))),
@@ -176,7 +169,6 @@ def launch_refusal(settings, *, automation=None, orchestrator=None, schedule=Fal
         if used and not enabled(settings, key):
             return f'{FEATURES[key].label} is turned off in Admin features.'
     return None
-
 
 def path_feature(path):
     """All optional transports, including alternate resource routes, share this boundary."""
@@ -203,7 +195,6 @@ def path_feature(path):
         'risk_labels': r'/api/preferences/risk-labels$',
     }
     return next((key for key, pattern in patterns.items() if re.match(pattern, path)), None)
-
 
 class FeatureBoundary:
     def __init__(self, app, ctx):

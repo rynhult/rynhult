@@ -2,7 +2,9 @@
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
-Use **Cards** or **List** beside the filters to change the layout. List is a columned table with the project name, repository and folder, live sessions, compose status, autostart and actions. Select a sortable heading to reverse its order; the active heading announces ascending or descending order. The filter and **Show archived** still apply, and read-only projects keep their badge. On a phone, swipe the table sideways to reach the other columns; keyboard users can focus the table region and use the arrow keys. Your choice is remembered in this browser for your signed-in viewer, separately from Workspaces. Focus the control and use arrow keys, Home or End to switch.
+**List** is the default: a compact table of **Name**, **Status**, **Last activity** and **Runtime**. Select a heading to sort; select it again to reverse the order. Keyboard users can focus each heading button and press Enter or Space. The active heading announces its sort direction. Sorting applies before pagination and stays in the URL, together with filters and the chosen view. On a phone, projects stack into rows and **Sort projects** offers each column and direction.
+
+**Status** shows registration state (Ready, Not trusted, Read-only or Archived), with live session activity beneath it. **Last activity** is the latest recorded session status, activity or output time visible to you; projects without activity sort last. **Runtime** shows compose **Autostart on** or **Autostart off**. Open a project's Runtime section for live container details. **Cards** keeps the source repository and working location summaries, project actions and the same search, owner, location and archived filters.
 
 A project is a folder on the host that your agent [sessions](/User-Guide/Glossary#session) work in, usually with a repository and sometimes a Docker (compose) stack.
 
@@ -12,7 +14,7 @@ A project is a folder on the host that your agent [sessions](/User-Guide/Glossar
 
 ![Projects table on a phone](/.attachments/projects-list-390.png)
 
-Each card leads with what is happening now: **1 needs you** in amber, how many sessions are live, or **No live sessions**. Hover the name for the project's folder. Badges appear only for exceptions: **not trusted**, **read-only** or **archived**. **New session** on the card (and at the top of the project's own page) opens New session with the project already chosen.
+Each card shows what is happening now: **1 needs you** in amber, how many sessions are live, or **No live sessions**. Hover the name for the project's folder. Badges appear only for exceptions: **not trusted**, **read-only** or **archived**. Use **New session** at the top of the project’s own page to launch with that project chosen.
 
 **Archive** is in the card's three-dot actions menu, not beside **New session**. It asks for confirmation and removes the project from launch lists without deleting its folder, containers or repository. **Cancel** leaves it unchanged and returns focus to the actions button.
 
@@ -472,3 +474,8 @@ and review the exact repository folder, apply its policy, then retry registratio
 or trust. This keeps the checkout where it is. Allowing a parent also authorizes
 its children; prefer the exact repository. Folder policy does not grant Unix
 permissions or trust repository code.
+
+Registering an existing folder resolves symlinks on its machine. A folder already
+registered for the same agent account is refused; choose **Open the existing
+project** to continue there. Separate machines and agent accounts have separate
+registrations.

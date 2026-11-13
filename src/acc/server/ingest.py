@@ -18,7 +18,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as DbSession
 
 from .. import providers
-from . import attention, risk_labels, states
+from . import approval_cards, attention, risk_labels, states
 from .models import Event, Observation, Placement, Project, Session
 from .supervisor_common import _trim, log, now
 
@@ -185,6 +185,9 @@ class IngestMixin:
         hook = record.get("hook") or {}
         if not isinstance(hook, dict):
             hook = {}
+        # These fields belong exclusively to the server, for every provider/event.
+        for key in ("acc_card", "acc_complete_input"):
+            hook.pop(key, None)
         if not hook.get("hook_event_name") and _text(record.get("event"), 64):  # named by acc-hook's argument
             hook = {**hook, "hook_event_name": _text(record.get("event"), 64)}
         name = _text(hook.get("hook_event_name"), 64) or "unknown"
@@ -196,13 +199,20 @@ class IngestMixin:
             self._agent_request(db, session, hook)
             return
         stored = _trim(hook)
-        if provider == "claude" and name == "PermissionRequest":
+        if provider in ("claude", "codex") and name == "PermissionRequest":
             # Compute completeness AFTER vault redaction but BEFORE generic event trimming.
             # Never trust an agent-supplied completeness flag or trimmed tool_input.
             tool_input = hook.get("tool_input")
             rendered = json.dumps(tool_input, ensure_ascii=False, indent=2) if isinstance(tool_input, dict) else ""
             stored["acc_complete_input"] = rendered if rendered and len(rendered.encode("utf-8")) <= 8192 else None
+            stored["acc_card"] = approval_cards.card(stored)
         db.add(Event(session_id=session.id, source=f"{provider}_hook", kind=name, payload=stored))
+        from .models import RelaySession
+        if db.get(RelaySession, session.id) is not None:
+            # Owned relay callbacks carry the run identity. Legacy spool events
+            # remain history only: old SessionEnd must not end a replacement owner
+            # or re-open a parallel permission/lifecycle authority.
+            return
         if provider in providers.PROVIDERS:  # each CLI's events in ACC's vocabulary (Claude Code's names and fields)
             hook = providers.get(provider).normalize_hook(hook)
             name = _text(hook.get("hook_event_name"), 64) or name

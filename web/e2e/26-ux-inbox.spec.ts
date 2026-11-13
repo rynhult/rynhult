@@ -29,7 +29,8 @@ test("inbox: a publish warning shows as a note, and Approve asks first", async (
   let posted: unknown = "nothing";
   await page.route("**/api/publish/pub-000000000010/approve", async (route) => { posted = route.request().postDataJSON() ?? {}; await route.fulfill({ json: {} }); });
   await page.goto("/inbox");
-  const row = page.getByRole("main").getByText("ui-polish asks to publish").locator("xpath=ancestor::div[contains(@class,'grid')][1]");
+  await page.getByRole("button", { name: /ui-polish asks to publish/ }).click();
+  const row = page.getByRole("region", { name: "Inbox item details" });
   await expect(row.getByText("Port 8010 isn't reserved for any project.")).toBeVisible();
   await expect(row.getByText("Requested by session ui-polish · project demo-web · port 8010 · private networks only")).toBeVisible();
   await row.getByRole("button", { name: "Review and approve" }).click();
@@ -50,7 +51,8 @@ test("Overview points to Inbox actions, which show the same warning as Publishin
   await page.route(/\/api\/publish(?:\?.*)?$/, (route) => route.fulfill({ json: [{ ...pending, id: "pub-000000000010", status: "pending_approval",
     project_id: 2, session_id: null, zone_name: "example.com", detail: null, decided_by: null, created_at: now(), decided_at: null, completed_at: null }] }));
   await page.goto("/");
-  await page.getByRole("region", { name: "Inbox status" }).getByRole("link", { name: /Inbox/ }).click();
+  await page.getByRole("main").getByRole("link", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: /ui-polish asks to publish/ }).click();
   await expect(page.getByRole("main").getByText("Port 8010 isn't reserved for any project.").filter({ visible: true })).toBeVisible();
   await page.goto("/publishing");
   await expect(page.getByRole("main").getByText("Port 8010 isn't reserved for any project.")).toBeVisible();
@@ -59,24 +61,39 @@ test("Overview points to Inbox actions, which show the same warning as Publishin
 
 test("inbox rows: no green badge, sources in words, actions that say what they do", async ({ page }, testInfo) => {
   const acked: number[] = [];
+  const registry = await (await page.request.get('/api/providers/registry')).json();
+  const claudeLabel = registry.providers.find((p: { id: string; label: string }) => p.id === 'claude').label;
   await routeInbox(page, acked);
   await page.route("**/api/attention/*/ack", async (route) => { acked.push(Number(route.request().url().split("/").at(-2))); await route.fulfill({ json: { ok: true } }); });
   await page.goto("/inbox");
   const main = page.getByRole("main");
-  await expect(main.getByText("api-refactor needs your input")).toBeVisible();
-  await expect(main.locator(".text-ok")).toHaveCount(0);
-  await expect(main.getByText("verified", { exact: true })).toHaveCount(0);
-  await expect(main.getByText("guessed", { exact: true })).toHaveCount(1);  // only the screen-scraped prompt
-  for (const word of ["Claude Code", "Agent request", "Guardrail"]) await expect(main.getByText(word, { exact: true })).toBeVisible();
-  for (const raw of ["claude_hook", "guardrails", "session ui-polish ·"]) await expect(main.getByText(raw, { exact: true })).toHaveCount(0);
-  await expect(main.getByText("Claude Code", { exact: true })).toHaveAttribute("title", "Source: claude_hook");
-  await expect(main.getByRole("link", { name: "Answer in terminal" })).toHaveCount(2);
-  await expect(main.getByRole("link", { name: "Answer in terminal" }).first()).toHaveAttribute("href", "/sessions/s-api");
-  await expect(main.getByRole("link", { name: "Open session" })).toHaveAttribute("href", "/sessions/s-co");
+  const detail = page.getByRole('region', { name: 'Inbox item details' });
+  await expect(main.getByRole('button', { name: /api-refactor needs your input/ })).toBeVisible();
+  await expect(main.locator('.text-ok')).toHaveCount(0);
+  await expect(main.getByText('verified', { exact: true })).toHaveCount(0);
+  for (const [title, word, href] of [
+    ['api-refactor needs your input', claudeLabel, '/sessions/s-api'],
+    ['docs-pass needs your input', 'Prompt on screen', '/sessions/s-docs'],
+    ['ui-polish asks to publish', 'Agent request', null],
+    ['checkout-flow: guardrail', 'Guardrail', '/sessions/s-co'],
+  ] as const) {
+    await main.getByRole('button', { name: new RegExp(title) }).click();
+    await expect(detail.getByText(word, { exact: true }).first()).toBeVisible();
+    if (href) await expect(detail.getByRole('link', { name: 'Open related work' })).toHaveAttribute('href', href);
+    if (title.startsWith('docs')) {
+      await expect(detail.getByText('guessed', { exact: true })).toBeVisible();
+      await expect(detail.getByRole('link', { name: 'Answer in terminal' })).toHaveAttribute('href', href!);
+    }
+  }
+  for (const raw of ['claude_hook', 'guardrails', 'session ui-polish ·']) await expect(main.getByText(raw, { exact: true })).toHaveCount(0);
+  await expect(detail.getByRole('link', { name: 'Open session', exact: true })).toHaveAttribute('href', '/sessions/s-co');
   // A prompt's dismiss sits behind ⋯ and says it doesn't answer; a note's is a plain button.
   await expect(main.getByRole("button", { name: "Dismiss notice" })).toHaveCount(1);
   await expectAxeClean(page, "main");
   await shot(page, testInfo.project.name, "inbox-rows");
+  await main.getByRole('button', { name: /api-refactor needs your input/ }).click();
+  await expect(detail.getByText(claudeLabel, { exact: true }).last()).toHaveAttribute('title', 'Source: claude_hook');
+  await expect(detail.getByRole('link', { name: 'Answer in terminal' })).toHaveAttribute('href', '/sessions/s-api');
   await main.getByRole("button", { name: "More actions" }).first().click();
   await expect(main.getByText("The session keeps waiting for its answer")).toBeVisible();
   await main.getByRole("menuitem", { name: /^Dismiss notice/ }).first().click();
@@ -98,8 +115,8 @@ test("inbox: a restored session still running elsewhere is stopped only after co
       : route.fulfill({ status: 403, json: { detail: "Verify your sign-in again in Settings → Passkeys, then try again within five minutes." } }));
   });
   await page.goto("/inbox");
-  const row = page.getByRole("main").getByText("A restored session is still running on build-box").locator("xpath=ancestor::div[contains(@class,'grid')][1]");
-  await expect(row.getByText("Backups", { exact: true })).toBeVisible();
+  const row = page.getByRole("region", { name: "Inbox item details" });
+  await expect(row.getByTitle("Source: backup", { exact: true })).toBeVisible();
   await expect(row.getByRole("link", { name: "Open session" })).toHaveAttribute("href", "/sessions/s-held");
   const stop = row.getByRole("button", { name: "Stop on that machine" });
   await stop.click();
@@ -129,7 +146,7 @@ test("inbox: members never get the stop action for a held session", async ({ pag
       title: "A restored session is still running on build-box", created_at: at, updated_at: at },
   ] }));
   await page.goto("/inbox");
-  await expect(page.getByRole("main").getByText("A restored session is still running on build-box")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Inbox item details" }).getByRole("heading", { name: "A restored session is still running on build-box" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop on that machine" })).toHaveCount(0);
 });
 
@@ -170,3 +187,40 @@ for (const expired of [false, true]) {
     else await expect(page.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
   });
 }
+
+for (const width of [1440, 390]) test(`bulk notices use shown selection and Undo · ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  const at = now();
+  const all = [
+    { ...base, id: 201, kind: 'state', severity: 'info', title: 'First notice', source: 'test', bulk_dismissible: true, created_at: at, updated_at: at },
+    { ...base, id: 202, kind: 'state', severity: 'info', title: 'Second notice', source: 'test', bulk_dismissible: true, created_at: at, updated_at: at },
+    { ...base, id: 203, kind: 'needs_input', severity: 'warn', title: 'Answer required', source: 'screen', bulk_dismissible: true, created_at: at, updated_at: at },
+    { ...base, id: 204, kind: 'publish_request', severity: 'warn', title: 'Approval required', source: 'test', bulk_dismissible: false, created_at: at, updated_at: at },
+  ];
+  let hidden: number[] = [];
+  const batches: unknown[] = [];
+  await page.route('**/api/attention**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/dismiss/undo')) { hidden = []; return route.fulfill({ json: { restored: 2 } }); }
+    if (path.endsWith('/dismiss')) {
+      const body = route.request().postDataJSON(); batches.push(body);
+      hidden = body.items.map((item: { id: number }) => item.id);
+      return route.fulfill({ json: { batch: 99, dismissed: hidden.length, skipped: 0 } });
+    }
+    return route.fulfill({ json: all.filter(item => !hidden.includes(item.id)) });
+  });
+  await page.goto('/inbox');
+  await expect(page.getByRole('checkbox')).toHaveCount(2);
+  await page.getByRole('checkbox', { name: 'Select First notice' }).check();
+  await page.getByRole('checkbox', { name: 'Select Second notice' }).check();
+  await page.getByRole('button', { name: 'Dismiss selected (2)' }).dblclick();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+  expect(batches).toEqual([{ items: [{ id: 201, updated_at: at }, { id: 202, updated_at: at }] }]);
+  await expect(page.getByRole('button', { name: /Answer required/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Approval required/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('checkbox')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Dismiss all shown', exact: true }).click();
+  await expect.poll(() => batches.length).toBe(2);
+  await expectAxeClean(page, 'main');
+});

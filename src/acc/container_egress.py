@@ -38,6 +38,9 @@ class Denied(ValueError):
 class Policy:
     deny_hosts: tuple = ()
     deny_networks: tuple = ()
+    allow_hosts: tuple | None = None
+    expires_at: int | None = None
+    parent: str | None = None
 
     def __post_init__(self):
         if (len(self.deny_hosts) > 128 or len(self.deny_networks) > 128
@@ -148,6 +151,12 @@ def _dial(address, port):
 
 def connect(policy, destination, *, resolve=_resolve, dial=_dial, local=host_networks):
     host = authority(destination)
+    from acc.session_capabilities import require
+    try:
+        require({'network': list(policy.allow_hosts) if policy.allow_hosts is not None else None,
+                 'expires_at': policy.expires_at}, 'network', host, parent=policy.parent)
+    except ValueError as error:
+        raise Denied(str(error)) from None
     if any(host == denied or host.endswith('.' + denied) for denied in policy.deny_hosts):
         raise Denied('control-plane destination denied')
     try:
@@ -167,9 +176,10 @@ def connect(policy, destination, *, resolve=_resolve, dial=_dial, local=host_net
 _CAPACITY = threading.BoundedSemaphore(32)
 
 
-def relay(left, right):
+def relay(left, right, *, expires_at=None):
     """Bounded, opaque TLS transport; never inspect or log content."""
-    deadline = time.monotonic() + 300
+    seconds = 300 if expires_at is None else min(300, max(0, expires_at - time.time()))
+    deadline = time.monotonic() + seconds
     remaining = 64 << 20
     while remaining > 0 and time.monotonic() < deadline:
         readable, _, _ = select.select([left, right], [], [], min(30, max(0, deadline-time.monotonic())))
@@ -306,7 +316,7 @@ class Gateway:
                     return
                 self._clients.add(upstream)
             client.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-            relay(client, upstream)
+            relay(client, upstream, expires_at=self.policy.expires_at)
         except (OSError, ValueError, UnicodeError):
             try:
                 client.sendall(b'HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')

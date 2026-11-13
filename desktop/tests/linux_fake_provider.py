@@ -21,7 +21,7 @@ if args[:1] in (['auth'], ['login']):
     with (store / 'invocations.jsonl').open('a') as trace:
         trace.write(json.dumps({'provider': provider, 'uid': os.getuid(), 'home': str(home), 'action': args[0]}) + '\n')
 if args == ['--version']:
-    print('codex-cli 0.163.0' if provider == 'codex' else '2.1.120 (Claude Code qualification fake)')
+    print('codex-cli 0.167.1' if provider == 'codex' else '2.1.120 (Claude Code qualification fake)')
     raise SystemExit(0)
 if args[:2] in (['auth', 'status'], ['login', 'status']):
     if provider == 'claude':

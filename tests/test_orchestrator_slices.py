@@ -17,6 +17,7 @@ from acc.server.models import TeamRequest
 from acc.server.supervisor import Supervisor
 
 REPO = Path(__file__).resolve().parents[1]
+DELEGATION_TOOLS = ['delegated_image', 'delegated_install', 'delegated_port', 'delegated_status']
 M17_TOOLS = ['start', 'list', 'status', 'read', 'message', 'stop', 'finish', 'merge']
 WORKLIST_TOOLS = ['worklist', 'worklist_add', 'worklist_update', 'worklist_ingest', 'worklist_done', 'now']  # slice 1
 SELECTION_TOOLS = ['assign', 'select', 'selection_status', 'give']  # slice 3
@@ -30,9 +31,11 @@ def test_registry_matches_the_slices_without_cross_slice_edits(monkeypatch):
     monkeypatch.setenv('ACC_ORCHESTRATOR', '1')
     assert orchestrator.team_fields() == orchestrator._merged('TEAM_FIELDS')
     assert orchestrator.team_actions() == orchestrator._merged('TEAM_ACTIONS')
+    assert set(DELEGATION_TOOLS) <= set(orchestrator.team_fields())
+    assert set(DELEGATION_TOOLS) <= set(orchestrator.team_actions())
     assert 'select' in orchestrator.team_fields() and set(GATE_TOOLS) <= set(orchestrator.team_actions())
     assert [module.__name__.rsplit('.', 1)[1] for module in orchestrator.SLICES] == [
-        'worklist', 'live', 'selection', 'delivery', 'gates', 'reservations', 'planning', 'project_briefs', 'assignments']
+        'worklist', 'live', 'selection', 'delivery', 'gates', 'reservations', 'planning', 'project_briefs', 'assignments', 'delegation']
 
 
 def test_two_slices_cannot_claim_the_same_team_action(monkeypatch):
@@ -104,13 +107,13 @@ def test_the_team_mcp_lists_the_m17_tools_then_each_slices():
     # slices 1 and 6 (working list, plan) only with their own switch too.
     preview = SELECTION_TOOLS + DELIVERY_TOOLS + GATE_TOOLS
     assert listed() == listed(ACC_ORCHESTRATOR_V2='1') == listed('--orchestrator-v2') == M17_TOOLS
-    assert listed('--orchestrator') == M17_TOOLS + preview
+    assert listed('--orchestrator') == M17_TOOLS + preview + DELEGATION_TOOLS
     # The agent's own environment never lists v2 tools: only accd's launch arguments do (review 2026-10-26, L-6).
     assert listed(ACC_ORCHESTRATOR='1') == listed(RYNHULT_ORCHESTRATOR='1', ACC_ORCHESTRATOR_V2='1') == M17_TOOLS
-    assert listed('--orchestrator', ACC_ORCHESTRATOR_V2='1') == M17_TOOLS + preview
-    assert listed('--orchestrator', '--orchestrator-v2') == M17_TOOLS + WORKLIST_TOOLS + preview + PLAN_TOOLS + BRIEF_TOOLS  # team_files
+    assert listed('--orchestrator', ACC_ORCHESTRATOR_V2='1') == M17_TOOLS + preview + DELEGATION_TOOLS
+    assert listed('--orchestrator', '--orchestrator-v2') == M17_TOOLS + WORKLIST_TOOLS + preview + PLAN_TOOLS + BRIEF_TOOLS + DELEGATION_TOOLS  # team_files
     text = (REPO / 'bin/acc-mcp-team').read_text()
-    for section in ('M17_TOOLS', 'WORKLIST_TOOLS', 'SELECTION_TOOLS', 'DELIVERY_TOOLS', 'GATE_TOOLS', 'PLAN_TOOLS', 'BRIEF_TOOLS'):
+    for section in ('M17_TOOLS', 'WORKLIST_TOOLS', 'SELECTION_TOOLS', 'DELIVERY_TOOLS', 'GATE_TOOLS', 'PLAN_TOOLS', 'BRIEF_TOOLS', 'DELEGATION_TOOLS'):
         assert f'\n{section} = {{' in text, section
 
 

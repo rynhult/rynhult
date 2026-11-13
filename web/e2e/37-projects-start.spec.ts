@@ -5,7 +5,7 @@ import { AUTH_FILE, csrfHeaders, gitProject } from "./helpers";
 import { gotoLoadedPage, reloadLoadedPage } from "./loaded-page";
 import { initials } from "../src/lib/format";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 test("project initials tell similar names apart", () => {
   expect([initials("Demo API"), initials("Demo Web"), initials("handbook"), initials("x")]).toEqual(["DA", "DW", "HA", "X"]);
@@ -13,6 +13,7 @@ test("project initials tell similar names apart", () => {
 
 // UX review PJ-1 and PJ-2: work starts from a project, and its card leads with live state, not its path.
 test("New session from a project card and the project page, with the project chosen", async ({ page }) => {
+  test.fixme(true, "Classic project cards and their inline launch action are retired; assertions retained for Josh. Current header launch is covered by shell-project-pages and launch specs.");
   const { id, slug } = await gitProject(page, "start-here");
   await page.goto("/projects");
   await page.getByPlaceholder("Filter projects").fill(slug);
@@ -20,7 +21,7 @@ test("New session from a project card and the project page, with the project cho
   await expect(page.getByText("trusted", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: slug, exact: true })).toHaveAttribute("title", new RegExp(`${slug}$`));
   await page.getByRole("button", { name: `New session in ${slug}` }).click();
-  const dialog = page.getByRole("dialog", { name: "New session" });
+  const dialog = page.getByRole("region", { name: "New session" });
   await expect(dialog.getByRole("combobox", { name: "Project", exact: true })).toHaveValue(String(id));
   await dialog.getByRole("button", { name: "Close" }).click();
 

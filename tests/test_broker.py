@@ -346,3 +346,101 @@ def test_workspace_disappearing_during_removal_is_still_idempotent(env, monkeypa
 
     monkeypatch.setattr(ops.shutil, 'rmtree', vanished)
     assert ops.delete_workspace(env['broker'], str(local), target.name)['already_removed'] is True
+
+
+@pytest.mark.parametrize('error', [ops.OpError('tmux refused'), OSError('tmux unavailable'),
+                                  subprocess.CalledProcessError(1, 'tmux'),
+                                  subprocess.TimeoutExpired('tmux', 2)])
+def test_dead_osc_cleanup_failure_does_not_break_session_list(env, monkeypatch, caplog, error):
+    def tmux(config, *args, **kwargs):
+        if args[0] == 'list-panes':
+            return subprocess.CompletedProcess(args, 0,
+                'acc-dead\t1\t0\t\t123\t100\t101\tworking\n'
+                'acc-live\t0\t\t\t456\t100\t102\tdone\n', '')
+        assert args[0] == 'set-option'
+        raise error
+
+    monkeypatch.setattr(ops, 'tmux', tmux)
+    sessions = ops.list_sessions(env['broker'])
+    assert [(row['tmux_name'], row['osc7501']) for row in sessions] == [('acc-dead', None), ('acc-live', 'done')]
+    assert 'Could not clear OSC status for dead terminal acc-dead' in caplog.text
+
+
+def test_internal_relay_clean_environment_keeps_credentials_out_of_tmux_argv(env, monkeypatch):
+    commands = []
+    real_tmux = ops.tmux
+    def record(config, *args, **kwargs):
+        if args and args[0] == 'new-session':
+            commands.append(args[-1])
+        return real_tmux(config, *args, **kwargs)
+    monkeypatch.setattr(ops, 'tmux', record)
+    params = base_params(env, env={'ANTHROPIC_API_KEY': 'artificial-relay-key-sentinel'})
+    ops.launch(env['broker'], params, inherit_environment=False)
+    assert len(commands) == 1 and 'env -i' in commands[0]
+    assert 'artificial-relay-key-sentinel' not in commands[0]
+    assert 'session.env' in commands[0]
+    assert env['broker'].auth_contexts[params['tmux_name']]['inherit'] is False
+
+
+async def test_clean_supervised_owner_keeps_tmux_pane_pid_through_exec(env, tmp_path):
+    """The owned supervisor must be the pinned pane, not a surviving shell parent."""
+    from types import SimpleNamespace
+
+    from acc.broker.claude_owner import TmuxProcess
+    from acc.broker.relay_enclosure import Enclosure
+    script = tmp_path / 'finite-owned-cli'
+    script.write_text('#!/usr/bin/python3\nimport time\ntime.sleep(20)\n')
+    script.chmod(0o500)
+    enclosure = Enclosure(tmp_path / 'private', SimpleNamespace(run_id='pane-pid'), script)
+    params = base_params(env, args=[], env={'ANTHROPIC_API_KEY': 'artificial-relay-key-sentinel'})
+    process = None
+    try:
+        ops.launch(env['broker'], params, inherit_environment=False, owner_executable=str(enclosure.cli))
+        process = TmuxProcess(env['broker'], params['tmux_name'], enclosure)
+        await wait_for(lambda: enclosure.proof('started.json', f'{process.pid}:{process.started}'), timeout=3, interval=.02)
+        assert process.current()
+        process.terminate()
+        await asyncio.wait_for(process.wait(), 5)
+        assert await process.tree_exited(process)
+    finally:
+        if process:
+            if process.returncode is None:
+                process.terminate()
+                await asyncio.wait_for(process.wait(), 5)
+            process.close()
+        enclosure.close()
+
+@pytest.mark.parametrize('with_credentials', [False, True])
+@pytest.mark.parametrize('long_command', [False, True])
+def test_supervised_clean_relay_pins_actual_supervisor_as_pane_pid(env, tmp_path, monkeypatch, with_credentials, long_command):
+    import json
+    import sys
+    import time
+
+    receipt = tmp_path / 'supervisor-receipt.json'
+    supervisor = tmp_path / 'supervisor'
+    supervisor.write_text(f'#!{sys.executable}\n'
+        'import json,os,sys,time\nfrom pathlib import Path\n'
+        f'Path({str(receipt)!r}).write_text(json.dumps({{"pid":os.getpid(),"args":sys.argv[1:],'
+        '"inherited":bool(os.environ.get("RELAY_PARENT_SENTINEL")),'
+        '"credential":bool(os.environ.get("ANTHROPIC_API_KEY"))}))\n'
+        'time.sleep(30)\n')
+    supervisor.chmod(0o500)
+    monkeypatch.setenv('RELAY_PARENT_SENTINEL','must-not-inherit')
+    credentials = {'ANTHROPIC_API_KEY':'artificial-supervisor-fixture-only'} if with_credentials else {}
+    params = base_params(env, env=credentials)
+    params['args'] = ['--resume','fixture-conversation','--settings','/tmp/generated settings.json']
+    if long_command:
+        params['args'] += ['--fixture-long-arg','x'*4096]
+    try:
+        ops.launch(env['broker'],params,inherit_environment=False,owner_executable=str(supervisor))
+        deadline = time.monotonic()+5
+        while not receipt.exists() and time.monotonic()<deadline:
+            time.sleep(.01)
+        proof = json.loads(receipt.read_text())
+        pane = ops.tmux(env['broker'],'display-message','-p','-t','='+params['tmux_name']+':','#{pane_pid}',check=True)
+        assert int(pane.stdout)==proof['pid']
+        assert proof['args']==params['args']
+        assert proof['inherited'] is False and proof['credential'] is with_credentials
+    finally:
+        ops.kill(env['broker'],params['tmux_name'])

@@ -14,6 +14,7 @@ test("theme follows the system by default, and the button cycles System, Light, 
   await expect(html).not.toHaveClass(/dark/);
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(html).toHaveClass(/dark/);  // follows a change while open
+  await page.getByRole("button", { name: /^Account:/ }).click();
   await page.getByRole("button", { name: /^Theme: System/ }).click();
   await expect(html).not.toHaveClass(/dark/);
   expect(await page.evaluate(() => localStorage.getItem("acc-theme"))).toBe("light");

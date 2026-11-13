@@ -229,9 +229,9 @@ PROVIDER = Cursor(
     supports=frozenset({"resume", "models", "instructions", "skills", "agents", "mcp"}),
     options=(
         Option("mode", "Mode", choices=(("agent", "Agent"), ("plan", "Plan (read-only)"), ("ask", "Ask (read-only Q&A)")),
-               default="agent"),
+               default="agent", permission_order=("ask", "plan", "agent"), permission_levels=(0, 0, 1)),
         Option("force", "Run everything without asking ⚠", kind="bool", default=False, help="--force",
-               dangerous=(True,)),
+               permission_order=(False, True), permission_levels=(1, 4), dangerous=(True,)),
     ),
     hook_events=HOOK_EVENTS,
 )

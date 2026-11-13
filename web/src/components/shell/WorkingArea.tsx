@@ -7,7 +7,7 @@ import { DocumentRegistry } from "../../lib/documentRegistry";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { Link, useBlocker, useLocation, useNavigate } from 'react-router-dom';
 import { useSessions } from '../../lib/queries';
-import { closeView, columnMinimum, effectiveColumns, emptyLayout, moveView, openView, referenceFor, resizeColumns, type WorkingLayout, type ViewReference } from '../../lib/workingLayout';
+import { closeView, columnMinimum, effectiveColumns, emptyLayout, pruneViews, moveView, openView, referenceFor, resizeColumns, type WorkingLayout, type ViewReference } from '../../lib/workingLayout';
 import { LayoutSync, prunePendingLayouts, type SyncView } from '../../lib/layoutSync';
 import type { Layout, LayoutRecord, LayoutTransport } from '../../lib/layoutStore';
 import { fileTarget, fromServer, keepViews, resolvePlaceholders, toServer } from '../../lib/workingSerial';
@@ -56,6 +56,7 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
   const [books, setBooks] = useState<Record<string, WorkingLayout>>({});
   const booksNow = useRef(books); booksNow.current = books;
   const [message, setMessage] = useState('');
+  const [removedNotice, setRemovedNotice] = useState('');
   const [access, setAccess] = useState<Record<string, boolean | undefined>>({});
   const accessChanged = useCallback((key: string, available: boolean | undefined) => setAccess(old => old[key] === available ? old : { ...old, [key]: available }), []);
   const [retained, setRetained] = useState<Record<string, ViewReference>>({});
@@ -191,6 +192,29 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
     };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
+  useEffect(() => {
+    if (composing.current.size) return;
+    const protectedKeys = new Set([...works(), ...terminals.retainedWriters()]);
+    const unavailable = new Set(Object.keys(access).filter(key => access[key] === false));
+    const removed = new Set<string>();
+    const nextBooks = { ...books };
+    for (const [target, book] of Object.entries(books)) {
+      const next = pruneViews(book, unavailable, protectedKeys);
+      if (next === book) continue;
+      for (const key of Object.keys(book.views)) if (!next.views[key]) removed.add(key);
+      nextBooks[target] = next; void persist(target, next);
+    }
+    if (!removed.size) return;
+    setBooks(nextBooks);
+    const used = new Set(Object.values(nextBooks).flatMap(book => Object.keys(book.views)));
+    setRetained(old => Object.fromEntries(Object.entries(old).filter(([key]) => !removed.has(key) || used.has(key))));
+    for (const key of removed) if (!used.has(key)) { documents.close(key); work.current.delete(key); fileRefs.current.delete(key); }
+    setRemovedNotice('Tabs removed: unavailable views are dropped; each strip keeps up to 12 views, dropping the oldest first. Unsaved edits and terminal control stay open until you close them. Running sessions continue.');
+    if (reference && removed.has(reference.key) && !nextBooks[scope]?.views[reference.key]) {
+      const next = nextBooks[scope]; const selected = next?.columns[next.focused]?.active;
+      navigate(selected ? next.views[selected].href : '/projects', { replace: true });
+    }
+  }, [books, access, compositionEnded, persist]);
   // A long tab strip scrolls, so keep the selected tab in view wherever the selection came from.
   useEffect(() => { area.current?.querySelector('.working-tabs [aria-selected=true]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [current, scope, visible, access, sessions.data, projects.data]);
   const focus = (key: string, navigation = true) => act(() => {
@@ -266,7 +290,7 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
             onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} />}
           <section className="working-column" aria-label={`Column ${index + 1}`} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const key = event.dataTransfer.getData('text/rynhult-view'); if (layout.views[key]) move(key, index); }}>
             <div className="working-tab-row"><div role="tablist" aria-label={`Column ${index + 1} views`} className="working-tabs">
-              {(single ? layout.columns.flatMap(c => c.tabs) : column.tabs).map(key => <button key={key} type="button" role="tab" data-view-tab={key} aria-selected={single ? key === current : key === column.active} tabIndex={(single ? key === current : key === column.active) ? 0 : -1} draggable
+              {(single ? layout.columns.flatMap(c => c.tabs) : column.tabs).map(key => <button key={key} type="button" role="tab" id={encodeURIComponent(key)} aria-controls={`pane-${encodeURIComponent(key)}`} data-view-tab={key} aria-selected={single ? key === current : key === column.active} tabIndex={(single ? key === current : key === column.active) ? 0 : -1} draggable
                 onDragStart={event => event.dataTransfer.setData('text/rynhult-view', key)}
                 onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const from = event.dataTransfer.getData('text/rynhult-view'); if (layout.views[from]) move(from, index, key); }}
                 onClick={() => focus(key)} onKeyDown={event => {
@@ -276,7 +300,7 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
                   const next = event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : event.key === 'ArrowLeft' ? (at - 1 + keys.length) % keys.length : event.key === 'ArrowRight' ? (at + 1) % keys.length : null;
                   if (next !== null) { event.preventDefault(); focus(keys[next]); }
                 }}>{label(layout.views[key])}</button>)}
-            </div>{position === shownColumns.length - 1 && <>{message && <span className="working-notice" role="status" title={message}>{message.startsWith("Some views") ? "Some views stay in this window" : message}</span>}{toolbar}</>}</div>
+            </div>{position === shownColumns.length - 1 && <>{removedNotice && <span className="working-notice" role="status" title={removedNotice}>Tabs removed</span>}{message && <span className="working-notice" role="status" title={message}>{message.startsWith("Some views") ? "Some views stay in this window" : message}</span>}{toolbar}</>}</div>
             <div className="working-slot" ref={slotRefs[index]}>
               {!column.active && <div className="working-empty"><p>Open a session or file from Browse.</p><Link to="/projects">Browse projects</Link><Link to="/sessions">Browse sessions</Link></div>}
             </div>
@@ -286,7 +310,7 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
     </>}
     {!visible && <div className="working-page">{children}</div>}
     {[...new Set(Object.values(retained).map(view => /^\/sessions\/([^/?]+)/.exec(view.href)?.[1]).filter((id): id is string => !!id))].map(id => <SessionLifetime key={id} id={id} />)}
-    {Object.entries(retained).map(([key, view]) => <RetainedView key={key} allowArchived={explicitViews.current.has(key)} intent={reference?.key === key ? route.key : undefined} view={view} style={geometry[key]} focused={current === key} onAccess={accessChanged} openBeside={href => {
+    {Object.entries(retained).map(([key, view]) => <RetainedView key={key} allowArchived={explicitViews.current.has(key)} intent={reference?.key === key && reference.href === view.href ? route.key : undefined} navigationState={reference?.key === key && reference.href === view.href ? route.state : undefined} focusTab={reference?.key === key && reference.href === view.href ? route.state?.focusTab : undefined} view={view} style={geometry[key]} focused={current === key} onAccess={accessChanged} openBeside={href => {
       const view = referenceFor(href); if (!view) return;
       act(() => {
         if (!retainedNow.current[view.key] && Object.keys(retainedNow.current).length >= 32) { setMessage('Open view limit reached. Close a view before opening another.'); return; }
@@ -303,19 +327,19 @@ export function WorkingArea({ personId, children }: { personId: string | null; c
   </div>;
 }
 
-function RetainedView({ allowArchived, intent, view, style, focused, documents, terminals, person, focusExisting, openBeside, onAccess, setWork, children }: { allowArchived: boolean; intent?: string; view: ViewReference; style?: CSSProperties; focused: boolean; onAccess: (key: string, available: boolean | undefined) => void; documents: DocumentRegistry; terminals: TerminalOwner; person: string; openBeside: (href: string) => void; focusExisting: (key: string) => void; setWork: WorkingViewState['setWork']; children: ReactNode }) {
+function RetainedView({ allowArchived, intent, navigationState, focusTab, view, style, focused, documents, terminals, person, focusExisting, openBeside, onAccess, setWork, children }: { allowArchived: boolean; intent?: string; navigationState?: unknown; focusTab?: string; view: ViewReference; style?: CSSProperties; focused: boolean; onAccess: (key: string, available: boolean | undefined) => void; documents: DocumentRegistry; terminals: TerminalOwner; person: string; openBeside: (href: string) => void; focusExisting: (key: string) => void; setWork: WorkingViewState['setWork']; children: ReactNode }) {
   // Non-resource pages may be reconstructed. Terminal and Files renderers stay mounted while hidden.
   const visible = !!style;
   const [opened, setOpened] = useState(visible);
   useEffect(() => { if (visible) setOpened(true); }, [visible]);
-  if (view.kind === 'unavailable') return <div className="working-view" data-working-view={view.key} style={{ ...style, visibility: visible ? 'visible' : 'hidden' }} inert={!visible} aria-hidden={!visible}>
+  if (view.kind === 'unavailable') return <div id={`pane-${encodeURIComponent(view.key)}`} role="tabpanel" aria-labelledby={encodeURIComponent(view.key)} className="working-view" data-working-view={view.key} style={{ ...style, visibility: visible ? 'visible' : 'hidden' }} inert={!visible} aria-hidden={!visible}>
     <div className="working-empty"><p>View unavailable. Access may have ended or the resource may have been removed.</p></div>
   </div>;
   const accessChanged = useCallback((available: boolean | undefined) => onAccess(view.key, available), [onAccess, view.key]);
   // Check saved references even while hidden; defer page/editor/terminal mounting until opened.
   const render = visible || opened && view.kind !== 'page';
-  const value = useMemo(() => ({ key: view.key, href: view.href, visible, focused, explicit: !!intent, intent, documents, terminals, person, focusExisting, openBeside, setWork, setAvailable: accessChanged }), [view.key, view.href, visible, focused, allowArchived, intent, documents, terminals, person, focusExisting, openBeside, setWork, accessChanged]);
-  return <div className="working-view" data-working-view={view.key} style={{ ...style, visibility: visible ? 'visible' : 'hidden' }} inert={!visible} aria-hidden={!visible}>
+  const value = useMemo(() => ({ key: view.key, href: view.href, visible, focused, explicit: !!intent, intent, navigationState, focusTab, documents, terminals, person, focusExisting, openBeside, setWork, setAvailable: accessChanged }), [view.key, view.href, visible, focused, allowArchived, intent, navigationState, focusTab, documents, terminals, person, focusExisting, openBeside, setWork, accessChanged]);
+  return <div id={`pane-${encodeURIComponent(view.key)}`} role="tabpanel" aria-labelledby={encodeURIComponent(view.key)} className="working-view" data-working-view={view.key} style={{ ...style, visibility: visible ? 'visible' : 'hidden' }} inert={!visible} aria-hidden={!visible}>
     <WorkingView.Provider value={value}><ErrorBoundary resetKey={view.key}><ViewAccess allowArchived={allowArchived} onAccess={accessChanged}>{render && children}</ViewAccess></ErrorBoundary></WorkingView.Provider>
   </div>;
 }

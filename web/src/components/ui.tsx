@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { ClaudeApiKeyLink } from "./ClaudeAutomationNotice";
 import { ApiError } from "../lib/api";
 import type { AutomationRefusal } from "./ClaudeAutomationNotice";
@@ -370,22 +371,24 @@ export function Dialog({ open, onClose, title, children, wide, description, foot
       `children` lay out and scroll themselves. */
   sheet?: boolean;
 }) {
+  const working = useWorkingView();
+  const shown = open && (!working || working.visible);
   const panel = useRef<HTMLDivElement>(null);
   const { onFocusCapture } = useDismissableLayer({
-    open, root: panel, onDismiss: onClose, modal: true,
+    open: shown, root: panel, onDismiss: onClose, modal: true,
     initialFocus: (element) => element.contains(document.activeElement) ? null
       : focusableElements(element, "input, select, textarea, button:not([aria-label='Close']), a[href]")[0]
         ?? focusableElements(element, "button")[0] ?? element,
   });
   useEffect(() => {
-    if (!open) return;
+    if (!shown) return;
     return () => {
       // The rest of a double-click must not activate the page exposed by closing.
       document.addEventListener("click", preventClickThrough, true);
     };
-  }, [open]);
-  if (!open) return null;
-  return (
+  }, [shown]);
+  if (!shown) return null;
+  return createPortal(
     <div className={sheet ? "fixed inset-0 z-50 flex bg-black/55"
       : "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/55 p-3 pt-[5vh] backdrop-blur-[2px] md:p-4 md:pt-[7vh]"}
       onMouseDown={(event) => { event.preventDefault(); if (dismissible) onClose(); }}>
@@ -409,7 +412,7 @@ export function Dialog({ open, onClose, title, children, wide, description, foot
         {footer && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line bg-panel px-5 py-3">{footer}</div>}
         </>}
       </div>
-    </div>
+    </div>, document.body
   );
 }
 

@@ -287,10 +287,10 @@ PROVIDER = Copilot(
     endpoint_styles=("openai", "anthropic"),
     options=(
         Option("mode", "Mode", choices=(("interactive", "Interactive"), ("plan", "Plan first"),
-                                        ("autopilot", "Autopilot (keeps going on its own)")), default="interactive"),
+                                        ("autopilot", "Autopilot (keeps going on its own)")), default="interactive", permission_order=("plan", "interactive", "autopilot"), permission_levels=(0, 1, 3)),
         Option("permissions", "Permissions", choices=(
             ("ask", "Ask before tools and paths"), ("tools", "Allow all tools ⚠"), ("all", "Allow everything ⚠")),
-            default="ask", dangerous=("tools", "all")),
+            default="ask", permission_order=("ask", "tools", "all"), permission_levels=(1, 4, 4), dangerous=("tools", "all")),
     ),
     hook_events=HOOK_EVENTS,
 )

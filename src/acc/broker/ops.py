@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import shlex
@@ -26,6 +27,8 @@ from ..providers import copilot_settings
 from . import containers
 from .config import BrokerConfig
 
+log = logging.getLogger(__name__)
+
 ACC_ID = re.compile(r"^[a-z0-9]{8,32}$")
 TMUX_NAME = re.compile(r"^acc-[a-z0-9][a-z0-9-]{0,60}$")
 # A conversation id: a UUID (most CLIs), or OpenCode's ses_… (letters and digits only, so safe in a file glob)
@@ -36,14 +39,14 @@ RESERVED_ENV = {"_", *PROTECTED_SESSION_VARIABLES, "PATH", "HOME"}
 # Launch files that hold the guardrails or a CLI's hooks: written read-only, and their hashes go into the CLI's own
 # environment (ACC_GUARD_FILES), which acc-guard checks before every tool call. The agent's account owns its run folder,
 # so read-only is only a speed bump; the hashes are what make a changed or removed policy block everything.
-GUARD_FILES = ("guardrails.json", "settings.json", "plugin/hooks/hooks.json", "opencode/opencode.json",
+GUARD_FILES = ("session-capabilities.json", "guardrails.json", "settings.json", "relay-sdk-settings.json", "plugin/hooks/hooks.json", "opencode/opencode.json",
                "opencode/plugins/acc/index.js", "opencode/plugins/acc/package.json", "opencode/bin/bash")
 EXECUTABLE_FILES = ("opencode/bin/bash",)  # OpenCode's shell for the session (providers/opencode.py)
 # Leave ample room for tmux framing and platform differences (UTF-8 bytes, not characters).
 TMUX_INLINE_BYTES = 4096
 PANE_FORMAT = "\t".join([
     "#{session_name}", "#{pane_dead}", "#{pane_dead_status}", "#{pane_dead_signal}",
-    "#{pane_pid}", "#{session_created}", "#{window_activity}",
+    "#{pane_pid}", "#{session_created}", "#{window_activity}", "#{@acc-osc7501}",
 ])
 
 
@@ -92,9 +95,15 @@ def _read_sessions(config: BrokerConfig) -> list[dict]:
         return []  # no server yet means no sessions
     sessions = []
     for line in result.stdout.splitlines():
-        name, dead, status, signal, pid, created, activity = (line.split("\t") + [""] * 7)[:7]
+        name, dead, status, signal, pid, created, activity, osc = (line.split("\t") + [""] * 8)[:8]
         if not TMUX_NAME.match(name):
             continue
+        if dead == "1" and osc:
+            try:
+                clear_osc_status(config, name)
+            except (OpError, OSError, subprocess.SubprocessError) as error:
+                log.warning("Could not clear OSC status for dead terminal %s: %s", name, error)
+            osc = ""  # never return a dead process's status, even when cleanup fails
         sessions.append({
             "tmux_name": name,
             "dead": dead == "1",
@@ -103,6 +112,7 @@ def _read_sessions(config: BrokerConfig) -> list[dict]:
             "pid": int(pid) if pid.isdigit() else None,
             "created": int(created) if created.isdigit() else None,
             "last_output": int(activity) if activity.isdigit() else None,
+            "osc7501": osc if osc in {"working", "done", "blocked", "error"} else None,
         })
     return sessions
 
@@ -307,6 +317,7 @@ def workspace_changes(config: BrokerConfig, path: str, base: str | None, detail:
     out = {"git": True, "base": ref[:12] if ref != EMPTY_TREE else "empty", "since_launch": False, "branch": branch,
            "files": len(files), "additions": sum(f["additions"] for f in files),
            "deletions": sum(f["deletions"] for f in files)}
+    out["commits"] = int(_git_ok(cwd, "rev-list", "--count", f"{ref}..HEAD").strip()) if ref != EMPTY_TREE else 0
     if comparison_ref:
         out["comparison_ref"] = comparison_ref
     if not detail:
@@ -587,7 +598,7 @@ def _walk_dirs(parts: list[str]) -> int:
     return fd
 
 
-def _materialize_run(run_dir: Path, files: dict, env: dict, *, private: bool = False) -> None:
+def _materialize_run(run_dir: Path, files: dict, env: dict, *, private: bool = False, guard_files=GUARD_FILES) -> None:
     """All writes stay on held directories; a container may replace any run-folder entry on resume."""
     try:
         # Parent is setgid acc. Preserve that bit and group when creating the session folder.
@@ -619,7 +630,7 @@ def _materialize_run(run_dir: Path, files: dict, env: dict, *, private: bool = F
                         os.unlink(parts[-1], dir_fd=folder)
                     except FileNotFoundError:
                         pass
-                    mode = 0o600 if private else ((0o440 if name in GUARD_FILES else 0o640)
+                    mode = 0o600 if private else ((0o440 if name in guard_files else 0o640)
                                                    | (0o110 if name in EXECUTABLE_FILES else 0))
                     fd = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=folder)
                     with os.fdopen(fd, "wb") as handle:
@@ -716,7 +727,11 @@ def _codex_team_git_args(config: BrokerConfig, cwd: Path, args: list[str], files
     return ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps([str(path) for path in roots])]
 
 
-def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = None) -> dict:
+def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = None,
+           inherit_environment: bool = True, owner_executable: str | None = None, guard_files=GUARD_FILES,
+           before_owner_start=None) -> dict:
+    if before_owner_start is not None and owner_executable is None:
+        raise OpError('Owner launch callback requires a supervised owner.')
     acc_id = params["acc_id"]
     tmux_name = params["tmux_name"]
     provider = params["provider"]
@@ -735,6 +750,16 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
         if not ENV_KEY.match(key) or key in RESERVED_ENV or interpreter_variable(key) or not isinstance(value, str):
             raise OpError(f"The environment variable {key!r} is not allowed for a session: Rynhult sets it itself, or it could change "
                           "which programs run. Use another name.")
+    if 'session-capabilities.json' in files:
+        from acc.session_capabilities import launch as admit_caps
+        try:
+            proof = json.loads(files['session-capabilities.json'])
+            # The provider argv is compiler-owned; model is independently bound
+            # into the capability envelope by accd at the dispatch boundary.
+            admit_caps(proof['effective'], provider, proof.get('model'),
+                       container=params.get('container') is not None, parent=proof.get('parent'))
+        except (ValueError, KeyError, TypeError) as error:
+            raise OpError(str(error)) from None
     helper = "explanation.json" in files
     container = params.get("container")
     if container is not None:
@@ -772,7 +797,7 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
         from .brief_references import seal
         bound_files['private-workspace.json'] = seal(acc_id, str(cwd), workspace_key)
     _materialize_run(run_dir, {**files, **bound_files,
-        "permission-transport": "terminal" if container else "host"}, env)
+        "permission-transport": "terminal" if container else "host"}, env, guard_files=guard_files)
 
     executable = None
     if not container:
@@ -782,7 +807,7 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
         executable = os.path.abspath(executable)
     from .claude_auth import refresh
     config.auth_contexts[tmux_name] = dict(acc_id=acc_id, provider=provider, exe=executable, cwd=str(cwd),
-                                           env=dict(env), args=list(args), container=container)
+                                           env=dict(env), args=list(args), container=container, inherit=inherit_environment)
     if helper and provider == 'claude':
         from .explain import arguments, isolated_home
         home = run_dir / 'home'
@@ -820,17 +845,33 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
     elif not container:  # a container's home is its own (empty) one: nothing to set up in this account's
         providers.get(provider).bootstrap(Path.home(), config.hook_path, exe=executable)
         command = shlex.join([executable, *args])
+    if owner_executable is not None:
+        if inherit_environment or provider != 'claude' or helper or container:
+            raise OpError('Invalid supervised owner placement.')
+        command = shlex.join([owner_executable, *args])
+    launch_executable = owner_executable or executable
     env_file = run_dir / "session.env"
     if env and not container:
         command = (shlex.join(["sh", "-c", '. "$0" && exec sh -c "$1"', str(env_file), command]) if helper else
-                   shlex.join(["sh", "-c", '. "$0" && exec "$@"', str(env_file), executable, *args]))
+                   shlex.join(["sh", "-c", '. "$0" && exec "$@"', str(env_file), launch_executable, *args]))
     if provider == 'claude' and not container and not helper:
         from .claude_auth import supplied_mode
         if supplied_mode(env) == 'unknown':
             from acc.providers.claude_auth import subscription_command
             command = shlex.join(subscription_command(shlex.split(command)))
-    guarded = " ".join(f"{name}={hashlib.sha256(files[name].encode()).hexdigest()}" for name in GUARD_FILES if name in files)
-    session_env = dict(Environment({"ACC_RUN_DIR": str(run_dir), "ACC_SESSION_ID": acc_id, "ACC_GUARD_FILES": guarded}))
+    guarded = " ".join(f"{name}={hashlib.sha256(files[name].encode()).hexdigest()}" for name in guard_files if name in files)
+    cap_parent = json.loads(files.get('session-capabilities.json', '{}')).get('parent') or ''
+    session_env = dict(Environment({"ACC_RUN_DIR": str(run_dir), "ACC_SESSION_ID": acc_id, "ACC_GUARD_FILES": guarded, "ACC_PARENT_SESSION_ID": cap_parent}))
+    if not inherit_environment:
+        # Internal relay callers only. Keep credential values in session.env,
+        # loaded by the existing quoted command, never in tmux/process argv.
+        # The RPC params cannot select this keyword or override these roots.
+        if container or helper:
+            raise OpError('Clean relay environment requires a native account session.')
+        import pwd
+        command = shlex.join(['env', '-i', 'HOME=' + pwd.getpwuid(os.getuid()).pw_dir,
+            'PATH=/usr/local/bin:/usr/bin:/bin', 'LANG=C.UTF-8', 'TERM=tmux-256color',
+            *[key + '=' + value for key, value in session_env.items()], 'sh', '-c', 'exec ' + command])
     launched = None
     if container:
         # The root helper starts it from accd's grant (never from anything this broker says) as this account, in a
@@ -863,7 +904,23 @@ def launch(config: BrokerConfig, params: dict, *, workspace_key: bytes | None = 
             command = shlex.join(["/bin/sh", str(run_dir / "launch-command.sh")])
             if sum(len(value.encode()) + 1 for value in [*new, command]) > TMUX_INLINE_BYTES:
                 raise OpError("The session's terminal paths are too long. Choose a shorter workspace path.")
-        tmux(config, *new, command, check=True)
+        # Hold the CLI until its raw-output observer is installed: no lost startup OSC.
+        channel = 'osc-' + uuid.uuid4().hex
+        wait = shlex.join(module_command('acc.broker.osc_status', '--wait', config.tmux_socket, channel))
+        gated = wait + ' && exec ' + command
+        if sum(len(value.encode()) + 1 for value in [*new, gated]) > TMUX_INLINE_BYTES:
+            _materialize_run(run_dir, {'launch-gated.sh': '#!/bin/sh\n' + gated + '\n'}, {}, private=True)
+            gated = shlex.join(['/bin/sh', str(run_dir / 'launch-gated.sh')])
+        if before_owner_start is not None:
+            before_owner_start()  # internal owner gate, immediately before the first possible fork
+        tmux(config, *new, gated, check=True)
+        try:
+            observer = shlex.join(module_command('acc.broker.osc_status', config.tmux_socket, tmux_name))
+            tmux(config, 'pipe-pane', '-O', '-t', f'={tmux_name}:', observer, check=True)
+            tmux(config, 'wait-for', '-S', channel, check=True)
+        except OpError:
+            tmux(config, 'kill-session', '-t', f'={tmux_name}')
+            raise
         if provider == "codex" and not helper:
             tmux(config, "set-option", "-t", tmux_name, "@acc-wheel", "on", check=True)
     except OpError:
@@ -959,6 +1016,17 @@ def kill(config: BrokerConfig, tmux_name: str, container: dict | None = None, ac
     except containers.ContainerError as error:
         raise OpError(str(error)) from None
     return {"killed": existed, "container": stop_container(config, acc_id, container)}
+
+
+def clear_osc_status(config: BrokerConfig, tmux_name: str) -> dict:
+    """Discard status from a closed/adopted incarnation; no arbitrary option access."""
+    if not TMUX_NAME.fullmatch(tmux_name):
+        raise OpError("Rynhult sent an invalid session terminal name.")
+    result = tmux(config, 'set-option', '-u', '-t', '=' + tmux_name + ':', '@acc-osc7501')
+    # The pane can disappear between list-panes and cleanup; absence is already clear.
+    if result.returncode and 'no such session:' not in result.stderr:
+        raise OpError(f"The terminal status could not be cleared: {result.stderr.strip()}")
+    return {'cleared': True}
 
 
 def terminal_output(config: BrokerConfig, tmux_name: str, *, watching: bool = False) -> dict:

@@ -18,12 +18,13 @@ for (const managed of [true, false]) test(`${managed ? 'managed checkout' : 'reg
   }
   if (managed) {
     await page.goto(`/projects/${project.id}`);
+    await page.getByRole('button', { name: 'Project actions', exact: true }).click();
     await page.getByRole('button', { name: 'Delete project', exact: true }).click();
   } else {
     await page.goto('/projects');
     await page.getByRole('button', { name: `Project actions for ${project.slug}`, exact: true }).click();
-    await expect(page.getByRole('menuitem', { name: `Archive ${project.slug}`, exact: true })).toBeVisible();
-    await page.getByRole('menuitem', { name: `Delete ${project.slug}`, exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Archive', exact: true })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
   }
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText(managed ? 'permanently deletes this managed checkout' : 'Keeps the registered or imported folder');
@@ -53,7 +54,10 @@ test('Cancel, live-session refusal, Stop all and retry keep confirmation in page
   expect(created.ok(), await created.text()).toBeTruthy();
   const session = await created.json();
   await page.goto(`/projects/${p.id}`);
-  const open = () => page.getByRole('button', { name: 'Delete project', exact: true }).click();
+  const open = async () => {
+    await page.getByRole('button', { name: 'Project actions', exact: true }).click();
+    await page.getByRole('button', { name: 'Delete project', exact: true }).click();
+  };
   await open();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('alert')).toContainText('live sessions or a team');

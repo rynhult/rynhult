@@ -9,6 +9,7 @@ import asyncio
 import json
 import shutil
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -30,7 +31,14 @@ RECEIVE_PACK = "git-receive-pack"
 def router(ctx: Context) -> APIRouter:
     settings, db, supervisor = ctx.settings, ctx.db, ctx.supervisor
     backend = gitbackup.HttpBackend(settings.git_dir, settings.backup_max_push, settings.backup_timeout)
-    api = APIRouter()
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            await backend.close()
+
+    api = APIRouter(lifespan=lifespan)
 
     def authorized(request: Request, repo: str) -> int:
         match = gitbackup.REPO_NAME.match(repo)
@@ -61,8 +69,34 @@ def router(ctx: Context) -> APIRouter:
         return gitbackup.repo_info(settings.git_dir, project_id)
 
     async def serve(request: Request, repo: str, path_info: str) -> Response:
-        status, headers, body = await backend.run(request.method, f"/{repo}{path_info}", request.url.query,
-                                                  {k.lower(): v for k, v in request.headers.items()}, request.stream())
+        body_read = asyncio.Event()
+
+        async def incoming():
+            try:
+                async for chunk in request.stream():
+                    yield chunk
+            finally:
+                body_read.set()
+
+        async def disconnected():
+            # Only probe receive after stream() finishes, so we cannot steal body chunks.
+            await body_read.wait()
+            while (await request.receive())['type'] != 'http.disconnect':
+                pass
+
+        work = asyncio.create_task(backend.run(request.method, f"/{repo}{path_info}", request.url.query,
+                                   {k.lower(): v for k, v in request.headers.items()}, incoming()))
+        disconnect = asyncio.create_task(disconnected())
+        try:
+            done, _ = await asyncio.wait((work, disconnect), return_when=asyncio.FIRST_COMPLETED)
+            if work not in done:
+                await disconnect
+                return Response(status_code=499)
+            status, headers, body = await work
+        finally:
+            work.cancel()
+            disconnect.cancel()
+            await asyncio.gather(work, disconnect, return_exceptions=True)
         if status >= 400:
             log.warning("git backup: %s %s answered %d", request.method, repo, status)
         return Response(body, status_code=status, headers=dict(headers))

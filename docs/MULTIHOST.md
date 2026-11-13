@@ -49,6 +49,15 @@ Binary WebSocket messages, each one frame: `1 byte type | 4 byte big-endian chan
 - `d` data, either way: raw bytes for the channel (max 1 MiB per frame).
 - `c` close, either way: the sender closed its side; the receiver closes its side and forgets the channel.
 
+Session relay uses a separate typed open request
+`{"type":"session-runtime-v1","account":"<name>"}`. Both the node's hello and
+main's allowlist must preserve `session-runtime-v1`; an older node is refused
+rather than using an ordinary account channel. Closing this channel aborts its
+buffered mutations. Live native reads recheck the current leader and the frozen
+node/key/link/account placement as well as person/run authority. Reconnecting a
+node does not renew an old runtime or enrollment token. This transport support
+does not enable the default-off session relay or qualify native input.
+
 Backup channels can negotiate request half-close without changing ordinary broker
 channels: the `backup-v1` open request adds `"request_eof": true`; a supporting node
 acknowledges with `k` payload `backup-eof-v1`. Only then may the primary send `h`

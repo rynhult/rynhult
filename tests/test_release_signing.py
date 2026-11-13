@@ -2,9 +2,7 @@
 import os
 import re
 import shutil
-import signal
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -41,25 +39,21 @@ def test_public_key_and_verification_docs_agree(tmp_path):
 
 
 @pytest.fixture
-def test_key():
-    # Keep agent sockets short, private and separate from any real keyring.
-    with tempfile.TemporaryDirectory(prefix='acc-sign-key-', dir='/tmp') as scratch:
-        home = Path(scratch) / 'gnupg'
-        home.mkdir(mode=0o700)
-        agent = subprocess.run(['gpg-connect-agent', '--homedir', str(home), 'GETINFO pid', '/bye'],
-                               capture_output=True, text=True, check=True, timeout=10)
-        agent_pid = int(re.search(r'^D (\d+)$', agent.stdout, re.MULTILINE)[1])
-        try:
-            gpg(home, '--no-autostart', '--pinentry-mode', 'loopback', '--passphrase', '',
-                '--quick-generate-key', 'Release Test <release@example.com>', 'ed25519', 'cert', '1d')
-            primary = fingerprints(gpg(home, '--no-autostart', '--with-colons', '--list-keys').stdout)[0]
-            gpg(home, '--no-autostart', '--pinentry-mode', 'loopback', '--passphrase', '',
-                '--quick-add-key', primary, 'ed25519', 'sign', '1d')
-            primary, signing = fingerprints(gpg(home, '--no-autostart', '--with-colons',
-                                                '--with-subkey-fingerprint', '--list-keys').stdout)
-            yield home, primary, signing
-        finally:
-            os.kill(agent_pid, signal.SIGTERM)
+def test_key(gpg_home):
+    from owned_gpg import stop_agents
+
+    home = gpg_home()
+    try:
+        gpg(home, '--pinentry-mode', 'loopback', '--passphrase', '',
+            '--quick-generate-key', 'Release Test <release@example.com>', 'ed25519', 'cert', '1d')
+        primary = fingerprints(gpg(home, '--no-autostart', '--with-colons', '--list-keys').stdout)[0]
+        gpg(home, '--no-autostart', '--pinentry-mode', 'loopback', '--passphrase', '',
+            '--quick-add-key', primary, 'ed25519', 'sign', '1d')
+        primary, signing = fingerprints(gpg(home, '--no-autostart', '--with-colons',
+                                            '--with-subkey-fingerprint', '--list-keys').stdout)
+        yield home, primary, signing
+    finally:
+        stop_agents(home)
 
 
 def signing_checkout(tmp_path, test_key, *, trusted):
@@ -107,7 +101,7 @@ def test_signs_only_the_manifest_and_verifies_against_the_repository_key(tmp_pat
     env = {**os.environ, 'GNUPGHOME': str(test_key[0])}
     if home_mode == 'default':
         env.pop('GNUPGHOME')
-        env['HOME'] = str(test_key[0].parent / 'owner')
+        env['HOME'] = str(tmp_path / 'owner')
         Path(env['HOME']).mkdir()
         (Path(env['HOME']) / 'rynhult-signing').symlink_to(test_key[0], target_is_directory=True)
     elif home_mode == 'unset-deep':
@@ -120,7 +114,7 @@ def test_signs_only_the_manifest_and_verifies_against_the_repository_key(tmp_pat
     assert signature.is_file()
     assert manifest.read_bytes() == original
     assert sorted(p.name for p in release.iterdir()) == ['SHA256SUMS', 'SHA256SUMS.asc']
-    verifier = test_key[0].parent / 'verifier'
+    verifier = tmp_path / 'verifier'
     verifier.mkdir(mode=0o700)
     gpg(verifier, '--no-autostart', '--import', str(script.parents[1] / 'keys/rynhult-release-key.asc'))
     verified = gpg(verifier, '--no-autostart', '--status-fd', '1', '--verify', str(signature), str(manifest))

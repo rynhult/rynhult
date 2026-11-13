@@ -10,13 +10,14 @@ import datetime
 import fcntl
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from . import bundle
 from .env import Environment, environment
 from .release_signatures import verify
 from .update_helper import Transaction, read_json, write_json
-from .updates import BUILD, release_checksum, version
+from .updates import BUILD, GIT_MESSAGE, checkout_blocks_update, release_checksum, version
 
 
 def bounded(path: Path, limit: int) -> bytes:
@@ -108,14 +109,19 @@ def rollback(root, source, data, identifier, config, *, transaction_class=Offlin
     job = transaction_class(root, source, data, record['version'], config, run=run)
     # Retain a fresh backup of today's state before reverting its schema/data.
     from .maintenance import update_hold
+    job.previous = source.with_name(f'{source.name}.previous-{identifier}')
+    if not job.previous.is_dir() or job.previous.is_symlink():
+        raise ValueError('Retained source is missing or unsafe.')
+    for tree in (source, job.previous):
+        if checkout_blocks_update(tree, require_root_owned=True):
+            raise ValueError(GIT_MESSAGE)
+    job.distro_flags()
+    job.preflight(job.previous)
     with update_hold(data):
         Transaction.backup(job)
         job.saved = root / 'backups' / identifier / day
         if not (job.saved / 'acc.db').is_file():
             raise ValueError('Retained database backup is missing.')
-        job.previous = source.with_name(f'{source.name}.previous-{identifier}')
-        if not job.previous.is_dir() or job.previous.is_symlink():
-            raise ValueError('Retained source is missing or unsafe.')
         job.stage.mkdir(mode=0o700)
         job.activated = job.install_started = True
         job.state['from_version'] = record['from_version']
@@ -157,7 +163,7 @@ def main(argv=None):
                 result = rollback(root, source, data, args.rollback, config)
             else:
                 result = OfflineTransaction(root, source, data, args.version, config, archive=args.bundle).apply()
-        except (OSError, ValueError):
+        except (OSError, ValueError, subprocess.SubprocessError):
             print('Upgrade/recovery refused. Check the signed files, retained backups and installation settings.')
             return 1
     print(result['detail'])

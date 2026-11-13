@@ -231,7 +231,9 @@ async def test_untrusted_and_readonly_projects_refuse_launch(api, env):
     untrusted = (await api.post("/api/projects", json={"slug": "u", "name": "U", "workspace_path": str(workspace)})).json()
     response = await api.post("/api/sessions", json={"project_id": untrusted["id"], "provider": "claude", "name": "x"})
     assert response.status_code == 409 and "trusted" in response.json()["detail"]
-    readonly = (await api.post("/api/projects", json={"slug": "r", "name": "R", "workspace_path": str(workspace),
+    readonly_workspace = env["workspaces"] / "readonly"
+    readonly_workspace.mkdir()
+    readonly = (await api.post("/api/projects", json={"slug": "r", "name": "R", "workspace_path": str(readonly_workspace),
                                                        "import_mode": "readonly"})).json()
     await api.post(f"/api/projects/{readonly['id']}/trust")
     response = await api.post("/api/sessions", json={"project_id": readonly["id"], "provider": "claude", "name": "x"})
@@ -429,7 +431,9 @@ async def test_remote_probe_does_not_pin_reconcile_read_snapshot(api, project, e
 
 async def test_stop_confirmation_survives_a_commit_during_kill(api, project, env, monkeypatch, caplog, tmux_has):
     """The kill awaits the broker inside reconcile's snapshot; a concurrent commit must not leave the stop pending."""
-    from acc.server.models import Project, Session
+    from sqlalchemy import select
+
+    from acc.server.models import AttentionItem, Project, Session
 
     session = await launch(api, project)
     await wait_for(state_is(api, session["id"], "idle"))
@@ -438,6 +442,8 @@ async def test_stop_confirmation_survives_a_commit_during_kill(api, project, env
     with supervisor.db() as db:
         row = db.get(Session, session["id"])
         row.desired_state, row.team_stop_pending = "stopped", True
+        db.add(AttentionItem(dedupe_key=f'review:{row.id}:fixture', kind='ready_for_review',
+            severity='info', source='fixture', title='Ready', session_id=row.id))
         db.commit()
     original = supervisor.broker.call
     kills = []
@@ -457,6 +463,9 @@ async def test_stop_confirmation_survives_a_commit_during_kill(api, project, env
     with supervisor.db() as db:
         assert db.get(Session, session["id"]).team_stop_pending is False
         assert db.get(Project, project["id"]).name == "Renamed during kill"
+        notice = db.scalar(select(AttentionItem).where(AttentionItem.session_id == session['id'],
+                                                       AttentionItem.kind == 'ready_for_review'))
+        assert notice.resolved_at is not None  # deferred cleanup still runs after kill confirmation
     assert not any("reconcile failed" in record.getMessage() for record in caplog.records)
 
 

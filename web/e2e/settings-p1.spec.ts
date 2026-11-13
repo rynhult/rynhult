@@ -3,14 +3,10 @@ import {writeFileSync} from 'node:fs';
 import {expect,type Page} from '@playwright/test';
 import {AUTH_FILE,csrfHeaders,expectAxeClean,gitProject,info,PASSWORD,totp,verifyAgain} from './helpers';
 // The member journey intentionally saves that person's shell choice.
-test.use({storageState:AUTH_FILE,presentationChanges:['layouts','ui_shell']});
-async function preference(page:Page,enabled:boolean){expect((await page.request.put('/api/preferences/ui-shell',{headers:await csrfHeaders(page),data:{enabled}})).ok()).toBeTruthy();}
-async function enable(page:Page){
-  const put=async()=>{const state=await(await page.request.get('/api/admin-features')).json();return page.request.put('/api/admin-features/new_shell',{headers:await csrfHeaders(page),data:{enabled:true,revision:state.revision}});};
-  let response=await put();if(!response.ok()){await verifyAgain(page);response=await put();}expect(response.ok(),await response.text()).toBeTruthy();await preference(page,true);
-}
+test.use({storageState:AUTH_FILE,presentationChanges:['layouts',]});
+
 test('owner scopes converge on existing editors and preserve account drafts across scopes',async({page})=>{
-  test.setTimeout(150000);await enable(page);const project=await gitProject(page,'cedar-settings');
+  test.setTimeout(150000);const project=await gitProject(page,'cedar-settings');
   for(const width of [1440,390])for(const theme of ['light','dark'] as const){
     await page.setViewportSize({width,height:900});await page.emulateMedia({colorScheme:theme});await page.goto('/settings#passkeys');
     await expect(page.getByRole('navigation',{name:'Settings scopes',exact:true})).toHaveCount(0);
@@ -58,10 +54,10 @@ test('owner scopes converge on existing editors and preserve account drafts acro
 
 });
 test('member scopes retain source visibility and never mount installation editors',async({page,context})=>{
-  test.setTimeout(120000);await enable(page);const privateProject=await gitProject(page,'cedar-settings-private');const account=`settings-${crypto.randomUUID().slice(0,8)}-agent`;writeFileSync(`${info().state}/fixture-accounts/${account}`,'');
+  test.setTimeout(120000);const privateProject=await gitProject(page,'cedar-settings-private');const account=`settings-${crypto.randomUUID().slice(0,8)}-agent`;writeFileSync(`${info().state}/fixture-accounts/${account}`,'');
   const invite=await page.request.post('/api/users/invites',{headers:await csrfHeaders(page),data:{role:'member',account}});expect(invite.ok(),await invite.text()).toBeTruthy();const token=(await invite.json()).link.split('/').pop();await context.clearCookies();
   const begin=await page.request.post('/api/auth/invite/begin',{headers:{Origin:info().origin},data:{token}});
-  const joined=await page.request.post('/api/auth/invite/complete',{headers:{Origin:info().origin},data:{token,username:`blair-settings-${Date.now()}`,password:PASSWORD,code:totp((await begin.json()).totp_secret)}});expect(joined.ok(),await joined.text()).toBeTruthy();await preference(page,true);
+  const joined=await page.request.post('/api/auth/invite/complete',{headers:{Origin:info().origin},data:{token,username:`blair-settings-${Date.now()}`,password:PASSWORD,code:totp((await begin.json()).totp_secret)}});expect(joined.ok(),await joined.text()).toBeTruthy();
   const project=await gitProject(page,'maple-settings');
   expect((await page.request.get(`/api/projects/${privateProject.id}/knowledge`)).status()).toBe(404);
   const forbidden:string[]=[];page.on('request',r=>{const path=new URL(r.url()).pathname;if(['/api/security/scopes','/api/users','/api/nodes','/api/board','/api/security/folders'].includes(path))forbidden.push(path);});
@@ -78,7 +74,7 @@ test('member scopes retain source visibility and never mount installation editor
   expect(forbidden).toEqual([]);
 });
 test('every legacy Settings fragment and dedicated URL still resolves in the new layout',async({page})=>{
-  test.setTimeout(150000);await enable(page);
+  test.setTimeout(150000);
   const targets=['access-devices','passkeys','password','sign-ins','notifications','notification-devices','keys','risk-labels','guardrails','security','certificate','admin-features','remote-access','usage-and-bug-reports','updates','publishing','people','company-sign-in','dns','issue-sources','tool-approvals','budgets','selection-allow-lists','image-access','container-limits'];
   const aliases={'your-devices':'access-devices',devices:'notification-devices',telemetry:'usage-and-bug-reports','infrastructure-keys':'dns','dns-certificates':'dns'};
   await page.goto('/settings');
@@ -91,7 +87,7 @@ test('every legacy Settings fragment and dedicated URL still resolves in the new
 });
 
 test('Settings sidebar supports keyboard navigation and compact attention keeps warning details',async({page})=>{
-  await enable(page);
+
   await page.route('**/api/certificate',route=>route.fulfill({json:{kind:'unverified',primary:'acc.example.lan'}}));
   await page.goto('/settings');
   const main=page.getByRole('main');

@@ -1583,7 +1583,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "onetwo",
+     "text": "one\u0085two",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1607,7 +1607,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "one two",
+     "text": "one\u2028two",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1631,7 +1631,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "one two",
+     "text": "one\u2029two",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1778,7 +1778,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u007fb",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1798,7 +1798,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u009bb",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1818,7 +1818,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u0080b",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1838,7 +1838,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u0084b",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1858,7 +1858,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u0086b",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1878,7 +1878,7 @@
      "sessionId": "sess-1",
      "expectedRunId": "run-1",
      "operationId": "op-1",
-     "text": "ab",
+     "text": "a\u009fb",
      "expectedConfigurationRevision": 2,
      "ifBusy": "reject"
     }
@@ -1886,6 +1886,47 @@
    "expect": {
     "rpc": -32602,
     "id": 1
+   }
+  },
+  {
+   "name": "valid writer.take",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/writer.take",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "attachmentId": "att-1",
+     "expectedRevision": 3,
+     "reason": "Taking over to finish the review",
+     "view": "terminal"
+    }
+   },
+   "expect": {
+    "method": "writer.take",
+    "admit": "ok"
+   }
+  },
+  {
+   "name": "valid switch.recover",
+   "frame": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "ry/switch.recover",
+    "params": {
+     "sessionId": "sess-1",
+     "expectedRunId": "run-1",
+     "operationId": "op-1",
+     "target": "chat",
+     "expectedRevision": 2,
+     "reason": "Reviewed stopped session recovery"
+    }
+   },
+   "expect": {
+    "method": "switch.recover",
+    "admit": "UNSUPPORTED"
    }
   }
  ]

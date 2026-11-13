@@ -76,4 +76,4 @@ def policy(db: DbSession, workspace: str, owner: str | None = None, project_id: 
     return {"rules": {key: effective['switches'][key] for key in BUILTINS},
             "custom": value['custom'] if effective['switches']['custom_rules'] else [],
             "workspace": workspace, "tool_approval": effective['switches']['tool_install_check'],
-            "local_only": local_only, "security": effective}
+            "local_only": local_only, "security": effective, "parent_session_id": None}

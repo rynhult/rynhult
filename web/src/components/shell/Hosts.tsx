@@ -1,10 +1,9 @@
 import { Surface as Card, ShellPage as Page, Workbar as PageHeader } from './PagePrimitives';
 import {useQueries,useQuery} from '@tanstack/react-query';
-import {Link,Navigate,useLocation,useSearchParams} from 'react-router-dom';
+import {Link,useLocation,useSearchParams} from 'react-router-dom';
 import {api} from '../../lib/api';
 import {ago} from '../../lib/format';
 import {useHealth,useInstance,useProjects,useRole,useSessions} from '../../lib/queries';
-import {useNewShell} from '../../lib/uiShell';
 import type {BoardView,HostView} from '../../lib/types';
 import { Badge, Button, Dot, Empty, QueryState } from '../ui';
 import {needsYou,sessionCount} from '../../lib/order';
@@ -73,8 +72,8 @@ export function HostsSidebar({close}:{close:()=>void}) {
 
 }
 export default function Hosts() {
-  const shell=useNewShell();
-  return shell?<HostsView/>:<Navigate to="/host" replace/>;
+
+  return <HostsView/>;
 }
 function HostsView() {
   const query=useHostSummaries();const {owner}=useRole();const [params]=useSearchParams();

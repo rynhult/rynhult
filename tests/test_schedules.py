@@ -455,3 +455,11 @@ async def test_offline_workstation_occurrence_is_skipped_without_failure(api, pr
     assert 'Machine offline' in result['reason']
     assert result['session_id'] is None
     assert not any(item['kind'] == 'schedule_failed' for item in (await api.get('/api/attention')).json())
+
+
+async def test_schedule_refuses_explicit_relay_opt_in_instead_of_dropping_it(api, project, person):
+    body = payload(project)
+    body['launch']['session_relay'] = True
+    response = await api.post('/api/schedules', json=body)
+    assert response.status_code == 409 and 'qualified hub transport' in response.text
+    assert (await api.get('/api/schedules')).json() == []

@@ -14,7 +14,9 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from .. import tooling
+from ..install_qualification import QUALIFIED_TOOL_EXECUTORS as QUALIFIED_TOOL_EXECUTORS
 from . import security_settings as security
+from .child_caps import grant_digest as child_grant_digest
 from .models import (
     API_PRINCIPAL,
     ApprovalBatch,
@@ -30,11 +32,10 @@ from .models import (
     utcnow,
 )
 
-ACTIONS = frozenset({'tool.install', 'main.merge', 'main.push'})
-REGISTRY_VERSION = 1
+ACTIONS = frozenset({'tool.install', 'main.merge', 'main.push', 'port.reserve', 'image.check'})
+REGISTRY_VERSION = 2
 # Deliberately empty until a typed broker adapter proves canonical provenance,
 # account UID/destination, bounded footprint and fresh execution admission.
-QUALIFIED_TOOL_EXECUTORS = frozenset()
 
 
 class Refused(ValueError):
@@ -51,7 +52,7 @@ def audit(db, actor, action, target, detail=None):
     db.add(AuditLog(actor=actor, action='approval.' + action, target=target, detail=detail or {}))
 
 
-def enabled(db):
+def available(db):
     from .admin_features import CURRENT
     features = CURRENT.get()
     if features is not None and not features.enabled('teams'):
@@ -59,8 +60,12 @@ def enabled(db):
     availability = db.get(Setting, 'admin_features')
     if availability and availability.value.get('choices', {}).get('teams') is False:
         return False
+    return True
+
+
+def enabled(db):
     row = db.get(Setting, 'approvals.enabled')
-    return row is None or row.value is True
+    return available(db) and row is not None and row.value is True
 
 
 def person(db, actor):
@@ -112,7 +117,7 @@ def authority(db, actor, project_id, team_id):
     if resolved['enforcement']['allowed_folders'] != 'applied':
         raise Refused('the account security policy is not applied')
     return project_authority(db, actor, project_id) | {
-            'team_id': team.id, 'team_revision': team.lifetime_revision, 'grant_digest': digest(team.limits),
+            'team_id': team.id, 'team_revision': team.lifetime_revision, 'grant_digest': child_grant_digest(db, lead),
             'launch_digest': lead.launch_spec.digest, 'placement_id': lead.placement_id,
             'container': lead.container, 'container_generation': lead.container_generation,
             'run_id': lead.runs[-1].id if lead.runs else None}
@@ -134,6 +139,9 @@ def project_authority(db, actor, project_id):
 def validate(action, constraints):
     if action not in ACTIONS or not isinstance(constraints, dict):
         raise Refused('unknown action class; a person must decide', 422)
+    if action == 'tool.install' and 'recipe_digest' in constraints:
+        from .account_installs import constraints as install_constraints
+        return install_constraints(constraints)
     if action == 'tool.install':
         if set(constraints) != {'manager', 'name', 'version', 'registry'}:
             raise Refused('review exact tool coordinates and registry', 422)
@@ -143,6 +151,18 @@ def validate(action, constraints):
             raise Refused(str(error), 422) from None
         if constraints['manager'] != 'npm' or constraints['registry'] != 'https://registry.npmjs.org' or constraints['version'] is None:
             raise Refused('only exact npm registry coordinates can be recorded in phase one', 422)
+    elif action == 'port.reserve':
+        if (set(constraints) != {'range', 'max_reservations'} or constraints['range'] not in ('dev', 'prod')
+                or type(constraints['max_reservations']) is not int or not 1 <= constraints['max_reservations'] <= 10):
+            raise Refused('review a port pool and a count of 1–10', 422)
+    elif action == 'image.check':
+        from .. import providers
+        if (set(constraints) != {'provider', 'model', 'uid', 'runtime_id'} or constraints['provider'] not in providers.ids()
+                or type(constraints['uid']) is not int or constraints['uid'] < 1
+                or not isinstance(constraints['runtime_id'], str) or not re.fullmatch('[0-9a-f]{32}', constraints['runtime_id'])
+                or not isinstance(constraints['model'], str)
+                or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}', constraints['model'])):
+            raise Refused('review an exact provider and model', 422)
     else:
         if set(constraints) != {'repository', 'remote', 'ref', 'verification_policy'} or any(
                 not isinstance(v, str) or not v or len(v) > 500 for v in constraints.values()):
@@ -161,6 +181,10 @@ def grant(db, *, actor, project_id, team_id, action, constraints, duration,
     # Check principal before fields so installation tokens cannot probe policy.
     snapshot = authority(db, actor, project_id, team_id)
     constraints = validate(action, constraints)
+    if action == 'tool.install' and 'recipe_digest' in constraints:
+        from .account_installs import check_uid, recipe_for
+        recipe_for(db, constraints)
+        check_uid(constraints, snapshot['placement'])
     if duration not in ('once', 'team', 'project'):
         raise Refused('choose once, team or project duration', 422)
     if duration == 'once' and not (isinstance(request_digest, str) and re.fullmatch('[0-9a-f]{64}', request_digest)):
@@ -191,7 +215,7 @@ def grant(db, *, actor, project_id, team_id, action, constraints, duration,
     return row
 
 
-def current(db, row):
+def current(db, row, *, check_remaining=True):
     # A caller may have loaded the row before waiting for the revision fence.
     # READ COMMITTED must re-read it rather than trust SQLAlchemy's identity map.
     if row is not None:
@@ -202,7 +226,7 @@ def current(db, row):
         raise Refused('delegation is disabled')
     if row.expires_at is not None and utcnow() >= row.expires_at:
         raise Refused('consent expired')
-    if row.remaining is not None and row.remaining < 1:
+    if check_remaining and row.remaining is not None and row.remaining < 1:
         raise Refused('consent is exhausted')
     expected = (project_authority(db, row.issuer, row.project_id) if row.duration == 'project'
                 else authority(db, row.issuer, row.project_id, row.team_id))
@@ -211,6 +235,9 @@ def current(db, row):
     if row.parent_id:
         current(db, db.get(ApprovalConsent, row.parent_id))
     validate(row.action, row.constraints)
+    if row.action == 'tool.install' and 'recipe_digest' in row.constraints:
+        from .account_installs import check_uid
+        check_uid(row.constraints, expected['placement'])
     return row
 
 
@@ -302,6 +329,8 @@ def evaluate_tool(db, request, lead_id):
     from .compiler import LaunchInputs
     if read_only(LaunchInputs.from_dict(worker.launch_spec.inputs)):
         return person_decision('read_only_worker')
+    if worker.parent_session_id:
+        return person_decision('child_request_requires_root_person')
     return match(db, lead_id, request.project_id, 'tool.install', {'manager': request.manager,
         'name': request.name, 'version': request.version, 'registry': 'https://registry.npmjs.org'}, digest(tool_payload(request)))
 
@@ -340,19 +369,8 @@ def consume(db, operation_id):
     if (op.digest != digest(tool_payload(request)) or request.status != 'pending_approval'
             or result['consent_id'] != consent.id):
         raise Refused('request or authority changed')
-    if request.manager not in QUALIFIED_TOOL_EXECUTORS:
-        raise Refused('a qualified canonical-registry executor is required')
-    if consent.remaining is not None:
-        claimed = db.execute(update(ApprovalConsent).where(ApprovalConsent.id == consent.id,
-            ApprovalConsent.remaining > 0, ApprovalConsent.revision == op.consent_revision,
-            ApprovalConsent.state == 'active').values(remaining=ApprovalConsent.remaining - 1))
-        if not claimed.rowcount:
-            raise Refused('consent exhausted or revoked')
-    consent.last_used_at = utcnow()
-    op.state = 'dispatched'
-    request.status, request.decided_by, request.decision = 'approved', 'session:' + op.lead_id, result | {'operation_id': op.id}
-    audit(db, request.decided_by, 'use', op.id, request.decision)
-    return request
+    # Qualification never enables the legacy four-field protocol.
+    raise Refused('a qualified canonical-registry executor is required')
 
 
 def evaluate_main(db, lead_id, action, constraints, request_digest):
@@ -370,7 +388,7 @@ def claim_main(db, lead_id, action, constraints, request_digest):
     raise Refused('a qualified main-finalization verifier and integration fence are required')
 
 
-def preview_batch(db, actor, ids):
+def preview_batch(db, actor, ids, *, browser_session=False):
     security.lock_revision(db)
     if not isinstance(ids, list) or not 1 <= len(ids) <= 50 or len(set(ids)) != len(ids):
         raise Refused('select 1–50 distinct exact pending requests', 422)
@@ -382,6 +400,7 @@ def preview_batch(db, actor, ids):
             raise Refused('no such pending request', 404)
         if row.status != 'pending_approval':
             raise Refused('request is no longer pending')
+        Tools.validate_root_approver(db, row, actor, browser_session=browser_session)
         payload.append({'request_id': rid, 'digest': digest(tool_payload(row))})
     # Root/system and routine account operations are separate previews.
     families = {db.get(ToolRequest, rid).manager in tooling.SYSTEM for rid in ids}
@@ -395,7 +414,7 @@ def preview_batch(db, actor, ids):
     return row
 
 
-def approve_batch(db, batch_id, actor, expected_digest):
+def approve_batch(db, batch_id, actor, expected_digest, *, browser_session=False):
     security.lock_revision(db)
     batch = db.scalar(select(ApprovalBatch).where(ApprovalBatch.id == batch_id).with_for_update()
                       .execution_options(populate_existing=True))
@@ -411,6 +430,7 @@ def approve_batch(db, batch_id, actor, expected_digest):
         if (row is None or row.status != 'pending_approval' or digest(tool_payload(row)) != item['digest']
                 or not Tools.can_see_actor(db, row, actor)):
             raise Refused('a reviewed request changed; preview the batch again')
+        Tools.validate_root_approver(db, row, actor, browser_session=browser_session)
         Tools.validate_person(db, row)
         rows.append(row)
     # All validation precedes any status changes. The caller commits once.

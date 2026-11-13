@@ -127,6 +127,7 @@ def test_plan_mode_still_asks_before_team_tools_that_change_the_workspace(tmp_pa
 
 @pytest.mark.parametrize('mode', ['plan', 'auto'])
 @pytest.mark.parametrize('name,allowed', [
+    ('delegated_status', True), ('delegated_port', False), ('delegated_image', False), ('delegated_install', False),
     ('brief', True), ('brief_documents', True),
     ('brief_propose_documents', False), ('brief_share', False), ('future_write_tool', False),
 ])

@@ -200,7 +200,13 @@ async def test_total_limit_across_depth_and_expiry(api, project, env):
     await wait_for(stopped)
     with api.app.state.supervisor.db() as db:
         assert db.get(Session, b['id']).desired_state == 'stopped'
-        assert db.get(Session, x['id']).desired_state == 'running'
+        from acc.server.models import AuditLog
+        assert db.get(Session, x['id']).desired_state == 'running', {
+            'lead_error': db.get(Session, x['id']).last_error,
+            'team_reason': db.get(Team, x['id']).stop_reason,
+            'team_wrapup': str(db.get(Team, x['id']).wrapup_until),
+            'audit': [(item.action, item.detail) for item in db.scalars(select(AuditLog).where(AuditLog.target == x['id']))]}
+
     assert (await api.post(f"/api/sessions/{a['id']}/resume")).status_code == 409
 
 
@@ -636,3 +642,26 @@ async def test_codex_profile_helper_launch_survives_tmux_transport_limit(api, pr
     for text in ['developer_instructions=', 'Role:', 'capabilities', 'features.hooks=true']:
         assert text.lower() in script.lower()
     assert any('launch-command.sh' in command for command in requests)
+
+
+async def test_expiry_before_lifetime_pass_preserves_only_bounded_lead_wrapup(api, project, env):
+    from datetime import timedelta
+
+    from helpers import pause_supervisor
+
+    from acc.server import session_caps
+    from acc.server.models import Team
+    from acc.server.orchestrator import verification
+    from acc.server.supervisor_common import now
+    x = await lead(api, project, env)
+    await pause_supervisor(api)
+    with write_db(api.app.state.db) as db:
+        team = db.get(Team, x['id'])
+        team.expires_at = now() - timedelta(seconds=1)
+        db.commit()
+        root = db.get(Session, x['id'])
+        assert not team.stopped and team.wrapup_until is None
+        caps = session_caps.check_execution(db, root, True)
+        assert caps['expires_at'] == int(verification.deadline(db, team).timestamp())
+        with pytest.raises(session_caps.Refused):
+            session_caps.authorize(db, root, 'ports')  # wrap-up never restores operational/launch authority

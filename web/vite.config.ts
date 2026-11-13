@@ -29,6 +29,7 @@ export default defineConfig({
     },
   }],
   build: {
+    cssMinify: "lightningcss",
     manifest: true, outDir: "../src/acc/server/static", emptyOutDir: true, sourcemap: false,
     // Fonts are always files: the CSP (font-src 'self') blocks data: URLs, and a small inlined subset showed a console
     // error on every page (UX review R11).

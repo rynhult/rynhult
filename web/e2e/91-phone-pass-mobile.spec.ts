@@ -1,10 +1,11 @@
+import { projectWorkspace } from "./helpers";
 // Phone pass (rc): every main flow at 390 px, touch, both themes. Nothing may stick out sideways, tap targets are at
 // least 44 px (inline text links excepted, as WCAG allows; a checkbox counts with its label), fixed or sticky bars
 // never cover an input, and with the keyboard open the send button stays reachable.
 import { expect, test, type Page } from "./fixtures";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { AUTH_FILE, control, csrfHeaders, info, sessionWithChanges } from "./helpers";
+import { settingsSectionIds, AUTH_FILE, control, csrfHeaders, info, sessionWithChanges } from "./helpers";
 import type { AttentionItem } from "../src/lib/types";
 
 test.use({ storageState: AUTH_FILE, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -132,7 +133,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto("/");
     const headers = await csrfHeaders(page);
     const project = await page.request.post("/api/projects", { headers, data: {
-      slug: `phone-pass-${randomUUID().slice(0, 8)}`, name: "Phone pass", workspace_path: `${info().workspace}/../mobile-demo` } });
+      slug: `phone-pass-${randomUUID().slice(0, 8)}`, name: "Phone pass", workspace_path: projectWorkspace() } });
     expect(project.ok()).toBeTruthy();
     const pid = (await project.json()).id;
     expect((await page.request.post(`/api/projects/${pid}/trust`, { headers })).ok()).toBeTruthy();
@@ -141,12 +142,12 @@ for (const theme of ["light", "dark"] as const) {
     expect(launched.ok()).toBeTruthy();
     const sid = (await launched.json()).id;
     // Another worker's waiting session can precede this test's own Inbox item.
-    await page.route("**/api/attention?scope=open", async route => {
+    await page.route(/\/api\/attention(?:\?.*)?$/, async route => {
       const response = await route.fetch();
       const items: AttentionItem[] = await response.json();
       const own = items.find(item => item.kind === "needs_input" && item.session_id === sid);
       await route.fulfill({ response, json: own ? [
-        { ...own, id: -1, session_id: "unrelated-session", title: "Another session needs your input" }, ...items,
+        { ...own, id: -1, session_id: "unrelated-session", session_name: "Unrelated session", title: "Another session needs your input" }, ...items,
       ] : items });
     });
     try {
@@ -156,6 +157,9 @@ for (const theme of ["light", "dark"] as const) {
 
       control(sid, "permission");  // the agent asks: Inbox has something to answer
       await page.goto("/inbox");
+      const ownNotice = page.getByRole("list", { name: "Inbox items", exact: true }).getByRole("button").filter({ hasText: `phone-${theme}` });
+      await expect(ownNotice).toBeVisible({ timeout: 20_000 });
+      await ownNotice.click();
       const answer = page.getByRole("link", { name: "Answer in terminal", exact: true })
         .and(page.locator(`[href="/sessions/${sid}"]`));
       await expect(answer).toBeVisible({ timeout: 20_000 });
@@ -182,10 +186,10 @@ for (const theme of ["light", "dark"] as const) {
 
       await page.goto("/");
       await page.getByRole("button", { name: "New session" }).first().click();
-      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByRole("region", { name: "New session", exact: true })).toBeVisible();
       await check(page, `${theme} New session`);
-      await page.getByRole("dialog").getByPlaceholder("What should the agent work on?").fill("Fix the failing test");
-      await keyboardOpen(page, `${theme} New session`, page.getByRole("dialog").getByRole("button", { name: /^(Trust and )?[Ll]aunch$/ }));
+      await page.getByRole("region", { name: "New session", exact: true }).getByPlaceholder("What should the agent work on?").fill("Fix the failing test");
+      await keyboardOpen(page, `${theme} New session`, page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: /^(Trust and )?[Ll]aunch$/ }));
       await page.keyboard.press("Escape");
 
       await page.goto(`/projects/${pid}`);
@@ -198,7 +202,7 @@ for (const theme of ["light", "dark"] as const) {
       }
 
       await page.goto("/settings");
-      const options = await page.locator("#settings-section option").evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value));
+      const options = await settingsSectionIds(page);
       for (const value of options.filter((v) => v !== "all")) {
         await page.goto(`/settings#${value}`);
         await check(page, `${theme} Settings ${value}`);
@@ -215,7 +219,7 @@ for (const theme of ["light", "dark"] as const) {
       await check(page, `${theme} Backups setup`);
 
       await page.goto("/settings#access-devices");
-      const pair = page.getByRole("button", { name: "Pair device" }).first();
+      const pair = page.getByRole("button", { name: "Pair a phone" }).first();
       if (await pair.count()) {
         await pair.click();
         await check(page, `${theme} Pair a phone`);

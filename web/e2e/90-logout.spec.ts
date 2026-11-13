@@ -13,7 +13,8 @@ test("logout, then log in with password and a fresh code", async ({ page }) => {
   await page.getByLabel("Authenticator code").fill(totp(loadSecret()));
   await page.getByRole("button", { name: "Sign in", exact: true }).dblclick();
   await expect(page.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
-  await page.getByTitle("Sign out").click();
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   // Let the logout navigation finish before testing a fresh protected-page visit. Authentication
   // can redirect before the document's load event: observe the committed request, then assert the URL.

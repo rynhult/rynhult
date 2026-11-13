@@ -33,14 +33,12 @@ def test_dry_run_reports_mapping_orphans_and_never_changes_source(tmp_path):
     assert result['blocked'] is True
     assert result == report_copy(path, namespace='e41c9c3b-4f72-4ba4-9834-e42af726a754')
 
-
 def test_cli_missing_file_does_not_create_database(tmp_path):
     path = tmp_path / 'absent.db'
     result = subprocess.run([sys.executable, '-m', 'acc.organization_ids', str(path),
                              '--namespace', 'e41c9c3b-4f72-4ba4-9834-e42af726a754'], capture_output=True)
     assert result.returncode != 0
     assert not path.exists()
-
 
 def test_complete_schema_is_inventoried(tmp_path):
     from sqlalchemy import create_engine
@@ -56,7 +54,6 @@ def test_complete_schema_is_inventoried(tmp_path):
     assert 'infrastructure_credential.owner' in result['references']
     assert 'audit_log.actor' in result['references']
 
-
 def test_foreign_keys_and_name_keyed_settings_are_reported(tmp_path):
     from sqlalchemy import create_engine
 
@@ -70,8 +67,7 @@ def test_foreign_keys_and_name_keyed_settings_are_reported(tmp_path):
         db.execute("INSERT INTO setting(key,value,updated_at) VALUES('ui_header.alex','{}','2026-11-01')")
     result = report_copy(path, namespace='e41c9c3b-4f72-4ba4-9834-e42af726a754')
     assert result['foreign_keys']['session.project_id']['target'] == 'project.id'
-    assert result['name_keyed_settings'] == {'budget.': 1, 'tools.person.': 0, 'risk_labels.': 0, 'phone_banner.': 0, 'ui_shell.': 0, 'ui_header.': 1, 'setup_level.': 0, 'theme.person.': 1}
-
+    assert result['name_keyed_settings'] == {'budget.': 1, 'tools.person.': 0, 'risk_labels.': 0, 'phone_banner.': 0, 'ui_header.': 1, 'setup_level.': 0, 'theme.person.': 1}
 
 def test_reserved_identity_collision_blocks_mapping(tmp_path):
     import pytest

@@ -3,7 +3,7 @@ import { gotoLoadedPage } from './loaded-page';
 import {execFileSync} from 'node:child_process';
 import {environmentValue} from '../../src/acc/env.mjs';
 import {expect,test} from './fixtures';
-import {AUTH_FILE,csrfHeaders,freshStep,gitProject,expectAxeClean,loadSecret,PASSWORD,totp,wikiShotPath,info} from './helpers';
+import {AUTH_FILE,openAdvanced,csrfHeaders,freshStep,gitProject,expectAxeClean,loadSecret,PASSWORD,totp,wikiShotPath,info} from './helpers';
 test.use({storageState:AUTH_FILE});
 test.setTimeout(90000);
 // This serial file shares its fixture owner's sign-in across repetitions.
@@ -139,17 +139,18 @@ test('project changes are reviewed, apply once, and frozen sessions keep their o
     const policy=await (await page.request.get(`/api/security/effective?project_id=${project.id}`)).json();
     expect(policy.switches.force_push).toBe(false);expect(policy.sources.force_push).toEqual({kind:'project',project_id:project.id});
     await page.getByRole('button',{name:'New session',exact:true}).click();
-    const launch=page.getByRole('dialog',{name:'New session',exact:true});
+    const launch=page.getByRole('region', {name:'New session',exact:true});
+    await openAdvanced(launch);
     await expect(launch.getByRole('combobox',{name:'Project',exact:true})).toBeVisible();
     await launch.getByRole('combobox',{name:'Project',exact:true}).selectOption(String(project.id));
     await expect(launch.getByRole('button',{name:/Custom security.*This launch/})).toBeVisible();
-    await launch.getByRole('button',{name:'Cancel',exact:true}).click();
+    await launch.getByRole('button',{name:'Back to workspace',exact:true}).click();
     const created=await page.request.post('/api/sessions',{headers:project.headers,data:{project_id:project.id,provider:'claude',name:'Frozen security example'}});
     expect(created.ok(),await created.text()).toBe(true);sessionId=(await created.json()).id;
     // Loosen a second control while the first session continues using its original record.
     await saveScope(page,{kind:'project',project_id:project.id},{force_push:false,secrets:false});
     await openDocument(page,`/sessions/${sessionId}`);
-    await expect(page.getByRole('button',{name:/Custom security · 2 off/}).first()).toBeVisible();
+    await expect(page.getByRole('link',{name:/Security: Custom security · 2 off/}).first()).toBeVisible();
     const frozen=page.getByRole('button',{name:/Custom security · 1 off.*This session.*frozen launch/}).first();
     await expect(frozen).toBeVisible();await frozen.click();
     await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText(`Frozen launch revision ${policy.revision}`);
@@ -180,7 +181,7 @@ for(const width of [1440,390]) test(`tightening with a running weaker session at
     await expect(panel.getByText('Server policy saved.',{exact:false})).toBeVisible();
     await expect(panel.getByRole('button',{name:/Current protections On · 1 session on older settings/})).toBeVisible();
     const old=panel.getByRole('listitem').filter({has:page.getByRole('link',{name:`Older settings ${width}`,exact:true})});
-    await expect(page.getByRole('button',{name:`Current protections On · 1 session on older settings · ${project.slug} project`,exact:true})).toBeVisible();
+    await expect(page.getByRole('link',{name:`Security: Current protections On · 1 session on older settings · ${project.slug} project`,exact:true})).toBeVisible();
     await expectAxeClean(page,'#security');
     await expect(old.getByRole('button',{name:'Stop',exact:true})).toBeVisible();
     await expect(old.getByRole('button',{name:'Start a new session',exact:true})).toBeVisible();
@@ -195,8 +196,8 @@ for(const width of [1440,390]) test(`tightening with a running weaker session at
     await stop.getByRole('button',{name:'Cancel',exact:true}).click();
     await expect(old).toBeVisible();
     await old.getByRole('button',{name:'Start a new session',exact:true}).click();
-    await expect(page.getByRole('dialog',{name:'New session',exact:true})).toBeVisible();
-    await page.getByRole('dialog',{name:'New session',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(page.getByRole('region', {name:'New session',exact:true})).toBeVisible();
+    await page.getByRole('region', {name:'New session',exact:true}).getByRole('button',{name:'Back to workspace',exact:true}).click();
     await old.getByRole('button',{name:'Stop',exact:true}).click();
     await stop.getByRole('button',{name:'Stop',exact:true}).click();
     await expect(panel.getByText('0 sessions on older settings.',{exact:false})).toBeVisible();
@@ -253,10 +254,10 @@ for(const width of [1440,390]) test(`owner badge counts other accounts and confi
   try {
     for(const path of ['/', '/sessions', `/projects/${project.id}`]) {
       await openDocument(page,path);
-      const badge=page.getByRole('button',{name:/(Custom security|Current protections On).*1 session on older settings/}).filter({visible:true}).first();
+      const badge=page.getByRole('link',{name:/Security: (Custom security|Current protections On).*1 session on older settings/}).filter({visible:true}).first();
       await expect(badge).toBeVisible();
-      await expect(badge).toContainText(path.startsWith('/projects/')?'1 off':'Current protections On');
-      await expect(badge).not.toContainText('1 sessions');
+      await expect(badge).toHaveAccessibleName(new RegExp(path.startsWith('/projects/')?'1 off':'Current protections On'));
+      await expect(badge).not.toHaveAccessibleName(/1 sessions/);
     }
     await openDocument(page,`/sessions/${fixture.id}`);
     await expect(page.getByText('This session · older settings · frozen protections unavailable',{exact:true}).filter({visible:true}).first()).toBeVisible();
@@ -400,10 +401,9 @@ test('acknowledged policy fixtures keep current and frozen Unrestricted badges d
     await expect(frozen).toBeVisible();await frozen.click();
     await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText('Frozen launch revision 77');
     await page.keyboard.press('Escape');
-    await page.getByRole('button',{name:new RegExp(`Unrestricted.*${project.slug} project`)}).first().click();
-    await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText('Current policy revision 99');
-    await expect(page.getByRole('dialog',{name:'Security protections'})).toContainText('Authentication, owner approvals');
-    await page.keyboard.press('Escape');
+    await page.getByRole('link',{name:new RegExp(`Security: Unrestricted.*${project.slug} project`)}).first().click();
+    await expect(page.locator('#security')).toBeVisible();
+    await expect(page.locator('#security')).toContainText('Authentication, owner approvals');
   } finally {await page.request.post(`/api/sessions/${session.id}/stop`,{headers:project.headers});}
 });
 
@@ -492,9 +492,9 @@ test('SS-5 audit distinguishes refusal conflict and failed apply from successful
 test('SS-2 dangerous launch confirmation cannot override provider prompts On',async({page})=>{
   const project=await gitProject(page,'security-provider');
   await openDocument(page,`/projects/${project.id}`);
-  await page.getByRole('main').getByRole('button',{name:'New session',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'New session',exact:true});
-  await dialog.getByRole('button',{name:/^Advanced/}).click();
+  await page.locator('#shell-new-session').click();
+  const dialog=page.getByRole('region', {name:'New session',exact:true});
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox',{name:'Permissions',exact:true}).selectOption('bypassPermissions');
   await expect(dialog.getByText('This confirmation cannot override Security.',{exact:false})).toBeVisible();
   await dialog.getByRole('checkbox',{name:/The agent will run commands without asking/}).check();

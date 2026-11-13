@@ -115,7 +115,7 @@ async def test_desktop_project_approval_session_terminal_and_files(env, desktop_
         launched = await client.post('/api/sessions', json=body)
         assert launched.status_code == 201, launched.text
         session = launched.json()
-        changing = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.163.0'})
+        changing = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.167.1'})
         assert changing.status_code == 409 and 'Stop running sessions' in changing.text
         async def output():
             response = await client.get(f"/api/sessions/{session['id']}/terminal-output")
@@ -277,12 +277,12 @@ async def test_cli_install_is_unprivileged_pinned_and_provider_only(env, desktop
                                 cookies={'acc_session': token}, headers={'x-acc-csrf': csrf}) as client:
         invalid = await client.post('/api/desktop/cli', json={'provider': 'bash', 'version': '1.2.3'})
         assert invalid.status_code == 422
-        pinned = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.163.0'})
+        pinned = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.167.1'})
         assert pinned.status_code == 200, pinned.text
-        assert pinned.json()['version'] == '0.163.0'
+        assert pinned.json()['version'] == '0.167.1'
         import json
         assert json.loads((env['home'] / 'fake-npm-installed.json').read_text()) == {
-            'dependencies': {'@openai/codex': {'version': '0.163.0'}}}
+            'dependencies': {'@openai/codex': {'version': '0.167.1'}}}
 
 
 async def test_cli_install_refuses_root_without_running_npm(env, desktop_app, monkeypatch):
@@ -294,7 +294,7 @@ async def test_cli_install_refuses_root_without_running_npm(env, desktop_app, mo
     token, csrf = runtime().bootstrap_owner(desktop_app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=desktop_app), base_url='http://acc',
                                 cookies={'acc_session': token}, headers={'x-acc-csrf': csrf}) as client:
-        response = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.163.0'})
+        response = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.167.1'})
     assert response.status_code == 502
     assert 'unprivileged agent account, never root' in response.text
     assert not (env['home'] / 'fake-npm-installed.json').exists()
@@ -352,7 +352,7 @@ async def test_break_it_6_desktop_routes_refuse_foreign_authority(desktop_app):
         token, csrf = auth.create_session(db, member, 'test')
         db.commit()
     endpoints = [('GET', '/api/desktop/status', None),
-                 ('POST', '/api/desktop/cli', {'provider': 'codex', 'version': '0.163.0'}),
+                 ('POST', '/api/desktop/cli', {'provider': 'codex', 'version': '0.167.1'}),
                  ('POST', '/api/desktop/projects/123/native', {'accept': True})]
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=desktop_app), base_url='http://acc') as client:
         for method, path, body in endpoints:
@@ -390,11 +390,11 @@ async def test_break_it_6_cli_update_waits_for_actual_session_exit(env, desktop_
         try:
             await asyncio.wait_for(entered.wait(), 5)
             # Stop intent is durable, but its real tmux pane is deliberately still alive.
-            update = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.163.0'})
+            update = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.167.1'})
         finally:
             release.set()
             assert (await stopping).status_code == 200
         assert update.status_code == 409, update.text
         assert not (env['home'] / 'fake-npm-installed.json').exists()
-        retry = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.163.0'})
+        retry = await client.post('/api/desktop/cli', json={'provider': 'codex', 'version': '0.167.1'})
         assert retry.status_code == 200, retry.text

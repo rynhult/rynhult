@@ -7,7 +7,7 @@ from acc.server.models import AuditLog, DevicePairing
 
 
 async def claim(api, pending):
-    return await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})
+    return await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})
 
 
 async def test_closing_a_pairing_cancels_its_link(api, env, monkeypatch):

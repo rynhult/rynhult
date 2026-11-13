@@ -78,12 +78,12 @@ def test_allowlist_is_exactly_the_design_surface():
     assert set(p.OPERATIONS) == {
         "initialize", "session.attach", "session.detach", "session.snapshot", "history.page", "events.read", "events.ack",
         "operation.register", "operation.get", "operation.cancel", "turn.submit", "turn.steer", "turn.interrupt",
-        "decision.reply", "configuration.read", "configuration.request", "control.claim", "control.take", "control.release",
+        "decision.reply", "configuration.read", "configuration.request", "control.claim", "control.take", "writer.take", "control.release",
         "terminal.attach", "terminal.detach", "terminal.input", "terminal.resize", "terminal.drain", "switch.prepare",
-        "switch.commit", "switch.cancel", "session.stop", "session.resume", "attachment.begin", "attachment.chunk",
+        "switch.commit", "switch.cancel", "switch.recover", "session.stop", "session.resume", "attachment.begin", "attachment.chunk",
         "attachment.finish", "attachment.get", "attachment.read", "attachment.remove", "presence.update", "security.read"}
     assert set(p.OPERATIONS) - p.R1_METHODS == {
-        "turn.steer", "configuration.request", "switch.prepare", "switch.commit", "switch.cancel", "attachment.begin",
+        "turn.steer", "configuration.request", "attachment.begin",
         "attachment.chunk", "attachment.finish", "attachment.get", "attachment.read", "attachment.remove"}
     assert {case["expect"]["method"] for case in cases("commands") if case["name"].startswith("valid ")} == set(p.OPERATIONS)
 
@@ -111,8 +111,8 @@ def test_events_are_exactly_the_design_surface():
 def test_control_permission_methods_are_pinned():
     # Nothing reads this flag at M0, and the hub will rely on it.
     assert {name for name, spec in p.OPERATIONS.items() if spec.needs_control} == {
-        "turn.submit", "turn.steer", "turn.interrupt", "configuration.request", "control.claim", "control.take", "control.release",
-        "switch.prepare", "switch.commit", "switch.cancel", "session.stop", "session.resume"}
+        "turn.submit", "turn.steer", "turn.interrupt", "configuration.request", "control.claim", "control.take", "writer.take", "control.release",
+        "switch.prepare", "switch.commit", "switch.cancel", "switch.recover", "session.stop", "session.resume"}
 
 
 def test_every_durable_method_declares_who_settles_it():
@@ -155,7 +155,7 @@ def test_r1_refuses_later_methods_even_when_every_feature_and_capability_is_offe
     offered = p.Negotiated(1, 0, p.FEATURES)
     refused_methods = set()
     for case in cases("commands"):
-        if case["name"].startswith("valid ") and case["expect"]["admit"] != "ok":
+        if case["name"].startswith("valid ") and case["expect"]["method"] not in p.R1_METHODS:
             with pytest.raises(p.RelayError) as refused:
                 p.admit(p.parse_command(frame(case["frame"])), offered, EVERYTHING)
             assert refused.value.code is p.ErrorCode.UNSUPPORTED and "feature" not in refused.value.details
@@ -825,8 +825,11 @@ def test_adapter_outcome_cannot_outrun_its_evidence(outcome, evidence):
 
 def test_contract_modules_import_only_the_standard_library_and_each_other():
     root = Path(p.__file__).parent
-    paths = list(root.rglob("*.py"))
+    # Implementations may depend on broker transport; the M0 contracts stay pure.
+    paths = [root / "__init__.py", root / "protocol.py", root / "adapters" / "__init__.py",
+             root / "adapters" / "base.py"]
     assert {root / "protocol.py", root / "adapters" / "base.py"} <= set(paths)
+
     for path in paths:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.level:

@@ -1,4 +1,4 @@
-"""Upgrade rehearsal: synthetic data at 0066 survives the app's own migration to head, value for value, and a
+"""Upgrade rehearsal: data survives migration to head, except the intentional NULL-owner normalization, and a
 downgrade to 0066 restores the schema. SQLite always; PostgreSQL from local binaries when present (a throwaway cluster,
 Unix socket only). scripts/upgrade_rehearsal.py adds the e2e server start on the upgraded database."""
 import os
@@ -39,18 +39,31 @@ def test_upgrade_keeps_every_value_and_downgrade_restores_the_schema(url, tmp_pa
     base = rehearsal.schema(url)
     assert 'decision' not in base['tool_request']
     before = rehearsal.snapshot(url, base)
+    # 0092 deliberately normalizes the legacy installation principal representation.
+    expected = dict(before)
+    owner_index = base['session'].index('owner')
+    expected['session'] = sorted((tuple('@api' if index == owner_index and value is None else value
+                                        for index, value in enumerate(row)) for row in before['session']), key=repr)
 
     migrate(url)  # the path accd takes at startup
-    assert rehearsal.version(url) == rehearsal.head(url)
+    assert rehearsal.version(url) == rehearsal.head(url) == '0093'
     upgraded = rehearsal.schema(url)
-    approval_tables = {'approval_consent', 'approval_operation', 'approval_batch'}
+    relay_tables = {'relay_session', 'relay_run', 'relay_operation', 'relay_event', 'relay_decision', 'relay_preference', 'relay_ownership'}
+    assert relay_tables.isdisjoint(base)
+    assert relay_tables <= upgraded.keys()
+    assert rehearsal.snapshot(url, {name: upgraded[name] for name in relay_tables}) == {name: [] for name in relay_tables}
+    install_tables = {'install_recipe', 'account_install_journal'}
+    assert install_tables.isdisjoint(base)
+    assert install_tables <= upgraded.keys()
+    assert rehearsal.snapshot(url, {name: upgraded[name] for name in install_tables}) == {name: [] for name in install_tables}
+    approval_tables = {'approval_consent', 'approval_operation', 'approval_batch', 'delegated_action'}
     assert approval_tables.isdisjoint(base)
     assert approval_tables <= upgraded.keys()
     assert 'decision' in upgraded['tool_request']
     assert rehearsal.snapshot(url, {name: upgraded[name] for name in approval_tables}) == {
-        'approval_consent': [], 'approval_operation': [], 'approval_batch': []}
+        'approval_consent': [], 'approval_operation': [], 'approval_batch': [], 'delegated_action': []}
     after = rehearsal.snapshot(url, base)
-    assert {t for t in before if before[t] != after[t]} == set()
+    assert {t for t in expected if expected[t] != after[t]} == set()
     assert rehearsal.integrity(url) == []
     engine = make_engine(url)
     try:  # new rows still get ids after explicit seeded ones (PostgreSQL sequences)
@@ -78,8 +91,9 @@ def test_upgrade_keeps_every_value_and_downgrade_restores_the_schema(url, tmp_pa
     assert rehearsal.integrity(url) == []
     down = rehearsal.snapshot(url, base)
     # 0067's downgrade deletes what older code would misread (security review 9, SR9-8): the phone-bound sign-in and
-    # the pending phone pairing added after the upgrade are gone; every seeded row is as it was.
-    assert {t for t in before if before[t] != down[t]} == {'audit_log'}
+    # the pending phone pairing added after upgrade are gone; other seeded data retains the normalized owner representation.
+    assert {t for t in expected if expected[t] != down[t]} == {'audit_log'}
+    assert down['session'] == expected['session']
     if 'device_pairing' in added:
         assert added['auth_session'] == 1
         assert down['device_pairing'] == before['device_pairing'] and down['auth_session'] == before['auth_session']

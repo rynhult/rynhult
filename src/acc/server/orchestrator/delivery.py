@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, func, or_, select, update
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, exists, func, or_, select, update
 from sqlalchemy.orm import Mapped, defer, mapped_column
 
 from acc import providers
@@ -129,6 +129,9 @@ def validate_text(text):
 
 
 NOTICES = {
+    'relay_not_supported_in_release': 'Scheduled/notice automation is not supported in this release. Nothing was sent or replayed.',
+    'relay_admission_unconfirmed': 'Submission unconfirmed. Waiting for provider evidence; this message will not be sent again.',
+    'relay_unavailable': 'Not delivered: this session requires a qualified relay transport.',
     'superseded_run_mode': 'Not sent: a newer run-mode change replaced this notice before the lead resumed.',
     'input_conflict': 'Not delivered: the input could not be cleared. Clear it in the terminal before sending again.',
     'terminal_in_use': 'Not delivered: another window controls the terminal. Close it, then retry.',
@@ -168,7 +171,7 @@ def transition(db, row, state, *, ack=None, error=None):
                         detail={'delivery': row.id, 'error': error}))
 
 
-def enqueue(supervisor, session_id, actor, text):
+def enqueue(supervisor, session_id, actor, text, *, relay_service=False):
     if not enabled():
         refuse('delivery queue is disabled')
     validate_text(text)
@@ -178,14 +181,24 @@ def enqueue(supervisor, session_id, actor, text):
             refuse('delivery requires a running managed session')
         from .assignments import current
         attempt = current(db, session_id)
-        row = enqueue_in_transaction(db, supervisor, session, actor, text, attempt_id=attempt.id if attempt else None)
+        row = enqueue_in_transaction(db, supervisor, session, actor, text, attempt_id=attempt.id if attempt else None, relay_service=relay_service)
         db.commit()
         return public(row)
 
 
-def enqueue_in_transaction(db, supervisor, session, actor, text, *, attempt_id=None):
+def enqueue_in_transaction(db, supervisor, session, actor, text, *, attempt_id=None, relay_service=False, notice_family=None):
+    from acc.server.models import RelaySession
+    relay = db.get(RelaySession, session.id)
+    if relay:
+        from ..session_relay import delivery as relay_delivery
+        manager = relay_delivery.runtime(supervisor)
+        if relay_service is not True or (notice_family is None and (manager is None or not relay_delivery.ready(manager.ctx, relay))):
+            refuse('this session requires qualified relay delivery; terminal typing is unavailable')
     from acc.server import claude_auth
-    claude_auth.require(db, session)
+    if not relay:
+        claude_auth.require(db, session)
+    # Qualified relay uses its attested frozen API mode plus the owned CLI's
+    # live verifier. SDK-only owners have no legacy tmux auth observation.
     validate_text(text)
     count = len(list(db.scalars(select(MessageDelivery.id).where(
         MessageDelivery.session_id == session.id, MessageDelivery.state.not_in(TERMINAL)).limit(21))))
@@ -199,6 +212,17 @@ def enqueue_in_transaction(db, supervisor, session, actor, text, *, attempt_id=N
         text_sha256=hashlib.sha256(text.encode()).hexdigest(), bytes=len(text.encode()), expires_at=now() + TTL)
     db.add(row)
     db.flush()
+    if relay:
+        try:
+            if notice_family is not None:
+                relay_delivery.seal_notice(db, row, notice_family)
+            else:
+                relay_delivery.registration(manager.ctx, db, row)
+        except Exception as error:
+            from acc.session_relay.protocol import RelayError
+            if isinstance(error, RelayError):
+                refuse('this session requires a current qualified relay delivery grant')
+            raise
     event(db, session, 'team.delivery', {'id': row.id, 'session': session.id, 'attempt': attempt_id, 'state': 'queued'})
     return row
 
@@ -230,6 +254,10 @@ def authorized(db, session, actor):
 async def safety(supervisor, session_id, writer_token=None, actor=None):
     with supervisor.db() as db:
         session = supervisor._get(db, session_id)
+        from acc.server.models import RelaySession
+        if db.get(RelaySession, session_id):
+            from ..session_relay.delivery import idle_for_assignment
+            return idle_for_assignment(supervisor, db, session, actor)
         from acc.server import claude_auth
         claude_auth.require(db, session)
         if not runnable(session) or actor is not None and not authorized(db, session, actor):
@@ -356,9 +384,19 @@ async def _deliver(supervisor, identifier, progress=None):
     writers = getattr(supervisor, '_delivery_writers', None)
     writer_token = DeliveryWriter()
     session_id = None
+    from ..session_relay import delivery as relay_delivery
+    if await relay_delivery.deliver(supervisor, identifier):
+        return
     try:
         with supervisor.db() as db:
-            row = db.get(MessageDelivery, identifier)
+            row = db.scalar(select(MessageDelivery).where(MessageDelivery.id == identifier).with_for_update())
+            if row is None or row.state != 'queued':
+                return
+            from acc.server.models import RelaySession
+            if db.get(RelaySession, row.session_id):
+                transition(db, row, 'failed', error='relay_unavailable')
+                db.commit()
+                return
             session_id, text, actor = row.session_id, row.body, row.actor
             if writers:
                 session = db.get(Session, session_id)
@@ -382,7 +420,11 @@ async def _deliver(supervisor, identifier, progress=None):
         await ingest(supervisor, session_id)
         with supervisor.db() as db:
             row = db.scalar(select(MessageDelivery).where(MessageDelivery.id == identifier).with_for_update())
-            if row.state != 'queued' or row.actor != actor:
+            if row is None or row.state != 'queued' or row.actor != actor:
+                return
+            if db.get(RelaySession, row.session_id):
+                transition(db, row, 'failed', error='relay_unavailable')
+                db.commit()
                 return
             # A queued nudge/scope notice may have coalesced while safety awaited the broker.
             # Claim and send the same body; an old-body ACK must never cover a new version.
@@ -560,7 +602,12 @@ async def process_once(supervisor):
                         MessageDelivery.state == 'queued', or_(MessageDelivery.expires_at <= now(),
                         (Session.desired_state != 'running') & ~func.coalesce(mode_resume, False))).limit(100)))
                     for row in stale:
+                        from acc.session_relay import protocol as relay_protocol
+
+                        from ..session_relay import delivery as relay_delivery
                         expired = row.expires_at <= now()
+                        relay_delivery.end_waiting(db, row, relay_protocol.FailureReason.EXPIRED if expired
+                                                   else relay_protocol.FailureReason.AUTHORITY_ENDED)
                         transition(db, row, 'expired' if expired else 'failed',
                                    error='queue_expired' if expired else 'session_stopped')
                     # One head per session, so a busy/offline queue cannot bury another
@@ -569,9 +616,11 @@ async def process_once(supervisor):
                         partition_by=MessageDelivery.session_id,
                         order_by=(MessageDelivery.created_at, MessageDelivery.id)).label('position')).where(
                             MessageDelivery.state == 'queued').subquery()
+                    from ..models import RelaySession
                     rows = list(db.scalars(select(MessageDelivery).join(heads, heads.c.id == MessageDelivery.id)
                         .join(Session).where(heads.c.position == 1, MessageDelivery.deliver_after <= now(),
-                            Session.desired_state == 'running', or_(Session.observed_state == 'idle',
+                            Session.desired_state == 'running', or_(exists(select(RelaySession.session_id).where(
+                                RelaySession.session_id == Session.id)), Session.observed_state == 'idle',
                             (Session.provider == 'copilot') & (Session.observed_state == 'waiting_input')))
                         .order_by(MessageDelivery.created_at, MessageDelivery.id).limit(4)))
                     identifiers = []
@@ -581,6 +630,8 @@ async def process_once(supervisor):
                         else:
                             identifiers.append(row.id)
                     db.commit()
+                from ..session_relay.delivery import reap_failed
+                await asyncio.gather(*(reap_failed(supervisor, row.id) for row in stale))
                 await asyncio.gather(*(deliver(supervisor, key) for key in identifiers))
             finally:
                 WRITE_INTENT.reset(token)
@@ -678,11 +729,40 @@ def run_mode_notice(db, supervisor, team_id, mode, version):
     for old in db.scalars(select(MessageDelivery).where(MessageDelivery.session_id == team_id,
         MessageDelivery.actor == 'supervisor', MessageDelivery.state == 'queued',
         MessageDelivery.preview.startswith(RUN_MODE_ORIGIN))):
-        transition(db, old, 'expired', error='superseded_run_mode')
+        from ..models import RelaySession
+        from ..session_relay import delivery as relay_delivery
+        if db.get(RelaySession, team_id):
+            relay_delivery.supersede_notice(db, old)
+        else:
+            transition(db, old, 'expired', error='superseded_run_mode')
     continuation = ('Continue: plan_ready when the plan is complete, then start helpers for unblocked phases.'
         if mode == 'build' else 'Continue read-only discovery and planning. Do not start implementation helpers.')
     return enqueue_in_transaction(db, supervisor, db.get(Session, team_id), 'supervisor',
-        f'{RUN_MODE_ORIGIN}Plan version {version}. Run mode is now {mode}. {continuation}')
+        f'{RUN_MODE_ORIGIN}Plan version {version}. Run mode is now {mode}. {continuation}',
+        relay_service=True, notice_family='run_mode')
+
+
+def pending_notice(db, session_id, prefix):
+    from ..models import RelaySession
+    from ..session_relay import delivery as relay_delivery
+    relay = db.get(RelaySession, session_id)
+    if relay:
+        from ..session_relay import store
+        store.lock(db, session_id)
+    candidates = db.scalars(select(MessageDelivery).where(MessageDelivery.session_id == session_id,
+        MessageDelivery.actor == 'supervisor', MessageDelivery.state == 'queued',
+        MessageDelivery.preview.startswith(prefix)).order_by(MessageDelivery.created_at, MessageDelivery.id).limit(21)).all()
+    for row in candidates:
+        if not relay:
+            return row
+        try:
+            if relay_delivery.notice_scope(db, row) is not None and relay_delivery.coalescible(db, row):
+                return row
+        except Exception as error:
+            from acc.session_relay.protocol import RelayError
+            if not isinstance(error, RelayError):
+                raise
+    return None
 
 
 def nudge_lead(db, team_id, what):
@@ -697,21 +777,27 @@ def nudge_lead(db, team_id, what):
             or lead.management != 'acc' or lead.desired_state != 'running'):
         return None
     origin = NUDGE_ORIGIN + ('No difference found between current and proposed. ' if what == 'proposal' else 'your person ')
-    pending = db.scalar(select(MessageDelivery).where(
-        MessageDelivery.session_id == team_id, MessageDelivery.actor == 'supervisor',
-        MessageDelivery.state == 'queued', MessageDelivery.preview.startswith(origin)).limit(1))
+    pending = pending_notice(db, team_id, origin)
     if what == 'proposal':
         text = origin + 'Review the corrected proposal notes with worklist. No approval was requested or recorded.'
     else:
         changed = [words for key, words in NUDGE_WHAT.items() if key == what or pending is not None and words in pending.body]
         said = ' and '.join([', '.join(changed[:-1]), changed[-1]] if len(changed) > 1 else changed)
         text = NUDGE_ORIGIN + f'your person {said}. Read the working list and the plan (worklist, plan) before you go on.'
+    from ..models import RelaySession
+    from ..session_relay import delivery as relay_delivery
+    relay = db.get(RelaySession, lead.id)
+    if relay and pending is not None:
+        relay_delivery.supersede_notice(db, pending)
+        pending = None
     if pending is None:
         pending = MessageDelivery(session_id=team_id, actor='supervisor', expires_at=team.expires_at or (now() + TTL))
         db.add(pending)
     pending.body, pending.preview, pending.bytes = text, text[:200], len(text.encode())
     pending.text_sha256, pending.updated_at = hashlib.sha256(text.encode()).hexdigest(), now()
     db.flush()
+    if relay:
+        relay_delivery.seal_notice(db, pending, 'lead')
     event(db, lead, 'team.delivery', {'id': pending.id, 'session': team_id, 'state': 'queued'})
     return pending
 
@@ -733,9 +819,7 @@ def nudge_parent(db, *, team_id, parent_id, name, status, assignment=None, attem
         return None
     name = re.sub(r'[^\w .-]', '', name or '')[:64].strip() or 'unnamed'
     line = f'helper {name} {status} for assignment {assignment or "unassigned"} (attempt {attempt or "none"}, version {version or 0})'
-    pending = db.scalar(select(MessageDelivery).where(
-        MessageDelivery.session_id == parent_id, MessageDelivery.actor == 'supervisor',
-        MessageDelivery.state == 'queued', MessageDelivery.preview.startswith(HELPER_NOTICE)).limit(1))
+    pending = pending_notice(db, parent_id, HELPER_NOTICE)
     suffix = '. Read it with the team tools and continue.'
     lines = pending.body[len(HELPER_NOTICE):-len(suffix)].split('; ') if pending else []
     if line not in lines:
@@ -744,13 +828,24 @@ def nudge_parent(db, *, team_id, parent_id, name, status, assignment=None, attem
         elif 'more helper updates available' not in lines:
             lines.append('more helper updates available')
     text = HELPER_NOTICE + '; '.join(lines) + suffix
+    from ..models import RelaySession
+    from ..session_relay import delivery as relay_delivery
+    relay = db.get(RelaySession, parent.id)
+    original_window = (pending.deliver_after, pending.expires_at) if relay and pending is not None else None
+    if relay and pending is not None:
+        relay_delivery.supersede_notice(db, pending)
+        pending = None
     if pending is None:
         pending = MessageDelivery(session_id=parent_id, actor='supervisor', expires_at=team.expires_at or (now() + TTL),
-                                  deliver_after=now() + timedelta(seconds=2))
+                                  deliver_after=original_window[0] if original_window else now() + timedelta(seconds=2))
+        if original_window:
+            pending.expires_at = original_window[1]
         db.add(pending)
     pending.body, pending.preview, pending.bytes = text, text[:200], len(text.encode())
     pending.text_sha256, pending.updated_at = hashlib.sha256(text.encode()).hexdigest(), now()
     db.flush()
+    if relay:
+        relay_delivery.seal_notice(db, pending, 'parent')
     event(db, parent, 'team.delivery', {'id': pending.id, 'session': parent_id, 'state': 'queued'})
     return pending
 
@@ -784,7 +879,7 @@ async def team_message(supervisor, caller_id, payload):
             result = retry(db, row)
             start_worker(supervisor)
             return {'helper': helper_id, 'delivery': result}
-    row = enqueue(supervisor, helper_id, f'session:{caller_id}', origin + text)
+    row = enqueue(supervisor, helper_id, f'session:{caller_id}', origin + text, relay_service=True)
     start_worker(supervisor)
     return {'helper': helper_id, 'delivery': row}
 

@@ -1,7 +1,7 @@
 import { test } from './shell-state';
 import { expect } from '@playwright/test';
 import { AUTH_FILE, expectAxeClean } from './helpers';
-test.use({ shellLayout: 'standard', storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE });
 
 test('qualification is panel information, while pending cleanup still needs action', async ({ page }) => {
   let pending: string[] = [];
@@ -13,15 +13,16 @@ test('qualification is panel information, while pending cleanup still needs acti
   const attention = page.getByRole('region', { name: 'Settings needing attention' });
   await expect(attention.getByText('Needs qualification', { exact: true })).toBeHidden();
   await expect(attention.getByText('Needs verification', { exact: true })).toBeHidden();
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('admin-features');
+  await page.getByRole('complementary', { name: 'Context sidebar' }).getByRole('link', { name: 'Admin features', exact: true }).click();
   await expect(page.locator('#admin-features').getByText('Needs qualification', { exact: true })).toBeVisible();
   await expect(page.locator('#admin-features').getByRole('region', { name: 'Previews', exact: true }).getByText('Needs verification', { exact: true })).toBeVisible();
   pending = ['Container cleanup needs your attention.'];
   await page.reload();
   await expect(page.locator('#admin-features').getByRole('alert')).toContainText(pending[0]);
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('password');
+  await page.getByRole('complementary', { name: 'Context sidebar' }).getByRole('link', { name: 'Password', exact: true }).click();
+  await attention.locator('summary').click();
   await expect(attention).toContainText(pending[0]);
-  const link = attention.getByRole('link', { name: 'Admin features', exact: true });
+  const link = attention.getByRole('link', { name: /Admin features/ });
   await expect(link).toHaveCSS('text-decoration-line', 'none');
   await expect(link).toHaveClass(/border/);
   await link.click();
@@ -35,12 +36,13 @@ test('an Updates error stays in its own panel and the attention link opens it', 
   const attention = page.getByRole('region', { name: 'Settings needing attention' });
   await expect(attention).toContainText("That service isn't available right now. Try again in a moment.");
   await expect(page.locator('#updates')).toBeHidden();
-  const link = attention.getByRole('link', { name: 'Updates', exact: true });
+  await attention.locator('summary').click();
+  const link = attention.getByRole('link', { name: /Updates/, exact: false });
   await expect(link).toHaveClass(/border/);
   await link.click();
   await expect(page.locator('#updates')).toBeVisible();
   await expect(page.locator('#updates')).toContainText("That service isn't available right now. Try again in a moment.");
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
+  await page.getByRole('complementary', { name: 'Context sidebar' }).getByRole('link', { name: 'Passkeys', exact: true }).click();
   await expect(page.locator('#updates')).toBeHidden();
   await expectAxeClean(page);
 });

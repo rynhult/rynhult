@@ -30,10 +30,10 @@ try {
   await expect(login.getByText('Logged in. Running sessions keep their conversations.')).toBeVisible();
   await login.getByRole('button', { name: 'Close', exact: true }).last().click();
   await page.getByRole('combobox', { name: 'Agent CLI', exact: true }).selectOption('codex');
-  await page.getByRole('textbox', { name: 'Exact CLI version', exact: true }).fill('0.163.0');
+  await page.getByRole('textbox', { name: 'Exact CLI version', exact: true }).fill('0.167.1');
   await page.getByRole('button', { name: 'Install or update CLI', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Install CLI', exact: true }).click();
-  await expect(page.getByText('Installed version 0.163.0 in the agent account.')).toBeVisible();
+  await expect(page.getByText('Installed version 0.167.1 in the agent account.')).toBeVisible();
   await shot('desktop-linux-providers');
   await page.getByRole('link', { name: 'Projects', exact: true }).first().click();
   await page.getByRole('button', { name: 'New project', exact: true }).first().click();

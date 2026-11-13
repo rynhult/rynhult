@@ -45,12 +45,13 @@ class BrokerClient:
     """Async JSON-lines client for acc-broker. One connection, requests serialized."""
 
     def __init__(self, socket_path: Path, trusted_uids: frozenset[int] | None = None, opener=None,
-                 timeout: float = 60.0, authority=None):
+                 timeout: float = 60.0, authority=None, runtime_opener=None):
         self.authority = authority
         self.folder_policy = None
         self.socket_path = socket_path
         self.timeout = timeout  # seconds to wait for one answer
         self.trusted_uids = trusted_uids  # who may own the listening end (None: anyone, for tests)
+        self.runtime_opener = runtime_opener
         self.opener = opener  # a node's channel instead of a local socket (multi-host): () -> (reader, writer)
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -79,7 +80,7 @@ class BrokerClient:
 
     async def call(self, method: str, **params):
         if self.folder_policy and method not in {'ping', 'list', 'session_auth', 'claude_auth', 'kill', 'interrupt', 'send_text', 'clear_env',
-                'read_spool', 'terminal_observer_geometry', 'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}:
+                'read_spool', 'terminal_observer_geometry', 'terminal_output', 'automation_screen', 'screen_prompt', 'clear_osc_status', 'team_reply', 'folder_check'}:
             expected = self.folder_policy()
             if expected is not None:
                 params['folder_revision'] = expected
@@ -130,6 +131,28 @@ class BrokerClient:
                     raise BrokerError(str(response.get("error", "unknown broker error"))[:500])
                 return response.get("result")
 
+    async def session_runtime(self, enrollment: dict):
+        """A dedicated, non-retrying connection. Never reuse the ordinary RPC reader."""
+        if self._writer is not None:
+            raise BrokerError('Session runtime requires a dedicated client.')
+        if self.runtime_opener is not None:
+            self._reader, self._writer = await self.runtime_opener()
+        else:
+            await self._connect()
+        request_id = next(self._ids)
+        try:
+            self._writer.write(json.dumps({'id': request_id, 'method': 'session_runtime', 'params': enrollment}).encode() + b'\n')
+            await self._writer.drain()
+            answer = response_from(await asyncio.wait_for(self._reader.readline(), self.timeout), request_id)
+            if not answer['ok'] or answer['result'] != {'version': enrollment.get('version', 1)}:
+                raise BrokerUnavailable('Session runtime is unavailable.')
+            reader, writer = self._reader, self._writer
+            self._reader = self._writer = None
+            return reader, writer
+        except BaseException:
+            await self.close()
+            raise
+
     async def close(self) -> None:
         if self._writer is not None:
             self._writer.close()
@@ -162,6 +185,7 @@ class Brokers:
         self.folder_policy = None
         self._clients: dict[Path, BrokerClient] = {}
         self._remote: dict[tuple[str, str], tuple[object, BrokerClient]] = {}
+        self.runtime_managers = set()
 
     def socket_for(self, account: str | None = None) -> Path:
         account = account or self.default_account
@@ -213,7 +237,8 @@ class Brokers:
                 link = self.hub.get(host)
             except ConnectionError:
                 raise MachineOffline(f"Machine offline: {host}. It checks in when it returns.") from None
-            client = BrokerClient(Path(f"{host}:{account}"), None, opener=lambda: link.open(account), timeout=timeout, authority=self.authority)
+            client = BrokerClient(Path(f"{host}:{account}"), None, opener=lambda: link.open(account), timeout=timeout, authority=self.authority,
+                                  runtime_opener=lambda: link.open_session_runtime(account))
             client.folder_policy = lambda: self.folder_policy(account, host) if self.folder_policy else None
             return client
         shared = self.get(account)
@@ -254,6 +279,7 @@ class Brokers:
         return [a for a in found if a != self.services_account or a == self.default_account] or [self.default_account]
 
     async def close(self) -> None:
+        await asyncio.gather(*(manager.close() for manager in self.runtime_managers))
         if self.hub is not None:
             await self.hub.close()
         for _, client in list(self._remote.values()):

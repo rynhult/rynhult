@@ -20,7 +20,7 @@ def names(key: str) -> tuple[str, ...]:
 
 
 PROTECTED_SESSION_VARIABLES = frozenset(
-    key for suffix in ('RUN_DIR', 'SESSION_ID', 'GUARD_FILES') for key in names('ACC_' + suffix)
+    key for suffix in ('RUN_DIR', 'SESSION_ID', 'GUARD_FILES', 'PARENT_SESSION_ID') for key in names('ACC_' + suffix)
 )
 
 

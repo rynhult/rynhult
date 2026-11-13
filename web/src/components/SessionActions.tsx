@@ -1,5 +1,4 @@
 import { CheckedResume } from "./shell/ResumeAction";
-import { useNewShell } from "../lib/uiShell";
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,7 +11,7 @@ import { OFFLINE_TITLE, useOffline } from "../lib/queries";
 import { isLive } from "./session-bits";
 
 export function SessionActions({ session, compact, checkResume = false, primaryOnly = false, secondaryOnly = false }: { session: SessionSummary; compact?: boolean; checkResume?: boolean; primaryOnly?: boolean; secondaryOnly?: boolean }) {
-  const shell = useNewShell();
+
   const queryClient = useQueryClient();
   const action = useMutation({
     mutationFn: (verb: string) => post(`/api/sessions/${session.id}/${verb}`),
@@ -32,7 +31,7 @@ export function SessionActions({ session, compact, checkResume = false, primaryO
   const live = isLive(session);
   const offline = useOffline();
   const off = offline ? { disabled: true, title: OFFLINE_TITLE } : {};
-  const resumeOff = shell && session.machine_offline ? { disabled: true, title: "Machine offline. Resume returns when the machine checks in." } : off;
+  const resumeOff = session.machine_offline ? { disabled: true, title: "Machine offline. Resume returns when the machine checks in." } : off;
   if (session.management === "external") {
     if (primaryOnly) return null;
     return (
@@ -51,7 +50,7 @@ export function SessionActions({ session, compact, checkResume = false, primaryO
   const stop = () => run("stop", { title: `Stop ${session.name}?`, body: "The process ends; the conversation is kept and Resume brings it back.", confirm: "Stop session" });
   const menuItem = "flex min-h-10 w-full items-center gap-2 rounded-md px-3 text-left text-[13px] hover:bg-panel-2";
   return (
-    <div className={clsx("flex items-center gap-1.5", shell && checkResume && "min-w-0 flex-1 flex-wrap")}>
+    <div className={clsx("flex items-center gap-1.5", checkResume && "min-w-0 flex-1 flex-wrap")}>
       {!primaryOnly && session.remote_url && (
         <a href={session.remote_url} target="_blank" rel="noreferrer"
           className="inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2 text-[13px] text-muted hover:bg-panel-2 hover:text-fg underline underline-offset-2"
@@ -82,7 +81,7 @@ export function SessionActions({ session, compact, checkResume = false, primaryO
           </Popover>
         </>
       ) : session.desired_state !== "archived" && (
-        shell && checkResume ? <CheckedResume session={session} compact={compact} pending={action.isPending} resume={() => void run('resume')} />
+        checkResume ? <CheckedResume session={session} compact={compact} pending={action.isPending} resume={() => void run('resume')} />
           : <Button size={size} variant="ghost" onClick={() => run("resume")} title="Resume the same conversation" aria-label="Resume" {...resumeOff}>
             <Play size={14} aria-hidden="true" /> {!compact && "Resume"}
           </Button>
@@ -92,7 +91,7 @@ export function SessionActions({ session, compact, checkResume = false, primaryO
           <Archive size={14} aria-hidden="true" /> Archive
         </Button>
       )}
-      {shell && action.error && (checkResume ? <div className="min-w-0 basis-full"><ErrorNote error={action.error} /></div> : <ErrorNote error={action.error} />)}
+      {action.error && (checkResume ? <div className="min-w-0 basis-full"><ErrorNote error={action.error} /></div> : <ErrorNote error={action.error} />)}
     </div>
   );
 }

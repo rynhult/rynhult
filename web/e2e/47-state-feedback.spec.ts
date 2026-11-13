@@ -1,7 +1,7 @@
 import { expect } from './fixtures';
 import { test } from './shell-state';
-import { AUTH_FILE, expectAxeClean } from './helpers';
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+import { selectSettingsSection, AUTH_FILE, expectAxeClean } from './helpers';
+test.use({ storageState: AUTH_FILE, });
 test('cached board sources independently disclose refresh failure and retry', async ({ page }) => {
   let fail = false;
   await page.route('**/api/board', r => fail ? r.fulfill({ status: 503, json: { detail: 'demo unavailable' } }) : r.continue());
@@ -28,8 +28,7 @@ test('settings index deep links to personal sign-in and verification expires', a
   await page.clock.install();
   await page.route('**/api/auth/passkeys/reauth', r => r.fulfill({ json: { ok: true } }));
   await page.goto('/settings');
-  const index = page.getByRole('navigation', { name: 'Settings sections' });
-  await index.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
+  await selectSettingsSection(page, 'passkeys');
   await expect(page).toHaveURL(/#passkeys$/);
   await page.getByLabel('Verification password', { exact: true }).fill('demo password');
   await page.getByLabel('Verification authenticator code', { exact: true }).fill('123456');

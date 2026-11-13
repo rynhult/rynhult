@@ -49,12 +49,13 @@ test('person starts alternatives, compares files, and keeps one without deleting
   const git = (...args: string[]) => execFileSync('git', ['-C', folder, ...args]);
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
   await dialog.getByLabel('Name', { exact: true }).fill(sessionName);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(project.id));
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /Several agents/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('several');
   await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeDisabled();
   await expect(dialog.getByRole('status')).toHaveText('Add a task to start 2 runs.');
   await dialog.getByLabel('Task', { exact: true }).fill('Improve the demo greeting.');
@@ -161,10 +162,11 @@ test('person starts alternatives, compares files, and keeps one without deleting
 test('multi-run confirmation cannot widen prompts-On Security policy', async ({ page, projectFixture }) => {
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(projectFixture.id));
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /Several agents/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('several');
   await dialog.getByLabel('Task', { exact: true }).fill('Compare protected alternatives.');
   await dialog.getByRole('combobox', { name: 'Run 2: Agent', exact: true }).selectOption('claude');
   await dialog.getByRole('combobox', { name: 'Run 2: Permissions', exact: true }).selectOption('bypassPermissions');

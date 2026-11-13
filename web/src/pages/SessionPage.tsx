@@ -1,39 +1,44 @@
 import { SessionActions } from "../components/SessionActions";
 import { SessionChat } from '../components/SessionChat';
-import { useNewShell } from '../lib/uiShell';
 import { OfflineHost, UnavailableTab, UnavailableView, unavailableResource } from '../components/shell/RecoveryStates';
 import { useWorkingView, workingId } from "../lib/workingView";
 import {SecurityBadge} from '../components/SecurityBadge';
 import {frozenSecurity} from '../lib/security';
-import { DeliveryHistory, SessionDeliveries } from '../components/SessionDeliveries';
+import { SessionDeliveries } from '../components/SessionDeliveries';
 import { Feature, useFeatures } from "../components/Feature";
-import { PreviewBadge } from "../components/Containers";
-import { CopyBlock } from "../components/InstallSteps";
+import { CopyBlock } from "../components/CopyBlock";
 import clsx from "clsx";
 import { useSingleMutation as useMutation } from "../lib/mutations";
-import { SessionAutomation } from "../components/SessionAutomation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, BookMarked, ChevronDown, Code2,  Download, ExternalLink, FolderUp, GitBranch, GitPullRequest, Pencil, TerminalSquare } from "lucide-react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, BookMarked, ChevronDown, Code2,  Download, ExternalLink, GitBranch, GitPullRequest, Pencil, TerminalSquare } from "lucide-react";
 import { api, isNotFound, post } from "../lib/api";
-import { stamp, workspaceName, workspaceTopic } from "../lib/format";
-import type { AccEvent, AttentionItem, GithubSnapshot, Project, SessionDetail } from "../lib/types";
-import { announce, Badge, Button, Card, Dialog, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Page, PageHeader, Popover, QueryState, Select, Skeleton, useDocumentTitle, useMedia } from "../components/ui";
+import type { AttentionItem, GithubSnapshot, SessionDetail } from "../lib/types";
+import { announce, Badge, Button, Card, Dialog, Empty, ErrorNote, Field, IconButton, Input, LoadingRows, Page, Popover, QueryState, Skeleton, useDocumentTitle, useMedia } from "../components/ui";
 import { TabPanel, Tabs } from "../components/Tabs";
-import { isLive, NowDoing, permissionWords, ProviderBadge, sessionMachineName, sessionState, StateBadge } from "../components/session-bits";
-import { Artifacts, useArtifacts } from "../components/Artifacts";
+import { isLive, NowDoing, permissionWords, ProviderBadge, sessionState, StateBadge } from "../components/session-bits";
+import { useArtifacts } from '../components/useArtifacts';
 import { DocList, DocViewer, type KnowledgeView, KnowledgePanel, useKnowledge } from "../components/Knowledge";
-import { Fragment, lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { providerLabel, useInstance, useProviderRegistry, useRole } from "../lib/queries";
-import { eventWords, notificationWords, permissionSummary, sourceWords } from "../lib/words";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useInstance } from "../lib/queries";
+
 import { RiskLabel } from "../components/RiskLabel";
 import { useDismissableLayer } from "../components/keyboard";
 import { lazyImport } from "../lib/lazyImport";
 
+
+
+const PromoteButton = lazy(() => lazyImport(() => import('../components/PromoteButton')));
+const DeliveryHistory = lazy(() => lazyImport(() => import('../components/DeliveryHistory')).then(m => ({ default: m.DeliveryHistory })));
+const SessionAutomation = lazy(() => lazyImport(() => import('../components/SessionAutomation')).then(m => ({ default: m.SessionAutomation })));
+const Setup = lazy(() => lazyImport(() => import('../components/SessionSetup')).then(m => ({ default: m.SessionSetup })));
+const Artifacts = lazy(() => lazyImport(() => import('../components/Artifacts')).then(m => ({ default: m.Artifacts })));
+const Activity = lazy(() => lazyImport(() => import('../components/SessionActivity')).then(m => ({ default: m.SessionActivity })));
+const InboxPermissionSetting = lazy(() => lazyImport(() => import('../components/SessionSetup')).then(m => ({ default: m.InboxPermissionSetting })));
 const Files = lazy(() => lazyImport(() => import("../components/Files")).then((m) => ({ default: m.Files })));
 const Changes = lazy(() => lazyImport(() => import("../components/Changes")).then((m) => ({ default: m.Changes })));
+const SessionRelayPanel = lazy(() => import('../components/session-relay/SessionRelayPanel').then(m => ({ default: m.SessionRelayPanel })));
 const RegisteredTerminal = lazy(() => lazyImport(() => import("../components/RegisteredTerminal")).then(m => ({ default: m.RegisteredTerminal })));
-const Terminal = lazy(() => lazyImport(() => import("../components/Terminal")).then((m) => ({ default: m.Terminal })));
 const Preview = lazy(() => lazyImport(() => import("../components/Preview")).then((m) => ({ default: m.Preview })));
 const PullRequestPanel = lazy(() => lazyImport(() => import("../components/PullRequest")).then((m) => ({ default: m.PullRequestPanel })));
 const TeamPanel = lazy(() => lazyImport(() => import("../components/TeamPanel")).then((m) => ({ default: m.TeamPanel })));
@@ -75,49 +80,11 @@ function HeaderRisk({ session }: { session: SessionDetail }) {
 }
 
 /** Phones: the same advisory label in one line under the session's name, so the terminal stays near the top. */
-function NeedsYouLine({ session }: { session: SessionDetail }) {
-  const item = usePendingRisk(session).data?.find((i) => i.kind === "needs_input");
-  return (
-    <section aria-label="Needs you" className="mt-1 text-xs text-muted">
-      {item?.risk ? <RiskLabel risk={item.risk} /> : "Answer in the terminal below. Labels are advisory only."}
-    </section>
-  );
-}
 
 const TABS = ["Terminal", "Chat", "Files", "Preview", "Changes", "Pull request", "Artifacts", "Activity", "Handoffs", "Setup", "Team"] as const;
 type Tab = (typeof TABS)[number];
 const hasPullTab = (session: SessionDetail) => !!session.repo && !session.standalone;
 const tabLabel = (t: Tab, standalone: boolean) => (t === "Handoffs" && standalone ? "Findings" : t);
-
-const stateWords = (raw: string) => sessionState({ observed_state: raw as SessionDetail["observed_state"] }).label;
-
-function Activity({ id }: { id: string }) {
-  const registry = useProviderRegistry();
-  const providerName = (provider: string) => providerLabel(provider, registry.byId(provider));
-  const events = useQuery({ queryKey: ["events", id], queryFn: () => api<AccEvent[]>(`/api/sessions/${id}/events?limit=300`), refetchInterval: 3000 });
-  return (
-    <QueryState query={events} isEmpty={(data) => !data.length} empty={<Empty>No events yet.</Empty>}>{(data) => (
-    <Card className="overflow-hidden">
-      <div className="max-h-full divide-y divide-line overflow-y-auto">
-        {[...data].reverse().map((e) => (
-          <div key={e.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 px-4 py-2 text-[13px] sm:grid-cols-[9.5rem_8rem_minmax(0,1fr)] sm:gap-3">
-            <span className="font-mono text-[11px] text-faint">{stamp(e.ts)}</span>
-            <span className="truncate text-muted" title={e.source}>{sourceWords(e.source, providerName)}</span>
-            <span className="min-w-0 [overflow-wrap:anywhere]">
-              <span className="font-medium" title={e.kind}>{eventWords(e, stateWords)}</span>
-              <span className="block text-xs text-faint sm:ml-2 sm:inline">
-                {e.payload.notification_type ? notificationWords(String(e.payload.notification_type))
-                  : String(e.payload.reason ?? e.payload.message ?? e.payload.error ?? "")}
-              </span>
-              {!e.verified && <Badge tone="wait" className="ml-2" title="Not confirmed by the agent's hooks">guessed</Badge>}
-            </span>
-          </div>
-        ))}
-      </div>
-    </Card>
-    )}</QueryState>
-  );
-}
 
 const handoffsFor = (view: KnowledgeView, sessionId: string) =>
   (view.docs.handoffs ?? []).filter((doc) => doc.path.includes(sessionId));
@@ -157,138 +124,6 @@ function SessionHandoffs({ session }: { session: SessionDetail }) {
   );
 }
 
-const RUN_WORDS: Record<string, string> = { launch: "Started", resume: "Resumed", explanation: "Started to explain its changes", adopted: "Picked up after a Rynhult restart" };
-
-/** Setup (was "Launch spec", UX review SE-4): what this session was given, in words first; the exact inputs and the
-    generated files follow for anyone who needs them. */
-function Setup({ session }: { session: SessionDetail }) {
-  const registry = useProviderRegistry();
-  const inputs = session.launch_spec.inputs as Record<string, unknown>;
-  const list = (key: string) => (Array.isArray(inputs[key]) ? inputs[key] as string[] : []);
-  const provider = String(inputs.provider ?? session.provider);
-  const permissions = permissionSummary(provider, inputs);
-  const { host } = useInstance();
-  const fileNames = Object.keys(session.launch_spec.files);
-  const [filter, setFilter] = useState("");
-  const [selectedFile, setSelectedFile] = useState<string | undefined>(() => fileNames[0]);
-  const filteredFiles = fileNames.filter(name => name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
-  const activeFile = selectedFile !== undefined && filteredFiles.includes(selectedFile) ? selectedFile : filteredFiles[0];
-  const items: [string, ReactNode][] = [
-    ["Agent", <>{providerLabel(provider, registry.byId(provider))} · {inputs.model ? String(inputs.model) : "default model"}{inputs.effort ? ` · ${inputs.effort} effort` : ""}</>],
-    ...(provider === "claude" ? [["Claude sign-in", session.claude_auth === "api_key" ? (session.auth?.mode === "subscription" ? "Subscription token" : "API key (API billing)") : "Your Claude login (subscription)"] as [string, ReactNode]] : []),
-    ["Permissions", permissions],
-    ["Profile", inputs.profile ? String(inputs.profile) : "None"],
-    ["Skills", list("skills").length ? list("skills").join(", ") : "None"],
-    ...(list("agents").length ? [["Subagents", list("agents").join(", ")] as [string, ReactNode]] : []),
-    ["MCP servers", list("mcps").length ? list("mcps").join(", ") : "None"],
-    ["Folder", <><span className="font-mono">{session.cwd}</span>{session.worktree_branch && <> · its own {session.container ? "private checkout" : "worktree"} on <span className="font-mono">{session.worktree_branch}</span></>}</>],
-    ...(session.container ? [["Runs in", <span>A container <PreviewBadge />, with its account's container limits</span>] as [string, ReactNode]] : []),
-    ["Machine", sessionMachineName(session, host)],
-    ["Runs as", <span className="font-mono">{session.run_as}</span>],
-  ];
-  return (
-    <div className="space-y-4">
-      <Card className="min-w-0 p-4">
-        <h3 className="mb-3 text-[13px] font-semibold">How this session was set up</h3>
-        <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-[9rem_minmax(0,1fr)]">
-          {items.map(([label, value]) => <Fragment key={label}><dt className="text-muted">{label}</dt><dd className="min-w-0 break-words text-fg">{value}</dd></Fragment>)}
-          <dt className="text-muted">History</dt>
-          <dd className="min-w-0 space-y-1">
-            {session.runs.map((r) => (
-              <div key={r.id} className="flex flex-wrap gap-x-3 text-muted">
-                <span className="text-fg" title={`run #${r.id} · ${r.reason}`}>{RUN_WORDS[r.reason] ?? r.reason}</span>
-                <span>{stamp(r.started_at)}</span>
-                {r.ended_at && <span>ended {r.exit_signal ? `by signal ${r.exit_signal}` : r.exit_status === 0 ? "normally" : `with status ${r.exit_status ?? "unknown"}`}{r.end_reason ? ` · ${r.end_reason}` : ""}</span>}
-              </div>
-            ))}
-          </dd>
-        </dl>
-      </Card>
-      <Card className="min-w-0 p-4">
-        <details>
-          <summary className="min-h-8 cursor-pointer break-words text-[13px] font-semibold pointer-coarse:min-h-11">
-            Exact inputs <span className="ml-2 font-mono text-[11px] font-normal text-faint" title="Digest of the inputs">{session.launch_spec.digest.slice(0, 12)}</span>
-          </summary>
-          <div className="mt-3 min-w-0">
-            <CopyBlock text={JSON.stringify(session.launch_spec.inputs, null, 2)} label="Copy launch inputs" stacked />
-          </div>
-        </details>
-      </Card>
-      <Card className="min-w-0 p-4">
-        <details>
-          <summary className="min-h-8 cursor-pointer text-[13px] font-semibold pointer-coarse:min-h-11">Generated files ({fileNames.length})</summary>
-          <div className="mt-3 min-w-0 space-y-3">
-            {!!fileNames.length && <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-              <Field label="Filter generated files">
-                <Input value={filter} onChange={event => setFilter(event.target.value)} type="search" autoComplete="off" spellCheck={false} />
-              </Field>
-              {!!filteredFiles.length && <Field label="Generated file">
-                <Select value={activeFile ?? ""} onChange={event => setSelectedFile(event.target.value)} className="w-full min-w-0">
-                  {filteredFiles.map(name => <option key={name} value={name}>{name}</option>)}
-                </Select>
-              </Field>}
-            </div>}
-            <p role="status" aria-label="Generated files results" className="text-xs text-muted">
-              {!fileNames.length ? "No generated files." : !filteredFiles.length ? "No matching files." : `${filteredFiles.length} of ${fileNames.length} files`}
-            </p>
-            {activeFile !== undefined && <CopyBlock key={activeFile} text={session.launch_spec.files[activeFile]} label={`Copy ${activeFile}`} stacked />}
-          </div>
-        </details>
-      </Card>
-    </div>
-  );
-}
-
-function PromoteButton({ session }: { session: SessionDetail }) {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const folder = session.workdir?.split("/").pop() ?? "";
-  const suggested = workspaceTopic(folder);
-  const [open, setOpen] = useState(false);
-  const { owner } = useRole();  // creating a repository uses the owner's GitHub token
-  const [form, setForm] = useState({ name: workspaceName(folder), slug: suggested, description: "", github: owner, confirm: false });
-  const promote = useMutation({
-    mutationFn: () => post<Project>(`/api/sessions/${session.id}/promote`, form),
-    onSuccess: (project) => { queryClient.invalidateQueries({ queryKey: ["projects"] }); setOpen(false); navigate(`/projects/${project.id}`); },
-  });
-  return (
-    <>
-      <Button onClick={() => setOpen(true)}><FolderUp size={14} aria-hidden="true" /> Promote to project</Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Promote to project" dismissible={false}
-        description="Worth pursuing? The workspace folder becomes a project, and its research, council reports and notes come with it."
-        footer={<>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button variant="primary" disabled={!form.name.trim() || !/^[a-z0-9][a-z0-9-]*$/.test(form.slug) || (form.github && !form.confirm) || promote.isPending}
-            onClick={() => promote.mutate()}>{promote.isPending ? "Promoting…" : "Promote"}</Button>
-        </>}>
-        <div className="space-y-4">
-          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Project name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus /></Field>
-            <Field label="Slug" hint="Also the repository name"><Input value={form.slug} className="font-mono"
-              onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} /></Field>
-          </div>
-          <label className="flex items-start gap-2.5 text-[13px] text-fg">
-            <input type="checkbox" checked={form.github} onChange={(e) => setForm({ ...form, github: e.target.checked, confirm: false })} className="mt-0.5 size-3.5 accent-[var(--accent)]" />
-            <span>Create a private GitHub repository, push this workspace's history to it, and protect main
-              <span className="block text-xs text-muted">Projects use GitHub and CI/CD; untick to keep it local for now.</span></span>
-          </label>
-          {form.github && (
-            <>
-              <Field label="Description (optional)"><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
-              <label className="flex items-start gap-2 rounded-md border border-wait/30 bg-wait/10 p-3 text-xs text-wait">
-                <input type="checkbox" checked={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.checked })} className="mt-0.5" />
-                <span>Create <b>github.com/…/{form.slug || "…"}</b> (private) under your account and push to it.</span>
-              </label>
-            </>
-          )}
-          <p className="font-mono text-[11.5px] text-faint">{session.workdir}</p>
-          <ErrorNote error={promote.error} />
-        </div>
-      </Dialog>
-    </>
-  );
-}
-
 const ciTone = (run: { status: string; conclusion: string | null }) =>
   run.status !== "completed" ? "accent" : run.conclusion === "success" ? "ok"
     : ["failure", "timed_out", "startup_failure"].includes(run.conclusion ?? "") ? "bad" : "neutral";
@@ -302,7 +137,7 @@ function BranchAndPull({ session }: { session: SessionDetail }) {
     refetchInterval: 60000, enabled: !!branch && !session.standalone && (!view || view.visible),
   });
   if (!branch) return null;
-  const pull = github.data?.pulls?.find((p) => p.head === branch);
+  const pull = github.data?.pulls?.find((p) => p.head === branch && !!p.head_repo && p.head_repo.toLowerCase() === session.repo?.toLowerCase());
   const run = github.data?.runs?.find((r) => r.branch === branch);  // newest first
   return (
     <>
@@ -313,7 +148,7 @@ function BranchAndPull({ session }: { session: SessionDetail }) {
       </span>
       {pull && (
         <a href={pull.url} target="_blank" rel="noreferrer" title={pull.title} className="inline-flex pointer-coarse:min-h-11 items-center gap-1 hover:text-fg underline underline-offset-2">
-          <GitPullRequest size={12} aria-hidden="true" /> #{pull.number}{pull.draft ? " (draft)" : ""}
+          <GitPullRequest size={12} aria-hidden="true" /> #{pull.number} <Badge>{(pull.lifecycle ?? (pull.draft ? "draft" : "open")).replaceAll("_", " ")}</Badge>
         </a>
       )}
       {pull && run && (
@@ -353,16 +188,6 @@ function OpenInEditor({ editor, inline = false }: { editor: NonNullable<SessionD
   );
 }
 
-function InboxPermissionSetting({ id }: { id: string }) {
-  const path = `/api/sessions/${id}/inbox-permissions`;
-  const setting = useQuery({ queryKey: ["inbox-permissions", id], queryFn: () => api<{ enabled: boolean }>(path) });
-  const change = useMutation({ mutationFn: (enabled: boolean) => api(path, { method: "PUT", json: { enabled } }),
-    onSuccess: () => setting.refetch() });
-  return <Card><label className="flex items-center gap-2"><input type="checkbox" checked={setting.data?.enabled ?? true}
-    disabled={!setting.data || change.isPending} onChange={e => change.mutate(e.target.checked)} />
-    Answer permission prompts from the Inbox</label><ErrorNote error={setting.error || change.error} /></Card>;
-}
-
 function RenameButton({ session }: { session: SessionDetail }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -398,14 +223,20 @@ const availableTab = (session: SessionDetail, tab: Tab): Tab =>
   (tab === "Team" && session.team_id !== session.id) || (tab === "Pull request" && !hasPullTab(session)) ? "Terminal" : tab;
 
 function SessionTabs({ session, tab, setTab, chatAvailable }: { session: SessionDetail; tab: Tab; setTab: (t: Tab) => void; chatAvailable: boolean }) {
+  const working = useWorkingView();
+  useLayoutEffect(() => {
+    if (working?.visible && working.focusTab === `${session.id}:${tab}`)
+      document.getElementById(`${workingId('session-tabs', working)}-tab-${tab.replaceAll(' ', '-')}`)?.focus();
+  }, [working?.intent, working?.focusTab, working?.visible, session.id, tab]);
   const feature = useFeatures();
-  const shell = useNewShell();
+
   const small = useMedia("(max-width: 639px)");
-  const compact = shell && !small;
+  const compact = !small;
   const artifacts = useArtifacts(session).data?.files.length ?? 0;
-  const shown = TABS.filter((t) => (t !== "Chat" || (feature("chat") && (chatAvailable || tab === "Chat"))) && (t !== "Preview" || feature("live_preview")) && (t !== "Team" || feature("teams")) && (t !== "Team" || session.team_id === session.id) && (t !== "Artifacts" || artifacts > 0 || tab === "Artifacts") && (t !== "Pull request" || hasPullTab(session)));
+  const relay = session.session_relay === true;
+  const shown = TABS.filter((t) => (!relay || t !== "Chat") && (t !== "Chat" || (feature("chat") && (chatAvailable || tab === "Chat"))) && (t !== "Preview" || feature("live_preview")) && (t !== "Team" || feature("teams")) && (t !== "Team" || session.team_id === session.id) && (t !== "Artifacts" || artifacts > 0 || tab === "Artifacts") && (t !== "Pull request" || hasPullTab(session)));
   return <Tabs id="session-tabs" label="Session views" tabs={shown.map((t) => ({ id: t, label: tabLabel(t, session.standalone),
-    count: t === "Changes" ? session.changes?.files || undefined : t === "Artifacts" ? artifacts || undefined : undefined }))} value={tab} onChange={setTab} className={clsx("shrink-0", shell && "session-views-compact")}
+    count: t === "Changes" ? session.changes?.files || undefined : t === "Artifacts" ? artifacts || undefined : undefined }))} value={tab} onChange={setTab} className={clsx("shrink-0", "session-views-compact")}
     phone={compact ? shown.filter(t => !["Setup", "Activity", "Handoffs"].includes(t)) : ["Terminal", "Chat", "Changes"]} />;
 }
 
@@ -422,7 +253,7 @@ function useAnnounceState(session: SessionDetail | undefined) {
 
 export function SessionPage() {
   const working = useWorkingView();
-  const newShell = useNewShell();
+
   const [terminalTools, setTerminalTools] = useState<HTMLDivElement | null>(null);
   const { id = "" } = useParams();
   const [search, setSearch] = useSearchParams();
@@ -431,18 +262,18 @@ export function SessionPage() {
     : tabParam === "files" ? "Files" : tabParam === "preview" ? "Preview" : tabParam === "changes" ? "Changes" : tabParam === "pull" ? "Pull request" : tabParam === "artifacts" ? "Artifacts" : "Terminal";
   const setTab = (t: Tab) =>
     setSearch(t === "Terminal" ? {} : { tab: t === "Chat" ? "chat" : t === "Activity" ? "activity" : t === "Handoffs" ? "handoffs" : t === "Changes" ? "changes" : t === "Pull request" ? "pull"
-      : t === "Preview" ? "preview" : t === "Files" ? "files" : t === "Artifacts" ? "artifacts" : t === "Team" ? "team" : "spec" }, { replace: true });
+      : t === "Preview" ? "preview" : t === "Files" ? "files" : t === "Artifacts" ? "artifacts" : t === "Team" ? "team" : "spec" }, { replace: true, state: { focusTab: `${id}:${t}` } });
   const query = useQuery({ queryKey: ["sessions", id], queryFn: () => api<SessionDetail>(`/api/sessions/${id}`), refetchInterval: working && !working.visible ? false : 3000, enabled: !working || working.visible,
-    retry: (count, error) => !(newShell ? unavailableResource(error) : isNotFound(error)) && count < 3 });
+    retry: (count, error) => !(unavailableResource(error)) && count < 3 });
   const session = query.data;
   const [chatAvailability, setChatAvailability] = useState({ id: "", available: false });
   const onChatAvailability = useCallback((id: string, available: boolean) => setChatAvailability(previous => previous.id === id && previous.available === available ? previous : { id, available }), []);
-  const { host } = useInstance();
+  const { host, features: relayFeatures } = useInstance();
   const feature = useFeatures();
   const [editingAutomation, setEditingAutomation] = useState(false);
-  useDocumentTitle(newShell && unavailableResource(query.error) ? undefined : session?.name);
-  useAnnounceState(newShell && unavailableResource(query.error) || working && !working.visible ? undefined : session);
-  if (newShell && unavailableResource(query.error)) return <Page><UnavailableView onRetry={() => { void query.refetch(); }} /></Page>;
+  useDocumentTitle(unavailableResource(query.error) ? undefined : session?.name);
+  useAnnounceState(unavailableResource(query.error) || working && !working.visible ? undefined : session);
+  if (unavailableResource(query.error)) return <Page><UnavailableView onRetry={() => { void query.refetch(); }} /></Page>;
   if (!session) return <Page>{isNotFound(query.error) ? (
     <Card><Empty icon={TerminalSquare} action={<Link to="/sessions" className="inline-flex h-8 pointer-coarse:h-11 items-center gap-1.5 rounded-md border border-line-strong px-3 text-[13px] text-fg hover:bg-panel-2 underline underline-offset-2"><ArrowLeft size={14} aria-hidden="true" /> Back to sessions</Link>}>
       <span className="block text-[15px] font-semibold text-fg">There's no session here</span>
@@ -452,7 +283,7 @@ export function SessionPage() {
   const tab = availableTab(session, requested);
   const knownTabs = ['chat', 'team', 'activity', 'spec', 'automation', 'goal', 'handoffs', 'files', 'preview', 'changes', 'pull', 'artifacts', 'terminal'];
   if (requested === 'Chat' && !feature('chat')) return <Page><Feature name="chat" page>{null}</Feature></Page>;
-  if (newShell && ((tabParam && !knownTabs.includes(tabParam)) || tab !== requested || (requested === 'Preview' && !feature('live_preview')) || (requested === 'Team' && !feature('teams')))) return <Page><UnavailableTab sessionId={session.id} onRetry={() => { void query.refetch(); }} /></Page>;
+  if ((tabParam && !knownTabs.includes(tabParam)) || tab !== requested || (requested === 'Preview' && !feature('live_preview')) || (requested === 'Team' && !feature('teams'))) return <Page><UnavailableTab sessionId={session.id} onRetry={() => { void query.refetch(); }} /></Page>;
 
   const waiting = session.observed_state === "waiting_input";
   const automation = session.management !== "external";
@@ -475,69 +306,29 @@ export function SessionPage() {
       <Download size={14} aria-hidden="true" /> Export</a>
   );
   return (
-    <div className={clsx("flex h-full flex-col gap-3 px-4 pb-4 pt-3 md:gap-4 md:px-8 md:pb-6 md:pt-5", newShell && "shell-session-page")}>
-      {newShell ? <div className="session-heading shell-session-heading">
+    <div className={clsx("flex h-full flex-col gap-3 px-4 pb-4 pt-3 md:gap-4 md:px-8 md:pb-6 md:pt-5", "shell-session-page")}>
+      {<div className="session-heading shell-session-heading">
         <div className="session-primary-line">
           <h1 title={session.name}>{session.name}</h1>
           <ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} />
           <SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session" />
           {waiting && tab === "Terminal" && <HeaderRisk session={session} />}
-          <SessionDeliveries key={session.id} id={session.id} onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} />
+          <div className="session-delivery-slot"><SessionDeliveries key={session.id} id={session.id} onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} /></div>
           <Popover label="Session details" className="session-details-popover" wide trigger={<>Details <ChevronDown size={13} aria-hidden="true" /></>}>
             {close => <div className="space-y-3 p-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-3 text-xs text-muted">{projectLink}{meta(close)}</div>
               <p className="break-all font-mono text-xs text-muted">{session.worktree ?? session.cwd}</p>
               <NowDoing session={session} className="text-xs text-muted" />
+              {session.native_helpers_capped === false && <p className="text-xs text-muted">Provider-native helpers are not capped or tracked by Rynhult. <Link className="underline" to="/guide/User-Guide/Orchestrator#parent-permission-limits">Managed helper permissions</Link></p>}
               <div className="flex flex-wrap items-center gap-2"><RenameButton session={session} />{exportLink}{session.editor && <OpenInEditor editor={session.editor} inline />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} secondaryOnly /></div>
             </div>}
           </Popover>
           <SessionActions session={session} compact primaryOnly />
         </div>
         <div className="session-tab-line"><SessionTabs session={session} tab={tab} setTab={setTab} chatAvailable={chatAvailability.id === session.id && chatAvailability.available} />{tab === "Terminal" && <div className="session-terminal-tools" ref={setTerminalTools} />}</div>
-      </div> : <div className="session-heading grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 md:grid-cols-[minmax(0,1fr)] md:gap-x-0">
-      <div className="col-span-full row-start-1 max-md:hidden">
-        <PageHeader
-          title={<span className="flex flex-wrap items-center gap-2.5">{session.name}<RenameButton session={session} /><ProviderBadge provider={session.provider} model={session.model} /><StateBadge session={session} /><SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session"/>{waiting && tab === "Terminal" ? <HeaderRisk session={session} />
-            : <NowDoing session={session} className="max-w-[28rem] truncate text-[13px] font-normal text-muted" />}</span>}
-          meta={<>{projectLink}{meta()}</>}
-          actions={<>{exportLink}{session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}<SessionActions session={session} /></>} />
-      </div>
-      {/* Phones: name, state and project in one line; everything else under Details, so the terminal starts high
-          on the screen (UX review SE-6). Interrupt and Stop sit behind "⋯" on touch (OV-4). */}
-      <header className="contents md:hidden">
-        <div className="contents">
-          <h1 className="col-start-1 row-start-1 flex min-w-0 items-center gap-2 text-[15px] font-semibold leading-tight">
-            <span className="truncate">{session.name}</span><StateBadge session={session} />
-          </h1>
-          <div className="phone-session-meta col-start-1 row-start-2 flex min-w-0 items-center gap-2 text-xs text-muted">{projectLink}
-            <NowDoing session={session} className="truncate" /><SecurityBadge policy={frozenSecurity(session.launch_spec.files)} frozen older={session.security_older_settings} label="This session"/></div>
-          {session.observed_state === "waiting_input" && <div className="col-start-1 row-start-3"><NeedsYouLine session={session} /></div>}
-        </div>
-        <div className="col-start-2 row-start-1 row-span-3 flex items-center gap-2">
-        <Popover label="Session details" wide trigger={<>Details <ChevronDown size={13} aria-hidden="true" /></>}>
-          {(close) => (
-            <div className="space-y-3 p-1.5">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
-                <ProviderBadge provider={session.provider} model={session.model} />{meta(close)}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <RenameButton session={session} />{exportLink}
-                {session.editor && <OpenInEditor editor={session.editor} />}{session.standalone && <PromoteButton session={session} />}
-              </div>
-            </div>
-          )}
-        </Popover>
-        <SessionActions session={session} compact />
-        </div>
-      </header>
-        <div className="pointer-events-none col-start-1 row-start-2 min-w-0 md:pointer-events-auto md:mt-4 md:h-8 md:pointer-coarse:h-11">
-          <SessionDeliveries key={session.id} id={session.id}
-            onDetails={() => setSearch({ tab: "activity", delivery: "details" }, { replace: true })} />
-        </div>
-        <div className="col-span-full row-start-4 mt-3 md:mt-0"><SessionTabs session={session} tab={tab} setTab={setTab} chatAvailable={chatAvailability.id === session.id && chatAvailability.available} /></div>
       </div>}
-      <TabPanel id="session-tabs" value={tab} className={clsx("min-h-[420px] flex-1", newShell && tab === "Terminal" && "shell-terminal-panel")}>
-        {session.machine_offline && (newShell ? <OfflineHost host={session.host} /> : <p className="text-sm text-muted">Machine offline. Sessions check in when the machine returns.</p>)}
+      <TabPanel id="session-tabs" value={tab} className={clsx("min-h-[420px] flex-1", tab === "Terminal" && "shell-terminal-panel")}>
+        {session.machine_offline && (<OfflineHost host={session.host} />)}
         {!session.machine_offline && session.last_error && <ErrorNote error={session.last_error} />}
         {waiting && tab !== "Terminal" && <NeedsYou session={session} onTerminal={() => setTab("Terminal")} />}
         <Suspense fallback={<div role="status" className="h-full min-h-[420px]">
@@ -559,25 +350,25 @@ export function SessionPage() {
             <p className="mt-5 border-t border-line pt-4 text-xs text-faint">From a shell on {host}: <span className="font-mono text-muted">sudo tmux -L acc-root attach -t acc-root</span></p>
           </Card>
         )}
-        {feature("chat") ? <SessionChat key={session.id} session={session} tab={tab} onTerminal={() => { setTab("Terminal"); requestAnimationFrame(() => document.getElementById(`${workingId("session-tabs", working)}-tab-Terminal`)?.focus()); }} onChat={() => setTab("Chat")} onAvailability={onChatAvailability}
+        {session.session_relay === true ? (<div hidden={tab !== "Terminal" && tab !== "Chat"}><Suspense><SessionRelayPanel sessionId={session.id} projectId={session.project_id} enabled={relayFeatures?.session_relay === true} /></Suspense></div>) : feature("chat") ? <SessionChat key={session.id} session={session} tab={tab} onTerminal={() => { setTab("Terminal"); requestAnimationFrame(() => document.getElementById(`${workingId("session-tabs", working)}-tab-Terminal`)?.focus()); }} onChat={() => setTab("Chat")} onAvailability={onChatAvailability}
           terminal={session.management !== "external" && (session.machine_offline
-          ? newShell ? null : <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card> : isLive(session) || session.observed_state === "exited"
-          ? newShell ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} /> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
+          ? null : isLive(session) || session.observed_state === "exited"
+          ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} />
           : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)} />
           : tab === "Terminal" && session.management !== "external" && (session.machine_offline
-            ? newShell ? null : <Card><Empty icon={TerminalSquare}>Machine offline. This view returns when the machine checks in.</Empty></Card>
+            ? null
             : isLive(session) || session.observed_state === "exited"
-              ? newShell ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} /> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} name={session.name} tone={sessionState(session).tone} stateLabel={sessionState(session).label} />
+              ? <RegisteredTerminal sessionId={session.id} toolbarTarget={terminalTools} />
               : <Card><Empty icon={TerminalSquare}>This session isn't running. Resume it to open its terminal.</Empty></Card>)}
         {tab === "Team" && session.project_id !== null && !session.machine_offline && session.team_id === session.id && <Feature name="teams"><TeamPanel id={session.id} projectId={session.project_id} /></Feature>}
         {feature("live_preview") && tab === "Preview" && session.project_id !== null && !session.machine_offline && <div className="grid min-w-0 gap-4 xl:grid-cols-2">
           <Preview key={session.id} projectId={session.project_id} projectName={session.project}
             folder={session.worktree ?? session.cwd} branch={session.changes?.branch ?? session.worktree_branch} sessionId={session.id} />
           <div className="min-w-0">{session.management !== "external" && (isLive(session) || session.observed_state === "exited")
-            ? newShell ? <Link to={`/sessions/${session.id}`}>Open terminal view</Link> : <Terminal key={session.id} sessionId={session.id} live={isLive(session)} /> : <Activity id={session.id} />}</div>
+            ? <Link to={`/sessions/${session.id}`}>Open terminal view</Link> : <Activity id={session.id} />}</div>
         </div>}
         {tab === "Activity" && <div className="space-y-4"><DeliveryHistory id={session.id} focus={search.get("delivery") === "details"} /><Activity id={session.id} /></div>}
-        {!newShell && session.machine_offline && ["Files", "Changes", "Artifacts", "Preview", "Handoffs", "Team"].includes(tab) && <Card><Empty>Machine offline. This view returns when the machine checks in.</Empty></Card>}
+
         {tab === "Files" && !session.machine_offline && <Files kind="session" scopeKey={session.id} />}
         {tab === "Changes" && !session.machine_offline && <Changes session={session} />}
         {tab === "Pull request" && hasPullTab(session) && <PullRequestPanel session={session} />}

@@ -74,6 +74,7 @@ export function Login() {
         <Button type="submit" variant="primary" className="w-full" disabled={busy || !form.code}>{recovering ? "Recover sign-in" : "Sign in"}</Button>
         <Button disabled={busy} className="w-full" variant="ghost" onClick={() => { setRecovering(!recovering); setForm({ ...form, code: "" }); }}>{recovering ? "Use authenticator code" : "Lost your passkeys?"}</Button>
       </form>
+      <a className="mt-4 block text-center text-sm text-accent underline" href="https://rynhult.dev/docs/User-Guide/Troubleshooting/#sign-in-and-launch-policy">Trouble signing in?</a>
     </Shell>
   );
 }

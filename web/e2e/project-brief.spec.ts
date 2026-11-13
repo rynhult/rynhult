@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './fixtures';
-import { AUTH_FILE, expectAxeClean, gitProject, wikiShotPath, createProjectFromDialog, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
+import { AUTH_FILE, openAdvanced, expectAxeClean, gitProject, wikiShotPath, createProjectFromDialog, teamRequest, waitForSessionState, waitForTeamStopped } from './helpers';
 import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -43,10 +43,10 @@ for (const origin of ['project', 'grant'] as const) for (const choice of ['save'
     const productText = 'Private room bookings with accessible controls';
     await page.goto(`/projects/${id}${origin === 'project' ? '#project-brief' : ''}`);
     if (origin === 'project') await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill(productText);
-    await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-    await dialog.getByRole('button', { name: /^Advanced/ }).click();
-    await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+    await page.locator('#shell-new-session').click();
+    const dialog = page.getByRole('region', { name: 'New session', exact: true });
+    await openAdvanced(dialog);
+    await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
     const task = dialog.getByRole('textbox', { name: 'Task (optional)', exact: true });
     await expect(task).toHaveValue(/no accepted brief/);
     const personalTask = 'Plan the booking workflow without a saved brief.';
@@ -88,7 +88,8 @@ for (const origin of ['project', 'grant'] as const) for (const choice of ['save'
       await page.keyboard.press('Enter');
       await expect(step).toHaveCount(0);
       await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeFocused();
-      await dialog.getByText('Add a project brief', { exact: true }).click();
+      await openAdvanced(dialog);
+      if (!await dialog.getByRole('textbox', { name: 'Product or feature', exact: true }).isVisible()) await dialog.getByText('Add a project brief', { exact: true }).click();
       await expect(dialog.getByRole('textbox', { name: 'Product or feature', exact: true })).toHaveValue(productText);
       expect(launches).toBe(0);
       expect((await (await page.request.get(`/api/projects/${id}/brief`)).json()).current_version).toBe(0);
@@ -127,10 +128,10 @@ for (const origin of ['project', 'grant'] as const) test(`a ${origin} draft stil
   });
   await page.goto(`/projects/${id}${origin === 'project' ? '#project-brief' : ''}`);
   if (origin === 'project') await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('Keep this idea in memory');
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   if (origin === 'grant') {
     await dialog.getByText('Add a project brief', { exact: true }).click();
     await dialog.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('Keep this idea in memory');
@@ -154,10 +155,10 @@ for (const origin of ['project', 'grant'] as const) test(`a ${origin} draft stil
 test('a failed brief save never launches a team and Back keeps the draft', async ({ page }) => {
   const { id } = await gitProject(page, 'brief-launch-failure');
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await dialog.getByText('Add a project brief', { exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('Keep this booking idea');
   await page.route(`**/api/projects/${id}/brief`, route => route.request().method() === 'POST'
@@ -170,6 +171,7 @@ test('a failed brief save never launches a team and Back keeps the draft', async
   expect(launches).toBe(0);
   expect((await (await page.request.get(`/api/projects/${id}/brief`)).json()).current_version).toBe(0);
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await openAdvanced(dialog);
   await dialog.getByText('Add a project brief', { exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: 'Product or feature', exact: true })).toHaveValue('Keep this booking idea');
 });
@@ -184,10 +186,10 @@ for (const action of ['retry', 'back'] as const) test(`saved launch failure can 
   await page.goto(`/projects/${id}#project-brief`);
   await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('Revised private bookings');
   await page.getByRole('dialog', { name: 'There is a proposed brief from your documents; review it first?' }).getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'Save this brief as version 3 and pin it to the team?', exact: true })).toBeVisible();
   await page.route('**/api/sessions', route => route.request().method() === 'POST'
@@ -198,11 +200,12 @@ for (const action of ['retry', 'back'] as const) test(`saved launch failure can 
   await page.unroute('**/api/sessions');
   if (action === 'back') {
     await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+    await openAdvanced(dialog);
     await dialog.getByText('Add a project brief', { exact: true }).click();
     await expect(dialog.getByText('Saved as version 3', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     await expect(page.getByText('Saved as version 3', { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Projects', exact: true }).first().click();
+    await page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: 'Projects', exact: true }).click();
     await expect(page).toHaveURL(/\/projects$/);
     await expect(page.getByRole('dialog')).toHaveCount(0);
     return;
@@ -220,10 +223,10 @@ test('Launch without the brief skips an older saved version and retains its newe
     data: { version: 0, fields: { product: 'Original bookings', run_mode: 'prepare' } } })).ok()).toBeTruthy();
   await page.goto(`/projects/${id}#project-brief`);
   await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('New booking scope, not saved');
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(dialog.getByRole('combobox', { name: 'Project brief version', exact: true })).toHaveValue('1');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
   const session = await launch(page, () => dialog.getByRole('button', { name: 'Launch without the brief', exact: true }).click());
@@ -280,21 +283,21 @@ for (const selection of ['latest', 'older', 'none'] as const) test(`grant displa
     expect(saved.ok(), await saved.text()).toBeTruthy();
   }
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   const choice = dialog.getByRole('combobox', { name: 'Project brief version', exact: true });
   await expect(choice).toHaveValue('2');
   await expect(dialog.getByText('This team will pin saved project brief version 2.', { exact: true })).toBeVisible();
   if (info.project.name === 'brief-1440-dark' && selection === 'latest') await dialog.screenshot({ path: wikiShotPath(info, 'project-brief-grant.png') });
   const expected = selection === 'latest' ? 2 : selection === 'older' ? 1 : 0;
   if (selection !== 'latest') await choice.selectOption(String(expected));
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await expect(dialog.getByText(expected ? `Project brief: saved version ${expected}.` : 'Project brief: none pinned.', { exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
+  await dialog.locator('summary').filter({ hasText: 'Model and working location' }).click();
+  await expect(dialog.getByText(expected ? `This team will pin saved project brief version ${expected}.` : 'This team will start without a pinned project brief.', { exact: true })).toBeVisible();
+  await dialog.locator('summary').filter({ hasText: 'Model and working location' }).click();
   await expect(choice).toHaveValue(String(expected));
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
+  await dialog.locator('summary').filter({ hasText: 'Model and working location' }).click();
   const sent = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/sessions');
   const session = await launch(page, () => dialog.getByRole('button', { name: 'Launch', exact: true }).click());
   const granted = (await sent).postDataJSON().orchestrator.brief_version;
@@ -319,18 +322,18 @@ test('grant distinguishes a tab-only draft from no project brief', async ({ page
   const { id } = await gitProject(page, 'brief-draft-grant');
   await page.goto(`/projects/${id}#project-brief`);
   await page.getByRole('textbox', { name: 'People and problem', exact: true }).fill('Draft only, no product yet.');
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(dialog.getByText('This project has only an unsaved draft in this tab. The team cannot read it.', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('link', { name: 'Save the project brief', exact: true })).toHaveAttribute('href', `/projects/${id}#project-brief`);
   await dialog.getByRole('link', { name: 'Save the project brief', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole('button', { name: 'Discard draft', exact: true }).click();
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(dialog.getByText('This project has no saved brief.', { exact: true })).toBeVisible();
 });
 
@@ -369,10 +372,10 @@ test('a failed brief read blocks grant launch until its visible version can be r
   expect(saved.ok(), await saved.text()).toBeTruthy();
   await page.route(`**/api/projects/${id}/brief`, route => route.fulfill({ status: 503, json: { detail: 'Synthetic brief outage' } }));
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   // Keep the outage until both the picker and lazy brief form have mounted and failed.
   // Otherwise the lazy observer can recover automatically after unroute, removing Retry mid-click.
   await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(2);
@@ -468,14 +471,15 @@ test('a person saves incomplete scope, private captioned references and immutabl
 test('team grant offers the existing project brief form', async ({ page }) => {
   const { id } = await gitProject(page, 'brief-grant');
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog');
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await expect(dialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(id));
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  const team = dialog.getByRole('radio', { name: /helper|team|orchestrat/i });
+  await openAdvanced(dialog);
+  const team = dialog.getByRole('combobox', { name: 'Run', exact: true });
   await expect(team).toBeVisible();
-  await team.check();
+  await team.selectOption('helpers');
   await dialog.getByText('Add a project brief', { exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: 'Product or feature', exact: true })).toBeVisible();
   await expect(dialog.getByRole('combobox', { name: 'Brief run mode', exact: true })).toHaveValue('prepare');
@@ -490,11 +494,12 @@ test('a saved brief supplies the team run mode instead of a conflicting grant ch
   } });
   expect(saved.ok(), await saved.text()).toBeTruthy();
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog');
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await expect(dialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(id));
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /helper|team|orchestrat/i }).check();
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   const mode = dialog.getByRole('combobox', { name: 'Team run mode', exact: true });
   await expect(mode).toHaveValue('prepare');
   await expect(mode).toBeDisabled();

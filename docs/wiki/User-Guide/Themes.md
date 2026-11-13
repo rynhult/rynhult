@@ -1,6 +1,6 @@
 # Community themes
 
-Themes change your personal appearance, not projects, permissions, saved layouts or agents. **Settings → Appearance** and **Catalog → Themes** offer the same approved packages to signed-in people. Choose **Appearance** in **Settings section** (under **Account** in the new layout).
+Themes change your personal appearance, not projects, permissions, saved layouts or agents. **Settings → Appearance** and **Catalog → Themes** offer the same approved packages to signed-in people. Choose **Account → Appearance** in the Settings contextual sidebar (on a phone, open **More** for Browse).
 
 This phase supports local declarative packages. Workspace-specific choices, arbitrary CSS, remote fonts/assets and executable plugins are unavailable. Terminal colors remain built in.
 

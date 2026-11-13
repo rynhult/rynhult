@@ -1,7 +1,7 @@
 import { useInstance } from "../lib/queries";
 import clsx from "clsx";
 import { CornerDownLeft, CornerDownRight, FolderGit2, type LucideIcon, Moon, Plus, Search, TerminalSquare } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useProjects, useGroupAdministration, useRole, useSessions } from "../lib/queries";
 import { navFor } from "./nav";
@@ -32,6 +32,33 @@ function Palette({ onClose, onNewSession, onToggleTheme }: Omit<PaletteProps, "o
   const list = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const { onFocusCapture, restoreFocus } = useDismissableLayer({ open: true, root: panel, modal: true, onDismiss: onClose });
+  const releaseBackground = useRef(() => {});
+  useLayoutEffect(() => {
+    // Capture the opener through onFocusCapture before isolating the background.
+    input.current?.focus();
+    const background = new Map<HTMLElement, { inert: boolean; ariaHidden: string | null }>();
+    releaseBackground.current = () => {
+      for (const [sibling, previous] of background) {
+        sibling.inert = previous.inert;
+        if (previous.ariaHidden === null) sibling.removeAttribute("aria-hidden");
+        else sibling.setAttribute("aria-hidden", previous.ariaHidden);
+      }
+      background.clear();
+    };
+    // Hide siblings along the ancestor path, preserving the palette itself.
+    for (let branch: HTMLElement | null = panel.current; branch?.parentElement; branch = branch.parentElement) {
+      for (const sibling of branch.parentElement.children) {
+        if (sibling instanceof HTMLElement && sibling !== branch) {
+          background.set(sibling, { inert: sibling.inert, ariaHidden: sibling.getAttribute("aria-hidden") });
+          sibling.inert = true;
+          sibling.setAttribute("aria-hidden", "true");
+        }
+      }
+      if (branch.parentElement === document.body) break;
+    }
+    // Layout cleanup releases isolation before the focus layer restores its opener.
+    return () => releaseBackground.current();
+  }, []);
 
   const commands = useMemo<Command[]>(() => {
     const go = (to: string) => () => navigate(to);
@@ -61,7 +88,7 @@ function Palette({ onClose, onNewSession, onToggleTheme }: Omit<PaletteProps, "o
   useEffect(() => setActive(0), [query]);
   useEffect(() => { list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" }); }, [active]);
 
-  const choose = (c?: Command) => { if (!c) return; restoreFocus(); onClose(); c.run(); };
+  const choose = (c?: Command) => { if (!c) return; releaseBackground.current(); restoreFocus(); onClose(); c.run(); };
   const onKey = (e: React.KeyboardEvent) => {
     if (e.target !== input.current || e.defaultPrevented || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.ctrlKey || e.altKey || e.metaKey) return;
     const next = navigationIndex(e.key, active, results.length, { orientation: "vertical", loop: false, homeEnd: false });

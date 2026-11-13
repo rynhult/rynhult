@@ -22,12 +22,13 @@ for (const codexSignedIn of [false, true]) test(`new teams show task profiles an
   }));
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   const registry = page.waitForResponse(r => r.url().includes(`/api/providers/registry?project_id=${id}`));
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(id));
   await registry;
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(dialog.getByRole('combobox', { name: /^Helper profile / })).toHaveCount(choices.length);
   for (const [index, choice] of choices.entries()) {
     await expect(dialog.getByRole('combobox', { name: `Helper profile ${index + 1}`, exact: true })).toHaveValue(choice.profile);
@@ -111,14 +112,9 @@ test('person records boundaries and switches a running prepare lead to build', a
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });
 
-test('switching a running build lead to prepare stops helpers first and resumes with read-only permissions', async ({ page, arrangeTeam }) => {
-  const { lead, headers } = await buildLead(page);
-  const original = await (await page.request.get(`/api/sessions/${lead}`)).json();
-  const made = await page.request.post('/api/sessions', { headers, data: {
-    project_id: original.project_id, provider: 'claude', name: 'Riley helper', worktree: true,
-  } });
-  expect(made.ok(), await made.text()).toBeTruthy();
-  const helper = (await made.json()).id;
+test('switching a running build lead to prepare stops helpers first and resumes with read-only permissions', async ({ page, arrangeTeam, createTeamHelper }) => {
+  const { lead } = await buildLead(page);
+  const helper = await createTeamHelper(lead);
   await arrangeTeam('member', lead, helper);
   const stopped: string[] = [];
   page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/stop')) stopped.push(new URL(r.url()).pathname); });

@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, gitProject, info, PASSWORD, totp, verifyAgain } from './helpers';
-test.use({ presentationChanges: ['admin_features', 'ui_shell', 'layouts'], storageState: AUTH_FILE });
+test.use({ presentationChanges: ['admin_features', 'layouts'], storageState: AUTH_FILE });
 async function enable(page: import('@playwright/test').Page, enabled = true) {
   if (enabled) {
     let state = await (await page.request.get('/api/admin-features')).json();
@@ -9,13 +9,9 @@ async function enable(page: import('@playwright/test').Page, enabled = true) {
       expect((await page.request.put('/api/admin-features/chat', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } })).ok()).toBeTruthy();
       state = await (await page.request.get('/api/admin-features')).json();
     }
-    if (!state.features.find((f: { id: string; enabled: boolean }) => f.id === 'new_shell')?.enabled) {
-      await verifyAgain(page);
-      const r = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-      expect(r.ok(), await r.text()).toBeTruthy();
-    }
+
   }
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } })).ok()).toBeTruthy();
+
 }
 // The integrated native Chat reader validates the complete page contract.
 async function mockChat(page: import('@playwright/test').Page, sessionId: string, state: () => string) {
@@ -40,7 +36,7 @@ async function joinMember(page: import('@playwright/test').Page, context: import
   const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
   const joined = await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } });
   expect(joined.ok(), await joined.text()).toBeTruthy();
-  await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
 }
 for (const role of ['owner', 'member']) test(`${role}: recovery states in light and dark; no recovery mutations`, async ({ page, context }) => {
   test.setTimeout(120_000);
@@ -97,7 +93,7 @@ for (const role of ['owner', 'member']) test(`${role}: recovery states in light 
   expect(writes).toEqual([]); expect(sockets).toEqual([]);
   if (role === 'member') expect(inventory).toEqual([]);
 });
-for (const role of ['owner', 'member']) test(`${role}: conflict review keeps both revisions and draft; standard layout unchanged`, async ({ page, context }) => {
+for (const role of ['owner', 'member']) test(`${role}: conflict review keeps both revisions and draft after reopening the same view`, async ({ page, context }) => {
   await enable(page);
   if (role === 'member') await joinMember(page, context);
   const { id, folder } = await gitProject(page, 'recovery-conflict');
@@ -126,11 +122,11 @@ for (const role of ['owner', 'member']) test(`${role}: conflict review keeps bot
   await expect(page.getByRole('status', { name: 'File save status' })).toContainText('Saved');
   expect(readFileSync(`${folder}/app.py`, 'utf8')).toContain('my draft');
   await enable(page, false); await page.reload();
-  await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
   await editor.fill('old layout draft'); writeFileSync(`${folder}/app.py`, 'old layout disk');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'File changed on disk' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Review changes', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Resolve a save conflict' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review changes', exact: true })).toBeVisible();
 });
 
 test('Chat fallback preserves another terminal writer; denied refresh hides cached resource', async ({ page, context }) => {

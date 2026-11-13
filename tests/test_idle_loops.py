@@ -265,3 +265,113 @@ async def test_a_settled_stop_skipped_by_reconcile_still_has_its_late_hooks_read
     assert acc_id not in reconciled  # settled: no reconcile transaction
     supervisor.ingest_all()
     assert acc_id in calls and events(api, acc_id) == before + 1  # but ingest reads the new hook
+
+
+@pytest.mark.parametrize('failure', [False, True])
+async def test_exited_checkout_reads_are_once_per_run_under_reconcile_load(api, project, env, monkeypatch, failure):
+    """Thirty abandoned exits never become thirty permanent git polls, even when all folders are gone."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from helpers import write_db
+
+    from acc.server.broker_client import BrokerError
+    from acc.server.models import SessionRun, utcnow
+
+    await pause_supervisor(api)
+    acc_id, _ = await launched(api, project, env)
+    supervisor = api.app.state.supervisor
+    stamp = utcnow()
+    with write_db(api.app.state.db) as db:
+        template = db.get(Session, acc_id)
+        template.desired_state = 'archived'
+        for index in range(30):
+            sid = f'exit-load-{index}'
+            db.add(Session(id=sid, project_id=template.project_id, provider='codex', name=sid, tmux_name=sid,
+                           launch_spec_id=template.launch_spec_id, run_as=template.run_as,
+                           desired_state='stopped', observed_state='exited', status_at=stamp,
+                           changes_at=stamp if index < 10 else stamp - timedelta(seconds=1),
+                           changes={'git': True, 'branch': 'feature', 'files': 0}))
+            db.add(SessionRun(session_id=sid, reason='launch', started_at=stamp - timedelta(seconds=2), ended_at=stamp))
+        db.commit()
+    original = supervisor.broker.call
+    reads = []
+
+    async def counting(method, **params):
+        if method == 'workspace_changes':
+            reads.append(params)
+            if failure:
+                raise BrokerError('checkout is gone')
+            return {'git': True, 'branch': 'feature', 'files': 0}
+        return await original(method, **params)
+
+    monkeypatch.setattr(supervisor.broker, 'call', counting)
+    tick = [1000.0]
+    monkeypatch.setattr(reconcile, 'time', SimpleNamespace(monotonic=lambda: tick[0]))
+    await reconcile_passes(api, 3)
+    assert len(reads) == 20  # the ten already fresh exits never read
+    tick[0] += supervisor.settings.changes_interval * 100
+    await reconcile_passes(api, 3)
+    assert len(reads) == 20  # even failed exits do not poll again after the interval
+    with write_db(api.app.state.db) as db:
+        row = db.get(Session, 'exit-load-29')
+        row.status_at = stamp + timedelta(seconds=1)
+        row.changes_at = None
+        db.add(SessionRun(session_id=row.id, reason='resume', started_at=stamp, ended_at=row.status_at))
+        db.commit()
+    await reconcile_passes(api, 2)
+    assert len(reads) == 21  # a new process run has one new opportunity
+
+
+async def test_failed_changes_read_obeys_the_timer_despite_stale_status(api, project, env, monkeypatch):
+    from types import SimpleNamespace
+
+    from helpers import write_db
+
+    from acc.server.broker_client import BrokerError
+    from acc.server.models import utcnow
+
+    await pause_supervisor(api)
+    acc_id, _ = await launched(api, project, env)
+    supervisor = api.app.state.supervisor
+    reads = []
+
+    async def failing(method, **params):
+        assert method == 'workspace_changes'
+        reads.append(params)
+        raise BrokerError('checkout is gone')
+
+    monkeypatch.setattr(supervisor.broker, 'call', failing)
+    tick = [1000.0]
+    monkeypatch.setattr(reconcile, 'time', SimpleNamespace(monotonic=lambda: tick[0]))
+    with write_db(api.app.state.db) as db:
+        row = db.get(Session, acc_id)
+        row.observed_state = 'idle'
+        row.status_at = utcnow()
+        row.changes_at = None
+        await supervisor._check_changes(db, row)
+        assert supervisor._changes_checked[row.id][0] == tick[0]
+        await supervisor._check_changes(db, row)
+        assert len(reads) == 1
+        tick[0] += supervisor.settings.changes_interval * 6 + 1
+        await supervisor._check_changes(db, row)
+        assert len(reads) == 2
+
+
+async def test_fresh_exit_does_not_load_run_history(api, project, env):
+    from helpers import write_db
+    from sqlalchemy.orm import raiseload
+
+    from acc.server.models import utcnow
+
+    await pause_supervisor(api)
+    acc_id, _ = await launched(api, project, env)
+    with write_db(api.app.state.db) as db:
+        row = db.get(Session, acc_id)
+        row.observed_state = 'exited'
+        row.status_at = row.changes_at = utcnow()
+        db.commit()
+    with write_db(api.app.state.db) as db:
+        row = db.scalar(select(Session).where(Session.id == acc_id).options(raiseload(Session.runs)))
+        await api.app.state.supervisor._check_changes(db, row)
+        assert 'runs' not in row.__dict__

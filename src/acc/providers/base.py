@@ -51,6 +51,11 @@ class Option:
     help: str = ""
     dangerous: tuple[Any, ...] = ()  # values that let the agent act without asking: launch needs confirming
 
+    # Strictest to loosest; independent of display order. Empty for non-permission options.
+    permission_order: tuple[Any, ...] = ()
+    # Shared authority levels parallel to permission_order: read-only, asks, edits, auto, bypass.
+    permission_levels: tuple[int, ...] = ()
+
     def public(self) -> dict:
         return {"key": self.key, "label": self.label, "kind": self.kind, "default": self.default, "help": self.help,
                 "choices": [{"value": v, "label": l} for v, l in self.choices], "dangerous": list(self.dangerous)}
@@ -129,6 +134,21 @@ class Provider:
             return getattr(inputs, key)
         value = (inputs.options or {}).get(key)
         return spec.default if value is None and spec else value
+
+    def permission_level(self, inputs: "LaunchInputs") -> int:
+        levels = []
+        for option in self.options:
+            if not option.permission_order:
+                continue
+            value = self.option(inputs, option.key)
+            if value not in option.permission_order or len(option.permission_levels) != len(option.permission_order):
+                raise CompileError(f"unknown permission level for {self.id} {option.key}")
+            levels.append(option.permission_levels[option.permission_order.index(value)])
+        # Shared action levels and provider-specific bypass authorization are separate.
+        # A level-4 option still wins over read-only; other options are sandbox-bounded.
+        if 4 in levels:
+            return 4
+        return 0 if 0 in levels else max(levels, default=1)
 
     def validate(self, inputs: "LaunchInputs") -> None:
         for spec in self.options:

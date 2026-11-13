@@ -38,7 +38,7 @@ def test_changes_against_the_current_branch_merge_base(tmp_path):
     (ws / "notes.md").write_text("new\n")  # not yet added
     summary = ops.workspace_changes(config, str(ws), base)
     assert summary == {"git": True, "base": base[:12], "since_launch": False, "branch": "feature", "files": 3,
-                       "additions": 5, "deletions": 1, "comparison_ref": "main"}
+                       "additions": 5, "deletions": 1, "comparison_ref": "main", "commits": 1}
     detail = ops.workspace_changes(config, str(ws), base, detail=True)
     assert [(f["path"], f["status"]) for f in detail["list"]] == [("app.py", "M"), ("lib.py", "A"), ("notes.md", "A")]
     assert "+TWO" in detail["diff"] and "+new" in detail["diff"] and not detail["truncated"]
@@ -276,3 +276,12 @@ async def test_session_summary_and_changes_share_the_current_branch_baseline(api
     assert (summary["additions"], summary["deletions"]) == (2, 0)
     assert {key: changes[key] for key in summary} == summary
     assert {entry["path"] for entry in changes["list"]} == {"feature.txt", "notes.md"}
+
+
+def test_commits_count_even_when_the_branch_has_no_file_diff(tmp_path, changes_config):
+    ws = tmp_path / 'ws'
+    base = repo(ws)
+    git(ws, 'checkout', '-qb', 'feature')
+    git(ws, 'commit', '--allow-empty', '-qm', 'Record decision')
+    summary = ops.workspace_changes(changes_config, str(ws), base)
+    assert summary['files'] == 0 and summary['commits'] == 1

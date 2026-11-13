@@ -3,6 +3,8 @@ import pytest
 from test_auth import cookie_client, do_setup
 from test_users import browser, csrf, join
 
+from acc.server.setup_wizard import initial
+
 
 async def test_setup_level_requires_a_person_and_csrf(api, env):
     # The installation token has no personal experience to configure.
@@ -12,7 +14,7 @@ async def test_setup_level_requires_a_person_and_csrf(api, env):
     await do_setup(api, env)
     owner = cookie_client(api)
     assert (await owner.get('/api/preferences/setup-level')).json() == {
-        'level': None, 'dismissed': False, 'version': 1}
+        'level': None, 'dismissed': False, 'version': 1, 'wizard': initial(fresh=True)}
     assert (await owner.put('/api/preferences/setup-level', json={'level': 0, 'dismissed': True})).status_code == 403
     assert (await owner.put('/api/preferences/setup-level', headers=csrf(owner),
                             json={'level': None, 'dismissed': True})).json()['level'] is None
@@ -27,6 +29,7 @@ async def test_each_level_preserves_security_and_other_people(api, env, member_a
         security_settings.save(db, {'kind': 'instance'}, {'secrets': False}, actor='casey', expected_revision=0)
         db.commit()
     before = (await owner.get('/api/security/registry')).json()
+    features_before = (await owner.get('/api/admin-features')).json()
     invite = await owner.post('/api/users/invites', headers=csrf(owner), json={'account': 'dana-agent'})
     async with browser(api) as member:
         assert (await join(member, invite.json()['link'], 'alex')).status_code == 200
@@ -34,12 +37,13 @@ async def test_each_level_preserves_security_and_other_people(api, env, member_a
             response = await owner.put('/api/preferences/setup-level', headers=csrf(owner),
                                        json={'level': level, 'dismissed': True})
             assert response.status_code == 200
-            assert response.json() == {'level': level, 'dismissed': True, 'version': 1}
+            assert response.json() == {'level': level, 'dismissed': True, 'version': 1, 'wizard': initial(fresh=True)}
             assert (await member.get('/api/preferences/setup-level')).json()['level'] is None
         assert (await member.put('/api/preferences/setup-level', headers=csrf(member),
                                  json={'level': 1, 'dismissed': True})).status_code == 200
         assert (await owner.get('/api/preferences/setup-level')).json()['level'] == 6
     assert (await owner.get('/api/security/registry')).json() == before
+    assert (await owner.get('/api/admin-features')).json() == features_before
 
 
 @pytest.mark.parametrize('body', [

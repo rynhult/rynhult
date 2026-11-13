@@ -16,6 +16,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
@@ -44,7 +45,7 @@ JUNIT_LIMIT = 16 << 20
 # the time limit (SIGTERM, then SIGKILL), with a `timeout` marker. A per-job task count would need a cgroup: Linux's
 # RLIMIT_NPROC counts the whole account, which would hit the person's own sessions.
 WRAPPER = r"""
-import os, resource, signal, subprocess, sys, threading
+import os, resource, signal, subprocess, sys, threading, time
 exit_path, log_path = sys.argv[1], sys.argv[2]
 seconds, log_bytes, memory = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 
@@ -60,6 +61,13 @@ def finish(code):
     with open(exit_path + '.tmp', 'w') as out:
         out.write(str(code))
     os.replace(exit_path + '.tmp', exit_path)
+
+
+deadline = int(os.environ.get('ACC_GATE_EXPIRES_AT', '0'))
+if deadline and time.time() >= deadline:
+    open(os.path.join(os.path.dirname(exit_path), 'timeout'), 'w').close()
+    finish(124)
+    raise SystemExit(0)
 
 
 child = subprocess.Popen(sys.argv[6:], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -83,7 +91,7 @@ def pump():
 reader = threading.Thread(target=pump, daemon=True)
 reader.start()
 try:
-    code = child.wait(timeout=seconds)
+    code = child.wait(timeout=min(seconds, max(0, deadline - time.time())) if deadline else seconds)
 except subprocess.TimeoutExpired:
     open(os.path.join(os.path.dirname(exit_path), 'timeout'), 'w').close()
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -222,10 +230,18 @@ def gate_start(config: BrokerConfig, job: str, argv: list[str], limits: dict | N
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and '\x00' not in a for a in argv):
         raise OpError('invalid gate command')
     limits = {**DEFAULT_LIMITS, **(limits or {})}
+    expires_at = limits.pop('expires_at', None)
     if (set(limits) != set(DEFAULT_LIMITS) or any(type(v) is not int for v in limits.values())
             or not 1 <= limits['seconds'] <= 86400 or not 1 << 20 <= limits['log_bytes'] <= 1 << 30
             or not 1 << 30 <= limits['memory_bytes'] <= 256 << 30):
         raise OpError('invalid gate limits')
+    if expires_at is not None:
+        if type(expires_at) is not int or expires_at <= 0:
+            raise OpError('invalid gate deadline')
+        remaining = int(expires_at - time.time())
+        if remaining <= 0:
+            raise OpError('session time limit ended before gate dispatch')
+        limits['seconds'] = min(limits['seconds'], remaining)
     if _start_time(os.getpid()) is None:
         raise OpError('This machine cannot record a gate process identity. Run the gate on a Linux machine.')
     _keep_first_result(folder)
@@ -233,6 +249,8 @@ def gate_start(config: BrokerConfig, job: str, argv: list[str], limits: dict | N
         (folder / name).unlink(missing_ok=True)
     command = [a.replace('{junit}', str(folder / 'junit.xml')) for a in argv]
     env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ} | {'CI': '1', 'ACC_GATE_JOB': job}
+    if expires_at is not None:
+        env['ACC_GATE_EXPIRES_AT'] = str(expires_at)
     process = subprocess.Popen([sys.executable, '-I', '-c', WRAPPER, str(folder / 'exit'), str(folder / 'gate.log'),
                                 str(limits['seconds']), str(limits['log_bytes']), str(limits['memory_bytes']), *command],
                                cwd=checkout, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

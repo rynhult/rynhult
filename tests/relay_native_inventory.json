@@ -1,0 +1,570 @@
+{
+  "schema": 1,
+  "base": "5a9468829",
+  "files": {
+    "tests/test_session_relay_allow_parallel_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_application_os_restart.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_background_completion.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_background_death.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_churn.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_churn_budget.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_churn_long.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_deadline.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_joint_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_native_draft.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_native_enclosure.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_native_placement.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_process_death.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_service_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_team_background_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_claude_team_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_codex_native_exit.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_codex_native_placement.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_codex_native_stdio.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_allow_reconcile.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_claude_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_claude_failed_allow.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_claude_tool_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_claude_unoffered.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_codex_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_codex_ack_failed.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_codex_file_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_codex_file_inventory.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_codex_file_remaining.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_controls.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_decision_wire.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_decisions.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_explicit_recovery.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_failed_sdk_target.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_failed_target.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_handover.py": {
+      "targets": [
+        "test_actual_sdk_to_tui_uses_hub_plan_same_id_and_refuses_unknown_reverse"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_late_completion.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_native_prompt.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_partition.py": {
+      "targets": [
+        "test_enrolled_native_placement_expires_without_broker_only_authority"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_public_decisions.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_public_l1.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_public_retained.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_repeat_activation.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_retained_draft.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_roundtrip.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_cancel_loss.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_concurrent.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_decoder.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_lifecycle.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_outcomes.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_public.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_stock_withdrawal.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_allow_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_allow_inventory.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_deny_ack.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_deny_ack_lost.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_failed.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_file_deny.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_read_concurrent.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_enrolled_tui_restart.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_execution_broker_crash_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_frozen_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_installed_security.py": {
+      "targets": [
+        "test_enrolled_owner_consumes_installed_guard_and_frozen_policy"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_integration_stop_team.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_metadata_security.py": {
+      "targets": [
+        "test_real_native_metadata_boundary_denies_forgery_and_continues_workspace_work"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_codex_metadata.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_decision_scope.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_delivery_race.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_history_recovery.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_isolation.py": {
+      "targets": [
+        "test_pinned_native_tui_uses_private_unix_websocket_without_actor_watermark",
+        "test_real_claude_guard_denial_and_same_native_id_resume_without_live_account"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_lifetimes.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_pending_exit.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_replacement_recovery.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_retained_capacity.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_sdk_metadata.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_native_socket.py": {
+      "targets": [
+        "test_captured_stock_native_turn_has_no_actor_grant_and_is_refused"
+      ],
+      "reason": "handoff evidence dependency"
+    },
+    "tests/test_session_relay_native_turn.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "handoff evidence dependency"
+    },
+    "tests/test_session_relay_natural_decision_expiry.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_notice_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_os_main_ha.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_owned_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_private_read_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_process_restart.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_public_native_controls.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_runtime_retention.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_service_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_stock_fresh_codex_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_stock_loss_recovery_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_stock_post_delivery_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_stock_settled_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_supervisor_crash_native.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_temporary_claude.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    },
+    "tests/test_session_relay_tui_expiry.py": {
+      "targets": [
+        "*"
+      ],
+      "reason": "real agent CLI / environment-bound qualification probe"
+    }
+  },
+  "test_bodies_preserved": true,
+  "notes": [
+    "Only explicit markers and missing pytest imports added; normalized test ASTs identical.",
+    "Mixed modules retain all independent fake-CLI, namespace, policy and cleanup unit tests in default collection."
+  ]
+}

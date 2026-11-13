@@ -1,7 +1,7 @@
-# Claude Code: subscriptions and automation
+# Claude Agent: subscriptions and automation
 
-Claude sessions signed in with a Claude subscription only take your own typing.
-Add an API key to automate them.
+Claude terminal sessions signed in with a Claude subscription take your own typing.
+Add an API key to automate them through the existing automation paths.
 
 With a Pro, Max or Ultra subscription (claude.ai / OAuth sign-in), you can launch
 Claude Code, type in its browser terminal, read its output and approve requests
@@ -85,3 +85,46 @@ Other providers retain message delivery and automated terminal access after a
 broker restart.
 
 Claude Code 2.1.308: Rynhult does not pre-answer the custom API key confirmation. `customApiKeyResponses` is not documented in the official [settings reference](https://code.claude.com/docs/en/settings-reference), so confirm the key yourself in the terminal when asked. No key or key suffix is written to settings for this purpose.
+
+
+## Chat with Claude Agent
+
+Terminal sessions use the unmodified Claude Code CLI and appear as **Claude Code**
+in the provider registry. **Claude Agent** names Rynhult’s SDK Chat adapter only.
+
+The session relay is under development and defaults Off. Its Claude Agent SDK
+adapter is not yet qualified or connected to the hub/broker runtime in this slice.
+The personal setting alone does not enable writable Chat.
+
+The default authentication path uses your API key, Bedrock, Vertex or Foundry.
+The SDK drives your installed `claude` on the session's machine and account.
+Rynhult does not read, copy or replay Claude login credentials.
+
+To opt into subscription Chat when qualified relay support becomes available,
+open **Settings → Claude Agent → Use my Claude subscription for Chat**. It defaults
+Off. Read the notice and explicitly accept the account risk:
+
+> Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK…
+
+Using your Claude subscription for Chat may put your account at risk; the account
+risk is yours. Rynhult records the accepting person, time, text and text version.
+You can revoke acceptance at any time. An owner can disable **Claude subscription
+Chat** in **Security → Admin features** for the whole instance. Without current
+acceptance, subscription sessions retain Terminal and read-only Chat. This
+acceptance does not authorize schedules, team messages or other legacy automation.
+
+Chat and Terminal must use the same native Claude conversation and transcript.
+The L1 ownership coordinator permits only one live owner: either the native TUI or
+the SDK process. Switching at idle requires verified exit of the old owner,
+then resumes the same native session ID (`claude --resume <id>` for Terminal,
+SDK `resume` for Chat). Busy sessions show the reason inline. Terminal turns are
+never copied into synthetic checkpoint prompts, and switching never forks a
+second conversation. While Terminal owns execution, Claude's documented hooks
+continue to provide L2 structured status and person approvals. The SDK keeps
+Claude's tools and installed Rynhult guards/hooks; it does not replace the agent loop.
+
+The optional project extra `claude-agent` pins SDK 0.1.50. It bundles a CLI,
+but this adapter requires an explicit path to the person's installed CLI and never
+selects the bundled executable. CLI/hook qualification is still required.
+
+Artificial replay tests cover both switch directions against one native transcript and an exclusive process lock. Real native TUI/SDK and L2 hook qualification, plus hub/broker wiring, remain required before enabling these capabilities.

@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
-import { AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle } from './helpers';
+import { openGridTerminal, AUTH_FILE, csrfHeaders, gitProject, info, resetTerminalThrottle } from './helpers';
 
 test.use({ storageState: AUTH_FILE, serviceWorkers: 'block' });
 let id: string;
@@ -12,8 +12,9 @@ test.beforeEach(async ({ page }, testInfo) => {
     data: { project_id: project.id, provider: 'claude', name: 'Predictive input' } });
   expect(created.ok()).toBe(true);
   id = (await created.json()).id;
-  await page.goto(`/sessions/${id}`);
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await openGridTerminal(page, id!);
+  await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
   await page.locator('.xterm-helper-textarea').focus();
 });
 test.afterEach(async ({ page }) => {
@@ -89,11 +90,11 @@ for (const cancelled of [true, false]) test(`composition commits once and clears
 
 test('remounting the Safari editor keeps exactly one native input owner', async ({ page }) => {
   await page.keyboard.type('before-');
-  await page.getByRole('tab', { name: 'Activity', exact: true }).click();
+  await page.goto(`/sessions/${id}?tab=activity`);
   await expect(page.locator('.xterm-helper-textarea')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+  await openGridTerminal(page, id!);
   const take = page.getByRole('button', { name: 'Take control', exact: true });
-  await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
+  await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
   if (await take.isVisible()) {
     await take.click();
     const dialog = page.getByRole('dialog', { name: 'Take terminal control' });

@@ -1,13 +1,15 @@
+import { DelegatedDigest } from '../DelegatedDigest';
+import { useSingleMutation as useMutation } from '../../lib/mutations';
 import { Surface as Card, ShellPage as Page, Workbar as PageHeader } from './PagePrimitives';
-import { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { CheckCheck } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, post } from '../../lib/api';
 import { sourceWords } from '../../lib/words';
-import { providerLabel, useProviderRegistry } from '../../lib/queries';
+import { OFFLINE_TITLE, useOffline, providerLabel, useProviderRegistry } from '../../lib/queries';
 import type { AttentionItem } from '../../lib/types';
-import { Button, Empty, QueryState, Segmented } from '../ui';
+import { Button, Empty, ErrorNote, QueryState, Segmented } from '../ui';
 import { AttentionRow } from '../../pages/Inbox';
 import { categories, categoryOf, relatedWork, returnPath } from './inbox';
 
@@ -24,6 +26,22 @@ export function InboxContext({ item }: { item: AttentionItem }) {
 }
 
 export default function ShellInbox() {
+  const cache = useQueryClient();
+  const offline = useOffline();
+  const [checked, setChecked] = useState<number[]>([]);
+  const [batch, setBatch] = useState<{ id: number; count: number; skipped: number } | null>(null);
+  const dismiss = useMutation({
+    mutationFn: (items: AttentionItem[]) => post<{ batch: number; dismissed: number; skipped: number }>('/api/attention/dismiss', {
+      items: items.filter(item => item.bulk_dismissible && !item.persistent && !item.acked_at && !item.resolved_at
+        && !['decisions', 'approvals'].includes(categoryOf(item))).map(item => ({ id: item.id, updated_at: item.updated_at })),
+    }),
+    onSuccess: result => { setChecked([]); setBatch({ id: result.batch, count: result.dismissed, skipped: result.skipped }); void cache.invalidateQueries({ queryKey: ['attention'] }); },
+  });
+  const undo = useMutation({
+    mutationFn: (id: number) => post('/api/attention/dismiss/undo', { batch: id }),
+    onSuccess: () => { setBatch(null); void cache.invalidateQueries({ queryKey: ['attention'] }); },
+  });
+  useEffect(() => { if (batch) { const timer = setTimeout(() => setBatch(null), 8000); return () => clearTimeout(timer); } }, [batch]);
   const [params, setParams] = useSearchParams(); const route = useLocation();
   const detail = useRef<HTMLHeadingElement>(null); const picked = params.get('item');
   useEffect(() => { if (picked) detail.current?.focus(); }, [picked]);
@@ -44,12 +62,23 @@ export default function ShellInbox() {
       actions={<>{back && <Link className="shell-link text-accent" to={back}>Return to work</Link>}
         <Segmented label="Inbox scope" value={scope} onChange={value => update('scope', value)} options={[{ id: 'open', label: 'Open' }, { id: 'all', label: 'History' }]} />
         <Button onClick={() => void query.refetch()} disabled={query.isFetching}>Refresh Inbox</Button></>} />
+    {query.isPending && query.errorUpdatedAt > query.dataUpdatedAt && <p role="alert" className="text-sm text-wait">Inbox unavailable. Waiting for a successful refresh.</p>}
+    <DelegatedDigest/>
+    <ErrorNote error={dismiss.error || undo.error} />
+    {batch && <div role="status" className="flex flex-wrap items-center gap-2 py-2">
+      <span>{batch.count} notices dismissed.{batch.skipped ? ` ${batch.skipped} changed or unavailable items skipped.` : ''}</span>
+      <Button disabled={undo.isPending || offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => undo.mutate(batch.id)}>Undo</Button>
+    </div>}
     <QueryState query={query} isEmpty={items => !items.length}
       empty={<Card><Empty icon={CheckCheck}>{scope === 'open' ? 'Nothing needs you right now.' : 'No history yet.'}</Empty></Card>}>
       {items => {
         const filtered = items.filter(item => filter === 'all' || categoryOf(item) === filter);
         const pages = Math.max(1, Math.ceil(filtered.length / 20)); const current = Math.min(page, pages);
         const shown = filtered.slice((current - 1) * 20, current * 20);
+        const dismissible = shown.filter(item => item.bulk_dismissible && !item.persistent && !item.acked_at && !item.resolved_at
+          && !['decisions', 'approvals'].includes(categoryOf(item)));
+        const chosen = dismissible.filter(item => checked.includes(item.id));
+        const busy = offline || dismiss.isPending || undo.isPending || !!batch;
         const selected = params.has('item') ? filtered.find(i => String(i.id) === params.get('item')) : shown[0];
         const destination = selected && relatedWork(selected);
         const heading = categories.find(c => c.key === filter)?.label ?? 'All items';
@@ -57,7 +86,16 @@ export default function ShellInbox() {
           <Card className="min-w-0 self-start">
             <h2 className="break-words border-b border-line px-4 py-3 font-semibold">{heading}</h2>
             <p className="px-4 pt-2 text-xs text-muted">{filtered.length} items shown · {scope === 'all' ? 'history included' : 'open'} (up to 200 per read)</p>
+            {!!dismissible.length && <div className="flex flex-wrap gap-2 px-4 py-2" aria-label="Dismiss notices">
+              <Button disabled={busy || !chosen.length} onClick={() => dismiss.mutate(chosen)}>Dismiss selected ({chosen.length})</Button>
+              <Button disabled={busy} onClick={() => dismiss.mutate(dismissible)}>Dismiss all shown</Button>
+              <p className="text-xs text-muted">Only notices; decisions and approvals stay open.</p>
+            </div>}
             {shown.length ? <ul className="shell-inbox-list divide-y divide-line" aria-label="Inbox items">{shown.map(item => <li key={item.id}>
+              {dismissible.includes(item) && <label className="flex items-center gap-2 px-4 pt-2 text-xs">
+                <input type="checkbox" className="size-6 shrink-0" disabled={busy} checked={checked.includes(item.id)} onChange={event => setChecked(ids => event.target.checked ? [...ids, item.id] : ids.filter(id => id !== item.id))} />
+                Select {item.title}
+              </label>}
               <button type="button" aria-pressed={selected?.id === item.id} className="shell-link shell-inbox-item w-full text-left" onClick={() => update('item', String(item.id))}>
                 <span className="block text-xs text-muted">{categories.find(c => c.key === categoryOf(item))?.label}</span>
                 <span className="block break-words font-medium">{item.title}</span>

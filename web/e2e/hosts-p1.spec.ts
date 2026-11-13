@@ -4,20 +4,9 @@ import {expect,type Page,type Cookie} from '@playwright/test';
 import {AUTH_FILE,expectAxeClean,info,PASSWORD,totp,verifyAgain} from './helpers';
 // Member journeys deliberately save their own shell preference; owner restoration
 // alone cannot restore a different person's setting. The shared fixture owns both.
-test.use({storageState:AUTH_FILE,presentationChanges:['layouts','ui_shell']});
+test.use({storageState:AUTH_FILE,presentationChanges:['layouts',]});
 const headers=async(page:Page)=>({'x-acc-csrf':(await page.context().cookies()).find(c=>/acc_csrf$/.test(c.name))!.value});
-async function enable(page:Page) {
-  const put=async()=>{
-    const state=await(await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell',{headers:await headers(page),data:{enabled:true,revision:state.revision}});
-  };
-  let response=await put();
-  if(response.status()===403){await verifyAgain(page);response=await put();}
-  expect(response.ok(),await response.text()).toBeTruthy();
-}
-async function preference(page:Page,enabled=true) {
-  expect((await page.request.put('/api/preferences/ui-shell',{headers:await headers(page),data:{enabled}})).ok()).toBeTruthy();
-}
+
 let memberCookies:Cookie[]|undefined;
 const project={id:901,slug:'cedar',name:'Cedar archive',host:'local',account:'finn-agent',workspace_path:'/home/alex/src/cedar',repo:null,remote_url:null,import_mode:'managed',trusted:true,archived:false,notes:null,compose_autostart:false,compose_approved:false,git_backup:false};
 async function data(page:Page,owner:boolean) {
@@ -37,7 +26,7 @@ async function data(page:Page,owner:boolean) {
 for(const width of [1440,390]) for(const theme of ['light','dark'] as const) {
   test(`owner Hosts preserves resources and honest observations ${width} ${theme}`,async({page})=>{
     await page.setViewportSize({width,height:900});await page.emulateMedia({colorScheme:theme});
-    await enable(page);await preference(page);await data(page,true);
+    await data(page,true);
     await page.goto('/projects');
     if(width===390) await page.getByRole('button',{name:'More',exact:true}).click();
     await page.getByRole('button',{name:'Hosts',exact:true}).click();
@@ -61,7 +50,7 @@ for(const width of [1440,390]) for(const theme of ['light','dark'] as const) {
   });
   test(`member Hosts stays within existing host visibility ${width} ${theme}`,async({page,context})=>{
     await page.setViewportSize({width,height:900});await page.emulateMedia({colorScheme:theme});
-    await enable(page);
+
     if(!memberCookies) {
       const account=`hosts-${crypto.randomUUID().slice(0,8)}-agent`;
       writeFileSync(`${info().state}/fixture-accounts/${account}`,'');
@@ -74,7 +63,7 @@ for(const width of [1440,390]) for(const theme of ['light','dark'] as const) {
     } else {
       await context.clearCookies();await context.addCookies(memberCookies);
     }
-    await preference(page);await data(page,false);
+    await data(page,false);
     const forbidden:string[]=[];page.on('request',r=>{const u=new URL(r.url());if(u.pathname==='/api/board'||u.pathname==='/api/nodes'||u.pathname==='/api/host'&&u.searchParams.has('machine'))forbidden.push(u.pathname+u.search);});
     await page.goto('/hosts?machine=edge');
     await expect(page.getByRole('heading',{name:'Hosts',exact:true,level:1})).toBeVisible();
@@ -89,15 +78,18 @@ for(const width of [1440,390]) for(const theme of ['light','dark'] as const) {
     expect(forbidden).toEqual([]);await expectAxeClean(page);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   });
 }
-test('standard shell keeps its Host destination',async({page})=>{
+test('Hosts keeps the local Host destination reachable',async({page})=>{
   // The previous member tests deliberately use separate contexts; this is the owner fixture again.
-  await preference(page,false);await page.goto('/hosts');
-  await expect(page).toHaveURL(/\/host$/);await expect(page.getByRole('navigation',{name:'Main',exact:true})).toBeVisible();
+  await page.goto('/hosts');
+  await expect(page).toHaveURL(/\/hosts$/);
+  await expect(page.getByRole('heading',{name:'Hosts',exact:true,level:1})).toBeVisible();
+  await page.getByRole('complementary',{name:'Context sidebar'}).locator('a[href="/host"]').click();
+  await expect(page.getByRole('navigation',{name:'Rail',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Host',exact:true,level:1})).toBeVisible();
 });
 
 test('failed host refresh keeps dated observations without claiming a connection',async({page})=>{
-  await enable(page);await preference(page);await data(page,true);await page.goto('/hosts');
+  await data(page,true);await page.goto('/hosts');
   await expect(page.getByRole('region',{name:'Home lab',exact:true})).toContainText('Connected');
   await page.route('**/api/board',r=>r.fulfill({status:503,json:{detail:'Host summary temporarily unavailable'}}));
   await page.getByRole('button',{name:'Refresh hosts',exact:true}).click();
@@ -107,7 +99,7 @@ test('failed host refresh keeps dated observations without claiming a connection
 });
 
 test('failed session refresh dates saved work in cards while the sidebar stays names only',async({page})=>{
-  await enable(page);await preference(page);await data(page,true);await page.clock.install({time:Date.now()});
+  await data(page,true);await page.clock.install({time:Date.now()});
   await page.route('**/api/sessions',route=>route.fulfill({json:[{id:'saved-local',project_id:901,project:'Cedar archive',name:'Earlier active work',host:'local',desired_state:'running',observed_state:'active',provider:'claude',machine_offline:false}]}));
   await page.goto('/hosts');const home=page.getByRole('region',{name:'Home lab',exact:true});await expect(home).toContainText('Working 1');
   await page.getByRole('button',{name:'Hosts',exact:true}).click();

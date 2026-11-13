@@ -257,8 +257,11 @@ def disposable_root_vm(request):
 @pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
     # xdist workers start after the controller has scrubbed its environment.
-    # Send one boolean in pytest's private control record, never host credentials.
+    # Send bounded test controls in pytest's private record, never host credentials.
     node.workerinput['acc_disposable_root_vm'] = node.config.getoption('disposable_root_vm') is True
+    if hasattr(node.config.option, 'install_qualification'):
+        from install_artifact_qualification import OPTIONS
+        node.workerinput['acc_install_qualification'] = {name: node.config.getoption(name) for name in OPTIONS}
 
 
 def pytest_configure(config):
@@ -269,6 +272,9 @@ def pytest_configure(config):
         config.getoption('disposable_root_vm') is True
         or os.environ.get('ACC_FOLDER_QUALIFICATION_DISPOSABLE') == '1'
         or getattr(config, 'workerinput', {}).get('acc_disposable_root_vm') is True)
+    if hasattr(config.option, 'install_qualification'):
+        from install_artifact_qualification import capture_environment
+        capture_environment(config, os.environ, getattr(config, 'workerinput', {}).get('acc_install_qualification'))
     configure_test_environment(config)
     sys.dont_write_bytecode = True
     os.environ['PYTHONDONTWRITEBYTECODE'] = '1'

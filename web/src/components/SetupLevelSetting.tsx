@@ -5,6 +5,7 @@ import { useRole } from '../lib/queries';
 import { LEVELS, SECURITY_DEFAULTS, type SetupLevel } from '../lib/setupLevels';
 import { useSetupPreference, type SetupPreference } from '../lib/setupPreference';
 import { useSaveSetup } from '../lib/saveSetupPreference';
+import { ENTERPRISE_NOTE } from '../lib/setupWizard';
 import { SECURITY_COPY } from '../lib/security';
 import { navFor } from './nav';
 import { pathVisible } from '../lib/setupLevels';
@@ -40,17 +41,19 @@ function SetupForm({ value }: { value: SetupPreference }) {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   return <div className="space-y-4">
+    <Link className={buttonClass()} to="/setup/wizard">{value.wizard?.updated_at ? 'Review setup / Continue setup' : 'Review setup'}</Link>
     <p className="text-sm text-muted">Choose what you normally see. Your permissions, running work, sign-ins and Security settings stay as they are. Change this here at any time.</p>
     <Field label="Setup level"><Select name="setup-level" value={level ?? ''} disabled={save.isPending} onChange={e => { setLevel(e.target.value === '' ? null : Number(e.target.value) as SetupLevel); save.reset(); }}>
       <option value="">Current layout · not yet chosen</option>
       {LEVELS.map(x => <option value={x.id} key={x.id}>{x.id} · {x.name}{x.id === 1 ? ' (recommended)' : ''}</option>)}
     </Select></Field>
     {selected && <>
-      <p>{selected.description}</p>
+      <p>{LEVELS[Math.min(selected.id, 3)].description}</p>
+      {selected.id >= 4 && <p>{ENTERPRISE_NOTE}</p>}
       <details><summary className="cursor-pointer py-2 text-sm">Compare levels</summary><ul className="space-y-2 pt-2 text-sm">{LEVELS.map(x => <li key={x.id}><strong>{x.id} · {x.name}</strong> — {x.description}</li>)}</ul></details>
       <p className="text-sm"><strong>Normally visible:</strong> {navFor(owner, groupAdmin, instance.features).flatMap(g => g.items).filter(n => pathVisible(level, n.to)).map(n => n.label).join(', ')}.</p>
       <p className="text-sm text-muted">More tools reveals other authorized areas in the new layout. Saved links and recovery remain available.</p>
-      <section aria-label="Recommended team"><h3 className="font-semibold">Suggested team</h3><p className="text-sm">{selected.team}</p>
+      <section aria-label="Recommended team"><h3 className="font-semibold">Suggested team</h3><p className="text-sm">{LEVELS[Math.min(selected.id, 3)].team}</p>
         <p className="text-sm text-muted">Use these suggestions when choosing an agent in New session. Saving this layout creates no team and starts no work. Reusable personal team profiles are Later.</p>
       </section>
       <section aria-label="Recommended Security"><h3 className="font-semibold">Quiet protections stay on</h3>

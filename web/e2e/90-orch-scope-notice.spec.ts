@@ -9,7 +9,7 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const)
   test(`missed scope offers Stop at ${width}px in ${theme}`, async ({page}, ti) => {
     test.setTimeout(90000);
     await page.setViewportSize({width, height:900}); await page.emulateMedia({colorScheme:theme});
-    const {id, headers} = await gitProject(page, 'scope-notice');
+    const {id, headers, name: projectName} = await gitProject(page, 'scope-notice');
     const launched = await page.request.post('/api/sessions', {headers, data:{project_id:id, provider:'claude', name:'Scope lead', worktree:true,
       orchestrator:{agents:[{agent:'claude', profile:null}], machines:['local'], at_once:1, total:2, depth:1, hours:1}}});
     expect(launched.ok(), await launched.text()).toBeTruthy();
@@ -50,10 +50,11 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light'] as const)
         "import sqlite3,sys\nwith sqlite3.connect(sys.argv[1]) as db:\n row=db.execute(\"UPDATE message_delivery SET expires_at = datetime('now', '-1 second') WHERE id=? AND session_id=? AND state='queued'\",(sys.argv[2],sys.argv[3]))\n assert row.rowcount == 1, 'Expected exactly this queued scope notice'",
         `${info().state}/data/acc.db`, deliveryId, helper]);
       await page.goto('/inbox');
-      const notice = page.locator('div.grid').filter({has:page.locator(`a[href="/sessions/${helper}"]`)}).last();
+      await page.getByRole('list', {name:'Inbox items'}).getByRole('button').filter({hasText:`CSV scope worker has not received scope version ${version}`}).filter({hasText:projectName}).click();
+      const notice = page.getByRole('region', {name:'Inbox item details'});
       const stop = notice.getByRole('button',{name:'Stop helper',exact:true});
       await expect(stop).toBeVisible({ timeout: ti.timeout });
-      await expect(notice.getByText(/CSV scope worker has not received scope version/)).toBeVisible();
+      await expect(notice.getByRole('heading', {name:/CSV scope worker has not received scope version/})).toBeVisible();
       await notice.screenshot({path:ti.outputPath('scope-notice.png')});
       await expectAxeClean(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -1,7 +1,7 @@
 """Read-only, audience-scoped P4 projections. No provider, broker or file reads."""
 from sqlalchemy import case, exists, func, or_, select
 
-from .models import GroupMachineAccount, Node, Placement, Project
+from .models import GroupMachineAccount, Node, Placement, Project, Session
 from .source_models import (
     ExecutionAccount,
     ExecutionHost,
@@ -110,7 +110,7 @@ def snapshot(db, project, *, person=None, include_origin=True, locations_allowed
 
 
 def directory(db, who, *, q='', source_owner=None, host_id=None, offset=0, limit=30,
-              projects_only=False, include_archived=True):
+              projects_only=False, include_archived=True, sort=None, direction="asc"):
     """Personal directory only, like /api/projects. Filter whole edges before pagination.
 
     Facets/counts describe this authorized page, never a global repository census.
@@ -161,12 +161,27 @@ def directory(db, who, *, q='', source_owner=None, host_id=None, offset=0, limit
             local = exists(location_query().where(ProjectLocation.membership_id.is_(None), WorkingLocation.host_id == host_id)).correlate(Project)
             matches = or_(matches, local)
         query = query.where(matches)
+    # Aggregate only sessions the directory viewer may see. Sort before pagination.
+    latest = Session.status_at
+    for timestamp in (Session.activity_at, Session.last_output_at):
+        latest = case((latest.is_(None), timestamp), (timestamp > latest, timestamp), else_=latest)
+    activity_query = select(func.max(latest)).where(Session.project_id == Project.id)
+    if not who.is_owner:
+        activity_query = activity_query.where(Session.owner == who.username)
+    activity = activity_query.correlate(Project).scalar_subquery()
+    status = case((Project.archived, 'Archived'), (Project.import_mode == 'readonly', 'Read-only'),
+                  (~Project.trusted, 'Not trusted'), else_='Ready')
+    runtime = case((Project.compose_autostart, 'Autostart on'), else_='Autostart off')
+    columns = {'name': func.lower(Project.name), 'status': status, 'activity': activity, 'runtime': runtime}
+    column = columns.get(sort, Project.slug)
+    order = column.desc() if direction == 'desc' else column.asc()
+    tie_break = [func.lower(Project.name), Project.id] if sort in ('status', 'runtime') else [Project.id]
     total = db.scalar(select(func.count()).select_from(query.subquery()))
-    rows = db.scalars(query.order_by(Project.slug, Project.id).offset(offset).limit(limit))
+    rows = db.execute(query.add_columns(activity.label("last_activity"), status.label("status"), runtime.label("runtime")).order_by(order.nulls_last(), *tie_break).offset(offset).limit(limit))
     items, owners, hosts = [], {}, {}
-    for project in rows:
+    for project, last_activity, project_status, project_runtime in rows:
         view = snapshot(db, project, person=None if who.is_owner else who.username, is_owner=who.is_owner)
-        items.append({'id': project.id, 'name': project.name, 'slug': project.slug, **view})
+        items.append({'id': project.id, 'name': project.name, 'slug': project.slug, 'last_activity': last_activity, 'status': project_status, 'runtime': project_runtime, **view})
         for repo in view['repositories']:
             if repo['owner']:
                 owners[repo['owner']['id']] = {**repo['owner'], 'instance': repo['instance']}

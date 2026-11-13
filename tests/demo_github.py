@@ -34,7 +34,7 @@ class FakeGitHub:
     def open_pull(self, branch: str = "feature/login", draft: bool = False, state: str = "clean") -> dict:
         number = len(self.pulls) + 1
         self.pulls[number] = {"number": number, "title": "Add login", "body": "", "state": "open", "draft": draft,
-                              "merged": False, "head": {"ref": branch, "sha": self.branches[branch]},
+                              "merged": False, "head": {"ref": branch, "sha": self.branches[branch], "repo": {"full_name": self.repo}},
                               "base": {"ref": "main"}, "node_id": f"PR_{number}", "mergeable": True,
                               "mergeable_state": state, "requested_reviewers": [], "user": {"login": "demo-agent"},
                               "html_url": f"https://github.com/{self.repo}/pull/{number}"}

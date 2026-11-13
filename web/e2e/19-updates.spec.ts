@@ -71,7 +71,7 @@ test('members see no updater or machine controls', async ({ page }) => {
   await page.route('**/api/auth/state', r => r.fulfill({json:{authenticated:true,setup_required:false,username:'demo-member',role:'member',account:'demo-agent',instance:{host:'acc-host'}}}));
   await page.route('**/api/updates', r => {updateRequests++; return r.fulfill({status:403,json:{detail:'owners only'}});});
   await page.goto('/settings#updates');
-  await expect(page.getByRole('heading',{name:'Settings',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Settings',exact:true,level:1})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Updates',exact:true})).toHaveCount(0);
   await expect(page.getByText('Update available',{exact:true})).toHaveCount(0);
   await page.goto('/host');

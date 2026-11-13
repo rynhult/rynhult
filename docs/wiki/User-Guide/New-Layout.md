@@ -2,7 +2,7 @@
 
 > Screenshots use fictional demo accounts and disposable fixture data, not live systems or qualification evidence.
 
-The new layout is the only layout for everyone signed in. Classic is retired, including for people who previously chose it. There is no layout selector in Settings and no owner feature switch. Your saved classic preference is retained for now but no longer changes the layout.
+The application frame is the same for everyone signed in. There is no layout selector in Settings or owner feature switch. Setup levels let you choose how much navigation you see.
 
 Choose the features you need in Settings, and use Setup level to adjust how much you see.
 
@@ -320,3 +320,21 @@ have started. A retained draft is not proof that a launch failed.
 Session tabs keep less frequent views (**Setup**, **Activity** and **Handoffs**) under **More** in the new layout. Choosing one keeps its selected tab visible; direct links still open it. In multiple working columns, session headers use the same compact pane spacing as project views.
 
 The terminal fills the remaining height of its working pane. Short windows keep the terminal's minimum height and let you scroll the page to reach its controls.
+
+Select notices in Inbox and use **Dismiss selected**, or **Dismiss all shown** for the current page and category. Decisions and approvals stay open. **Undo** appears beside Inbox for eight seconds; dismissing never answers a request.
+
+Opening a session on desktop focuses its terminal input. Returning from another browser tab, using a phone, or keeping a dialog open does not move focus there. Escape in New session (including issue and pull-request launches) returns to the workspace and keeps the typed draft, just like **Back to workspace**.
+
+On touch devices, working-view tabs, column selectors and empty-pane Browse links have targets at least 44 pixels high.
+
+Working-view tabs and their retained content panels are paired for screen readers.
+
+### Working-tab cleanup
+
+Unavailable saved views are removed after access checks confirm they cannot be
+restored. Each working strip keeps up to 12 views, dropping the oldest first.
+Active columns, unsaved edits and terminal control are protected; close those
+views yourself if they keep the strip above the limit. **Tabs removed** explains
+the cleanup in its tooltip. Removing a terminal tab does not stop the session.
+
+If a file is moved or removed while you have unsaved edits, the draft stays open with “File moved or removed - your changes are kept”. **Save as** downloads the draft to keep in another location; **Copy** copies its text, and **Discard** asks before removing your edits. **Recheck availability** checks whether access has returned and restores the editor with your draft when it has.

@@ -1,25 +1,28 @@
+import { SetupChecklistReminder } from '../components/SetupChecklistReminder';
 import { ShellPage as Page, Workbar as PageHeader, Surface as Card, SurfaceHeader as CardHeader } from '../components/shell/PagePrimitives';
 import { MachineState } from "../components/MachinePolicy";
 import { useNodes } from "../components/Machines";
 import clsx from "clsx";
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, useState } from "react";
+import { lazyImport } from "../lib/lazyImport";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowRight, BellRing, Check, ChevronRight, Container, Cpu, FolderGit2, FolderPlus, Gauge, HardDrive, Plus, Rocket, Smartphone, TerminalSquare, X } from "lucide-react";
+import { ArrowRight, BellRing, Check, ChevronRight, Container, Cpu, FolderGit2, FolderPlus, Gauge, HardDrive, Plus, Rocket, TerminalSquare } from "lucide-react";
 import { api } from "../lib/api";
 import { ago, isLocalProject, until } from "../lib/format";
 import { useAttention, useInstance, useProjects, useRole, useSessions } from "../lib/queries";
 import type { AccountHealth, HostView, Observation, Project } from "../lib/types";
-import { Button, Dot, Empty, ErrorNote, IconButton, LoadingRows, Meter, QueryState, Stat } from "../components/ui";
+import { Button, Dot, Empty, ErrorNote, LoadingRows, Meter, QueryState, Stat } from "../components/ui";
 import { NewProjectDialog } from "../components/NewProject";
 import { useNewSession } from "../components/newSession";
 import { groupLive, isLive, liveSessionsByProject } from "../components/session-bits";
 import { useBudgets } from "../components/Budgets";
-import { useSingleMutation as useMutation } from "../lib/mutations";
+
 import { SessionList } from "../components/SessionList";
 import { needsYou, sessionCount, SESSION_GROUPS, sortInbox } from "../lib/order";
-import { useNewShell } from "../lib/uiShell";
-import { installedApp } from "../lib/app";
+
+// This chooser belongs only to Overview; keep its preload graph out of the session frame.
+const SetupLevelSetting = lazy(() => lazyImport(() => import('../components/SetupLevelSetting')).then(m => ({ default: m.SetupLevelSetting })));
 
 export const useHost = () => useQuery({ queryKey: ["host"], queryFn: () => api<HostView>("/api/host"), refetchInterval: 15000 });
 // Plan usage is the main account's: owners only (members' pages don't ask; they'd be refused).
@@ -130,31 +133,6 @@ function GetStarted() {
   );
 }
 
-/** One quiet line pointing at the Connect your phone guide, until the person dismisses it. The dismissal is theirs
- *  (a server preference), so it stays gone on every browser; a phone step marked done here before counts too. Inside
- *  the installed phone app the phone is already connected: never shown there. */
-function PhoneBanner() {
-  const client = useQueryClient();
-  const markedDone = stored("acc.getStarted.phone") === "done" || installedApp();
-  const preference = useQuery({ queryKey: ["phone-banner"], queryFn: () => api<{ dismissed: boolean }>("/api/preferences/phone-banner"),
-    enabled: !markedDone });
-  const dismiss = useMutation({
-    mutationFn: () => api<{ dismissed: boolean }>("/api/preferences/phone-banner", { method: "PUT", json: { dismissed: true } }),
-    onMutate: () => client.setQueryData(["phone-banner"], { dismissed: true }),
-    onError: () => client.invalidateQueries({ queryKey: ["phone-banner"] }),
-  });
-  if (markedDone || !preference.data || preference.data.dismissed) return null;
-  return (
-    <aside aria-label="Connect your phone" className="flex items-center gap-2.5 rounded-[10px] border border-line bg-panel py-1.5 pl-4 pr-1.5 text-[13px] shadow-card">
-      <Smartphone size={15} className="shrink-0 text-muted" aria-hidden="true" />
-      <p className="min-w-0 flex-1 text-muted">
-        Use Rynhult from your phone, with notifications when a session needs you. <Link to="/guide/User-Guide/Connect-Your-Phone" className="text-fg underline underline-offset-2">Connect your phone</Link>
-      </p>
-      <IconButton label="Dismiss" icon={X} onClick={() => dismiss.mutate()} />
-    </aside>
-  );
-}
-
 function ProjectsGlance() {
   const projects = useProjects();
   const sessions = useSessions();
@@ -194,6 +172,8 @@ function ProjectsGlance() {
 }
 
 export function Overview() {
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [pullFilter, setPullFilter] = useState("all");
   const [hostOrder, setHostOrder] = useState<"asc" | "desc" | null>(null);
   const { host: hostLabel } = useInstance();
   const { owner } = useRole();
@@ -204,11 +184,13 @@ export function Overview() {
   const nodes = useNodes(owner);
   const attention = useAttention();
   const inbox = sortInbox(attention.data ?? []);
-  const all = (sessions.data ?? []).filter((s) => s.desired_state !== "archived");
-  const live = all.filter((s) => isLive(s) || s.observed_state === "recovery_needed");
+  const all = (sessions.data ?? []).filter((s) => s.desired_state !== "archived")
+    .filter(s => reviewFilter === "all" || s.ready_for_review)
+    .filter(s => pullFilter === "all" || s.pull_lifecycle?.state === pullFilter);
+  const live = all.filter((s) => s.ready_for_review || isLive(s) || s.observed_state === "recovery_needed");
   const rest = all.filter((s) => !live.includes(s));
   const liveGroups = groupLive(live);
-  const liveCounts = SESSION_GROUPS.filter((g) => ["working", "unknown", "idle"].includes(g.key))
+  const liveCounts = SESSION_GROUPS.filter((g) => ["ready_for_review", "working", "unknown", "idle"].includes(g.key))
     .map((g) => ({ ...g, count: sessionCount(live, g.key) })).filter((g) => g.count > 0);
   const h = host.data;
   const snap = h?.snapshot;
@@ -225,9 +207,10 @@ export function Overview() {
   // controls, below the sessions on narrow screens.
   const urgent = blocked.length > 0 || critical;
   const machines = owner ? (nodes.data ?? []) : [];
-  const shell = useNewShell();
-  const onboarding = <><GetStarted />{!shell && <PhoneBanner />}</>;
+
+  const onboarding = <><SetupChecklistReminder /><GetStarted /></>;
   return (
+    <><div className="mx-auto w-full max-w-7xl p-4 empty:hidden"><SetupLevelSetting firstRun /></div>
     <Page wide>
       <PageHeader title="Overview" description={`${owner ? "Sessions" : "Your sessions"}, attention and the health of ${hostLabel} at a glance.`} />
       <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -252,6 +235,15 @@ export function Overview() {
         </div>
 
         <div className="order-2 min-w-0 space-y-6 lg:order-none">
+          <div className="flex flex-wrap gap-3">
+            <label className="text-xs">Sessions <select aria-label="Review state" className="min-h-11 bg-panel" value={reviewFilter} onChange={e => setReviewFilter(e.target.value)}>
+              <option value="all">All review states</option><option value="ready">Ready for review</option>
+            </select></label>
+            <label className="text-xs">Pull request <select aria-label="Pull request state" className="min-h-11 bg-panel" value={pullFilter} onChange={e => setPullFilter(e.target.value)}>
+              <option value="all">All pull request states</option>
+              {["draft", "open", "checks_running", "checks_failed", "checks_passed", "approved", "changes_requested", "merged", "closed"].map(state => <option key={state} value={state}>{state.replaceAll("_", " ")}</option>)}
+            </select></label>
+          </div>
           <Card>
             <CardHeader title="Live sessions" icon={TerminalSquare}
               action={<Link to="/sessions" className="inline-flex pointer-coarse:min-h-11 items-center gap-1 text-xs text-muted hover:text-fg underline underline-offset-2">All sessions <ArrowRight size={12} aria-hidden="true" /></Link>} />
@@ -309,6 +301,6 @@ export function Overview() {
           )}
         </div>
       </div>
-    </Page>
+    </Page></>
   );
 }

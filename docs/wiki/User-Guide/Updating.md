@@ -1,7 +1,7 @@
 # Updating Rynhult
 
-For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
-for the signed in-place rc.2 procedure, main first and then nodes.
+For an existing rc.1 deployment, start with [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1),
+then follow [Updating Rynhult](/User-Guide/Updating) for subsequent signed releases, main first and then nodes.
 
 Owners can back up and update the [main Rynhult](/User-Guide/Glossary#main) from Settings, then sync the other machines to its exact source build.
 Members do not see update controls or release notifications. Installing updates automatically is off by default.
@@ -10,6 +10,29 @@ Members do not see update controls or release notifications. Installing updates 
 because their backup/rollback only supports the default SQLite database. Turn off **Install updates automatically**
 and ask the installation owner to follow an independent PostgreSQL backup, update and recovery procedure.
 A leftover SQLite database is not a backup of PostgreSQL. Updating additional machines is unaffected.
+
+## Unqualified Linux test installs
+
+Owner-accepted test installs on dnf, zypper and pacman record the package manager in
+`/etc/acc-unqualified-distro` (root-owned, writable only by root). Settings updates,
+offline updates and node updates reuse `--unqualified-distro` only while that record
+matches the host's package manager. Acceptance is read once before maintenance and
+kept for the transaction, so a later record change cannot block rollback.
+The same acceptance is used when reinstalling
+the previous source after a failed update. Host acceptance is checked before backup
+or download and checked again against the downloaded source before activation.
+These distributions remain unqualified.
+
+Older test installs have no record. Upgrade those releases once by hand using the
+documented manual upgrade procedure, passing `--unqualified-distro` to the installer.
+Rerunning an older installer alone cannot create the record. The owner can rerun the matching installed
+`deploy/setup.sh --unqualified-distro` (main) or
+`deploy/node/install.sh --update --unqualified-distro` (node) from a release that
+includes this fix before using automatic updates. Review the installation and take
+a backup first; never add this acceptance through a service account. A changed
+package manager requires a new owner review. `deploy/setup.sh --check` checks host
+acceptance without installing or changing settings; include `--unqualified-distro`
+when checking an owner-accepted test host.
 
 ## Update the main Rynhult
 
@@ -309,3 +332,26 @@ operation, batch-preview or per-request decision records exist, downgrade is ref
 server cannot ignore that authority or discard its audit evidence. Stop and fence
 affected work, then restore the consistent pre-upgrade backup or forward-repair.
 Never replace a saved permission with a global Security switch set to Off.
+
+## Repair agent software
+
+In **Host → Sign-ins and usage** (or **Providers**), select the affected machine.
+Use the agent tile's **Install** or **Update** button when available. Where the
+machine cannot install it, expand **How to install** for its exact command and
+provider instructions, then select **Check now**.
+
+If **acc-packages helper isn't installed** appears on the main, an administrator
+must re-run the installer from the reviewed source used for that installation:
+
+```bash
+cd /srv/acc/app
+sudo deploy/install.sh
+```
+
+Use the actual installation directory if different. This repairs Rynhult's helper;
+return to the agent tile to install or update the CLI. Keep the existing account,
+enrollment and configuration; do not run first-time setup again.
+For another Linux/WSL machine, use its offered recovery command under
+[Update an older machine](/User-Guide/Nodes#update-an-older-machine).
+For a Mac, follow [Mac software steps](/User-Guide/Connect-an-Agent#mac);
+if npm is missing, run `brew install node` as that machine's signed-in user.

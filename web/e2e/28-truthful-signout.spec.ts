@@ -14,6 +14,7 @@ for (const failure of ["aborted", "503"] as const) {
         : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "database is busy" }) });
     });
     await page.goto("/settings#sign-ins");
+    await page.getByRole("button", { name: /^Account:/ }).click();
     await page.getByRole("button", { name: "Sign out" }).click();
     const dialog = page.getByRole("dialog", { name: "You're still signed in" });
     await expect(dialog).toBeVisible();

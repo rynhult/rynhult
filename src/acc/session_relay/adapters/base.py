@@ -12,6 +12,7 @@ from __future__ import annotations
 import enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, AsyncIterator, Mapping, NoReturn
 
 from ..protocol import (
@@ -74,6 +75,39 @@ class AdapterOperation:
     deadline_ms: int
     params: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
+    def __post_init__(self):
+        # Snapshot caller-owned containers before any verifier or adapter awaits.
+        object.__setattr__(self, 'params', _freeze(self.params))
+
+    def native_params(self, required, *, optional=()):
+        """Validate the complete registered payload before selecting native fields.
+
+        Public envelope fields remain in the operation and its digest/journal.
+        The compact form remains usable by internal native-proxy operations.
+        No actor substitution or second digest is introduced by translation.
+        """
+        from ..protocol import operation_digest
+        if self.payload_digest != operation_digest(self.method, self.params):
+            raise RelayError(ErrorCode.INTEGRITY_FAILURE)
+        envelope = {'sessionId', 'expectedRunId'}
+        keys = self.params.keys()
+        if keys & envelope:
+            if (self.params.get('sessionId'), self.params.get('expectedRunId')) != (self.session_id, self.run_id):
+                raise RelayError(ErrorCode.STALE_RUN)
+        else:
+            envelope = set()
+        if not set(required) <= keys or keys - set(required) - set(optional) - envelope:
+            raise RelayError(ErrorCode.UNSUPPORTED)
+        return {key: self.params[key] for key in required}
+
+
+def _freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(child) for child in value)
+    return value
+
 
 @dataclass(frozen=True)
 class ReviewedSpec:
@@ -81,6 +115,9 @@ class ReviewedSpec:
     binding: Binding
     run_id: str
     spec: Mapping[str, Any] = field(repr=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, 'spec', _freeze(self.spec))
 
 
 @dataclass(frozen=True)
@@ -171,6 +208,7 @@ class SwitchEvidence:
     exit: ExitState
     native_conversation: str = field(repr=False)
     policy_digest: str = ""
+    retained_input: dict | None = None  # private exact old-client proof; never draft text or processing ACK
 
 
 class NativeClientProxy(ABC):

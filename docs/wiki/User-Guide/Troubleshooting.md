@@ -1,11 +1,10 @@
 # Troubleshooting
 
-For an existing rc.1 deployment, follow [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1)
-for the signed in-place rc.2 procedure, main first and then nodes.
+For an existing rc.1 deployment, start with [Upgrade from rc.1](/User-Guide/Upgrade-from-rc1),
+then follow [Updating Rynhult](/User-Guide/Updating) for subsequent signed releases, main first and then nodes.
 
-Find the symptom first, check the likely cause, then use the fix. This expanded
-guide is a **draft for the planned v0.15.0-rc.1**. Some cases describe safeguards
-or bugs fixed in current source, not a diagnosis of your installation.
+Find the symptom first, check the likely cause, then use the fix. This guide describes
+current source; check your installed version before applying a fix.
 
 Before retrying a change, check whether it already succeeded. Keep unsaved work,
 the last verified backup and any recovery hold. Never post raw logs, enrollment
@@ -74,6 +73,23 @@ external operation never happened.
 | No phone notifications | Permission, browser installation or device delivery is unavailable | Check that notifications are enabled for this device and send a test | Follow [Notifications and app](/User-Guide/Notifications-and-App); keep checking Inbox/Host. Acceptance by a push service does not prove delivery to the phone |
 
 ## Sign-in and launch policy
+
+**Lost your authenticator?** Enter your password and one unused sign-in recovery
+code in **Authenticator code**. Save these codes offline when setting up sign-in.
+After recovery, open **Settings → Account → Security → Sign-in recovery codes**
+and choose **I signed in with a recovery code and lost my authenticator**.
+Re-enter your password and a second unused code. This opens a five-minute window
+for one replacement passkey or a new set of codes. An owner can also issue their
+own reset link during that window to replace the authenticator.
+See [sign-in recovery codes](/User-Guide/People-and-Sign-in#if-you-lose-your-authenticator)
+for the exact recovery steps and passkey requirements.
+
+If no recovery method remains, ask another owner for a reset link. A sole owner
+can ask a trusted host administrator to stop the service and use the installed
+`rynhult-admin reset-owner-mfa` command. Follow the full
+[host recovery procedure](/User-Guide/People-and-Sign-in#if-you-lose-your-authenticator),
+including service stop/start, database selection and private handling of the
+one-time link. Recovery never sends email or confirms whether a username exists.
 
 | Symptom | Likely cause | What to check | Fix |
 |---|---|---|---|

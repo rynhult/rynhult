@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { AUTH_FILE } from './helpers';
+import { AUTH_FILE, openAdvanced } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 
@@ -10,7 +10,8 @@ test('choosing a local workspace before the catalog loads still selects the rese
     await page.route('**/api/catalog', async route => { await gate; await route.continue(); });
     await page.goto('/');
     await page.getByRole('button', { name: 'New session', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole('region', { name: 'New session', exact: true });
+    await openAdvanced(dialog);
     await dialog.getByRole('radio', { name: 'Local workspace', exact: true }).click();
     await dialog.getByLabel('Topic', { exact: true }).fill('Example research');
     const previews: string[] = [];

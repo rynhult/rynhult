@@ -28,11 +28,9 @@ PRINCIPAL_COLUMNS = {
 }
 SYSTEM_ACTORS = ('@api', 'api', 'supervisor', 'acc', 'system', 'root')
 
-
 def person_id(namespace: str, user_id: int) -> str:
     """The stable ID this report proposes for user row `user_id`; phase 1 persists the same value when it binds."""
     return str(uuid.uuid5(uuid.UUID(namespace), f'user:{user_id}'))
-
 
 def report_copy(path: Path, *, namespace: str) -> dict:
     """Read SQLite through mode=ro and inspect only its consistent private snapshot."""
@@ -89,13 +87,12 @@ def report_copy(path: Path, *, namespace: str) -> dict:
                     }
         settings = {prefix: db.execute('SELECT count(*) FROM setting WHERE substr(key,1,?)=?',
                                       (len(prefix), prefix)).fetchone()[0] if 'setting' in tables else 0
-                    for prefix in ('budget.', 'tools.person.', 'risk_labels.', 'phone_banner.', 'ui_shell.', 'ui_header.', 'setup_level.', 'theme.person.')}
+                    for prefix in ('budget.', 'tools.person.', 'risk_labels.', 'phone_banner.', 'ui_header.', 'setup_level.', 'theme.person.')}
         return {'schema_version': 1, 'namespace': str(ns), 'entities': entities, 'principals': principals,
                 'foreign_keys': foreign_keys, 'name_keyed_settings': settings,
                 'references': references, 'blocked': any(r['unresolved'] for r in references.values()),
                 'manual_review': ['JSON/frozen launch specs', 'setting keys', 'audit targets/detail',
                                   'filesystem/broker/backup bindings', 'external references and queued work']}
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -105,7 +102,6 @@ def main():
     result = report_copy(args.database_copy, namespace=args.namespace)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 2 if result['blocked'] else 0
-
 
 if __name__ == '__main__':
     raise SystemExit(main())

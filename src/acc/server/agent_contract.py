@@ -151,7 +151,7 @@ def render(inputs, session, *, limits=None, tools=(), queue=False, commands=Fals
     parts.append('profile items not delivered: ' + ('; '.join(f'{x["kind"]}:{x["id"]} ({x["reason"]})' for x in missing)
                                                    or 'none known') + '.')
     parts.append('Native subagents stay inside the parent session, share its slot and permissions, are not shown in the tree, '
-                 'and their count cannot be capped. They do not expand the frozen grant. For council use managed helpers '
+                 'and their count cannot be capped. Rynhult does not cap or track their separate launches or permissions. Use managed helpers for enforced parent limits. For council use managed helpers '
                  'when the grant has room; otherwise use sequential single-session perspectives, never call those independent.')
     if team and inputs.provider == 'codex':
         parts.append(

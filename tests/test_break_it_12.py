@@ -43,7 +43,15 @@ def test_014_rehearsal_fixture_upgrades_without_losing_original_rows(tmp_path):
     assert rehearsal.version(url) == rehearsal.head(url)
     assert rehearsal.integrity(url) == []
     after = rehearsal.snapshot(url, baseline)
-    assert {table for table in before if before[table] != after[table]} == set()
+    # 0092 normalizes NULL installation owners; it must preserve every row and
+    # every other original value, including session ids and foreign-key links.
+    owner_index = baseline['session'].index('owner')
+    expected = {**before, 'session': sorted((tuple('@api' if i == owner_index and value is None else value
+                                                for i, value in enumerate(row)) for row in before['session']), key=repr)}
+    assert {table for table in expected if expected[table] != after[table]} == set()
+    assert {table: len(rows) for table, rows in after.items()} == {table: len(rows) for table, rows in before.items()}
+    id_index = baseline['session'].index('id')
+    assert {row[id_index] for row in before['session']} == {row[id_index] for row in after['session']}
 
 
 async def test_teams_off_during_layout_wait_refuses_new_lead_without_recording_a_session(api, project, env, monkeypatch):

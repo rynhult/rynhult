@@ -1,4 +1,4 @@
-import { expect, test, chooseLayout } from "./fixtures";
+import { expect, test } from "./fixtures";
 import { AUTH_FILE, info, PASSWORD, totp, verifyAgain } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
@@ -19,8 +19,8 @@ test("X3/Q2: demotion closes other people's terminals immediately but preserves 
     expect(joined.ok()).toBe(true);
     const otherCsrf = (await other.cookies()).find((c) => c.name === "acc_csrf")!.value;
     const otherHeaders = { "X-ACC-CSRF": otherCsrf, Origin: info().origin };
-    // This invited person also exercises the classic terminal contract.
-    await chooseLayout(other, false);
+    // This invited person exercises the same retained terminal contract.
+
     const project = await page.request.post("/api/projects", { headers,
       data: { slug: "terminal-access", name: "Terminal demo", workspace_path: info().workspace } });
     const pid = (await project.json()).id;
@@ -36,20 +36,19 @@ test("X3/Q2: demotion closes other people's terminals immediately but preserves 
     const crossView = await other.newPage();
     const ownView = await other.newPage();
     await crossView.goto(`/sessions/${theirsId}`);
-    await expect(crossView.getByText("Read-write", { exact: true })).toBeVisible();
+    await expect(crossView.getByText("You control this terminal", { exact: true })).toBeVisible();
     await ownView.goto(`/sessions/${ownId}`);
-    await expect(ownView.getByText("Read-write", { exact: true })).toBeVisible();
+    await expect(ownView.getByText("You control this terminal", { exact: true })).toBeVisible();
     const users = await (await page.request.get("/api/users")).json();
     const uid = users.users.find((u: { username: string }) => u.username === "finn").id;
     const demoted = await page.request.post(`/api/users/${uid}/role`, { headers, data: { role: "member" } });
     expect(demoted.ok()).toBe(true);
-    await expect(crossView.getByText("terminal access revoked", { exact: true })).toBeVisible({ timeout: 5000 });
-    await expect(ownView.getByText("Read-write", { exact: true })).toBeVisible();
+    await expect(crossView.getByRole("heading", { name: "This saved view can’t be opened", exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(ownView.getByText("You control this terminal", { exact: true })).toBeVisible();
     expect((await other.request.get(`/api/sessions/${theirsId}`)).status()).toBe(404);
     expect((await other.request.get(`/api/sessions/${ownId}`)).ok()).toBe(true);
     expect((await (await other.request.get("/api/auth/state")).json()).authenticated).toBe(true);
   } finally {
-    try { await chooseLayout(other, true); }
-    finally { await other.close(); }
+    await other.close();
   }
 });

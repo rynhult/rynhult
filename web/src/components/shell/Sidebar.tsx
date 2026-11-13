@@ -1,21 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Pin } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useAttention, useGroupAdministration, useInstance, useProjects, useRole, useSessions } from '../../lib/queries';
 import { workspaceName } from '../../lib/format';
 import { groupLive, sessionState } from '../session-bits';
-import { SettingsScopeLinks } from './SettingsScopes';
+const SettingsScopeLinks = lazy(() => lazyImport(() => import('./SettingsScopes')).then(m => ({ default: m.SettingsScopeLinks })));
 import { announce, Button, IconButton, Input, QueryState } from '../ui';
-import { HostsSidebar } from './Hosts';
+import { lazyImport } from '../../lib/lazyImport';
+const HostsSidebar = lazy(() => lazyImport(() => import('./Hosts')).then(m => ({ default: m.HostsSidebar })));
 import { pathVisible, modeVisible } from '../../lib/setupLevels';
 import { useSetupLevel } from '../../lib/setupPreference';
 import { railFor, toolsFor, type Mode } from './navigation';
 import { resolveProjects } from './presentation';
-import { categories, categoryOf, returnPath } from './inbox';
+const InboxLinks = lazy(() => lazyImport(() => import('./InboxLinks')).then(m => ({ default: m.InboxLinks })));
 import { useProjectSourceView } from '../../lib/sourceViews';
-import { SourceDirectorySummary } from '../SourceViews';
+const SourceDirectorySummary = lazy(() => lazyImport(() => import('../SourceViews')).then(m => ({ default: m.SourceDirectorySummary })));
 
 export function Sidebar({ mode, pins, recent, pin, visit, close }: { mode: Mode; pins: number[]; recent: number[]; pin: (id: number) => void; visit: (id: number) => void; close: () => void }) {
   const owner = useRole().owner;
@@ -94,8 +95,8 @@ export function Sidebar({ mode, pins, recent, pin, visit, close }: { mode: Mode;
       <h3>{link(`/sessions?group=${group.key}`, `${group.label} · ${group.count}`)}</h3>
       {group.sessions.map(s => s.management === 'external' && s.remote_url ? <a className="shell-link" key={s.id} href={s.remote_url} target="_blank" rel="noreferrer">{s.name} · Remote Control</a> : link(`/sessions/${s.id}`, `${s.name} · ${sessionState(s).label}`, true))}
     </section>)}</QueryState></>}
-    {mode === 'inbox' && <InboxLinks close={close} />}
-    {mode === 'hosts' && <HostsSidebar close={close} />}
+    {mode === 'inbox' && <Suspense fallback={null}><InboxLinks close={close} /></Suspense>}
+    {mode === 'hosts' && <Suspense fallback={null}><HostsSidebar close={close} /></Suspense>}
     {mode === 'workspaces' && <Workspaces close={close} />}
     {mode === 'tools' && <>
       {toolsFor(owner, groupAdmin, instance.features, path => path !== '/catalog' && pathVisible(level, path)).map(n => link(n.to, n.label))}
@@ -105,7 +106,7 @@ export function Sidebar({ mode, pins, recent, pin, visit, close }: { mode: Mode;
         <Link className="shell-link" to="/settings#security" onClick={close}>Security & recovery settings</Link>
       </details>
     </>}
-    {mode === 'settings' && <><SettingsScopeLinks compact close={close}/></>}
+    {mode === 'settings' && <><Suspense fallback={null}><SettingsScopeLinks compact close={close}/></Suspense></>}
 
   </div>;
 }
@@ -114,25 +115,11 @@ function Workspaces({ close }: { close: () => void }) {
   return <QueryState query={query}>{rows => rows.length ? rows.map(w => <Link className="shell-link" key={w.folder} onClick={close} to={w.project ? `/projects/${w.project.id}` : `/workspaces/${encodeURIComponent(w.folder)}/files`}>{w.project?.name ?? workspaceName(w.folder)}</Link>) : <p className="text-muted">No private workspaces yet.</p>}</QueryState>;
 }
 
-function InboxLinks({ close }: { close: () => void }) {
-  const query = useAttention(); const [params] = useSearchParams(); const route = useLocation();
-  const filter = params.get('filter') ?? 'all'; const history = params.get('scope') === 'all';
-  const state = { inboxReturn: route.pathname === '/inbox' ? returnPath(route.state?.inboxReturn) : route.pathname + route.search + route.hash };
-  return <QueryState query={query}>{items => <>
-    <Link className="shell-link" aria-current={route.pathname === '/inbox' && !history && filter === 'all' ? 'page' : undefined} to="/inbox" state={state} onClick={close}>All items · {items.length}</Link>
-    {categories.map(category => <Link className="shell-link" key={category.key}
-      aria-current={route.pathname === '/inbox' && !history && filter === category.key ? 'page' : undefined}
-      to={`/inbox?filter=${category.key}`} state={state} onClick={close}>{category.label} · {items.filter(item => categoryOf(item) === category.key).length}</Link>)}
-    <Link className="shell-link" aria-current={route.pathname === '/inbox' && history ? 'page' : undefined} to="/inbox?scope=all" state={state} onClick={close}>History</Link>
-    <p className="shell-sidebar-hint">Browsing keeps your work open. Open a category to review its original notices and decisions.</p>
-  </>}</QueryState>;
-}
-
 /** Same audience-scoped P4 read as the project pages; no new source authority. */
 function ProjectMenuSources({ projectId, close }: { projectId: number; close: () => void }) {
   const query = useProjectSourceView(projectId);
   return <div className="shell-project-sources"><QueryState query={query} errorTitle="Couldn't load project sources.">
-    {view => !view.repositories.length ? null : <><SourceDirectorySummary view={view} kind="repositories" />
+    {view => !view.repositories.length ? null : <><Suspense fallback={null}><SourceDirectorySummary view={view} kind="repositories" /></Suspense>
       <Link className="shell-link" to={`/projects/${projectId}#project-sources`} onClick={close}>View source repositories</Link>
     </>}
   </QueryState></div>;

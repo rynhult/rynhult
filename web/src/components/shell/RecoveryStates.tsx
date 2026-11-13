@@ -41,7 +41,7 @@ export function UnavailableView({ onRetry, back = '/sessions', detail = 'The res
     <Badge tone="wait">Unavailable</Badge>
     <h1 className="text-lg font-semibold">This saved view can’t be opened</h1>
     <p className="text-sm text-muted">{detail}</p>
-    <div className="flex flex-wrap gap-2"><Button onClick={onRetry}>Recheck availability</Button><Link className={linkClass} to={back}>Back to sessions</Link></div>
+    <div className="flex flex-wrap gap-2"><Button onClick={onRetry}>Recheck availability</Button><Link className={linkClass} to={back}>{back === '/projects' ? 'Back to projects' : 'Back to sessions'}</Link></div>
   </Card>;
 }
 

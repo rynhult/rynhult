@@ -24,7 +24,7 @@ for (const width of [1440, 390]) test(`trusted pairing dialog clears recovered p
   });
   await page.goto('/settings#your-devices');
   await page.getByLabel('Device name', { exact: true }).fill('Demo phone');
-  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair a phone', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Pair device', exact: true });
   await expect(dialog.getByRole('alert')).toBeVisible({ timeout: 10000 });
   await expect(dialog.getByLabel('Matching code shown on Demo phone')).toBeVisible({ timeout: 10000 });

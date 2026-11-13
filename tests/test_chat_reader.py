@@ -200,3 +200,17 @@ def test_codex_tool_record_is_a_gap_and_does_not_expose_arguments(tmp_path):
     result = read_chat(tmp_path, 'codex', NATIVE)
     assert result['state'] == 'ready' and result['notices']['tools'] == 1
     assert 'private command' not in json.dumps(result)
+
+
+def test_0167_transcript_changes_remain_unsupported(tmp_path):
+    from acc.broker.chat import read_chat
+
+    # Source-derived minimal fragments, not a live CLI capture. Provenance and
+    # the added rollout variant are documented in docs/research/codex-chat-0167.md.
+    rows = [json.loads(line) for line in
+            (Path(__file__).parent / 'fixtures/codex-chat-0167-unsupported.jsonl').read_text().splitlines()]
+    source(tmp_path, 'codex', records=rows)
+    result = read_chat(tmp_path, 'codex', NATIVE)
+    assert result['state'] == 'unsupported' and result['items'] == []
+    assert 'Private harness context' not in json.dumps(result)
+    assert 'Unqualified reply' not in json.dumps(result)

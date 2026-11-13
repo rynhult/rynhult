@@ -1,26 +1,21 @@
 import { DraftSaveNote } from '../lib/useUnsaved';
-import { useNewShell } from "../lib/uiShell";
 import { ProjectDirectory } from "../components/shell/ProjectDirectory";
 import { ProjectDeleteDialog } from "../components/ProjectDelete";
-import { CollectionTable, CollectionView, useCollectionView } from "../components/CollectionView";
-import { desktopBuild } from "../lib/desktop";
+
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import { useEffect, useRef, useState } from "react";
 import { clearDraft, loadDraft, saveDraft } from "../lib/drafts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Archive as ArchiveIcon, ArrowRight, FolderGit2, FolderPlus, MoreHorizontal, Plus, ShieldCheck } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { useConfirm } from "../components/confirm";
-import { liveSessionsByProject } from "../components/session-bits";
-import { useNewSession } from "../components/newSession";
-import { needsYou } from "../lib/order";
+
 import { lineClass } from "../components/Changes";
-import { useInstance, useProjects, useRole, useSessions } from "../lib/queries";
+import { useInstance, useRole } from "../lib/queries";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, post } from "../lib/api";
+import { api, ApiError, post } from "../lib/api";
 import type { ComposeReview, Container, Project } from "../lib/types";
-import { Badge, Button, Card, Dialog, Dot, Empty, ErrorNote, Field, Input, Page, PageHeader, Popover, SearchInput, Select, Skeleton, Toolbar } from "../components/ui";
-import { initials, isLocalProject } from "../lib/format";
+import { Badge, Button, Dialog, Dot, ErrorNote, Field, Input, Popover, Select } from "../components/ui";
 import { useNodes } from "../components/Machines";
 import { NewProjectDialog } from "../components/NewProject";
 
@@ -42,8 +37,11 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
       ...form, slug, repo: form.repo || null, workspace_path: form.workspace_path || `${root}/${slug}`,
       account: form.host !== "local" && form.account ? form.account : null,
     }),
-    onSuccess: () => { clearDraft(storeKey); setForm(blank); queryClient.invalidateQueries({ queryKey: ["projects"] }); onClose(); },
+    onSuccess: () => { clearDraft(storeKey); setForm(blank); queryClient.invalidateQueries({ queryKey: ["projects"] }); queryClient.invalidateQueries({ queryKey: ["source-directory"] }); onClose(); },
   });
+  const duplicateDetail = create.error instanceof ApiError && create.error.data && typeof create.error.data === "object"
+    ? (create.error.data as { detail?: { message?: string; existing_project_id?: number } }).detail : undefined;
+  const duplicate = duplicateDetail?.existing_project_id;
   return (
     <Dialog open={open} onClose={onClose} title="Register a folder" description="A folder that already exists. Rynhult doesn't create or move it." dismissible={false}>
       <div className="space-y-4"><DraftSaveNote id={storeKey} />
@@ -82,46 +80,15 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Select>
           </Field>
         </div>
-        <ErrorNote error={create.error} action={<Link to="/settings/security/folders">Open Allowed folders in Security</Link>} />
+        <ErrorNote error={duplicateDetail?.message ? new Error(duplicateDetail.message) : create.error} action={duplicate
+          ? <Link to={`/projects/${duplicate}`} onClick={onClose}>Open the existing project</Link>
+          : <Link to="/settings/security/folders">Open Allowed folders in Security</Link>} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" disabled={!form.name.trim() || !slug || create.isPending} onClick={() => create.mutate()}>Register</Button>
         </div>
       </div>
     </Dialog>
-  );
-}
-
-function TrustButton({ project }: { project: Project }) {
-  const queryClient = useQueryClient();
-  const { agent_user } = useInstance();
-  const [open, setOpen] = useState(false);
-  const trust = useMutation({
-    mutationFn: () => post<Project>(`/api/projects/${project.id}/trust`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["projects"] }); setOpen(false); },
-  });
-  return (
-    <>
-      <Button size="sm" onClick={() => setOpen(true)}><ShieldCheck size={13} aria-hidden="true" /> Trust</Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title={`Trust ${project.name}?`}>
-        <div className="space-y-3 text-[13px] text-muted">
-          <p>Agents launched here can read, edit and run files in <span className="font-mono text-fg">{project.workspace_path}</span>, within the permissions you pick per session.</p>
-          <p>Sessions then start here without each agent asking "Do you trust this folder?". Rynhult never answers that question for you by typing into the terminal; it records your answer in the agents' own settings.</p>
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted hover:text-fg">Exactly what Rynhult changes</summary>
-            <ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-[12px]">
-              <li>~{agent_user}/.claude.json → projects[path].hasTrustDialogAccepted</li>
-              <li>~{agent_user}/.codex/config.toml → [projects."path"] trust_level = "trusted"</li>
-            </ul>
-          </details>
-          <ErrorNote error={trust.error} action={<Link to="/settings/security/folders">Open Allowed folders in Security</Link>} />
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={trust.isPending} onClick={() => trust.mutate()}>Trust this workspace</Button>
-          </div>
-        </div>
-      </Dialog>
-    </>
   );
 }
 
@@ -238,140 +205,9 @@ export function Runtime({ project, part = "all", onlyInView = false }: {
   );
 }
 
-function LegacyProjects() {
-  const { view, toggle } = useCollectionView("projects");
-  const { host } = useInstance();
-  const [deleting, setDeleting] = useState<Project | null>(null);
-  const [manualAdding, setAdding] = useState(false);
-  const [search, setSearch] = useSearchParams();
-  const adding = manualAdding || search.get('import') === 'existing';
-  const closeImport = () => { setAdding(false); const next = new URLSearchParams(search); next.delete('import'); setSearch(next, { replace: true }); };
-  const navigate = useNavigate();
-  const [creating, setCreating] = useState(false);
-  const [query, setQuery] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
-  const queryClient = useQueryClient();
-  const confirm = useConfirm();
-  const projects = useProjects();
-  const sessions = useSessions();
-  const sessionsByProject = liveSessionsByProject(sessions.data ?? []);
-  const newSession = useNewSession();
-  const archive = useMutation({
-    mutationFn: (id: number) => post(`/api/projects/${id}/archive`),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
-  });
-  const actions = (p: Project) => (
-    <div className={clsx("flex flex-wrap items-center gap-2", view === "cards" && "justify-between border-t border-line px-3 py-2")}>
-      <Link to={`/projects/${p.id}`} className="inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2 text-[12.5px] text-muted hover:bg-panel-2 hover:text-fg underline underline-offset-2">
-        Open <ArrowRight size={12} aria-hidden="true" />
-      </Link>
-      <div className="flex flex-wrap items-center gap-1">
-        {!p.trusted && p.import_mode === "managed" && !p.archived && <TrustButton project={p} />}
-        {p.import_mode === "managed" && !p.archived && <Button size="sm" onClick={() => newSession({ mode: "project", project_id: p.id })} aria-label={`New session in ${p.name}`}>
-          <Plus size={13} aria-hidden="true" /> New session</Button>}
-        <Popover menu label={`Project actions for ${p.name}`} trigger={<MoreHorizontal size={16} aria-hidden="true" />}>{close => <>
-          {!p.archived && <Button role="menuitem" tabIndex={-1} size="sm" variant="ghost" aria-label={`Archive ${p.name}`} disabled={archive.isPending} onClick={async () => {
-            close();
-            if (await confirm({ title: `Archive ${p.name}?`, body: "It leaves the launch lists. Its workspace, containers and repository are left exactly as they are.", confirm: "Archive", danger: true })) archive.mutate(p.id);
-          }}><ArchiveIcon size={13} aria-hidden="true" /> Archive</Button>}
-          <Button role="menuitem" tabIndex={-1} size="sm" variant="ghost" aria-label={`Delete ${p.name}`} onClick={() => { close(); setDeleting(p); }}>Delete</Button>
-        </>}</Popover>
-      </div>
-    </div>
-  );
-  const liveFor = (p: Project) => sessionsByProject.get(p.id) ?? [];
-  const runtimeAvailable = (p: Project) => !p.machine_offline && p.import_mode === "managed" && !p.archived;
-  const visible = (projects.data ?? []).filter((p) => !isLocalProject(p) && !p.private_workspace && (showArchived || !p.archived)  // local: see Workspaces
-    && (!query || `${p.name} ${p.slug} ${p.repo ?? ""}`.toLowerCase().includes(query.toLowerCase())));
-  return (
-    <Page wide>
-      <PageHeader title="Projects" description={desktopBuild ? "Projects, files and session history on this computer." : `Each project is a folder on ${host} that your agent sessions work in. Its page also shows its GitHub repository, checks and Docker stack, when it has them.`}
-        actions={<>
-          <Button onClick={() => setAdding(true)}><Plus size={14} aria-hidden="true" /> Register folder</Button>
-          <Button variant="primary" onClick={() => setCreating(true)}><FolderPlus size={14} aria-hidden="true" /> New project</Button>
-        </>} />
-      <Toolbar>
-        {toggle}
-        <SearchInput value={query} onChange={setQuery} placeholder="Filter projects" className="w-64" />
-        <label className="inline-flex items-center gap-1.5 text-xs text-muted">
-          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="size-3.5 accent-[var(--accent)]" /> Show archived
-        </label>
-      </Toolbar>
-      <ErrorNote error={archive.error} />
-      {projects.data === undefined ? (projects.error ? <ErrorNote error={projects.error} /> : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-44 rounded-[10px]" />)}</div>
-      )) : visible.length ? (view === "list" ? (
-        <CollectionTable label="Projects" items={visible} itemKey={p => p.id} columns={[
-          { key: "name", label: "Name", sortValue: p => p.name, render: p => <div className="min-w-[10rem] space-y-2">
-            <Link to={`/projects/${p.id}`} title={p.workspace_path} className="font-semibold text-fg underline underline-offset-2 hover:text-accent [overflow-wrap:anywhere]">{p.name}</Link>
-            <div className="flex flex-wrap gap-1.5">{p.archived && <Badge>archived</Badge>}{p.import_mode === "readonly" ? <Badge tone="wait">read-only</Badge> : !p.trusted && <Badge tone="wait">not trusted</Badge>}</div>
-          </div> },
-          { key: "folder", label: "Repository / folder", sortValue: p => p.repo ?? p.workspace_path, render: p => <div className="space-y-1 [overflow-wrap:anywhere]">
-            {p.repo && <a href={`https://github.com/${p.repo}`} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-2">{p.repo}</a>}
-            <div title={p.workspace_path} className="line-clamp-2 font-mono text-xs">{p.host && p.host !== "local" ? `${p.host}: ` : ""}{p.workspace_path}</div>
-          </div> },
-          { key: "live", label: "Live sessions", sortValue: p => liveFor(p).length, render: p => sessions.data === undefined ? (sessions.error ? "Sessions unavailable" : "Checking…") : <div className="space-y-1">
-            <span>{liveFor(p).length ? `${liveFor(p).length} live` : "No live sessions"}</span>
-            {needsYou(liveFor(p)).length > 0 && <p className="text-wait">{needsYou(liveFor(p)).length} needs you</p>}
-          </div> },
-          { key: "runtime", label: "Containers / compose", render: p => runtimeAvailable(p) ? <Runtime project={p} part="status" onlyInView /> : p.machine_offline ? "Machine offline" : p.archived ? "Archived" : "Read-only" },
-          { key: "autostart", label: "Autostart", sortValue: p => Number(p.compose_autostart), render: p => runtimeAvailable(p) ? <Runtime project={p} part="autostart" onlyInView /> : "Not available" },
-          { key: "actions", label: "Actions", render: p => actions(p) },
-        ]} />
-      ) : (
-        <CollectionView view={view}>
-          {visible.map((p) => {
-            const live = liveFor(p);
-            const waiting = needsYou(live).length;
-            return (
-              <Card key={p.id} className={clsx("flex min-w-0 flex-col", p.archived && "opacity-80")}>
-                <div className="flex items-start gap-3 px-4 pb-3 pt-4">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-panel-2 text-[13px] font-semibold uppercase text-muted" aria-hidden="true">
-                    {initials(p.name)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <Link to={`/projects/${p.id}`} title={p.workspace_path} className="block truncate py-0.5 text-[14px] font-semibold leading-6 text-fg hover:text-accent underline underline-offset-2">{p.name} <ArrowRight size={12} className="inline" aria-hidden="true" /></Link>
-                    <div className="truncate text-xs text-muted">
-                      {p.repo ? <a className="inline-block py-1 hover:text-fg underline underline-offset-2" href={`https://github.com/${p.repo}`} target="_blank" rel="noreferrer">{p.repo}</a> : p.slug}
-                    </div>
-                  </div>
-                </div>
-                {/* Live state leads (UX review PJ-2); the folder is in the name's tooltip, and only exceptions get a badge. */}
-                <p className="flex items-center gap-1.5 px-4 text-[12.5px]">
-                  {waiting > 0 && <><Dot tone="wait" /><span className="text-wait">{waiting} needs you</span>{live.length > waiting && <span className="text-faint">·</span>}</>}
-                  {live.length > waiting && <span className="text-muted">{live.length - waiting} live</span>}
-                  {!live.length && <span className="text-faint">No live sessions</span>}
-                </p>
-                {(p.archived || p.import_mode === "readonly" || !p.trusted) && <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-                  {p.archived && <Badge>archived</Badge>}
-                  {p.import_mode === "readonly" ? <Badge tone="wait" title="Rynhult shows it but launches nothing here">read-only</Badge>
-                    : !p.trusted && <Badge tone="wait" title="Agents will ask whether to trust this folder; trust it here or from New session">not trusted</Badge>}
-                </div>}
-                <div className="mt-auto space-y-3 px-4 pb-3 pt-4">
-                  {p.machine_offline && <p className="text-xs text-muted">Machine offline</p>}
-                  {!p.machine_offline && p.import_mode === "managed" && !p.archived && <Runtime project={p} onlyInView />}
-                </div>
-                {actions(p)}
-              </Card>
-            );
-          })}
-        </CollectionView>
-      )) : <Card>{query ? <Empty icon={FolderGit2}>No projects match.</Empty> : (
-        <Empty icon={FolderGit2} action={<Button variant="primary" onClick={() => setCreating(true)}><FolderPlus size={14} aria-hidden="true" /> New project</Button>}>
-          No projects yet. Start one from an empty folder or a repository: Rynhult makes the folder for you.
-        </Empty>)}</Card>}
-      <NewProject open={adding} onClose={closeImport} />
-      {/* A new project opens its page, where New session is the next step (first-run review). */}
-      {deleting && <ProjectDeleteDialog project={deleting} onClose={() => setDeleting(null)} />}
-      <NewProjectDialog open={creating} onClose={() => setCreating(false)} onCreated={(made) => navigate(`/projects/${made.id}`)} />
-    </Page>
-  );
-}
-
-
 export function Projects() {
-  const shell = useNewShell();
-  return shell ? <ShellProjects /> : <LegacyProjects />;
+
+  return <ShellProjects />;
 }
 function ShellProjects() {
   const [deleting, setDeleting] = useState<Project | null>(null);

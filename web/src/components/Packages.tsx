@@ -112,6 +112,7 @@ function PackageRow({ name, p, view, machine, onResult, tile }: { name: string; 
               }} />}
             </>}
       </div>
+      {(!p.installed || behind) && <a className="mt-2 inline-block text-xs text-accent underline" href="/guide/User-Guide/Updating#repair-agent-software">Agent software install and repair steps</a>}
       {manual && !p.installed && p.guide && (
         <details className="group mt-2 rounded-md border border-line">
           <summary className="cursor-pointer rounded-md px-3 py-2 text-xs font-medium text-accent hover:bg-panel-2">
@@ -156,7 +157,7 @@ export function SoftwareStatus({ machine, account }: { machine?: string; account
   return <div className="space-y-1">
     <p className="flex items-center gap-1.5 text-xs text-muted"><PackageCheck size={13} aria-hidden="true" />Agent software: {subtitle(view.data, name)}</p>
     {view.data && view.data.reported === false && <p className="text-xs text-wait">{sentence(name)} hasn't reported its agent software: update Rynhult there to manage it from here.</p>}
-    {view.data && view.data.reported !== false && !view.data.helper && <p className="text-xs text-wait">{helperMissing(view.data, name)}</p>}
+    {view.data && view.data.reported !== false && !view.data.helper && <p className="text-xs text-wait">{helperMissing(view.data, name)} <a className="text-accent underline" href="/guide/User-Guide/Updating#repair-agent-software">Installer re-run steps</a></p>}
     {refused && refused.at && Date.now() / 1000 - refused.at < 600 && <p role="alert" className="text-xs text-bad">{sentence(name)} refused a request: {refused.detail}</p>}
     <ErrorNote error={view.error} />
   </div>;

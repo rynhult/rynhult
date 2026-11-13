@@ -1,4 +1,4 @@
-import { expect, test, chooseLayout } from './fixtures';
+import { expect, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -40,7 +40,8 @@ for (const appearance of ['light', 'dark'] as const) test(`Account Appearance ow
     await control.selectOption(appearance === 'light' ? 'dark' : 'light');
     await expect(view.locator('html')).toHaveClass(appearance === 'light' ? /dark/ : /^(?!.*dark)/);
     await control.selectOption('system');
-    await view.getByRole('button', { name: 'Theme: System. Select for Light', exact: true }).click();
+    await view.getByRole('button', { name: /^Account:/ }).click();
+    await view.getByRole('button', { name: 'Theme: System', exact: true }).click();
     await expect(control).toHaveValue('light');
     await control.selectOption('system');
     if (appearance === 'dark') await expect(view.locator('html')).toHaveClass(/dark/);
@@ -63,8 +64,8 @@ for (const appearance of ['light', 'dark'] as const) test(`Account Appearance ow
     const begun = await member.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
     const joined = await member.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-${Date.now()}`, password: PASSWORD, code: totp((await begun.json()).totp_secret) } });
     expect(joined.ok(), await joined.text()).toBeTruthy();
-    // This journey uses the classic header controls, as does its owner fixture.
-    await chooseLayout(member, false);
+    // The invited person uses the same frame as the owner.
+
     const view = await member.newPage(); await view.goto('/settings#appearance');
     await expect(view.getByLabel('Theme package (.zip)')).toHaveCount(0);
     await expect(view.getByRole('link', { name: 'Manage themes in Catalog' })).toHaveCount(0);
@@ -73,7 +74,7 @@ for (const appearance of ['light', 'dark'] as const) test(`Account Appearance ow
     const refused = await member.request.post('/api/catalog/themes/review', { headers: { ...await csrfHeaders(view), 'Content-Type': 'application/zip' }, data: archive });
     expect(refused.status()).toBe(403);
   } finally {
-    try { await chooseLayout(member, true); }
+    try {  }
     finally { await member.close(); }
   }
 });

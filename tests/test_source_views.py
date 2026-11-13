@@ -366,3 +366,72 @@ async def test_v3_transferred_project_reports_audience_mismatch_without_rebindin
     with two['owner'].app.state.db() as db:
         assert db.get(Project, ident).owner == '@api'  # owner fixture uses the installation API principal
         assert db.scalar(select(ProjectRepository.visibility_domain).where(ProjectRepository.project_id == ident)) == 'person:alex'
+
+
+async def test_directory_sorts_before_pagination_and_validates_keys(api):
+    with api.app.state.db() as db:
+        first = legacy(db, slug='sort-z', trusted=False, compose_autostart=True)
+        second = legacy(db, slug='sort-a', trusted=True, compose_autostart=False)
+        first.name = 'Alpha'; second.name = 'Zulu'
+        db.commit()
+        first_id, second_id = first.id, second.id
+    for key, expected in [('name', first_id), ('status', first_id), ('runtime', second_id)]:
+        ascending = (await api.get(f'/api/source-views/directory?sort={key}&limit=1')).json()
+        assert ascending['items'][0]['id'] == expected
+        descending = (await api.get(f'/api/source-views/directory?sort={key}&direction=desc&limit=1')).json()
+        assert descending['items'][0]['id'] != expected
+        assert ascending['next_offset'] == 1
+    row = (await api.get('/api/source-views/directory?sort=activity&limit=1')).json()['items'][0]
+    assert row['last_activity'] is None
+    assert row['runtime'] in ('Autostart on', 'Autostart off')
+    assert (await api.get('/api/source-views/directory?sort=sql')).status_code == 422
+    assert (await api.get('/api/source-views/directory?direction=sideways')).status_code == 422
+
+
+async def test_directory_activity_uses_latest_timestamp_and_viewer_scope(api):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from acc.server.models import LaunchSpec, Session
+    from acc.server.source_views import directory
+
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    private = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    with api.app.state.db() as db:
+        p = legacy(db, slug='activity-one')
+        other = legacy(db, slug='activity-two')
+        for ident, project, owner, status_at, activity_at, output_at in [
+            ('activity-one', p, 'alex', old, old, recent),
+            ('activity-two', other, 'alex', old, old, None),
+            ('activity-private', other, 'casey', private, private, private),
+        ]:
+            db.add(Session(id=ident, name=ident, provider='claude', project=project, owner=owner,
+                           run_as='alex-agent', tmux_name=ident, status_at=status_at,
+                           activity_at=activity_at, last_output_at=output_at,
+                           launch_spec=LaunchSpec(provider='claude', inputs={}, files={}, digest=ident)))
+        db.flush()
+        member = directory(db, SimpleNamespace(is_owner=False, username='alex'), sort='activity', direction='desc', limit=1)
+        assert member['items'][0]['id'] == p.id
+        assert member['items'][0]['last_activity'] == recent
+        owner = directory(db, SimpleNamespace(is_owner=True), sort='activity', direction='desc', limit=1)
+        assert owner['items'][0]['id'] == other.id
+        assert owner['items'][0]['last_activity'] == private
+
+
+@pytest.mark.parametrize('sort', ['status', 'runtime'])
+@pytest.mark.parametrize('direction', ['asc', 'desc'])
+async def test_directory_sort_ties_use_name_then_id_before_pagination(api, sort, direction):
+    with api.app.state.db() as db:
+        zulu = legacy(db, slug='ties-first')
+        alpha = legacy(db, slug='ties-second')
+        same = legacy(db, slug='ties-third')
+        zulu.name = 'Zulu'; alpha.name = 'alpha'; same.name = 'Alpha'
+        db.commit()
+        expected = [alpha.id, same.id, zulu.id]
+    actual = []
+    for offset in range(3):
+        response = await api.get(f'/api/source-views/directory?sort={sort}&direction={direction}&limit=1&offset={offset}')
+        assert response.status_code == 200
+        actual.append(response.json()['items'][0]['id'])
+    assert actual == expected

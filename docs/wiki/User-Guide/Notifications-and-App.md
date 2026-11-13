@@ -32,7 +32,39 @@ Installing the app and notifications need a certificate the device trusts. If Ry
 
 On iPhone and iPad (iOS 16.4 or later) this only works from the Home Screen app: install it first, open Rynhult from the Home Screen, then turn notifications on there.
 
-Tapping a notification opens the page it is about, such as the session waiting for you. A newer notification about the same thing replaces the older one. Rynhult does not request persistent system banners, even for critical alerts; the operating system controls their display duration. While a Rynhult window or installed app is visible, Rynhult suppresses system push banners and uses the [compact Inbox status line](/User-Guide/Inbox#compact-status-without-blocking-the-page) and Inbox count instead. No alert or optional privacy invitation opens an overlay. Dismissing a system notification never resolves the underlying alert.
+Tapping a notification opens the page it is about, such as the session waiting for you. A newer notification about the same thing replaces the older one. Rynhult does not request persistent system banners, even for critical alerts; the operating system controls their display duration. While a Rynhult window or installed app is visible, Rynhult suppresses system push banners and uses the [Inbox rail count](/User-Guide/Inbox#compact-status-without-blocking-the-page) instead. No alert or optional privacy invitation opens an overlay. Dismissing a system notification never resolves the underlying alert.
+
+## Push while you are active
+By default, Rynhult holds ordinary pushes while you are looking at the matching
+session or the Inbox on any signed-in device. The tab must be visible, focused,
+and have input within the last two minutes. The item still appears in the open
+page. Other people's activity and agent activity do not count. Presence heartbeats
+run only on these views and only while your person has at least one registered
+notification device; that device can be another browser.
+
+When you hide the tab, switch away, close it, or become idle, Rynhult sends one
+summary, “N items still need you”, linking to the Inbox for the unanswered items
+it held while you were active. It does not send each held item separately.
+Closed or disconnected tabs expire within 45 seconds, followed by the next
+notification poll; focus loss is noticed on the next heartbeat, within 15 seconds.
+Answered, acknowledged or resolved items are not pushed later.
+
+A burst of more than three ordinary sendable items for you in one poll also
+becomes one Inbox summary. The items stay in your Inbox. Up to five critical
+alerts per person in a poll send individually; further critical alerts become
+one separate critical Inbox summary. Sign-in security, backup and persistent
+alerts always retain their individual titles, outside either summary.
+Reconnecting does not replay accepted notifications. Transient
+relay failures are retried after about two minutes, up to three total attempts;
+a retry can replace an earlier notification about the same item or summary.
+
+In **Settings → Notifications**, enable **Push even while I'm active** to send
+pushes regardless of your presence. This is your personal setting and defaults
+to off. Critical alerts, sign-in security alerts, backups, persistent alerts such
+as machine-offline warnings, and explicit test notifications bypass presence.
+Burst summaries still apply to non-exempt alerts with this setting on. Device
+and operating-system banner rules still apply, including the visible-app banner
+suppression described above.
 
 ## Notification devices
 When the list is empty, **Turn on notifications** in that card opens the separate **Notifications** section.
@@ -40,4 +72,4 @@ When the list is empty, **Turn on notifications** in that card opens the separat
 **Notification devices** on the Settings page lists every device that receives notifications, with when it last received one. Removing one only stops its alerts; it does not revoke that device's access to Rynhult. To stop a device signing in, revoke it under **Access devices** (the card links there). Remove a device with its bin icon, or select **Turn off on this device** on the device itself. Devices that uninstall the app or revoke permission are removed automatically. If Rynhult can't read the list, the card says so with **Retry** instead of showing an empty list; a removal that fails says why on the card.
 
 ## Privacy
-Each notification is encrypted for one device. The push service (Apple, Google, Mozilla or Microsoft) relays it without being able to read it. Rynhult only sends to those services.
+Each notification is encrypted for one device. The push service (Apple, Google, Mozilla or Microsoft) relays it without being able to read it. Rynhult only sends to those services. Payloads use RFC 8291 `aes128gcm` encryption with each subscription’s device key and authentication secret. Relay topic headers contain an installation-keyed HMAC rather than the alert’s deduplication tag, so relays cannot precompute common alert names from the tag. Relays can still see delivery metadata such as timing and destination.

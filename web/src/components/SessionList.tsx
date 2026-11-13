@@ -41,11 +41,15 @@ export function SessionList({ sessions, showProject = true, header = true, hostO
                   {s.git?.ahead !== undefined && <span> · {s.git.ahead} commits</span>}
                   {nowDoing(s) && <>{showProject ? " · " : ""}<NowDoing session={s} className="text-fg/80" /></>}
                   {s.changes?.files ? <>{" · "}<ChangeCount changes={s.changes} /></> : null}
+                  {s.pull_lifecycle && <Badge>PR #{s.pull_lifecycle.number}: {s.pull_lifecycle.state.replaceAll("_", " ")}</Badge>}
                   {s.management === "external" && <span className="text-faint">{showProject ? " · " : ""}observe-only · {s.run_as}</span>}
                   {!s.machine_offline && s.last_error && <span className="text-bad"> · {s.last_error}</span>}
                 </span>
                 <span className={clsx("shrink-0", !continueWorking && "@2xl:hidden")}><SessionMachine session={s} inline /></span>
               </div>
+              {!!s.dropped_mcps?.length && <p className="mt-1 break-words text-xs text-wait">
+                MCPs unavailable under parent limit: {s.dropped_mcps.join(', ')}
+              </p>}
             </Link>{continueWorking && <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
               <ProviderBadge provider={s.provider} /><span>{s.worktree_branch ?? s.git?.branch ?? s.changes?.branch ?? 'Branch not reported'}</span>
               <span className="break-all">{s.worktree ?? s.workdir ?? s.cwd}</span><span>Last seen {ago(s.status_at ?? s.last_output_at)}</span>
@@ -54,7 +58,7 @@ export function SessionList({ sessions, showProject = true, header = true, hostO
               {s.last_error?.startsWith('stop not confirmed:') && <span className="text-wait">{s.last_error}</span>}
             </div>}</div>
             <div role="cell" className={clsx("hidden min-w-0 truncate text-xs text-muted", !continueWorking && "@2xl:block")} title={sessionMachineName(s, host)}>{sessionMachineName(s, host)}</div>
-            <div role="cell" className="justify-self-end @2xl:justify-self-start"><StateBadge session={s} />{s.team_stop_pending && <Badge tone="wait">Stop pending</Badge>}</div>
+            <div role="cell" className="justify-self-end @2xl:justify-self-start">{s.ready_for_review ? <Badge tone="info">Ready for review</Badge> : <StateBadge session={s} />}{s.team_stop_pending && <Badge tone="wait">Stop pending</Badge>}</div>
             <div role="cell" className={clsx("hidden min-w-0", !continueWorking && "@2xl:block")}><ProviderBadge provider={s.provider} model={s.model} /></div>
             <div role="cell" className={clsx("tnum hidden text-xs text-muted", !continueWorking && "@2xl:block")} title="Last terminal output (heuristic)">{ago(s.last_output_at)}</div>
             <div role="cell" className={clsx("col-span-2 flex items-center justify-end gap-0.5", !continueWorking && "@2xl:col-span-1")}>

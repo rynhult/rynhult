@@ -138,6 +138,11 @@ async def test_browser_answer_audit_stale_and_hidden_item(api, project, env, mon
         records = list(db.scalars(select(AuditLog).where(AuditLog.action == "permission.result")))
         assert {r.actor for r in records} == {"casey"}
         assert {r.detail["outcome"] for r in records} == {"answered", "already_answered"}
+        import hashlib
+        attempts = list(db.scalars(select(AuditLog).where(AuditLog.action == 'permission.answer')))
+        assert {r.actor for r in attempts} == {'casey'}
+        assert {r.detail['input_sha256'] for r in attempts} == {
+            hashlib.sha256(saved_payload['acc_complete_input'].encode('utf-8')).hexdigest()}
 
 
 async def test_command_is_vault_redacted_before_truncation(api, project, env):
@@ -364,3 +369,135 @@ async def test_toggle_writes_audit(api, project, env, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["target"] == session["id"]
     assert rows[0]["detail"] == {"enabled": False}
+
+
+async def test_enrolled_permission_answer_refuses_before_broker(api, project, env, monkeypatch):
+    from helpers import pause_supervisor, write_db
+    from test_auth import cookie_client, do_setup
+
+    from acc.server.models import RelaySession
+
+    await do_setup(api, env)
+    session, folder, sid = await external(api, project, env, "relay permission fence")
+    (folder / "events.jsonl").write_text(line(sid, "PermissionRequest", acc_permission_id=TOKEN,
+        tool_name="Bash", tool_input={"command": "git status"}))
+    await wait_for(lambda: _waiting(api, session["id"]))
+    await pause_supervisor(api)
+    item = next(i for i in (await api.get("/api/attention")).json() if i["session_id"] == session["id"])
+    with write_db(api.app.state.db) as db:
+        db.add(RelaySession(session_id=session['id'], enrollment='fixture-enrollment', binding_id='fixture-binding'))
+        db.commit()
+    async def never_reply(*_args, **_kwargs):
+        pytest.fail('Enrolled permission answers must go through the hub')
+    monkeypatch.setattr(api.app.state.supervisor.broker, 'call', never_reply)
+    client = cookie_client(api)
+    headers = {"Origin": "http://acc", "X-ACC-CSRF": client.cookies.get("acc_csrf")}
+    for choice in ('allow', 'deny'):
+        response = await client.post(f"/api/attention/{item['id']}/permission",
+                                     json={'token': TOKEN, 'decision': choice}, headers=headers)
+        assert response.status_code == 409, response.text
+        assert 'qualified hub input' in response.json()['detail']
+
+
+@pytest.mark.parametrize('provider', ['claude', 'codex'])
+async def test_card_uses_bounded_hook_facts(api, project, env, provider, monkeypatch):
+    from helpers import write_db
+
+    from acc.server.models import Session
+
+    session, folder, sid = await external(api, project, env, 'bounded card')
+    with write_db(api.app.state.db) as db:
+        db.get(Session, session['id']).provider = provider
+        db.commit()
+    record = json.loads(line(sid, 'PermissionRequest', cwd='/tmp/<example>', tool_name='Bash',
+        tool_input={'command': '<script>literal</script>'}, acc_card={'command': 'forged'}, acc_complete_input='{"command":"forged"}'))
+    record['provider'] = provider
+    (folder / 'events.jsonl').write_text(json.dumps(record) + '\n')
+    await wait_for(lambda: _waiting(api, session['id']))
+    item = next(i for i in (await api.get('/api/attention')).json() if i['session_id'] == session['id'])
+    assert item['approval_card'] == {'command': '<script>literal</script>', 'cwd': '/tmp/<example>',
+                                     'diff': None, 'tool_name': 'Bash', 'file_path': None, 'label': 'No specific hint'}
+    from acc.server.api.inbox import permission_info
+    from acc.server.models import Event
+    with write_db(api.app.state.db) as db:
+        db.add(Event(session_id=session['id'], source='codex_hook' if provider == 'claude' else 'claude_hook',
+            kind='PermissionRequest', payload={'acc_card': {'command': 'forged'}, 'acc_permission_id': TOKEN}))
+        db.commit()
+        assert permission_info(db, session['id'])['approval_card'] == item['approval_card']
+    from acc.server import approval_cards
+    with monkeypatch.context() as patch:
+        patch.setattr(approval_cards, 'classify', lambda *a: pytest.fail('read path classified input'))
+        patch.setattr(approval_cards, 'card', lambda *a: pytest.fail('read path rebuilt card'))
+        listed = next(i for i in (await api.get('/api/attention')).json() if i['session_id'] == session['id'])
+        assert listed['approval_card'] == item['approval_card']
+    with (folder / 'events.jsonl').open('a') as stream:
+        record['hook']['tool_input'] = {'command': 'é' * 5000}
+        stream.write(json.dumps(record) + '\n')
+    async def bounded():
+        rows = (await api.get('/api/attention')).json()
+        return next(i for i in rows if i['session_id'] == session['id'])['approval_card']['command'] is None
+    await wait_for(bounded)
+
+
+@pytest.mark.parametrize('provider', ['cursor', 'copilot', 'antigravity', 'opencode'])
+async def test_other_providers_discard_forged_card_snapshot(api, project, env, provider):
+    from helpers import write_db
+    from sqlalchemy import select
+
+    from acc.server import attention
+    from acc.server.api.inbox import permission_info
+    from acc.server.models import Event, Session
+
+    session, folder, sid = await external(api, project, env, 'forged card ' + provider)
+    with write_db(api.app.state.db) as db:
+        db.get(Session, session['id']).provider = provider
+        db.commit()
+    record = json.loads(line(sid, 'PermissionRequest', tool_name='Bash', tool_input={'command': 'real command'},
+        acc_card={'command': 5, 'label': {}}, acc_complete_input='{"command":"git status"}'))
+    record['provider'] = provider
+    (folder / 'events.jsonl').write_text(json.dumps(record) + '\n')
+
+    async def ingested():
+        with api.app.state.db() as db:
+            return db.scalar(select(Event.id).where(Event.session_id == session['id'],
+                                                    Event.kind == 'PermissionRequest')) is not None
+    await wait_for(ingested)
+    with write_db(api.app.state.db) as db:
+        event = db.scalar(select(Event).where(Event.session_id == session['id'], Event.kind == 'PermissionRequest'))
+        assert 'acc_card' not in event.payload
+        assert 'acc_complete_input' not in event.payload
+        assert permission_info(db, session['id']) == {}
+        # Providers with advisory permission hooks may need a screen-detected item.
+        attention.raise_item(db, key='round2-forged:' + session['id'], kind='needs_input', severity='warn',
+                         source=f'{provider}_hook', title='Review actual prompt', session_id=session['id'])
+        db.commit()
+    rows = (await api.get('/api/attention')).json()
+    owned = [row for row in rows if row['session_id'] == session['id']]
+    assert owned
+    assert all('approval_card' not in row and 'permission_input' not in row for row in owned)
+
+
+async def test_native_terminal_notice_never_inherits_a_stale_remote_approval(api,project,env,monkeypatch):
+    from helpers import pause_supervisor, write_db
+    from test_auth import cookie_client, do_setup
+
+    from acc.server.models import AttentionItem
+
+    await do_setup(api,env)
+    session,folder,sid=await external(api,project,env,'native terminal handoff')
+    (folder/'events.jsonl').write_text(line(sid,'PermissionRequest',acc_permission_id=TOKEN,
+        acc_complete_input='stale input',tool_name='Bash',tool_input={'command':'fixture'}))
+    await wait_for(lambda:_waiting(api,session['id']));await pause_supervisor(api)
+    with write_db(api.app.state.db) as db:
+        item=db.query(AttentionItem).filter_by(session_id=session['id'],kind='needs_input').one()
+        item.source='claude_terminal';item.detail='Claude is asking in the terminal; answer it there';item.verified=False
+        item_id=item.id;db.commit()
+    calls=[]
+    async def refused(*args,**kwargs):calls.append(args);raise AssertionError('Native modal must not receive remote input')
+    monkeypatch.setattr(api.app.state.supervisor.broker,'call',refused)
+    item=next(item for item in (await api.get('/api/attention')).json() if item['id']==item_id)
+    assert 'permission_id' not in item and 'permission_can_approve' not in item
+    assert item['detail']=='Claude is asking in the terminal; answer it there'
+    client=cookie_client(api);headers={'Origin':'http://acc','X-ACC-CSRF':client.cookies.get('acc_csrf')}
+    reply=await client.post(f'/api/attention/{item_id}/permission',json={'token':TOKEN,'decision':'allow'},headers=headers)
+    assert reply.status_code==409 and 'answer it there' in reply.text and not calls

@@ -102,6 +102,7 @@ html.dark[data-shell-palette="mockup"]:not([data-community-theme]) .bg-accent.sh
 .shell-link[aria-current=page] { background: var(--accent-tint); color: var(--accent); }
 @media (max-width: 1100px) { .shell-inbox-grid { grid-template-columns: minmax(0, 1fr); } .shell-inbox-list { max-height: 40dvh; overflow: auto; } }
 @media (pointer: coarse) {
+  .shell label[for^="security-"], .shell label[for^="feature-"] { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
   .shell-security-trigger { width: 44px; height: 44px; }
   .shell-link, .shell-brand, .shell-launch { min-height: 44px; }
   .shell-sidebar-frame.is-collapsed { width: 52px; }
@@ -122,7 +123,7 @@ html.dark[data-shell-palette="mockup"]:not([data-community-theme]) .bg-accent.sh
 .session-primary-line { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; }
 .session-primary-line > h1 { flex: 1; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
 .session-primary-line > :not(h1) { flex-shrink: 0; }
-.session-primary-line > .session-delivery-indicator { flex-shrink: 1; max-width: 250px; height: auto; border: 1px solid var(--border); border-radius: var(--shell-radius); padding-inline: 6px; }
+.session-primary-line .session-delivery-indicator { flex-shrink: 1; max-width: 250px; height: auto; border: 1px solid var(--border); border-radius: var(--shell-radius); padding-inline: 6px; }
 .session-tab-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .session-tab-line > :first-child { flex: 1; min-width: 0; flex-shrink: 1; }
 .session-terminal-tools { flex: none; min-width: 0; }
@@ -131,14 +132,19 @@ html.dark[data-shell-palette="mockup"]:not([data-community-theme]) .bg-accent.sh
 @media (max-width: 767px) {
   .session-primary-line { flex-wrap: wrap; gap: 4px; }
   .session-primary-line > h1 { flex-basis: 120px; }
-  .session-primary-line > .session-delivery-indicator { order: 1; max-width: 100%; }
+  .session-primary-line .session-delivery-indicator { order: 1; max-width: 100%; }
   .session-tab-line { gap: 2px; }
 }
 
 @container (max-width: 640px) {
+  /* Terminal controls must not squeeze the view tabs out of narrow panes. */
+  .session-tab-line { flex-wrap: wrap; row-gap: 4px; }
+  .session-tab-line > :first-child { flex-basis: 100%; }
+  .session-terminal-tools { max-width: 100%; }
+  .session-terminal-toolbar { flex-wrap: wrap; }
   .session-primary-line { flex-wrap: wrap; gap: 4px; }
   .session-primary-line > h1 { flex-basis: 120px; }
-  .session-primary-line > .session-delivery-indicator { order: 1; max-width: 100%; }
+  .session-primary-line .session-delivery-indicator { order: 1; max-width: 100%; }
   .session-terminal-toolbar .terminal-control-label { max-width: 72px; }
 }
 
@@ -148,3 +154,12 @@ html.dark[data-shell-palette="mockup"]:not([data-community-theme]) .bg-accent.sh
 .session-primary-line { position: relative; }
 .session-primary-line > .session-details-popover { position: static; }
 .session-details-popover > [role=group] { top: 100%; right: 0; max-width: 100%; }
+
+/* Reserve the phone delivery row before queued status arrives, so typing never moves. */
+.session-delivery-slot { display: contents; }
+@media (max-width: 767px) {
+  .session-primary-line > .session-delivery-slot { display: flex; align-items: center; flex-basis: 100%; min-width: 0; height: 46px; order: 1; }
+}
+@container (max-width: 640px) {
+  .session-primary-line > .session-delivery-slot { display: flex; align-items: center; flex-basis: 100%; min-width: 0; height: 46px; order: 1; }
+}

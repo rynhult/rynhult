@@ -4,14 +4,11 @@ import { execFileSync } from 'node:child_process';
 import { AUTH_FILE, csrfHeaders, gitProject, verifyAgain } from './helpers';
 import { BASE } from './fixture-paths';
 
-test.use({ actionTimeout: 10000, storageState: AUTH_FILE, presentationChanges: ['admin_features', 'ui_shell', 'layouts'] });
+test.use({ actionTimeout: 10000, storageState: AUTH_FILE, presentationChanges: ['admin_features', 'layouts'] });
 
 test('terminal rows fill the retained pane and resize its PTY', async ({ page, context, browserName }) => {
   await verifyAgain(page);
-  const features = await (await page.request.get('/api/admin-features')).json();
-  if (!features.features.find((item: {id: string}) => item.id === 'new_shell')?.enabled)
-    expect((await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: features.revision } })).ok()).toBe(true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBe(true);
+
   const project = await gitProject(page, 'terminal-height');
   const made = await page.request.post('/api/sessions', { headers: project.headers, data: { project_id: project.id, provider: 'claude', name: 'Terminal height' } });
   expect(made.ok(), await made.text()).toBe(true);

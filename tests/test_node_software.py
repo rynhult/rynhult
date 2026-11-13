@@ -142,13 +142,13 @@ async def test_a_mac_installs_only_mac_ok_entries_as_the_user(mac, tmp_path):
     packages_.handle(frame())
     await packages_.worker
     assert npm.calls[0] == [str(tmp_path / "npm"), "install", "-g", "--ignore-scripts", "--no-audit", "--no-fund",
-                            "@openai/codex@0.163.0"]
+                            "@openai/codex@0.167.1"]
     state = packages_.message()
     assert state["kind"] == "mac" and state["pending"] == []
     codex = state["packages"]["codex"]
-    assert codex["installed"] == "0.163.0" and codex["latest"] == "0.163.0" and codex["upstream_latest"] == "0.171.0" and codex["last"]["ok"] and codex["mac_ok"]
+    assert codex["installed"] == "0.167.1" and codex["latest"] == "0.167.1" and codex["upstream_latest"] == "0.171.0" and codex["last"]["ok"] and codex["mac_ok"]
     assert not state["packages"]["claude"]["mac_ok"] and "install it there by hand" in state["packages"]["claude"]["note"]
-    assert json.loads((tmp_path / "packages.json").read_text())["packages"]["codex"]["installed"] == "0.163.0"
+    assert json.loads((tmp_path / "packages.json").read_text())["packages"]["codex"]["installed"] == "0.167.1"
 
     packages_.handle(frame(id="pkg-0123456789ac", action="remove"))
     await packages_.worker

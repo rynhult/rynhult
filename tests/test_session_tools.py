@@ -48,7 +48,7 @@ def api_auth(monkeypatch):
 
 
 def broker_config(tmp_path):
-    return isolated_broker(tmp_path, socket_path=tmp_path / "s", run_dir=tmp_path, tmux_socket=f"acc-test-{tmp_path.name[-8:]}",
+    return isolated_broker(tmp_path, socket_path=tmp_path / "s", run_dir=tmp_path,
                         allowed_roots=(tmp_path,), allowed_uids=frozenset(), providers={}, hook_path="x")
 
 

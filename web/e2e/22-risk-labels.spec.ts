@@ -1,3 +1,4 @@
+import { projectWorkspace } from "./helpers";
 import { wikiShotPath } from "./helpers";
 import { expect, test } from "./fixtures";
 import { appendFileSync } from "node:fs";
@@ -5,12 +6,12 @@ import { AUTH_FILE, info } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
-test("advice appears in Inbox and Needs you, and a saved preference hides it without answering", async ({ page }, testInfo) => {
+test("advice appears in Inbox and the session header, and a saved preference hides it without answering", async ({ page }, testInfo) => {
   await page.goto("/");
   const csrf = (await page.context().cookies()).find((c) => c.name === "acc_csrf")!.value;
   const headers = { "X-ACC-CSRF": csrf, Origin: info().origin };
   const project = await page.request.post("/api/projects", { headers,
-    data: { slug: `risk-${Date.now()}`, name: "Demo API", workspace_path: info().workspace } });
+    data: { slug: `risk-${Date.now()}`, name: "Demo API", workspace_path: projectWorkspace() } });
   expect(project.ok()).toBe(true);
   const pid = (await project.json()).id;
   await page.request.post(`/api/projects/${pid}/trust`, { headers });
@@ -18,7 +19,7 @@ test("advice appears in Inbox and Needs you, and a saved preference hides it wit
     data: { project_id: pid, provider: "claude", name: "Review demo" } });
   expect(launched.ok()).toBe(true);
   const sid = (await launched.json()).id;
-  const inboxRow = page.locator("div.grid").filter({ has: page.locator(`a[href="/sessions/${sid}"]`) });
+  const inboxRow = page.getByRole("region", { name: "Inbox item details", exact: true });
   const state = async () => (await (await page.request.get(`/api/sessions/${sid}`)).json()).observed_state;
   await expect.poll(state).toBe("idle");
   appendFileSync(`${info().run_dir}/${sid}/events.jsonl`, JSON.stringify({
@@ -30,14 +31,14 @@ test("advice appears in Inbox and Needs you, and a saved preference hides it wit
   const advice = page.getByRole("note", { name: "Advisory risk: Risky" });
   await expect(advice).toContainText("runs a network download piped to a shell");
   await page.screenshot({ path: wikiShotPath(testInfo, "risk-labels-inbox.png"), fullPage: true });
-  await page.goto(`/sessions/${sid}?tab=activity`);
+  await page.goto(`/sessions/${sid}`);
   await expect(advice).toBeVisible();
   await page.screenshot({ path: wikiShotPath(testInfo, "risk-labels-session.png"), fullPage: true });
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(advice).toBeVisible();
     expect(await advice.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-    if (width === 390) await page.getByRole("region", { name: "Needs you" }).screenshot({
+    if (width === 390) await page.locator(".session-heading").screenshot({
       path: wikiShotPath(testInfo, "risk-labels-phone.png"),
     });
   }
@@ -54,10 +55,10 @@ test("advice appears in Inbox and Needs you, and a saved preference hides it wit
   await page.reload();
   await expect(toggle).not.toBeChecked();
   await page.goto("/inbox");
-  await expect(page.getByText("Review demo needs your input")).toBeVisible();
+  await expect(page.getByRole("button").filter({ hasText: "Review demo needs your input" })).toBeVisible();
   await expect(advice).toHaveCount(0);
-  await page.goto(`/sessions/${sid}?tab=activity`);
-  await expect(page.getByRole("region", { name: "Needs you" })).toBeVisible();
+  await page.goto(`/sessions/${sid}`);
+  await expect(page.getByText("Needs you", { exact: true })).toBeVisible();
   await expect(advice).toHaveCount(0);
   expect(await state()).toBe("waiting_input");
   const pending = (await (await page.request.get("/api/attention?scope=pending")).json())
@@ -68,7 +69,7 @@ test("advice appears in Inbox and Needs you, and a saved preference hides it wit
   await toggle.check();
   await expect(page.getByText("Preference saved.")).toBeVisible();
   await page.request.post(`/api/attention/${pending.id}/ack`, { headers });
-  await page.goto(`/sessions/${sid}?tab=activity`);
+  await page.goto(`/sessions/${sid}`);
   await expect(advice).toBeVisible();
   expect(await state()).toBe("waiting_input");
   for (const [command, label, reason] of [
@@ -83,8 +84,9 @@ test("advice appears in Inbox and Needs you, and a saved preference hides it wit
     await expect(changedAdvice).toContainText(reason, { timeout: 10000 });
     await page.goto("/inbox");
     await page.getByRole("radio", { name: "History", exact: true }).click();
+    await page.getByRole("button").filter({ hasText: "Review demo needs your input" }).click();
     await expect(inboxRow.getByRole("note", { name: `Advisory risk: ${label}` })).toContainText(reason);
-    await page.goto(`/sessions/${sid}?tab=activity`);
+    await page.goto(`/sessions/${sid}`);
     await expect(changedAdvice).toContainText(reason);
     expect(await state()).toBe("waiting_input");
   }

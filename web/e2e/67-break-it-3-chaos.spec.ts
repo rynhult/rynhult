@@ -79,8 +79,8 @@ test('slow pairing double-click creates only one one-use link', async ({ page })
     });
     await page.goto('/settings#your-devices');
     await page.getByLabel('Device name', { exact: true }).fill('Demo phone');
-    await page.getByRole('button', { name: 'Pair device', exact: true }).dblclick();
-    await expect(page.getByRole('button', { name: 'Pair device', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Pair a phone', exact: true }).dblclick();
+    await expect(page.getByRole('button', { name: 'Pair a phone', exact: true })).toBeDisabled();
     await expect.poll(() => attempts).toBe(1);
     release();
     await expect(page.getByRole('dialog', { name: 'Pair device', exact: true })).toBeVisible();
@@ -91,12 +91,18 @@ test('slow pairing double-click creates only one one-use link', async ({ page })
 
 test('receiving-page Back, Forward and refresh never recover a used capability', async ({ page }) => {
   let claims = 0;
+  let previews = 0;
+  await page.route('**/api/device-pairing/preview', route => {
+    previews++;
+    return route.fulfill({ json: { installation: 'https://acc.example.lan', installation_name: 'Test installation', person: 'alex', label: 'Phone', desktop_code: '654321' } });
+  });
   await page.route('**/api/device-pairing/claim', route => {
     claims++;
     return route.fulfill({ json: { receipt: 'r'.repeat(43), matching_code: '123456' } });
   });
   await page.goto('/pair-device#' + 't'.repeat(43));
   await expect(page).toHaveURL(/\/pair-device$/);
+  await page.getByLabel('The installation, person and desktop match code match my trusted screen').check();
   await page.getByRole('button', { name: 'Request pairing', exact: true }).click();
   // The page's own sentence, not the Announcements live region, which repeats it about 50 ms later.
   await expect(page.getByRole('paragraph').filter({ hasText: 'Waiting for owner confirmation.' })).toBeVisible();
@@ -109,6 +115,7 @@ test('receiving-page Back, Forward and refresh never recover a used capability',
   await page.reload();
   await expect(page.getByRole('button', { name: 'Request pairing', exact: true })).toHaveCount(0);
   expect(claims).toBe(1);
+  expect(previews).toBe(1);
 });
 
 test('keyboard-only phone policy editing repairs a 10k timezone without losing the form', async ({ page }) => {

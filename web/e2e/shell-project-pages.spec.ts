@@ -1,8 +1,8 @@
 import { expect, test, type Page } from './fixtures';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { AUTH_FILE, BASE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain } from './helpers';
+import { AUTH_FILE, BASE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain, wikiShotPath } from './helpers';
 
-test.use({ presentationChanges: ['admin_features', 'ui_shell', 'layouts'], storageState: AUTH_FILE });
+test.use({ presentationChanges: ['admin_features', 'layouts'], storageState: AUTH_FILE });
 let sessionId: string | undefined;
 test.afterEach(async ({ page }) => {
   // Finish proxy fetch/fulfill callbacks before this page's API context closes.
@@ -13,18 +13,7 @@ test.afterEach(async ({ page }) => {
     sessionId = undefined;
   }
 });
-async function shell(page: Page, enabled: boolean) {
-  const h = await csrfHeaders(page);
-  const state = await (await page.request.get('/api/admin-features')).json();
-  let r = await page.request.put('/api/admin-features/new_shell', { headers: h, data: { enabled: true, revision: state.revision } });
-  if (!r.ok()) {
-    await verifyAgain(page);
-    const fresh = await (await page.request.get('/api/admin-features')).json();
-    r = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: fresh.revision } });
-  }
-  expect(r.ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } })).ok()).toBeTruthy();
-}
+
 async function screenshot(page: Page, name: string) {
   const dir = `${BASE}/project-pages`;
   mkdirSync(dir, { recursive: true });
@@ -34,7 +23,7 @@ async function screenshot(page: Page, name: string) {
 for (const theme of ['dark', 'light'] as const) {
   test(`owner directory and overview: filters, keyboard and axe (${theme})`, async ({ page }) => {
     test.setTimeout(90_000);
-    await shell(page, true);
+
     const p = await gitProject(page, `cedar-${theme}`, { name: 'Cedar archive', notes: 'Private workshop notes and restore tools. Build a clear restore preview while keeping the original notes private.' });
     mkdirSync(`${p.folder}/docs/handoffs`, { recursive: true });
     writeFileSync(`${p.folder}/docs/handoffs/2026-11-01-restore-preview.md`, '# Restore preview\nReview the saved notes before restoring.\n');
@@ -45,7 +34,7 @@ for (const theme of ['dark', 'light'] as const) {
     const main = page.getByRole('main');
     await expect(main.getByRole('heading', { name: 'All projects', exact: true })).toBeVisible();
     await expect(main.getByRole('combobox', { name: 'Source owner', exact: true })).toBeVisible();
-    for (const name of ['Project', 'Source repositories', 'Working locations', 'Activity']) await expect(main.getByRole('columnheader', { name, exact: true })).toBeVisible();
+    for (const name of ['Name ↑', 'Status', 'Last activity', 'Runtime']) await expect(main.getByRole('columnheader', { name, exact: true })).toBeVisible();
     const filter = main.getByRole('textbox', { name: 'Find a project or repository' });
     await filter.fill(p.slug);
     const row = main.getByRole('row').filter({ has: page.getByRole('link', { name: p.name, exact: true }) });
@@ -79,20 +68,19 @@ for (const theme of ['dark', 'light'] as const) {
   });
 }
 
-test('classic test preference retains the original projects controls and project overview', async ({ page }) => {
-  await shell(page, true);
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } })).ok()).toBeTruthy();
+test('directory and project overview retain controls and phone tab navigation', async ({ page }) => {
+
   const p = await gitProject(page, 'legacy-project');
   await page.goto('/projects');
   const main = page.getByRole('main');
-  await expect(main.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
-  await expect(main.getByRole('radiogroup', { name: 'View' })).toBeVisible();
-  await expect(main.getByRole('searchbox', { name: 'Filter projects' })).toBeVisible();
-  await expect(main.getByRole('heading', { name: 'All projects' })).toHaveCount(0);
+  await expect(main.getByRole('heading', { name: 'All projects', exact: true })).toBeVisible();
+  await expect(main.getByRole('textbox', { name: 'Find a project or repository', exact: true })).toBeVisible();
+  await expect(main.getByRole('table', { name: 'Project directory', exact: true })).toBeVisible();
+  // Classic cards/list and sorting controls are retained for review in collections-table; the directory replaces them.
   await page.goto(`/projects/${p.id}`);
   await expect(main.getByRole('tablist', { name: 'Project sections' })).toBeVisible();
-  await expect(main.getByRole('region', { name: 'Sessions' })).toHaveCount(0);
-  await expect(main.getByRole('region', { name: 'Project overview', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('region', { name: 'Sessions', exact: true })).toBeVisible();
+  await expect(main.getByRole('region', { name: 'Project overview', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/projects/${p.id}#project-backup`);
   const strip = main.getByRole('tablist', { name: 'Project sections' });
@@ -106,16 +94,18 @@ test('classic test preference retains the original projects controls and project
   await expect.poll(selectedIsRevealed).toBe(true);
   await backup.focus();
   await page.keyboard.press('Home');
+  await expect(strip.getByRole('tab', { name: 'Sessions', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(strip.getByRole('tab', { name: 'Sessions', exact: true })).toBeFocused();
   await expect.poll(selectedIsRevealed).toBe(true);
   await page.keyboard.press('End');
+  await expect(strip.getByRole('tab', { name: 'Runtime', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(strip.getByRole('tab', { name: 'Runtime', exact: true })).toBeFocused();
   await expect.poll(selectedIsRevealed).toBe(true);
 });
 
 test('member uses authorized project data only in both themes', async ({ page, context }) => {
   test.setTimeout(120_000);
-  await shell(page, true);
+
   const ownerProject = await gitProject(page, 'owner-private');
   const account = `pages-${Date.now()}-agent`;
   mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
@@ -124,7 +114,7 @@ test('member uses authorized project data only in both themes', async ({ page, c
   await context.clearCookies();
   const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
   expect((await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } })).ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
   const p = await gitProject(page, 'member-notes', { name: 'Field notes', notes: 'Product development and research notes.' });
   const requests: string[] = [];
   page.on('request', request => requests.push(new URL(request.url()).pathname));
@@ -152,7 +142,7 @@ test('member uses authorized project data only in both themes', async ({ page, c
 });
 
 test('directory paginates, filters repository owner, and reports unavailable activity', async ({ page }) => {
-  await shell(page, true);
+
   const p = await gitProject(page, 'directory-states');
   const original = (await (await page.request.get('/api/projects')).json()).find((project: { id: number }) => project.id === p.id);
   const rows = Array.from({ length: 25 }, (_, i) => ({ ...original, id: 10000 + i, name: `Directory ${String(i).padStart(2, '0')}`, slug: `directory-${i}`, repo: `${i === 24 ? 'birch' : 'cedar'}/app-${i}`, notes: 'Product development', host: 'acc-host', archived: i === 23, machine_offline: i === 0 }));
@@ -194,7 +184,7 @@ test('directory paginates, filters repository owner, and reports unavailable act
 });
 
 test('PP-1: shell overview retains failing CI and repository counts in both themes', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'overview-health');
+   const p = await gitProject(page, 'overview-health');
   await page.route('**/api/projects', async route => {
     const response = await route.fetch(); await route.fulfill({ json: (await response.json()).map((project: { id: number }) => project.id === p.id ? { ...project, repo: 'cedar-labs/archive', remote_url: 'https://github.com/cedar-labs/archive' } : project) });
   });
@@ -215,8 +205,8 @@ test('PP-1: shell overview retains failing CI and repository counts in both them
   }
 });
 
-test('PP-2: single-row menu is not clipped and keyboard focus returns; narrow tables still scroll', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'row-menu');
+test('PP-2: single-row menu is not clipped and keyboard focus returns; compact rows fit narrow widths', async ({ page }) => {
+   const p = await gitProject(page, 'row-menu');
   await page.goto(`/projects?q=${p.slug}`);
   const trigger = page.getByRole('main').getByRole('button', { name: `Project actions for ${p.name}`, exact: true });
   await trigger.focus(); await page.keyboard.press('ArrowDown');
@@ -229,12 +219,12 @@ test('PP-2: single-row menu is not clipped and keyboard focus returns; narrow ta
   await expectAxeClean(page);
   await page.keyboard.press('Escape'); await expect(trigger).toBeFocused();
   await page.setViewportSize({ width: 900, height: 900 });
-  await expect(table).toHaveCSS('overflow-x', 'auto');
-  expect(await table.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  await expect(table).toHaveCSS('overflow-x', 'visible');
+  expect(await table.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
 test('PP-3: read-only project keeps the warning badge tone', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'readonly-tone');
+   const p = await gitProject(page, 'readonly-tone');
   await page.route('**/api/projects', async route => {
     const response = await route.fetch(); await route.fulfill({ json: (await response.json()).map((project: { id: number }) => project.id === p.id ? { ...project, import_mode: 'readonly' } : project) });
   });
@@ -243,7 +233,7 @@ test('PP-3: read-only project keeps the warning badge tone', async ({ page }) =>
 });
 
 test('PP-4: directory pluralizes attention and overview names the main host', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'attention-wording');
+   const p = await gitProject(page, 'attention-wording');
   const made = await page.request.post('/api/sessions', { headers: p.headers, data: { project_id: p.id, provider: 'claude', name: 'Attention fixture' } });
   expect(made.ok()).toBeTruthy(); const session = await made.json();
   const detail = await (await page.request.get(`/api/sessions/${session.id}`)).json();
@@ -258,9 +248,8 @@ test('PP-4: directory pluralizes attention and overview names the main host', as
   await expect(overview).not.toContainText('Main host');
 });
 
-
 test('PP-6: direct and directory navigation keep the overview hero in view', async ({ page }) => {
-  await shell(page, true);
+
   const p = await gitProject(page, 'overview-scroll');
   const main = page.getByRole('main');
   for (const navigation of ['direct', 'directory']) {
@@ -278,7 +267,7 @@ test('PP-6: direct and directory navigation keep the overview hero in view', asy
 });
 
 test('PP-7: loading backup status is replaced once without duplicate project keys', async ({ page }) => {
-  await shell(page, true);
+
   const first = await gitProject(page, 'status-before');
   const p = await gitProject(page, 'status-transition');
   const warnings: string[] = [];
@@ -316,7 +305,7 @@ test('PP-7: loading backup status is replaced once without duplicate project key
 });
 
 test('Files begins below compact title and main tabs', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'density-files');
+   const p = await gitProject(page, 'density-files');
   await page.goto(`/projects/${p.id}?tab=files`);
   const main = page.getByRole('main');
   await expect(main.getByRole('tablist', { name: 'Project views' })).toBeVisible();
@@ -330,7 +319,7 @@ test('Files begins below compact title and main tabs', async ({ page }) => {
 });
 
 test('project sections start directly below the main tabs', async ({ page }) => {
-  await shell(page, true); const p = await gitProject(page, 'trim-density');
+   const p = await gitProject(page, 'trim-density');
   await page.goto(`/projects/${p.id}`);
   const tabs = page.getByRole('tablist', { name: 'Project sections' });
   await expect(tabs).toBeVisible();
@@ -358,4 +347,32 @@ test('project sections start directly below the main tabs', async ({ page }) => 
   await expect(views.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(tabs).toBeVisible();
 
+});
+
+
+test('compact directory sorts with the keyboard and URL, keeps cards and stacks on phones', async ({ page }, testInfo) => {
+  const p = await gitProject(page, 'compact-sort', { name: 'Cedar workshop' });
+  await page.goto('/projects');
+  await expect(page.getByRole('button', { name: 'List', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const name = page.getByRole('columnheader', { name: 'Name ↑', exact: true });
+  await page.screenshot({ path: wikiShotPath(testInfo, 'projects-list-1440.png'), fullPage: true });
+  await name.getByRole('button').focus(); await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/sort=name&direction=desc/);
+  await expect(page.getByRole('columnheader', { name: 'Name ↓', exact: true })).toHaveAttribute('aria-sort', 'descending');
+  await page.reload();
+  await expect(page.getByRole('columnheader', { name: 'Name ↓', exact: true })).toHaveAttribute('aria-sort', 'descending');
+  await page.getByRole('button', { name: 'Cards', exact: true }).click();
+  await expect(page).toHaveURL(/view=cards/);
+  await expect(page.locator('.shell-directory-cards')).toBeVisible();
+  await page.screenshot({ path: wikiShotPath(testInfo, 'projects.png'), fullPage: true });
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('textbox', { name: 'Find a project or repository' }).fill(p.name);
+  await page.getByRole('combobox', { name: 'Sort projects', exact: true }).selectOption('activity:desc');
+  await expect(page).toHaveURL(/sort=activity&direction=desc/);
+  const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: p.name, exact: true }) });
+  await expect(row).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: wikiShotPath(testInfo, 'projects-list-390.png'), fullPage: true });
+  await expectAxeClean(page);
 });

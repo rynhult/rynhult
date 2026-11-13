@@ -1,23 +1,24 @@
-import { Surface as Card, ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
+import { ParentChain } from '../components/ParentChain';
+import { visibleText } from '../lib/visibleText';
+import { RelayInboxActions } from '../components/session-relay/RelayInboxActions';
+import { ApprovalCard } from '../components/ApprovalCard';
 import { useSingleMutation as useMutation } from "../lib/mutations";
 import clsx from "clsx";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCheck, Info, KeyRound, MoreHorizontal, OctagonAlert, TerminalSquare } from "lucide-react";
-import { api, post } from "../lib/api";
+import { AlertTriangle, Info, KeyRound, MoreHorizontal, OctagonAlert, TerminalSquare } from "lucide-react";
+import { post } from "../lib/api";
 import { ago } from "../lib/format";
 import type { AttentionItem } from "../lib/types";
-import { Badge, Button, Empty, ErrorNote, Popover, QueryState, Segmented } from "../components/ui";
+import { Badge, Button, ErrorNote, Popover } from "../components/ui";
 import { PublishActions, PublishSummary } from "../components/PublishRequest";
 import { OFFLINE_TITLE, providerLabel, useOffline, useProviderRegistry, useRole } from "../lib/queries";
 import { useConfirm } from "../components/confirm";
 import { sourceWords } from "../lib/words";
 import { ToolActions, ToolDecision } from "../components/Tools";
 import { RiskLabel } from "../components/RiskLabel";
-import { groupInbox } from "../lib/order";
 
-import { useNewShell } from '../lib/uiShell';
 import { lazyImport } from '../lib/lazyImport';
 const ShellInbox = lazy(() => lazyImport(() => import('../components/shell/Inbox')));
 
@@ -111,7 +112,7 @@ function PermissionActions({ item }: { item: AttentionItem }) {
     return () => clearTimeout(timer);
   }, [item.permission_expires_at]);
   return <div className="flex flex-wrap items-center gap-2">
-    {item.permission_input && <pre className="w-full max-h-80 overflow-auto whitespace-pre-wrap break-all">{item.permission_input}</pre>}
+
     {item.permission_reason && <p>{item.permission_reason}</p>}
     {expired ? <p>This request expired. Answer in the terminal.</p> : <>
     {item.permission_can_approve && <Button size="sm" disabled={offline || reply.isPending || reply.isSuccess} onClick={() => reply.mutate("allow")}>Approve</Button>}
@@ -155,25 +156,29 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
           {item.acked_at && !item.resolved_at && <Badge>{item.persistent ? "acknowledged" : "dismissed"}</Badge>}
           {snoozed && !item.resolved_at && <Badge>snoozed</Badge>}
         </div>
+        {!publish && <ParentChain chain={item.parent_chain} owner={item.root_owner} />}
         {publish ? <>
           {publish.reason && <p className="mt-0.5 break-words text-[13px] text-muted">{publish.reason}</p>}
           <div className="mt-1"><PublishSummary request={publish} /></div>
-        </> : item.detail && <p className="mt-0.5 break-words text-[13px] text-muted">{item.detail}</p>}
-        {item.risk && <div className="mt-1"><RiskLabel risk={item.risk} /></div>}
+        </> : item.detail && <p className="mt-0.5 break-words text-[13px] text-muted">{item.approval_card ? visibleText(item.detail) : item.detail}</p>}
+        {item.source !== 'claude_terminal' && item.approval_card && <ApprovalCard key={item.permission_id ?? item.id} facts={item.approval_card} input={item.permission_input} risk={item.risk} />}
+        {item.risk && !item.approval_card && <div className="mt-1"><RiskLabel risk={item.risk} /></div>}
         <p className="mt-1 text-xs text-faint">
           <span title={`Source: ${item.source}`}>{source}</span> · {ago(item.created_at)}{item.session_name?.includes(" · team ") && ` · ${item.session_name}`}{item.project && ` · ${item.project}`}
         </p>
+        {item.source !== 'claude_terminal' && item.relay_decision && open && <RelayInboxActions key={item.relay_decision.decisionId} item={item} />}
+        {item.source !== 'claude_terminal' && !item.relay_decision && item.permission_id && open && <div className="mt-3">{!item.approval_card && item.permission_input != null && <pre className="whitespace-pre-wrap break-all font-mono text-xs">{visibleText(item.permission_input)}</pre>}<PermissionActions key={item.permission_id} item={item} /></div>}
         <ErrorNote error={ack.error || snooze.error} />
       </div>
       <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-auto">
         {item.session_id && (item.kind === 'team_expired' || item.kind === 'team_lifetime') && <Link to={`/sessions/${item.session_id}?tab=team#overview`} className="inline-flex min-h-11 items-center rounded-md border border-line-strong px-3 text-sm text-accent">
           {item.kind === 'team_expired' ? 'Resume team' : 'Review team time limit'}
         </Link>}
-        {item.permission_id && open && <PermissionActions key={item.permission_id} item={item} />}
+
         {item.session_id && (
-          <Link to={`/sessions/${item.session_id}`} className={clsx("inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2.5 text-[12.5px] font-medium",
+          <Link to={`/sessions/${item.session_id}${item.source === 'claude_terminal' ? '?tab=terminal' : ''}`} className={clsx("inline-flex h-7 pointer-coarse:h-11 items-center gap-1 rounded-md px-2.5 text-[12.5px] font-medium",
             prompt && open ? "bg-accent text-accent-ink hover:brightness-110" : "border border-line-strong bg-panel-2 text-fg hover:bg-panel-3")}>
-            <TerminalSquare size={14} aria-hidden="true" /> {prompt && open ? "Answer in terminal" : "Open session"}
+            <TerminalSquare size={14} aria-hidden="true" /> {item.source === 'claude_terminal' ? 'Open Terminal' : prompt && open ? "Answer in terminal" : "Open session"}
           </Link>
         )}
         {(item.kind === 'telemetry_report' || item.kind === 'telemetry_consent') && <Link to="/settings#telemetry" className="text-accent underline">Review privacy choices</Link>}
@@ -191,7 +196,8 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
         {item.kind === "publish_request" && item.publish_id && open && (
           <PublishActions request={{ id: item.publish_id, status: "pending_approval", action: publish?.action ?? "publish", host: publish?.host ?? "",
             port: publish?.port ?? null, access: publish?.access ?? null, replaces: publish?.replaces ?? null,
-            port_owner: publish?.port_owner, project: publish?.project }} />
+            port_owner: publish?.port_owner, project: publish?.project,
+            parent_chain: publish?.parent_chain ?? item.parent_chain, root_owner: publish?.root_owner ?? item.root_owner }} />
         )}
         {item.tool && open && item.tool.status === "pending_approval" && <ToolActions request={item.tool} />}
         {item.tool && <ToolDecision request={item.tool} />}
@@ -215,66 +221,6 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
 }
 
 export function Inbox() {
-  const shell = useNewShell();
-  return shell ? <Suspense fallback={<p role="status">Loading Inbox…</p>}><ShellInbox /></Suspense> : <StandardInbox />;
-}
 
-function StandardInbox() {
-  const queryClient = useQueryClient();
-  const offline = useOffline();
-  const { username } = useRole();
-  const [snapshot, setSnapshot] = useState<AttentionItem[] | null>(null);
-  const [undo, setUndo] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
-  useEffect(() => { setUndo(null); setSnapshot(null); setMessage(""); }, [username]);
-  useEffect(() => { if (undo !== null) { const timer = window.setTimeout(() => setUndo(null), 8000); return () => clearTimeout(timer); } }, [undo]);
-  const dismiss = useMutation({
-    mutationFn: (shown: AttentionItem[]) => post<{ batch: number; dismissed: number; skipped: number }>("/api/attention/dismiss", {
-      items: shown.map(({ id, updated_at }) => ({ id, updated_at })),
-    }),
-    onSuccess: result => {
-      setSnapshot(null); setUndo(result.dismissed ? result.batch : null);
-      setMessage(`${result.dismissed} dismissed. ${result.skipped} skipped (decisions, active alerts, handled or changed notices).`);
-      queryClient.invalidateQueries({ queryKey: ["attention"] });
-    },
-  });
-  const restore = useMutation({
-    mutationFn: (batch: number) => post<{ restored: number }>("/api/attention/dismiss/undo", { batch }),
-    onSuccess: result => { setUndo(null); setMessage(`${result.restored} restored. Changed notices stay as they are.`); queryClient.invalidateQueries({ queryKey: ["attention"] }); },
-  });
-  const [scope, setScope] = useState<"open" | "all">("open");
-  const items = useQuery({
-    queryKey: ["attention", scope],
-    queryFn: () => api<AttentionItem[]>(`/api/attention?scope=${scope}`),
-    refetchInterval: 3000,
-  });
-  return (
-    <Page>
-      <PageHeader title="Inbox" description="Everything to review: sessions waiting on you first, then approvals, alerts and notes. Dismissing a notice never approves a change or answers a prompt."
-        actions={<>{items.data?.some(item => item.bulk_dismissible) && <Button disabled={!items.data?.length || !!snapshot || undo !== null || dismiss.isPending || restore.isPending || offline} onClick={() => { dismiss.reset(); restore.reset(); setSnapshot([...(items.data ?? [])]); }}>Dismiss all</Button>}<Segmented label="Show" value={scope} onChange={setScope} options={[{ id: "open", label: "Open" }, { id: "all", label: "History" }]} /></>} />
-      {snapshot && <Card className="space-y-3 p-4">
-        <p className="font-medium">Dismiss {snapshot.filter(i => i.bulk_dismissible).length} items?</p>
-        <p className="text-sm text-muted">{snapshot.filter(i => !i.bulk_dismissible).length} skipped. Decisions, active alerts and handled notices stay in your Inbox.</p>
-        <div className="flex flex-wrap gap-2"><Button disabled={dismiss.isPending} onClick={() => setSnapshot(null)}>Cancel</Button>
-          <Button disabled={dismiss.isPending || offline || !snapshot.some(i => i.bulk_dismissible)} onClick={() => dismiss.mutate(snapshot)}>Dismiss {snapshot.filter(i => i.bulk_dismissible).length} items</Button></div>
-      </Card>}
-      <ErrorNote error={dismiss.error || restore.error} />
-      {message && <div className="flex flex-wrap items-center gap-2"><p role="status" className="text-sm text-muted">{message}</p>
-        {undo !== null && <Button disabled={restore.isPending || offline} onClick={() => restore.mutate(undo)}>Undo</Button>}</div>}
-      <Card>
-        <QueryState query={items} isEmpty={(d) => !d.length}
-          empty={<Empty icon={CheckCheck}>{scope === "open" ? "Nothing needs you right now." : "No history yet."}</Empty>}>
-          {(data) => scope === "open"
-            ? groupInbox(data).map((g) => (
-              <section key={g.key} aria-label={g.label} className="border-t border-line first:border-t-0">
-                <h2 className={clsx("flex items-center gap-2 border-b border-line bg-panel-2/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em]",
-                  g.key === "waiting" ? "text-wait" : "text-faint")}>{g.label} <span className="tnum font-normal">{g.items.length}</span></h2>
-                <div className="divide-y divide-line">{g.items.map((i) => <AttentionRow key={i.id} item={i} />)}</div>
-              </section>
-            ))
-            : <div className="divide-y divide-line">{data.map((i) => <AttentionRow key={i.id} item={i} />)}</div>}
-        </QueryState>
-      </Card>
-    </Page>
-  );
+  return <Suspense fallback={<p role="status">Loading Inbox…</p>}><ShellInbox /></Suspense>;
 }

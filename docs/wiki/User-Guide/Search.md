@@ -2,15 +2,15 @@
 
 **Search** finds words in your [sessions](/User-Guide/Glossary#session)' conversations: your prompts and the agents' replies, for every agent (Claude Code, Codex, GitHub Copilot CLI, Antigravity, Cursor and OpenCode), archived sessions included. It searches conversation content, not page or [project](/User-Guide/Glossary#project) names.
 
-1. Open **Search** in the sidebar (on a phone, open **Menu** first). Alternatively, open **Jump to…** with the top-bar button or <kbd>⌘K</kbd> / <kbd>Ctrl K</kbd> and choose **Search conversation content**.
+1. Use **Search conversations** in the header. Alternatively, open **Go to…** with the header button or <kbd>⌘K</kbd> / <kbd>Ctrl K</kbd> and choose **Search conversation content**.
 2. Type at least two characters. From **Jump to…**, you can also type your words and choose **Search conversations for “…”** to carry them into Search.
 3. Optionally narrow by **Project filter**, **Agent filter**, or **Sessions started since (UTC)**. The date includes sessions started at or after midnight UTC on that day, not just messages sent since then. Archived projects and sessions stay searchable.
 4. Select a matching session to open it.
 
 ![Search groups matching conversation excerpts by session and highlights the matched words](/.attachments/search.png)
 
-Looking for a page, project, session or command instead? Use **Jump to…** in
-the top bar. Its navigation arrow is distinct from Search's magnifying glass.
+Looking for a page, project, session or command instead? Use **Go to…** in
+the header. Its navigation arrow is distinct from Search's magnifying glass.
 See [Keyboard shortcuts](/User-Guide/Keyboard-Shortcuts).
 
 ![Phone Search keeps conversation results separate from the Jump to navigation button](/.attachments/search-phone.png)

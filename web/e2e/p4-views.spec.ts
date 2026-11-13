@@ -3,14 +3,8 @@ import { test } from './shell-state';
 import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, PASSWORD, totp, verifyAgain, freshStep, loadSecret } from './helpers';
 
-test.use({ presentationChanges: ['layouts', 'ui_shell'], storageState: AUTH_FILE, viewport: { width: 1440, height: 1000 } });
-async function enableShell(page: Page) {
-  const feature = await (await page.request.get('/api/admin-features')).json();
-  let enabled = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: feature.revision } });
-  if (enabled.status() === 403) { await verifyAgain(page); enabled = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: feature.revision } }); }
-  expect(enabled.ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-}
+test.use({ presentationChanges: ['layouts'], storageState: AUTH_FILE, viewport: { width: 1440, height: 1000 } });
+
 async function openInventory(page: Page, id: number, section: 'sources' | 'locations') {
   const target = new URL(`/projects/${id}`, info().origin);
   const current = new URL(page.url());
@@ -22,7 +16,7 @@ async function openInventory(page: Page, id: number, section: 'sources' | 'locat
 }
 test('read-only sources and locations: owner/member, themes, isolation and failure', async ({ page, context }) => {
   test.slow();
-  await enableShell(page);
+
   const { slug } = await gitProject(page, 'cedar-sources');
   const projects = await (await page.request.get('/api/projects')).json();
   const project = projects.find((p: { slug: string }) => p.slug === slug);
@@ -41,7 +35,7 @@ test('read-only sources and locations: owner/member, themes, isolation and failu
       expect(joined.ok(), await joined.text()).toBeTruthy();
       expect((await page.request.get(`/api/source-views/projects/${project.id}`)).status()).toBe(404);
       expect(JSON.stringify(await (await page.request.get('/api/source-views/directory')).json())).not.toContain(slug);
-      expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
+
       const created = await page.request.post('/api/projects', { headers: await csrfHeaders(page), data: { slug: 'blair-local-notes', name: 'Blair notes', workspace_path: info().workspace } });
       expect(created.ok(), await created.text()).toBeTruthy(); id = (await created.json()).id;
     }
@@ -80,16 +74,16 @@ test('read-only sources and locations: owner/member, themes, isolation and failu
     await refused;
     await expect(page.getByRole('region', { name: 'Working locations', exact: true }).getByRole('alert')).toContainText("Couldn't read sources and working locations");
     await page.unroute(`**/api/source-views/projects/${id}`);
-    await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: false } });
+
     await page.reload();
     await expect(page.getByRole('region', { name: 'Working locations', exact: true })).toHaveCount(0);
-    await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } });
+
   }
 });
 
 test('group view preserves viewer empty state and loses revoked membership', async ({ page, browser }) => {
   test.slow();
-  await enableShell(page);
+
   const account = 'p4-group-agent'; mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
   const invited = await page.request.post('/api/users/invites', { headers: await csrfHeaders(page), data: { role: 'member', account } });
   expect(invited.ok(), await invited.text()).toBeTruthy(); const token = (await invited.json()).link.split('/').pop();
@@ -115,7 +109,7 @@ test('group view preserves viewer empty state and loses revoked membership', asy
     expect(owners.ok(), await owners.text()).toBeTruthy();
     await change(member.id, 'viewer');
     const memberPage = await guest.newPage();
-    expect((await memberPage.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(memberPage), data: { enabled: true } })).ok()).toBeTruthy();
+
     for (const theme of ['dark', 'light'] as const) {
       await memberPage.setViewportSize({ width: 1440, height: 1000 }); await memberPage.emulateMedia({ colorScheme: theme });
       await memberPage.goto(`/groups?group=${group.id}&tab=projects`);
@@ -133,7 +127,7 @@ test('group view preserves viewer empty state and loses revoked membership', asy
 });
 
 test('mounted directory drops cached rows and facets when revalidation is refused', async ({ page }) => {
-  await enableShell(page);
+
   const { slug } = await gitProject(page, 'directory-revalidation');
   let denied = false;
   await page.route('**/api/source-views/directory?*', route => denied
@@ -165,7 +159,7 @@ test('mounted directory drops cached rows and facets when revalidation is refuse
 });
 
 test('V3: another-audience records show a neutral notice instead of a local-only claim', async ({ page }) => {
-  await enableShell(page);
+
   const p = await gitProject(page, 'transferred-source');
   await page.route(`**/api/source-views/projects/${p.id}`, route => route.fulfill({ json: {
     project_id: p.id, repositories: [], locations: [], counts: { repositories: 0, locations: 0 },
@@ -186,7 +180,7 @@ test('V3: another-audience records show a neutral notice instead of a local-only
 });
 
 test('V2: a redacted verified source is not labelled an unresolved locator', async ({ page }) => {
-  await enableShell(page);
+
   const p = await gitProject(page, 'redacted-verified');
   await page.route(`**/api/source-views/projects/${p.id}`, route => route.fulfill({ json: {
     project_id: p.id, repositories: [{ membership_id: 'redacted', membership_ids: ['redacted'], repository_id: 'opaque',
@@ -204,7 +198,7 @@ test('V2: a redacted verified source is not labelled an unresolved locator', asy
 });
 
 test('reduced-motion section navigation focuses the newly visible working view', async ({ page }) => {
-  await enableShell(page);
+
   const { id } = await gitProject(page, 'section-focus');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openInventory(page, id, 'sources');
@@ -222,7 +216,7 @@ test('V4: signing out and Back never retain a private project title', async ({ b
     const login = await page.request.post('/api/auth/login', { headers: { Origin: info().origin },
       data: { username: 'alex', password: PASSWORD, code: totp(loadSecret()) } });
     expect(login.ok(), await login.text()).toBeTruthy();
-    await enableShell(page);
+
     const p = await gitProject(page, 'private-title');
     let signingOut = false;
     let release!: () => void;

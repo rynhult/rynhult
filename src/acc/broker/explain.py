@@ -16,6 +16,7 @@ from .. import providers
 
 DEADLINE = 180
 MAX_OUTPUT = 256 * 1024
+SUPPORTED_PROVIDERS = frozenset({"claude", "codex", "copilot", "antigravity", "cursor"})
 
 
 def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe: str | None = None, *, bootstrap: bool = True, launch_env: dict | None = None) -> None:
@@ -52,6 +53,8 @@ def isolated_home(original: Path, home: Path, provider: str, hook_path: str, exe
 
 
 def arguments(provider: str, model: str, run_dir: Path, native_id: str | None) -> list[str]:
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError("this agent CLI can't write explanations in Rynhult's read-only mode; choose another CLI")
     model_args = ["--model", model] if model else []
     session_args = ["--session-id", native_id] if native_id else []
     if provider in ("claude", "copilot") and not session_args:

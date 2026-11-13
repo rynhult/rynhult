@@ -154,7 +154,7 @@ async def test_claim_issue_bind_and_owner_revoke(api, mobile):
 async def test_claim_secret_is_single_use_and_cannot_cross_browser_api(api, mobile):
     pending = await begin(api, mobile)
     body = claim_body(pending)
-    assert (await api.post('/api/device-pairing/claim', json={'token': body['token']})).status_code == 410
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': body['token']})).status_code == 410
     one = await api.post(PREFIX + '/claim', json=body)
     assert one.status_code == 200, one.text
     assert (await api.post(PREFIX + '/claim', json=body)).status_code == 410

@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { ExternalLink, LayoutGrid, Plus, X } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { SessionSummary } from "../lib/types";
-import { useSessions } from "../lib/queries";
+import { useInstance, useSessions } from "../lib/queries";
 import { Button, Dialog, Dot, Empty, ErrorNote, IconButton, LoadingRows, StaleNote, useDocumentTitle, useMedia } from "../components/ui";
 import { Tabs } from "../components/Tabs";
 import { groupLive, isLive, NowDoing, ProviderBadge, sessionState, StateBadge } from "../components/session-bits";
@@ -11,13 +11,12 @@ import { Terminal } from "../components/Terminal";
 import { expandedGridSession } from "../components/terminalExpansion";
 
 import { ShellPage as Page, Workbar as PageHeader } from '../components/shell/PagePrimitives';
-import { useNewShell } from '../lib/uiShell';
 
 function GridFrame({ children }: { children: ReactNode }) {
-  return useNewShell() ? <Page wide className="flex h-full min-h-0 flex-col">{children}</Page>
-    : <div className="flex h-full flex-col gap-3 px-4 pb-4 pt-5 md:px-8 md:pb-6">{children}</div>;
+  return <Page wide className="flex h-full min-h-0 flex-col">{children}</Page>;
 }
 
+const SessionRelayPanel = lazy(() => import('../components/session-relay/SessionRelayPanel').then(m => ({ default: m.SessionRelayPanel })));
 const MAX = 4;
 const STORE = "acc-grid";
 
@@ -28,7 +27,7 @@ function remembered(): string[] {
 /** Up to four live terminals side by side: watch several agents and answer whichever needs you. */
 export function Grid() {
   useDocumentTitle("Grid");
-  const Content = useNewShell() ? Fragment : Page;
+  const Content = Fragment;
   const sessions = useSessions();
   const [params, setParams] = useSearchParams();
   const [picking, setPicking] = useState(false);
@@ -91,6 +90,7 @@ export function Grid() {
 }
 
 function Tile({ session: s, phone, onRemove, onExpansionChange }: { session: SessionSummary; phone: boolean; onRemove: () => void; onExpansionChange: (id: string, expanded: boolean) => void }) {
+  const instance = useInstance();
   const expansionChanged = useCallback((expanded: boolean) => onExpansionChange(s.id, expanded), [s.id, onExpansionChange]);
   // Desktop tiles carry Select text / Expand in this header; phones keep the terminal's own row (narrow header).
   const [tools, setTools] = useState<HTMLSpanElement | null>(null);
@@ -108,7 +108,7 @@ function Tile({ session: s, phone, onRemove, onExpansionChange }: { session: Ses
           <IconButton icon={X} label={`Remove ${s.name} from the grid`} onClick={onRemove} />
         </span>
       </div>
-      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : <Terminal onExpansionChange={expansionChanged} sessionId={s.id} live compact name={s.name} tone={sessionState(s).tone} stateLabel={sessionState(s).label} toolbarTarget={phone ? null : tools} />}</div>
+      <div className="min-h-0 flex-1">{s.machine_offline ? <p className="p-4 text-xs text-muted">Machine offline</p> : s.session_relay === true ? <Suspense><SessionRelayPanel sessionId={s.id} projectId={s.project_id} enabled={instance.features?.session_relay === true} /></Suspense> : <Terminal onExpansionChange={expansionChanged} sessionId={s.id} live compact name={s.name} tone={sessionState(s).tone} stateLabel={sessionState(s).label} toolbarTarget={phone ? null : tools} />}</div>
     </section>
   );
 }

@@ -115,6 +115,10 @@ def test_scope_controls_budget_risk_and_account_tool_checks(api, project, monkey
     from acc.server import security_settings as security
     monkeypatch.setattr(budgets, 'status', lambda db, owner: {'claude.five_hour': {'over': True, 'action': 'pause'}})
     with api.app.state.db() as db:
+        # The mocked over-budget status represents an actual opted-in rule.
+        db.add(Setting(key='budget.casey', value={'rules': {
+            'claude.five_hour': {'mode': 'cap', 'limit': 80, 'action': 'pause'}}}))
+        db.flush()
         assert budgets.paused(db, 'casey', 'claude', project_id=project['id'])
         security.save(db, {'kind': 'project', 'project_id': project['id']},
             {'budget_checks': False, 'risk_labels': False, 'tool_install_check': False}, actor='casey', expected_revision=0)
@@ -145,6 +149,8 @@ def test_generation_never_widens_and_refuses_weaker_frozen_resume(api, project):
     with api.app.state.db() as db:
         policy = guardrails.policy(db, '/srv/ws', 'casey', project['id'])
         session = SimpleNamespace(launch_spec=SimpleNamespace(files={'guardrails.json': json.dumps(policy)}),
+            id='security-root', parent_session_id=None, parent_chain=[], root_owner='casey',
+            cap_requested=None, cap_limit=None, team_id=None,
             project_id=project['id'], owner='casey', host='local', run_as=project['account'])
         security.save(db, {'kind': 'project', 'project_id': project['id']}, {'secrets': False}, actor='casey', expected_revision=0)
         security.check_generation(db, session)
@@ -266,6 +272,8 @@ def test_stopped_generation_does_not_resume_without_new_custom_blocks(api, proje
     with api.app.state.db() as db:
         frozen = guardrails.policy(db, '/srv/ws', 'casey', project['id'])
         session = SimpleNamespace(launch_spec=SimpleNamespace(files={'guardrails.json': json.dumps(frozen)}),
+            id='security-root', parent_session_id=None, parent_chain=[], root_owner='casey',
+            cap_requested=None, cap_limit=None, team_id=None,
             project_id=project['id'], owner='casey', host='local', run_as=project['account'])
         db.merge(Setting(key='guardrails', value={'custom': [{'pattern': 'newly-blocked'}]}))
         db.flush()

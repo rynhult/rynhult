@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 import { AUTH_FILE, csrfHeaders, expectAxeClean } from './helpers';
 
-test.use({ storageState: AUTH_FILE, signedInLayout: 'new', presentationChanges: ['setup_level', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['setup_level', 'layouts'] });
 // Each journey starts in the new layout with a saved setup choice.
 test.beforeEach(async ({ page }) => {
   const headers = await csrfHeaders(page);
@@ -91,7 +91,7 @@ test('member levels never reveal owner tools, including More tools, in either th
     expect(joined.ok()).toBeTruthy();
     const member = await context.newPage();
     const headers = await csrfHeaders(member);
-    expect((await member.request.put('/api/preferences/ui-shell', { headers, data: { enabled: true } })).ok()).toBeTruthy();
+
     await member.goto('/settings#setup-level');
     for (const level of [0, 1, 2, 3, 4, 5, 6]) {
       // Tools is a real destination now; return to the editor before each change.
@@ -151,6 +151,8 @@ test('simplifying around an open terminal keeps its process, socket and header p
     await page.waitForTimeout(10_100);
     await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
     await expect(page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: 'Grid', exact: true })).toHaveCount(0);
+    await settings.goto('/setup/wizard');
+    await expect(settings.getByRole('heading', { name: 'Set up Rynhult', exact: true })).toBeVisible();
     expect(await terminal!.evaluate(node => node.isConnected && node === document.querySelector('.xterm'))).toBe(true);
     expect(sockets).toEqual([]); expect(mutations).toEqual([]);
     expect(await critical!.evaluate(node => node.isConnected && node === document.querySelector('.shell-critical'))).toBe(true);

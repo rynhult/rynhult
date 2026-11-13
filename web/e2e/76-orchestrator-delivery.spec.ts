@@ -1,3 +1,4 @@
+import { selectSessionView } from './helpers';
 import { expect, test } from './fixtures';
 import { existsSync, readFileSync } from 'node:fs';
 import { AUTH_FILE, control, csrfHeaders, gitProject, info, wikiShotPath } from './helpers';
@@ -50,7 +51,7 @@ test('an open terminal shows not-delivered status and retries the same message a
   expect(created.status()).toBe(201);
   const session = await created.json();
   await page.goto(`/sessions/${session.id}`);
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${session.id}`)).json()).observed_state).toBe('idle');
   const sent = await page.request.post(`/api/sessions/${session.id}/message`, {
     headers: await csrfHeaders(page), data: { text: 'Deliver this exactly once.' } });
@@ -67,7 +68,7 @@ test('an open terminal shows not-delivered status and retries the same message a
   await expect(panel.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   const received = `${info().run_dir}/${session.id}/fake.received`;
   expect(existsSync(received) ? readFileSync(received, 'utf8') : '').toBe('');
-  await page.getByRole('tab', { name: 'Activity', exact: true }).click();
+  await selectSessionView(page, 'Activity');
   // Releasing terminal control must flush automatically: no manual Retry click
   // that could race the worker or hide a missing automatic wake-up.
   await expect.poll(async () => (await (await page.request.get(`/api/deliveries/${delivery.id}`)).json()).delivery.state,
@@ -96,7 +97,7 @@ for (const width of [1440, 390]) test.describe(`delivery geometry ${width}`, () 
   });
   await page.goto(`/sessions/${id}`);
   const field = page.locator('.xterm-helper-textarea');
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
   if (width === 390) {
     await page.getByRole('button', { name: 'Session details', exact: true }).tap();
@@ -108,7 +109,7 @@ for (const width of [1440, 390]) test.describe(`delivery geometry ${width}`, () 
   await page.keyboard.type('before-');
   const terminal = page.locator('.xterm');
   const initial = (await terminal.boundingBox())!;
-  if (width === 390) expect(initial.y).toBeLessThan(250);
+  if (width === 390) expect(initial.y).toBeLessThan(page.viewportSize()!.height / 2);
   await page.evaluate(() => {
     (window as any).__deliveryAnnouncements = [];
     const region = document.querySelector('[aria-label="Announcements"]')!;
@@ -146,7 +147,7 @@ for (const width of [1440, 390]) test.describe(`delivery geometry ${width}`, () 
   await expect(terminal).toBeVisible();
   // Returning from Activity remounts the standard terminal. Measure the same
   // connected control state as the baseline, after the handshake has settled.
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await expect(page.locator('[data-terminal-notice]')).toHaveAttribute('title', /Partial input may remain/);
   const settled = (await terminal.boundingBox())!;
   expect(Math.abs(settled.y - initial.y)).toBeLessThan(1);

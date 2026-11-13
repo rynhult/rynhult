@@ -4,16 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, verifyAgain } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
-async function enable(page: Page) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-  };
-  let response = await put();
-  if (response.status() === 403) { await verifyAgain(page); response = await put(); }
-  expect(response.ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-}
+
 async function keyboardOpen(page: Page, name: string) {
   const target = page.getByRole('button', { name, exact: true });
   await expect(target).toBeEnabled();
@@ -29,7 +20,7 @@ test('rail navigation leaves modified shortcuts and IME alone', async ({ page })
     session_id: null, session_name: null, project: null,
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(), acked_at: null, resolved_at: null,
   }] }));
-  await enable(page); await page.goto('/projects');
+   await page.goto('/projects');
   const inbox = page.locator('#shell-rail').getByRole('button', { name: 'Inbox, 1 open', exact: true });
   await expect(inbox).toBeVisible();
   const first = page.locator('#shell-rail').getByRole('button', { name: 'Overview', exact: true });
@@ -39,7 +30,7 @@ test('rail navigation leaves modified shortcuts and IME alone', async ({ page })
 });
 
 test('short reflow viewport keeps content scrollable and all shell controls reachable', async ({ page }) => {
-  await enable(page);
+
   // This geometry case owns a quiet Inbox; earlier approval/backup fixtures are unrelated.
   await page.route('**/api/attention', route => route.fulfill({ json: [] }));
   // Hold the policy loading state while checking the compact required shield
@@ -72,7 +63,7 @@ test('short reflow viewport keeps content scrollable and all shell controls reac
 
 for (const width of [1440, 390]) for (const theme of ['light', 'dark'] as const) {
   test(`shell keyboard and axe at ${width} ${theme}`, async ({ page }) => {
-    test.slow(); await enable(page); await page.setViewportSize({ width, height: 900 });
+    test.slow();  await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
     const project = await gitProject(page, 'a11y-cedar');
     const created = await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'Cedar accessibility' } });
@@ -155,9 +146,8 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark'] as const)
   });
 }
 
-
 test('focused rail control survives changing to phone layout', async ({ page }) => {
-  await enable(page); await page.goto('/projects');
+   await page.goto('/projects');
   await page.locator('#shell-rail').getByRole('button', { name: 'Tools', exact: true }).focus();
   await page.setViewportSize({ width: 390, height: 900 });
   await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused();
@@ -169,7 +159,7 @@ test('focused rail control survives changing to phone layout', async ({ page }) 
 });
 
 test('project search and paging announce once through the shared announcer', async ({ page }) => {
-  await enable(page); const project = await gitProject(page, 'a11y-page');
+   const project = await gitProject(page, 'a11y-page');
   await page.route('**/api/projects', async route => {
     const response = await route.fetch(); const rows = await response.json();
     const original = rows.find((row: { id: number }) => row.id === project.id);
@@ -188,7 +178,7 @@ test('project search and paging announce once through the shared announcer', asy
 test.describe('coarse pointer', () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 900 } });
   test('phone shell navigation has 44px targets', async ({ page }) => {
-    await enable(page); await page.goto('/projects');
+     await page.goto('/projects');
     await expect(page.locator('#shell-phone-rail')).toBeVisible();
     for (const selector of ['#shell-header .shell-brand', '#shell-phone-rail button']) {
       for (const target of await page.locator(selector).all()) {
@@ -206,9 +196,8 @@ test.describe('coarse pointer', () => {
   });
 });
 
-
 test('terminal F6 still takes precedence over shell cycling', async ({ page }) => {
-  await enable(page); const project = await gitProject(page, 'a11y-terminal');
+   const project = await gitProject(page, 'a11y-terminal');
   const created = await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'Terminal escape' } });
   expect(created.ok()).toBeTruthy(); const session = await created.json();
   await page.goto(`/projects/${project.id}`);
@@ -220,7 +209,7 @@ test('terminal F6 still takes precedence over shell cycling', async ({ page }) =
 });
 
 test('long project launch label stays inside the phone header', async ({ page }) => {
-  await enable(page); const project = await gitProject(page, 'long-project-name-without-spaces');
+   const project = await gitProject(page, 'long-project-name-without-spaces');
   await page.setViewportSize({ width: 390, height: 900 }); await page.goto(`/projects/${project.id}`);
   const launch = page.locator('#shell-header').getByRole('button', { name: /^New session/ });
   await expect(launch).toBeVisible();

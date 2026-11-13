@@ -1199,3 +1199,10 @@ def test_root_checkout_git_flags(tmp_path, monkeypatch):
     monkeypatch.setattr(updates.subprocess, "run", run)
     assert updates.checkout_blocks_update(source, require_root_owned=True) is False
     assert [argv[9] for argv in calls] == ["tag", "status"]
+
+
+@pytest.fixture(autouse=True)
+def accepted_update_host(monkeypatch):
+    # Transaction fixtures model source/data changes independently of the execution host.
+    monkeypatch.setattr("acc.update_helper.Transaction.preflight", lambda self, source: None)
+    monkeypatch.setattr("acc.update_helper.Transaction.distro_flags", lambda self: [])

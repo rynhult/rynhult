@@ -23,7 +23,8 @@ async def test_team_arrangements_require_capability_and_wait_for_readers(api, pr
         for name in ('fixture-lead', 'fixture-helper'):
             db.add(Session(id=name, project_id=project['id'], provider='claude', name=name,
                 tmux_name=name, launch_spec_id=spec.id, run_as='agent', desired_state='stopped',
-                team_id=name if name == 'fixture-lead' else None))
+                team_id=name if name == 'fixture-lead' else None,
+                parent_session_id=None if name == 'fixture-lead' else 'fixture-lead'))
         db.add(Team(id='fixture-lead', limits={}))
         db.commit()
     app = FastAPI()
@@ -66,3 +67,33 @@ async def test_team_arrangements_require_capability_and_wait_for_readers(api, pr
             assert db.scalar(select(func.count()).select_from(Assignment)) == 49
             assert db.scalar(select(func.count()).select_from(Attempt)) == 490
             assert db.scalar(select(func.count()).select_from(TaskReport)) == 1470
+
+
+async def test_helper_fixture_binds_parent_at_managed_creation(api, project, env):
+    from test_team import lead
+
+    from acc.server.child_caps import FILE
+
+    root = await lead(api, project, env)
+    install(api.app, 'create-helper-capability')
+    path = f"/e2e-test/teams/{root['id']}/helpers"
+    assert (await api.post(path)).status_code == 403
+    headers = {'x-e2e-isolation': 'create-helper-capability'}
+    response = await api.post(path, headers=headers)
+    assert response.status_code == 200, response.text
+    sid = response.json()['id']
+    with api.app.state.db() as db:
+        helper = db.get(Session, sid)
+        assert helper.parent_session_id == root['id']
+        assert helper.parent_chain == [root['id']]
+        assert FILE in helper.launch_spec.files
+    member = await api.post(f"/e2e-test/teams/{root['id']}/fixtures/member/{sid}", headers=headers)
+    assert member.status_code == 200, member.text
+    # A second root cannot be converted to a child, even with fixture authority.
+    made = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Other root'})
+    assert made.status_code == 201, made.text
+    other = made.json()
+    refused = await api.post(f"/e2e-test/teams/{root['id']}/fixtures/member/{other['id']}", headers=headers)
+    assert refused.status_code == 409, refused.text
+    with api.app.state.db() as db:
+        assert db.get(Session, other['id']).parent_session_id is None

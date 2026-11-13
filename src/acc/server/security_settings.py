@@ -102,13 +102,15 @@ def resolve(db, *, project_id=None, owner=None, machine=None, account=None, poli
         owner = owner or project.owner
     switches = dict.fromkeys(REGISTRY, True)
     sources = {key: {'kind': 'default'} for key in REGISTRY}
-    legacy = db.get(Setting, 'guardrails')
+    legacy_keys = ('guardrails', f'tools.person.{owner}', f'tools.project.{project_id}')
+    legacy_rows = {row.key: row for row in db.scalars(select(Setting).where(Setting.key.in_(legacy_keys)))}
+    legacy = legacy_rows.get('guardrails')
     for key, value in ((legacy.value.get('rules') or {}).items() if legacy else ()):
         if key in BUILTINS:
             switches[key] = bool(value)
             sources[key] = {'kind': 'legacy', 'key': 'guardrails'}
-    for key in (f'tools.person.{owner}', f'tools.project.{project_id}'):
-        row = db.get(Setting, key)
+    for key in legacy_keys[1:]:
+        row = legacy_rows.get(key)
         if row and row.value.get('required') is False:
             switches['tool_install_check'] = False
             sources['tool_install_check'] = {'kind': 'legacy', 'key': key}
@@ -117,8 +119,10 @@ def resolve(db, *, project_id=None, owner=None, machine=None, account=None, poli
         scopes.append(account_scope(db, machine, account))
     if project:
         scopes.append({'kind': 'project', 'project_id': project.id})
+    scoped = {row.key: row for row in db.scalars(select(SecurityPolicy).where(
+        SecurityPolicy.key.in_([scope_key(scope) for scope in scopes])))}
     for scope in scopes:
-        row = db.get(SecurityPolicy, scope_key(scope))
+        row = scoped.get(scope_key(scope))
         overrides = policy_override[1] if policy_override and scope_key(scope) == scope_key(policy_override[0]) else row.overrides if row else {}
         if overrides:
             for key, value in overrides.items():
@@ -227,7 +231,7 @@ def _save(db, scope, overrides, *, actor, expected_revision, preset='custom', de
     return expected_revision + 1
 
 
-def validate_launch_inputs(inputs, effective):
+def validate_launch_inputs(inputs, effective, *, explanation_only=False):
     """Validate a permission ceiling without selecting a new provider mode."""
     if effective.get('enforcement', {}).get('allowed_folders') == 'pending':
         raise ValueError('Folder policy is pending target acknowledgement. Review Allowed folders in Security.')
@@ -238,12 +242,14 @@ def validate_launch_inputs(inputs, effective):
     if effective['switches']['provider_prompts']:
         from acc import providers
         provider = providers.get(inputs.provider)
-        if provider.dangerous(inputs):
+        unattended = (explanation_only and inputs.provider == 'codex' and inputs.sandbox == 'read-only'
+                      and inputs.approval == 'never' and not inputs.mcps)
+        if provider.dangerous(inputs) and not unattended:
             raise ValueError('Security requires provider prompts. An owner must review a scoped exception before using bypass options.')
 
 
-def launch_inputs(inputs, effective):
-    validate_launch_inputs(inputs, effective)
+def launch_inputs(inputs, effective, *, explanation_only=False):
+    validate_launch_inputs(inputs, effective, explanation_only=explanation_only)
     if effective['switches']['provider_prompts']:
         return inputs
     from .agent_contract import read_only
@@ -317,17 +323,35 @@ def saved_input_problem(session, old, current):
         # weaker frozen generation. Compare saved inputs against static ceilings.
         ceiling = {**current, 'enforcement': {}, 'switches': {**current['switches'],
                    'provider_prompts': current['switches']['provider_prompts'] or old.get('provider_prompts', True)}}
-        validate_launch_inputs(inputs, ceiling)
+        explanation_only = ('explanation.json' in session.launch_spec.files
+                            and json.loads(session.launch_spec.files.get('guardrails.json', '{}')).get('explanation_only') is True)
+        validate_launch_inputs(inputs, ceiling, explanation_only=explanation_only)
     except (ValueError, TypeError):
         return 'Security refuses this saved provider generation. Start a new session with reviewed settings.'
     return None
 
 
-def check_generation(db, session):
+def check_generation(db, session, *, check_parent=True, authority=None, current=None):
     """Never reuse a weaker frozen launch after tightening; never rewrite it on loosening."""
+    if check_parent:
+        from .child_caps import Refused, check
+        try:
+            check(db, session)
+        except Refused as error:
+            raise Conflict(str(error)) from None
+    from ..session_capabilities import require
+    from .session_caps import effective
+    try:
+        require(effective(db, session), 'expires_at', parent=getattr(session, 'parent_session_id', None))
+    except ValueError as error:
+        raise Conflict(str(error)) from None
     frozen, old = frozen_protections(session)
-    current = resolve(db, project_id=session.project_id, owner=session.owner,
-                      machine=session.host, account=session.run_as)
+    subject = authority or session
+    # Reuse only the policy resolved for this exact scope in this transaction.
+    # An explicit authority scope must resolve its own policy.
+    if current is None or authority is not None:
+        current = resolve(db, project_id=subject.project_id, owner=subject.owner,
+                          machine=subject.host, account=subject.run_as)
     if current.get('enforcement', {}).get('allowed_folders') == 'pending':
         raise Conflict('Security refuses this saved provider generation while folder policy awaits target acknowledgement.')
     if problem := saved_input_problem(session, old, current):

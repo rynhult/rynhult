@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, info, PASSWORD, sessionWithChanges, totp } from "./helpers";
+import { AUTH_FILE, csrfHeaders, expectAxeClean, fileRow, info, PASSWORD, selectSessionView, sessionWithChanges, totp } from "./helpers";
 
 const payload = JSON.parse(execFileSync(process.execPath, ["scripts/check-bundle-size.mjs", "--report"], { encoding: "utf8" })) as {
   pages: Record<string, { js: { files: string[] }; css: { files: string[] } }>;
@@ -13,10 +13,7 @@ for (const phone of [false, true]) {
   test.describe(phone ? "phone payload" : "desktop payload", () => {
     test.use({ storageState: AUTH_FILE, viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
       isMobile: phone, hasTouch: phone });
-    // These asset budgets and editor journeys intentionally cover the classic frame.
-    test.beforeEach(async ({ page }) => {
-      await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: false } }));
-    });
+    // The manifest roots and runtime asset set both cover the sole retained frame.
 
     test("sign-in loads only its budgeted assets and still signs in", async ({ browser, page: owner }, testInfo) => {
       const context = await browser.newContext({ storageState: { cookies: [], origins: [] },
@@ -78,13 +75,13 @@ for (const phone of [false, true]) {
       } finally { await context.close(); }
     });
 
-    for (const newShell of [false, true]) test(`Board loads only its budgeted assets without the authenticated shell (new layout ${newShell})`, async ({ page }, testInfo) => {
+    for (const newShell of [true]) test(`Board loads only its budgeted assets without the authenticated shell (new layout ${newShell})`, async ({ page }, testInfo) => {
       await page.route('**/api/auth/state', async route => {
         const response = await route.fetch(); const state = await response.json();
         await route.fulfill({ response, json: { ...state, instance: { ...state.instance,
-          features: { ...state.instance.features, new_shell: true } } } });
+          features: { ...state.instance.features } } } });
       });
-      await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: newShell } }));
+
       const assets = new Set<string>();
       page.on("request", (request) => {
         const path = new URL(request.url()).pathname;
@@ -117,13 +114,25 @@ for (const phone of [false, true]) {
         await page.goto(`/sessions/${id}`);
         const terminal = page.locator(".xterm-helper-textarea");
         await expect(terminal).toBeVisible();
-        if (!phone) await expect(terminal).toBeFocused();
-        expect([...assets].sort()).toEqual(initialAssets("session"));
-        expect([...scripts].filter((path) => /\/(?:Files|Changes|FileEditor|Preview|PullRequest|TeamPanel)-[^/]+\.js$/.test(path))).toEqual([]);
-        if (phone) {
-          await page.getByRole("button", { name: "More", exact: true }).click();
-          await page.getByRole("menuitem", { name: "Files", exact: true }).click();
-        } else await page.getByRole("tab", { name: "Files", exact: true }).click();
+        if (!phone) {
+          // Explicit desktop session navigation focuses the real input.
+          await expect(terminal).toBeFocused();
+          // A browser-tab round trip must leave the person's chosen focus alone.
+          const tab = page.getByRole('tab', { name: 'Terminal', exact: true });
+          await tab.focus();
+          const other = await page.context().newPage();
+          await other.goto('about:blank'); await other.bringToFront();
+          await page.bringToFront(); await other.close();
+          await expect(tab).toBeFocused();
+        } else await expect(terminal).not.toBeFocused();
+        const phoneKeys = [...assets].filter(path => /\/TerminalPhoneKeys-[^/]+\.js$/.test(path));
+        expect(phoneKeys).toHaveLength(phone ? 1 : 0);
+        expect([...assets].filter(path => !phoneKeys.includes(path)).sort()).toEqual(initialAssets("session"));
+        expect([...scripts].filter((path) => /\/(?:Files|Changes|FileEditor|Preview|PullRequest|TeamPanel|SessionSetup|SessionAutomation|SessionActivity|Artifacts|InboxLinks)-[^/]+\.js$/.test(path))).toEqual([]);
+        const views = page.getByRole('tablist', { name: 'Session views', exact: true });
+        await expect(views).toBeVisible();
+        await expect(views.getByRole('tab', { name: 'Terminal', exact: true })).toBeInViewport();
+        await selectSessionView(page, "Files");
         await expect(page.getByRole("button", { name: "Refresh files", exact: true })).toBeVisible();
         expect([...scripts].some((path) => /\/Files-[^/]+\.js$/.test(path))).toBe(true);
         expect([...scripts].some((path) => /\/FileEditor-[^/]+\.js$/.test(path))).toBe(false);
@@ -142,7 +151,10 @@ for (const phone of [false, true]) {
         await expect(page.getByRole("status", { name: "File save status" })).toContainText("Saved");
         await expectAxeClean(page);
         await page.screenshot({ path: testInfo.outputPath("lazy-files.png"), fullPage: true });
-        await page.getByRole("tab", { name: /^Changes(?: \d+)?$/ }).click();
+        // Opening a file creates a retained working tab. Return to its Files
+        // parent before using the session's secondary-view menu.
+        await page.getByRole('tab', { name: / · Files$/, exact: false }).click();
+        await selectSessionView(page, "Changes");
         await expect.poll(() => [...scripts].some((path) => /\/Changes-[^/]+\.js$/.test(path))).toBe(true);
         await page.getByRole("tab", { name: "Terminal", exact: true }).click();
         await expect(terminal).toBeVisible();
@@ -152,7 +164,29 @@ for (const phone of [false, true]) {
       }
     });
 
-    test("a Files deep link loads its editor without xterm or the Markdown preview until needed", async ({ page, request }) => {
+    if (!phone) test('a pending terminal never steals focus from an open dialog', async ({ page, request }) => {
+      const id = await sessionWithChanges(page, 'payload-dialog-focus');
+      const headers = await csrfHeaders(page);
+      await page.goto('about:blank');
+      let release!: () => void;
+      const ready = new Promise<void>(resolve => { release = resolve; });
+      await page.route(`**/api/sessions/${id}/terminal-reference`, async route => { await ready; await route.continue(); });
+      try {
+        await page.goto(`/sessions/${id}`);
+        await page.getByRole('button', { name: 'Go to…', exact: true }).click();
+        const input = page.getByRole('dialog', { name: 'Jump to…', exact: true }).getByRole('combobox');
+        await expect(input).toBeFocused();
+        release();
+        await expect(page.locator('.xterm-helper-textarea')).toBeVisible();
+        await expect(input).toBeFocused();
+        await page.keyboard.press('Escape');
+      } finally {
+        release(); await page.unrouteAll({ behavior: 'wait' });
+        await request.post(`/api/sessions/${id}/stop`, { headers });
+      }
+    });
+
+    test("a Files deep link loads no terminal host or xterm and defers Markdown until needed", async ({ page, request }) => {
       const id = await sessionWithChanges(page, `payload-files-${phone ? "phone" : "desktop"}`);
       const headers = await csrfHeaders(page);
       // The setup helper visits /sessions. Cancel that document's pending lazy
@@ -164,7 +198,7 @@ for (const phone of [false, true]) {
         await page.goto(`/sessions/${id}?tab=files&file=app.py`);
         const editor = page.getByRole("textbox", { name: "File content" });
         await expect(editor).toContainText("changed");
-        expect([...scripts].filter((path) => /\/(?:Terminal|FileMarkdownPreview)-/.test(path))).toEqual([]);
+        expect([...scripts].filter((path) => /\/(?:Terminal|terminalHostLayer|terminalRuntime|xterm|FileMarkdownPreview)-/.test(path))).toEqual([]);
         if (phone) await page.getByRole("button", { name: "Show tree", exact: true }).click();
         await page.getByRole("button", { name: fileRow("README.md") }).click();
         await expect(page.getByRole("heading", { name: "Demo", exact: true })).toBeVisible();

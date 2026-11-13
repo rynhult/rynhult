@@ -16,6 +16,7 @@ async def test_registry_lists_providers_with_options_and_install_state(api):
     by_id = {p["id"]: p for p in listing}
     assert list(by_id)[:2] == ["claude", "codex"]
     claude, codex = by_id["claude"], by_id["codex"]
+    assert claude["label"] == "Claude Code"  # The CLI provider is distinct from relay SDK Chat.
     assert claude["installed"] is True and codex["installed"] is True  # the fake CLIs
     assert [o["key"] for o in claude["options"]] == ["permission_mode", "remote_control"]
     assert "bypassPermissions" in claude["options"][0]["dangerous"]

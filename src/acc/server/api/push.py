@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from ..models import AuditLog, PushSubscription
+from ..models import AuditLog, PushSubscription, Setting
 from ..push import PushError, check_endpoint
 from .context import Context
 
@@ -25,6 +25,18 @@ class EndpointIn(BaseModel):
     endpoint: str = Field(max_length=2000)
 
 
+class PresenceIn(BaseModel):
+    tab: str = Field(min_length=1, max_length=64)
+    scope: str = Field(max_length=200)
+    idle_ms: int = Field(ge=0, le=86400000)
+    active: bool
+    sequence: int = Field(default=0, ge=0)
+
+
+class PreferenceIn(BaseModel):
+    always: bool
+
+
 def router(ctx: Context) -> APIRouter:
     db, supervisor = ctx.db, ctx.supervisor
     api = APIRouter()
@@ -33,12 +45,35 @@ def router(ctx: Context) -> APIRouter:
         return {"id": d.id, "label": d.label, "endpoint": d.endpoint, "created_at": d.created_at,
                 "last_ok_at": d.last_ok_at, "failures": d.failures}
 
+    def browser(request, who):
+        if not getattr(request.state, "cookie_authenticated", False):
+            raise HTTPException(403, "Presence requires a signed-in browser session.")
+        return request.state.session_hash
+
+    @api.post("/api/push/presence")
+    def presence(body: PresenceIn, request: Request, who=Depends(ctx.principal)):
+        login = browser(request, who)
+        if not supervisor.push_presence.update(who.username, login, body.tab, body.scope, body.idle_ms,
+                                               body.active, body.sequence):
+            raise HTTPException(429, "Too many presence updates. Try again shortly.", headers={"Retry-After": "15"})
+        return {"ok": True}
+
+    @api.post("/api/push/preference")
+    def preference(body: PreferenceIn, request: Request, who=Depends(ctx.principal)):
+        browser(request, who)
+        with db() as s:
+            s.merge(Setting(key=f"push.active.{who.username}", value={"always": body.always}, updated_by=who.username))
+            s.commit()
+        return {"ok": True}
+
     @api.get("/api/push")
     def push_state(who=Depends(ctx.principal)):
         with db() as s:
             devices = [device_out(d) for d in s.scalars(select(PushSubscription).where(PushSubscription.username == who.username)
                                                         .order_by(PushSubscription.created_at))]
-        return {"public_key": supervisor.push.public_key, "devices": devices}
+            choice = s.get(Setting, f"push.active.{who.username}")
+            always = bool(choice and choice.value.get("always"))
+        return {"public_key": supervisor.push.public_key, "devices": devices, "always": always}
 
     @api.post("/api/push/subscribe", status_code=201)
     def subscribe(body: SubscribeIn, request: Request, who=Depends(ctx.principal)):

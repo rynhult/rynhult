@@ -12,7 +12,7 @@ import { Badge, Button, Empty, ErrorNote, IconButton, LoadingRows, QueryState } 
 import { installedApp } from "../lib/app";
 
 interface Device { id: number; label: string; endpoint: string; created_at: string; last_ok_at: string | null; failures: number }
-interface PushState { public_key: string; devices: Device[] }
+interface PushState { always: boolean; public_key: string; devices: Device[] }
 
 const toKey = (b64: string) => Uint8Array.from(atob(b64.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(b64.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -104,11 +104,21 @@ const usePush = () => useQuery({ queryKey: ["push"], queryFn: () => api<PushStat
 /** This browser's own subscription: turn alerts on or off here, and send a test. */
 export function NotificationSettings() {
   const push = usePush();
+  const client = useQueryClient();
+  const preference = useMutation({
+    mutationFn: (always: boolean) => post('/api/push/preference', { always }),
+    onSettled: () => client.invalidateQueries({ queryKey: ['push'] }),
+  });
   return <Card>
     <CardHeader title="Notifications" icon={BellRing}
       subtitle="Push alerts when a session needs you, a login is expiring, CI fails, an agent asks to publish, or the host has a problem" />
     <QueryState query={push} loading={<LoadingRows rows={1} />} errorTitle="Couldn't read this device's notification settings.">
-      {(data) => <ThisDevice state={data} />}
+      {(data) => <><ThisDevice state={data} />
+        <label className="flex gap-2 px-4 py-3 text-sm"><input type="checkbox" checked={data.always}
+          disabled={preference.isPending} onChange={e => preference.mutate(e.target.checked)} />
+          Push even while I'm active</label>
+        {preference.error && <ErrorNote error={preference.error} title="Couldn't save notification preference." />}
+      </>}
     </QueryState>
   </Card>;
 }

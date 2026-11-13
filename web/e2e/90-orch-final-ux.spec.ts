@@ -3,9 +3,9 @@ import { test } from './shell-state';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { expandTeamPanels, AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info } from './helpers';
+import { expandTeamPanels, AUTH_FILE, openAdvanced, csrfHeaders, expectAxeClean, gitProject, info } from './helpers';
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 async function lead(page: Page, briefMode?: 'prepare' | 'build') {
   const project = await gitProject(page, 'final-ux');
@@ -30,7 +30,7 @@ test('selection settings link opens only the intended section and places keyboar
     await page.getByRole('tab', { name: 'Settings', exact: true }).click();
     await expandTeamPanels(page);
     await page.getByRole('link', { name: 'Edit selection allow-lists in Settings', exact: true }).press('Enter');
-    await expect(page.getByRole('combobox', { name: 'Settings section', exact: true })).toHaveValue('selection-allow-lists');
+    await expect(page).toHaveURL(/\/settings#selection-allow-lists$/);
     await expect(page.locator('#selection-allow-lists')).toBeFocused();
     await expect(page.locator('#passkeys')).toBeHidden();
     await expectAxeClean(page);
@@ -323,18 +323,18 @@ test('new project keyboard journey saves a screenshot brief, prepares scope and 
   const owned: string[] = [];
   async function launch(mode: 'prepare' | 'build') {
     await page.goto(`/projects/${id}`);
-    await tabTo(page, page.getByRole('main').getByRole('button', { name: 'New session', exact: true }));
+    await tabTo(page, page.locator('#shell-new-session'));
     await page.keyboard.press('Enter');
-    const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+    const dialog = page.getByRole('region', { name: 'New session', exact: true });
     await expect(dialog).toBeVisible();
+    await openAdvanced(dialog);
     await expect(dialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(id));
     await expect(dialog.getByRole('button', { name: 'Launch', exact: true })).toBeEnabled();
     await expect.poll(() => dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
-    await tabTo(page, dialog.getByRole('button', { name: /^Advanced/ }));
-    await page.keyboard.press('Enter');
-    await tabTo(page, dialog.getByRole('radio', { name: /Once/ }));
+    const run = dialog.getByRole('combobox', { name: 'Run', exact: true });
+    await tabTo(page, run);
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
-    await expect(dialog.getByRole('radio', { name: /With helpers/ })).toBeChecked();
+    await expect(run).toHaveValue('helpers');
     const choice = dialog.getByRole('combobox', { name: 'Team run mode', exact: true });
     if (mode === 'prepare') await expect(choice).toHaveValue('prepare');
     else {

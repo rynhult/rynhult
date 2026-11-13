@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -175,6 +176,11 @@ class Session(Base):
     team_repo: Mapped[str | None] = mapped_column(Text)
     team_id: Mapped[str | None] = mapped_column(String(32), index=True)
     parent_session_id: Mapped[str | None] = mapped_column(String(32))
+    parent_chain: Mapped[list | None] = mapped_column(JSON)
+    root_owner: Mapped[str | None] = mapped_column(String(64))
+    cap_requested: Mapped[dict | None] = mapped_column(JSON)
+    cap_effective: Mapped[dict | None] = mapped_column(JSON)
+    cap_limit: Mapped[dict | None] = mapped_column(JSON)
     team_depth: Mapped[int] = mapped_column(default=0)
     helper_kind: Mapped[str | None] = mapped_column(String(16))
     team_task: Mapped[str | None] = mapped_column(Text)
@@ -1053,6 +1059,56 @@ class ApprovalOperation(Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
 
 
+class DelegatedAction(Base):
+    """Idempotent typed admission and retained result for non-tool thin-path work."""
+    __tablename__ = 'delegated_action'
+    __table_args__ = (UniqueConstraint('lead_id', 'request_key', name='delegated_request_key'),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    lead_id: Mapped[str] = mapped_column(ForeignKey('session.id'))
+    request_key: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict] = mapped_column(JSON)
+    digest: Mapped[str] = mapped_column(String(64))
+    consent_id: Mapped[str] = mapped_column(ForeignKey('approval_consent.id'))
+    consent_revision: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[dict] = mapped_column(JSON)
+    authority: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(16), default='dispatched')
+    result: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class InstallRecipe(Base):
+    """Immutable service-owned bytes and reviewed catalog evidence, never a checkout."""
+    __tablename__ = 'install_recipe'
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    recipe_id: Mapped[str] = mapped_column(String(64))
+    recipe: Mapped[dict] = mapped_column(JSON)
+    metadata_entry: Mapped[dict] = mapped_column(JSON)
+    artifact: Mapped[bytes] = mapped_column(LargeBinary)
+    packument_digest: Mapped[str] = mapped_column(String(64))
+    reviewer: Mapped[str] = mapped_column(String(64))
+    approver: Mapped[str] = mapped_column(String(64))
+    withdrawn: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class AccountInstallJournal(Base):
+    """Accd owns nonce, lease, account lock, publication intent and observed effects."""
+    __tablename__ = 'account_install_journal'
+    operation_id: Mapped[str] = mapped_column(ForeignKey('delegated_action.id'), primary_key=True)
+    recipe_digest: Mapped[str] = mapped_column(ForeignKey('install_recipe.digest'))
+    nonce: Mapped[str] = mapped_column(String(32), unique=True)
+    account_digest: Mapped[str] = mapped_column(String(64), index=True)
+    lease_deadline: Mapped[datetime] = mapped_column(UTCDateTime())
+    dispatched_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    before: Mapped[dict | None] = mapped_column(JSON)
+    envelope: Mapped[dict] = mapped_column(JSON)
+    staged: Mapped[dict | None] = mapped_column(JSON)
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    cleanup: Mapped[str] = mapped_column(String(32), default='not_needed')
+
+
 class ApprovalBatch(Base):
     __tablename__ = 'approval_batch'
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -1065,3 +1121,97 @@ class ApprovalBatch(Base):
 
 # Source identity sidecars share this metadata, including create_all/transfer users.
 from . import source_models as _source_models  # noqa: E402,F401
+
+
+class RelaySession(Base):
+    __tablename__ = 'relay_session'
+    active_operation_id: Mapped[str | None] = mapped_column(String(32))
+    session_id: Mapped[str] = mapped_column(ForeignKey('session.id', ondelete='CASCADE'), primary_key=True)
+    enrollment: Mapped[str] = mapped_column(String(32))
+    current_run_id: Mapped[int | None] = mapped_column(ForeignKey('session_run.id'))
+    binding_id: Mapped[str] = mapped_column(String(128))
+    history_epoch: Mapped[int] = mapped_column(Integer, default=1)
+    event_seq: Mapped[int] = mapped_column(Integer, default=0)
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    used_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    floor_seq: Mapped[int] = mapped_column(Integer, default=0)
+    authority_epoch: Mapped[int] = mapped_column(Integer, default=1)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    configuration_revision: Mapped[int] = mapped_column(Integer, default=0)
+    control_revision: Mapped[int] = mapped_column(Integer, default=0)
+    controller: Mapped[dict | None] = mapped_column(JSON)
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    sealed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class RelayRun(Base):
+    __tablename__ = 'relay_run'
+    run_id: Mapped[int] = mapped_column(ForeignKey('session_run.id'), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey('relay_session.session_id', ondelete='CASCADE'), index=True)
+    binding_id: Mapped[str] = mapped_column(String(128))
+    identity: Mapped[dict] = mapped_column(JSON)
+    frozen_policy: Mapped[dict] = mapped_column(JSON)
+    policy_revision: Mapped[int] = mapped_column(Integer)
+
+
+class RelayOwnership(Base):
+    __tablename__ = 'relay_ownership'
+    session_id: Mapped[str] = mapped_column(ForeignKey('relay_session.session_id', ondelete='CASCADE'), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(32))
+    view: Mapped[str] = mapped_column(String(16))
+    phase: Mapped[str] = mapped_column(String(32))
+    plan_id: Mapped[str | None] = mapped_column(String(32))
+    request_key: Mapped[str | None] = mapped_column(String(128))
+    target: Mapped[str | None] = mapped_column(String(16))
+    digest: Mapped[str | None] = mapped_column(String(80))
+    source_run_id: Mapped[int] = mapped_column(ForeignKey('relay_run.run_id'))
+    target_run_id: Mapped[int | None] = mapped_column(ForeignKey('session_run.id'))
+    authority: Mapped[dict] = mapped_column(JSON)
+    previous_actor: Mapped[dict | None] = mapped_column(JSON)
+    prepare_operation_id: Mapped[str | None] = mapped_column(ForeignKey('relay_operation.id'))
+    commit_operation_id: Mapped[str | None] = mapped_column(ForeignKey('relay_operation.id'))
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class RelayOperation(Base):
+    __tablename__ = 'relay_operation'
+    __table_args__ = (UniqueConstraint('session_id', 'actor_key', 'registration_key', name='relay_registration'),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey('relay_session.session_id', ondelete='CASCADE'), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey('relay_run.run_id'))
+    actor_key: Mapped[str] = mapped_column(String(256))
+    registration_key: Mapped[str] = mapped_column(String(128))
+    receipt: Mapped[dict] = mapped_column(JSON)
+    authority: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    deadline: Mapped[datetime] = mapped_column(UTCDateTime)
+    queue_seq: Mapped[int | None] = mapped_column(Integer)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
+    configuration_revision: Mapped[int] = mapped_column(Integer)
+
+
+class RelayEvent(Base):
+    __tablename__ = 'relay_event'
+    __table_args__ = (UniqueConstraint('session_id', 'source_key', name='relay_source_event'),)
+    session_id: Mapped[str] = mapped_column(ForeignKey('relay_session.session_id', ondelete='CASCADE'), primary_key=True)
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_key: Mapped[str | None] = mapped_column(String(256))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    event: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    published: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class RelayDecision(Base):
+    __tablename__ = 'relay_decision'
+    session_id: Mapped[str] = mapped_column(ForeignKey('relay_session.session_id', ondelete='CASCADE'), primary_key=True)
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey('relay_run.run_id'))
+    decision: Mapped[dict] = mapped_column(JSON)
+
+
+class RelayPreference(Base):
+    __tablename__ = 'relay_preference'
+    owner: Mapped[str] = mapped_column(ForeignKey('user.username', ondelete='CASCADE'), primary_key=True)
+    view: Mapped[str] = mapped_column(String(16))
+    revision: Mapped[int] = mapped_column(Integer)

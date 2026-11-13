@@ -18,7 +18,8 @@ for (const width of [1440, 390]) {
         await page.goto("/search");
         await expect(page.getByRole("heading", { name: "Search", exact: true })).toBeVisible();
         await expect(page.getByRole("main")).toContainText("For pages, projects, sessions and commands, use Jump to… in the top bar.");
-        await page.getByRole("button", { name: "Jump to…", exact: true }).click();
+        if (width === 390) await page.getByRole("button", { name: "Header tools", exact: true }).click();
+        await page.getByRole("button", { name: "Go to…", exact: true }).click();
         const palette = page.getByRole("dialog", { name: "Jump to…" });
         const input = palette.getByRole("combobox", { name: "Jump to…" });
         await expect(input).toBeFocused();

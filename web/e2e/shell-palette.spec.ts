@@ -23,9 +23,7 @@ async function resolvedTokens(page: Page, names: string[]) {
   }, names);
 }
 async function tokens(page: Page) { const values = await resolvedTokens(page, names); return names.map(n => values[n]); }
-async function preference(page: Page, enabled: boolean) {
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } })).ok()).toBeTruthy();
-}
+
 function rgb(hex: string) { return [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255); }
 function contrast(a: number[], b: number[]) {
   const luminance = (c: number[]) => c.map(x => x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4).reduce((n, x, i) => n + x * [.2126, .7152, .0722][i], 0);
@@ -62,13 +60,6 @@ const disabledOpacity = (page: Page) => page.locator('body').evaluate(body => {
 
 test('1440 mockup palette: project and session AA, safety states, and legacy colours on unmount', async ({ page }) => {
   test.slow();
-  const state = await (await page.request.get('/api/admin-features')).json();
-  let enabled = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-  if (!enabled.ok()) {
-    await verifyAgain(page); const fresh = await (await page.request.get('/api/admin-features')).json();
-    enabled = await page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: fresh.revision } });
-  }
-  expect(enabled.ok()).toBeTruthy();
   const project = await gitProject(page, 'cedar-notes');
   const made = await page.request.post('/api/sessions', { headers: await csrfHeaders(page), data: { project_id: project.id, provider: 'claude', name: 'Restore workshop notes' } });
   expect(made.ok()).toBeTruthy(); const session = await made.json();
@@ -83,12 +74,12 @@ test('1440 mockup palette: project and session AA, safety states, and legacy col
   try {
     for (const theme of ['dark', 'light'] as const) {
       await page.emulateMedia({ colorScheme: theme });
-      await preference(page, false); await page.goto(`/projects/${project.id}`);
-      await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
+      await page.goto('/board');
+      await expect(page.getByRole('heading', { name: 'Status board', exact: true })).toBeVisible();
       expect(await tokens(page)).toEqual(legacy[theme]);
       const before = await page.locator('body').evaluate(el => ({ background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }));
       expect(await disabledOpacity(page)).toBe('0.5');
-      await preference(page, true); await page.goto(`/projects/${project.id}`);
+       await page.goto(`/projects/${project.id}`);
       await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
       expect(await disabledOpacity(page)).toBe('0.6');
       expect((await tokens(page))[0]).toBe(theme === 'dark' ? '#141719' : '#f6f5f2');
@@ -133,7 +124,8 @@ test('1440 mockup palette: project and session AA, safety states, and legacy col
       await expectAxeClean(page);
       await page.goBack(); await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
       expect((await tokens(page))[0]).toBe(theme === 'dark' ? '#141719' : '#f6f5f2');
-      await preference(page, false); await page.goto(`/projects/${project.id}`);
+      await page.goto('/board');
+      await expect(page.getByRole('heading', { name: 'Status board', exact: true })).toBeVisible();
       expect(await tokens(page)).toEqual(legacy[theme]);
       expect(await page.locator('body').evaluate(el => ({ background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }))).toEqual(before);
     }

@@ -299,7 +299,7 @@ async def test_handshake_sends_signed_hello(world, tmp_path):
     assert hello["t"] == "hello" and hello["node_id"] == "node-7"
     assert hello["accounts"] == ["alice"]
     assert set(hello["info"]) - {"windows"} == {"os", "release", "arch", "hostname", "version", "build", "wsl", "capabilities"}
-    assert hello["info"]["capabilities"] == ["rename-compat-1", "preview-v1", "host-v1", "backup-v1", "git-backup-v1", "update"]
+    assert hello["info"]["capabilities"] == ["rename-compat-1", "preview-v1", "host-v1", "backup-v1", "git-backup-v1", "update", "session-runtime-v1"]
     status = json.loads((tmp_path / "state/status.json").read_text())
     assert status["state"] == "connected"
 

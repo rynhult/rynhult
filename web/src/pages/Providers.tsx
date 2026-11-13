@@ -17,7 +17,6 @@ import { EndpointsCard } from "../components/Endpoints";
 import { InstallSteps } from "../components/InstallSteps";
 import { onMachine, OtherSoftwareCard, type PackageState, ProviderSoftware, SoftwareStatus, usePackageAction, usePackages } from "../components/Packages";
 import { MachineLabelScope, useMachineLabel } from "../lib/machineLabel";
-import { useNewShell } from "../lib/uiShell";
 import { MachinePicker, SystemBadge, useNodes } from "../components/Machines";
 import { type Provider, ReloginDialog } from "./Relogin";
 import { useInstance, useProviderRegistry, useRole } from "../lib/queries";
@@ -170,7 +169,7 @@ export function Providers() {
   const [account, setAccount] = useState<string | undefined>(undefined);  // undefined: the default agent account
   const [params, setParams] = useSearchParams();
   const machine = params.get("machine") || undefined;  // undefined: this machine
-  const shell = useNewShell();
+
   const nodes = useNodes(owner);
   const machines = (nodes.data ?? []).filter((n) => n.status === "active");
   const pick = (id: string) => { setAccount(undefined); setParams(id === "local" ? {} : { machine: id }, { replace: true }); };
@@ -213,7 +212,7 @@ export function Providers() {
   const tier = claude?.rate_limit_tier?.includes("20x") ? " 20x" : claude?.rate_limit_tier?.includes("5x") ? " 5x" : "";
   // The URL names the machine; only the authorized list may repeat that name as context.
   const knownMachine = !machine || machine === instance.host || machines.some((n) => n.name === machine);
-  const machineLabel = shell && !knownMachine ? "the selected machine" : undefined;
+  const machineLabel = !knownMachine ? "the selected machine" : undefined;
   const selectedMachine = machineLabel ?? machine ?? instance.host;
   // Read as a sentence (first-run review): the machine, then the agent account its sessions run as.
   const selectedScope = `On ${selectedMachine}${machine ? "" : " (the main Rynhult)"}, for sessions running as ${agentAccount}`;

@@ -1,4 +1,4 @@
-import { test, expect, chooseLayout } from './fixtures';
+import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -67,8 +67,8 @@ test('member can choose an approved theme but cannot import, and logout restores
     const begun = await member.request.post('/api/auth/invite/begin', { headers, data: { token } });
     const joined = await member.request.post('/api/auth/invite/complete', { headers, data: { token, username: `theme-${randomUUID().slice(0,8)}`, password: PASSWORD, code: totp((await begun.json()).totp_secret) } });
     expect(joined.ok()).toBe(true);
-    // This journey uses the classic header controls, as does its owner fixture.
-    await chooseLayout(member, false);
+    // The invited person uses the same frame as the owner.
+
     const view = await member.newPage(); await view.goto('/catalog');
     await view.getByRole('tab', { name: 'Themes', exact: true }).click();
     await expect(view.getByLabel('Theme package (.zip)')).toHaveCount(0);
@@ -78,18 +78,17 @@ test('member can choose an approved theme but cannot import, and logout restores
     await expect(view.locator('html')).toHaveAttribute('data-community-theme', '');
     expect((await (await page.request.get('/api/catalog/themes/preference')).json()).choice).toBeNull();
     // Restore while still authenticated; changing preference does not replace the mounted header.
-    await chooseLayout(member, true);
+
+    await view.getByRole('button', { name: /^Account:/ }).click();
     await view.getByRole('button', { name: 'Sign out', exact: true }).click();
     await expect(view.locator('html')).not.toHaveAttribute('data-community-theme');
     expect((await (await member.request.get('/api/auth/state')).json()).authenticated).toBe(false);
   } finally {
     try {
-      if ((await (await member.request.get('/api/auth/state')).json()).authenticated) await chooseLayout(member, true);
-    }
+      }
     finally { await member.close(); }
   }
 });
-
 
 for (const appearance of ['light', 'dark'] as const) test(`maximum theme labels fit phone ${appearance}`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });

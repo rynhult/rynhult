@@ -10,7 +10,7 @@ ACC installs its own account-level Codex hooks. New machines can stop at Codex's
 
 ## Decision
 
-Bootstrap records the upstream hash only for entire groups exactly equal to ACC's generated minimal command groups, using their original indices and the actual hooks.json path. Probe the configured CLI and accept only exact reviewed releases (initially 0.163.0 and 0.164.0). Preserve all unrelated config text, validate the parsed candidate against precisely the intended state updates, and retain explicit disablement. Unknown versions or formats receive no trust writes. Never use a global hook-trust bypass or answer the dialog automatically.
+Bootstrap records the upstream hash only for entire groups exactly equal to ACC's generated minimal command groups, using their original indices and the actual hooks.json path. Probe the configured CLI and accept only exact reviewed releases (0.163.0, 0.164.0 and, reviewed 2026-11-11, 0.167.1). Preserve all unrelated config text, validate the parsed candidate against precisely the intended state updates, and retain explicit disablement. Unknown versions or formats receive no trust writes. Never use a global hook-trust bypass or answer the dialog automatically.
 
 Detect remaining review dialogs through screen inspection and show Needs you with a plain explanation. The implementation and fixture provenance are documented in [the source research](../research/codex-hook-trust.md).
 

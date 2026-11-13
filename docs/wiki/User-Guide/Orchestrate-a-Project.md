@@ -77,7 +77,7 @@ specific missing evidence rather than claiming to have inspected them.
 <!-- lane E -->
 1. Select **New session**, choose your project and the lead's agent. You may type
    your own task, for example "Let office staff import customer lists".
-2. Under **Advanced → Run**, choose **With helpers**.
+2. Under **Agent or team → Run**, choose **With helpers**.
    If you have not typed a task, **Task (optional)** shows an editable first
    message with the project name and selected brief version. It tells the lead
    to read the brief through the `brief` tool, inspect references, write its own

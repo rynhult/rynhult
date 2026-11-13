@@ -510,6 +510,7 @@ def _read(stream, provider, native, home, workspace, limit, before, after, check
                     meta = record.get('payload')
                     if not isinstance(meta, dict) or meta.get('id') != native:
                         raise ValueError('identity')
+                    # 0.167.1 has unqualified rollout/provenance changes; see docs/research/codex-chat-0167.md.
                     known = meta.get('cli_version') == '0.163.0'
                     unsupported |= not known
                 if provider == 'claude' and record.get('sessionId') == native:

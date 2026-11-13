@@ -43,7 +43,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   expect(created.ok()).toBe(true);
   id = (await created.json()).id;
   await page.goto(`/sessions/${id}`);
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').focus();
 });
 test.afterEach(async ({ page }) => {

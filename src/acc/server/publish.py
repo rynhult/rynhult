@@ -163,6 +163,21 @@ class Publisher:
 
     # ------------------------------------------------------------ requests
 
+    @staticmethod
+    def _capability(db, session_id, port, host=None):
+        if session_id:
+            from .session_caps import authorize
+            session = db.get(Session, session_id)
+            if session is None:
+                raise PublishRefused('Publishing session no longer exists.')
+            if port is None and host is not None:
+                port = db.scalar(select(PublishRequest.port).where(PublishRequest.host == host,
+                    PublishRequest.action == 'publish', PublishRequest.status == 'applied'))
+            try:
+                authorize(db, session, 'ports' if port is not None else 'expires_at', port)
+            except ValueError as error:
+                raise PublishRefused(str(error)) from None
+
     def request(self, *, action: str, host: str, port: int | None, access: str | None, requested_by: str,
                 project_id: int | None = None, session_id: str | None = None, reason: str | None = None,
                 approved_by: str | None = None, owner: str | None = None, replace: bool = False, target_ip: str | None = None) -> str:
@@ -176,6 +191,7 @@ class Publisher:
             raise PublishRefused('Publishing is turned off in Admin features.')
         host = check_request(host, port, access, action, self.settings)
         with self.db() as db:
+            self._capability(db, session_id, port, host)
             if action == 'publish' and session_id:
                 session = db.get(Session, session_id)
                 if session and session.project_id is None:
@@ -221,7 +237,8 @@ class Publisher:
             names = {p.id: p.slug for p in db.scalars(select(Project).where(Project.id.in_(
                 {i for i in (project_id, live.project_id if live else None, reservation.project_id if reservation else None)
                  if i is not None})))}
-            context = {}
+            from .session_caps import attribution
+            context = attribution(db.get(Session, session_id)) if session_id else {}
             if action == 'publish':
                 try:
                     context['target_ip'] = publish_addresses.choose(
@@ -288,6 +305,8 @@ class Publisher:
                 raise PublishRefused("That request wasn't found.")
             if request.status != "pending_approval":
                 raise PublishRefused(f"This request is already {request.status.replace('_', ' ')}, so it can't be decided again.")
+            if approve:
+                self._capability(db, request.session_id, request.port, request.host)
             replaces = (request.context or {}).get("replaces")
             if approve and replaces and not confirm_replace:
                 raise PublishRefused(f"This retargets the live site {request.host} (now port {replaces['port']}). "
@@ -314,6 +333,12 @@ class Publisher:
         # Approval accepted before Off may finish; new requests and approvals are gated.
         with self.db() as db:
             r = db.get(PublishRequest, request_id)
+            try:
+                self._capability(db, r.session_id, r.port, r.host)
+            except PublishRefused as error:
+                r.status, r.detail = 'failed', str(error)
+                db.commit()
+                return
             action, host, port, access = r.action, r.host, r.port, r.access
         self._update(request_id, status="applying")
         try:
@@ -359,6 +384,11 @@ class Publisher:
                     row.prior, row.desired = row.applied, None
             s.commit()
 
+    def _recheck_capability(self, request_id):
+        with self.db() as db:
+            request = db.get(PublishRequest, request_id)
+            self._capability(db, request.session_id, request.port, request.host)
+
     async def _publish(self, request_id: str, host: str, port: int, access: str) -> dict:
         with self.db() as db:
             request = db.get(PublishRequest, request_id)
@@ -383,6 +413,7 @@ class Publisher:
                     old = owned.row(db, zone['id'], host)
                     prior = old.applied if old else None
                 fence(self.db)
+                self._recheck_capability(request_id)
                 record = await owned.ensure_record(zone['id'], host, 'AAAA' if ':' in ip else 'A', ip, request_id)
                 fence(self.db)
                 self._update(request_id, zone_id=zone['id'], zone_name=zone['name'], dns_record_id=record.id)
@@ -440,6 +471,7 @@ class Publisher:
                 'route_detail': result['detail']}
 
     async def _run_helper(self, request_id: str, payload: dict) -> dict:
+        self._recheck_capability(request_id)
         root = self.settings.publish_dir
         with self.db() as db:
             actor = db.get(PublishRequest, request_id).decided_by or ""

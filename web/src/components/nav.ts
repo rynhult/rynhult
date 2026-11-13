@@ -3,7 +3,7 @@ import { MonitorDot, CalendarClock, Activity, BookOpen, LayoutGrid, Search, Flas
 
 export interface NavItem { to: string; label: string; icon: LucideIcon; end?: boolean; ownerOnly?: boolean; groupAdminOnly?: boolean }
 
-/* One navigation model for the sidebar, the phone tab bar and the command palette. */
+/* Authorized routes shared by the rail, tools, setup recommendations and palette. */
 export const NAV: { label?: string; items: NavItem[] }[] = [
   { items: [
     { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
@@ -33,5 +33,3 @@ export const NAV: { label?: string; items: NavItem[] }[] = [
 /** NAV without what this person can't open (members don't see the host or the audit log). */
 export const navFor = (owner: boolean, groupAdmin = false, features: Record<string, boolean> = {}) =>
   NAV.map((g) => ({ ...g, items: g.items.filter((n) => (features[({ "/schedules": "schedules", "/publishing": "publishing", "/groups": "groups" } as Record<string, string>)[n.to]] !== false) && (!desktopBuild || ["/inbox", "/sessions", "/projects", "/search", "/providers", "/audit", "/guide"].includes(n.to)) && (owner || (!n.ownerOnly && (!n.groupAdminOnly || groupAdmin)))) })).filter((g) => g.items.length);
-
-export const PHONE_TABS = ["/", "/inbox", "/sessions", "/projects"];

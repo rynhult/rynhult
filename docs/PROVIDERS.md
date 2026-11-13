@@ -9,7 +9,7 @@ ACC stays "native CLI in tmux, supervised through the CLI's own hooks". A provid
 | Provider | CLI (version checked) | Hooks for state | Resume | Headless login | Local/compatible endpoints | Tier |
 |---|---|---|---|---|---|---|
 | Claude Code | `claude` (apt) | full (incl. permission, notification) | `--resume <id>` | paste code | Anthropic-compatible (`ANTHROPIC_BASE_URL`) | full (today) |
-| Codex | `codex` 0.163.0 | most (static `~/.codex/hooks.json`) | `resume <id>` | device code | OpenAI-compatible (`model_providers`, `--oss`) | full (today) |
+| Codex | `codex` 0.167.1 | most (static `~/.codex/hooks.json`) | `resume <id>` | device code | OpenAI-compatible (`model_providers`, `--oss`) | full (today) |
 | GitHub Copilot CLI | `copilot` 1.0.103 (npm `@github/copilot`, Node 22+) | full: sessionStart/End, UserPromptSubmit, Stop, notification, permissionRequest; `sessionId` in every payload; user hooks in `~/.copilot/hooks/*.json` | `--resume=<id>` | `copilot login --device-code`, or token | BYOK: `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_TYPE` openai/anthropic, `COPILOT_MODEL` | **full** |
 | ~~Gemini CLI~~ | retired by Google, replaced by Antigravity CLI | dropped 2026-10-21 | | | | |
 | Antigravity CLI | `agy` (install script) | partial: SessionStart, Stop, tool events; no permission/notification/end | `--conversation <id>` (third-party docs) | paste code; keyring storage may need a headless keyring | no | standard (preview) |
@@ -24,7 +24,7 @@ Every CLI's pre-tool hook runs `bin/acc-guard <provider> PreToolUse` (installed 
 | CLI | Hook | Deny | Allow | Notes |
 |---|---|---|---|---|
 | Claude Code | `PreToolUse` in the session's settings.json | exit 2, reason on stderr (JSON decision on stdout too) | exit 0, no output | |
-| Codex | `PreToolUse`/`PostToolUse` added to ~/.codex/hooks.json by bootstrap | exit 2, reason on stderr | exit 0, no output | Bootstrap records trust for ACC's exact command groups on reviewed versions 0.163.0 and 0.164.0; other hooks and unknown versions/config formats retain manual review. “Hooks need review” becomes Needs you with a plain explanation. `-c hooks.*` session hooks are ignored. Algorithm and versioned upstream citations: [hook trust research](research/codex-hook-trust.md). |
+| Codex | `PreToolUse`/`PostToolUse` added to ~/.codex/hooks.json by bootstrap | exit 2, reason on stderr | exit 0, no output | Bootstrap records trust for ACC's exact command groups on reviewed versions 0.163.0, 0.164.0 and 0.167.1; other hooks and unknown versions/config formats retain manual review. “Hooks need review” becomes Needs you with a plain explanation. On all reviewed versions, `-c hooks.*` session hooks are discovered under a separate synthetic path; bootstrap trusts only the account hooks.json definitions. Algorithm and versioned upstream citations: [hook trust research](research/codex-hook-trust.md). |
 | Copilot CLI | `PreToolUse` in ~/.copilot/hooks/acc.json | `{"permissionDecision":"deny","permissionDecisionReason":…}`, exit 0 | exit 0, no output | Exit 2 also denies but the agent only sees "hook exited with code 2". |
 | Cursor CLI | `preToolUse` in ~/.cursor/hooks.json | `{"permission":"deny","user_message":…,"agent_message":…}` | no output | |
 | Antigravity | `PreToolUse` (matcher group) in ~/.gemini/config/hooks.json | `{"decision":"deny","reason":…}` | **no output** | `{}` denies the call (seen live); its docs say `decision` is required. |
@@ -107,7 +107,7 @@ versions, the ACC install target and upstream availability in the package note.
 
 | Provider | ACC-managed install/update target | Automatic channel |
 |---|---|---|
-| Codex | Exactly 0.163.0, recorded in the compatibility table above | Pinned; a new ACC catalog pin is required to advance |
+| Codex | Exactly 0.167.1, recorded in the compatibility table above | Pinned; a new ACC catalog pin is required to advance |
 | Copilot | Exactly 1.0.103; preview qualification limits above still apply | Pinned; a new ACC catalog pin is required to advance |
 | OpenCode | Newest stable 2.1.x, minimum 2.1.3 | Supported line; patches may advance, new lines require ACC qualification |
 | Claude Code | Candidate from the configured signed apt repository; without apt (Fedora, openSUSE), Anthropic's native release 2.1.308, SHA-256 from Anthropic's manifest | Rolling upstream, owner opt-in; apt remains held between helper actions. The native release is pinned: a new version is a Rynhult change |
@@ -119,7 +119,14 @@ CLIs, Check and the daily timer query upstream availability but never install
 `@latest`; the reported `latest` target stays at the ACC pin, with
 `upstream_latest`, channel and check time in diagnostics. Install/Update selects
 the exact target. Daily updates never downgrade a newer manually installed CLI.
-A manual Install/Update can restore the ACC pin.
+Explicit Linux/WSL package-helper installs (including deploy) refuse a newer
+installed version with both versions in the explanation, leaving it unchanged.
+For deploy (`acc-packages --install`), preservation prints **KEPT**, records the
+reason as an unsuccessful package action, and exits successfully so the remaining
+deploy steps run. Dashboard requests still report the refusal. Real installation
+failures remain failures and stop deploy. The helper also preserves non-release
+version strings because their ordering cannot be established safely. Missing npm
+or an unreadable/failed npm inventory refuses installation as an error.
 
 Rolling channels start with auto-update off. On the first refresh after this policy
 arrives, legacy implicit rolling auto-update values reset to off; the owner can
@@ -132,3 +139,7 @@ Before advancing a pin or supported line, run the provider checklist above
 the exact CLI and qualification limits here, change the catalog, and run fake-CLI
 and wire fault regressions. A help-only check does not establish paid-account
 compatibility. No new live-provider qualification was performed for this policy.
+
+Native Chat history remains qualified for Codex 0.163.0 only; 0.167.1 is
+unsupported because its rollout/provenance format changed. See the
+[transcript source review](research/codex-chat-0167.md).

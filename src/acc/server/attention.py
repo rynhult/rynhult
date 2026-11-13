@@ -39,6 +39,15 @@ def raise_item(db: DbSession, key: str, *, kind: str, title: str, source: str, s
                detail: str | None = None, session_id: str | None = None, verified: bool = True,
                owner: str | None = None, risk: dict | None = None) -> AttentionItem:
     """`owner` (a username) sees it besides the owners; by default the session's owner, else owners only."""
+    if session_id is not None:
+        session = db.get(Session, session_id)
+        if session is not None and session.parent_session_id:
+            from .child_caps import chain
+            parents = chain(db, session)
+            if owner is None:
+                owner = parents[-1].owner
+            label = "Parent chain: " + " → ".join([p.id for p in reversed(parents)] + [session_id])
+            detail = (detail + " " if detail else "") + label
     item = _open(db, key)
     if item is None:
         if owner is None and session_id is not None and (session := db.get(Session, session_id)) is not None:
@@ -160,7 +169,7 @@ _BULK_NOTICES = frozenset({
     "publish_failed", "tool_failed", "spool_parse_error", "ci_failed", "linear_comment",
     "launch_failed", "schedule_failed", "git_identity_warning", "worktree_kept",
     "worktree_removed", "remote_spool_full", "budget", "update", "compose", "host",
-    "backup", "git_backup_kept", "phone_setup",
+    "backup", "git_backup_kept", "phone_setup", "ready_for_review",
 })
 
 

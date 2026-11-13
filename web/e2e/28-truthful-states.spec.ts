@@ -2,7 +2,7 @@ import { expect } from "./fixtures";
 import { test } from './shell-state';
 import { AUTH_FILE, routeDemoSessions } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 // Code-quality review UI-2: loading, a failed first read, a failed refresh with old data, and a genuinely empty list are four states.
 test("devices: loading and failure are never 'No devices yet'", async ({ page }) => {

@@ -2,7 +2,7 @@ import { gotoLoadedPage, loadPage, reloadLoadedPage } from './loaded-page';
 import { expect, test as base } from './fixtures';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { AUTH_FILE, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped, wikiShotPath, settleSession } from './helpers';
+import { AUTH_FILE, openAdvanced, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped, wikiShotPath, settleSession } from './helpers';
 // Real process startup has its own fixture budget; UI assertions keep the normal timeout.
 const test = base.extend<{ lead: { id: string; project: string; headers: Record<string, string> } }>({
   lead: [async ({ page }, use) => {
@@ -36,12 +36,12 @@ for (const width of [1440, 390]) {
   const { id: lead, project: id, headers } = owned;
   // Real grant form exposes the default as an empty optional number input.
   await gotoLoadedPage(page, `/projects/${id}`, ["ProjectPage"], ["/api/projects"]);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await expect(dialog.getByLabel('Hours', { exact: true })).toHaveValue('');
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     await gotoLoadedPage(page, `/sessions/${lead}?tab=team#overview`, ["SessionPage", "TeamPanel"], [`/api/sessions/${lead}/team`]);
     await expect(page.getByText('No time limit for this team.', { exact: true })).toBeVisible();
     const url = `/api/sessions/${lead}/team`;

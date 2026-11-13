@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { AUTH_FILE, csrfHeaders, gitProject } from './helpers';
+import { AUTH_FILE, csrfHeaders, gitProject, selectSessionView } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 
@@ -31,8 +31,7 @@ test('a failed Stop goal tells the person it did not stop', async ({ page }, tes
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/sessions/${session}`);
     await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Setup', exact: true }).click();
+    await selectSessionView(page, 'Setup');
     await expect(page.getByRole('region', { name: 'Session automation' })).toBeVisible();
     await page.route(`**/api/sessions/${session}/automation`, route => route.fulfill({
       status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Controller unavailable; try again' }),

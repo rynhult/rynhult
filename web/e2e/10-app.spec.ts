@@ -1,3 +1,4 @@
+import { selectSessionView } from './helpers';
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type TestInfo } from "./fixtures";
 import { test } from './shell-state';
@@ -7,7 +8,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AUTH_FILE, control, csrfHeaders, info, openAdvanced, shot, totp, wikiShotPath } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard', presentationChanges: ['ui_shell', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['layouts'] });
 test.describe.configure({ mode: "serial" });
 
 let sessionId = "";
@@ -100,44 +101,40 @@ test("overview renders and has no horizontal scroll", async ({ page }, testInfo)
   await shot(page, testInfo.project.name, "overview-empty");
 });
 
-test("register and trust a project", async ({ page }, testInfo) => {
+test("register a project without implicitly trusting it", async ({ page }, testInfo) => {
   mkdirSync(workspace(), { recursive: true });
   await page.goto("/projects");
   await page.getByRole("button", { name: "Register folder" }).click();
   await page.getByRole("dialog").getByLabel("Name", { exact: true }).fill(fixture("Demo"));
   await page.getByLabel("Workspace path").fill(workspace());
   await page.getByRole("button", { name: "Register", exact: true }).dblclick();
-  const card = page.locator("section").filter({ has: page.getByRole("link", { name: fixture("Demo"), exact: true }) });
-  await expect(card.getByText("not trusted")).toBeVisible();
-  await card.getByRole("button", { name: "Trust", exact: true }).click();
-  await expect(page.getByText(/without each agent asking/)).toBeVisible();  // words first (CO-1)
-  await expect(page.getByText("hasTrustDialogAccepted")).toBeHidden();
-  await page.getByText("Exactly what Rynhult changes").click();
-  await expect(page.getByText(/hasTrustDialogAccepted/)).toBeVisible();
-  await shot(page, testInfo.project.name, "trust-dialog");
-  await page.getByRole("button", { name: "Trust this workspace" }).dblclick();
-  await expect(card.getByText("not trusted", { exact: true })).toHaveCount(0);  // other projects can remain untrusted
-  await shot(page, testInfo.project.name, "projects");
+  const row = page.getByRole('table', { name: 'Project directory' }).getByRole('row').filter({ has: page.getByRole('link', { name: fixture('Demo'), exact: true }) });
+  await expect(row.getByText('Not trusted', { exact: true })).toBeVisible();
+  await shot(page, testInfo.project.name, 'projects');
 });
 
-test("new session: preview shows the exact command, launch opens the terminal", async ({ page }, testInfo) => {
+test("new session: preview shows the exact command, trust and launch opens the terminal", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Rename", exact: true }).click();
-  await page.getByRole("dialog").getByLabel("Name", { exact: true }).fill(fixture("e2e"));
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: "Rename", exact: true }).click();
+  await page.getByRole("region", { name: "New session", exact: true }).getByLabel("Name", { exact: true }).fill(fixture("e2e"));
+  await page.getByRole("region", { name: "New session", exact: true }).locator("summary").filter({ hasText: "Model and working location" }).click();
   await page.getByRole("combobox", { name: "Project", exact: true }).selectOption({ label: fixture("Demo") });
-  await openAdvanced(page.getByRole("dialog"));
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
   const preview = page.locator("text=--session-id");
   await expect(preview).toBeVisible();
   await expect(page.getByText("--permission-mode acceptEdits")).toBeVisible();
   await page.getByLabel("Permissions").selectOption("bypassPermissions");
-  await expect(page.getByRole("button", { name: "Launch", exact: true })).toBeDisabled();  // needs the explicit checkbox
+  await expect(page.getByRole("button", { name: "Trust and launch", exact: true })).toBeDisabled();  // needs the explicit checkbox
   await page.getByLabel("Permissions").selectOption("acceptEdits");
   await shot(page, testInfo.project.name, "new-session");
-  await page.getByRole("button", { name: "Launch", exact: true }).dblclick();
+  await page.getByRole("button", { name: "Trust and launch", exact: true }).dblclick();
+  const trust = page.getByRole('dialog', { name: `Trust ${fixture('Demo')}?`, exact: true });
+  await expect(trust).toContainText('Rynhult records the folder as trusted for every agent CLI');
+  await trust.getByRole('button', { name: 'Trust and launch', exact: true }).click();
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]{12}$/);
   sessionId = page.url().split("/").pop()!;
-  await expect(page.getByText("Read-write")).toBeVisible();
+  await expect(page.getByText("You control this terminal")).toBeVisible();
   await expect(page.locator(".xterm-rows")).toContainText("fake-claude ready", { timeout: 15_000 });
   await expect(page.locator(".xterm-rows")).not.toContainText("python3*");  // no tmux status bar
   await expect(page.getByText("Idle").first()).toBeVisible({ timeout: 15_000 });
@@ -150,15 +147,15 @@ test("second window is read-only until it takes control", async ({ browser }, te
   const one = await ctx1.newPage();
   const two = await ctx2.newPage();
   await one.goto(`/sessions/${sessionId}`);
-  await expect(one.getByText("Read-write")).toBeVisible();
+  await expect(one.getByText("You control this terminal")).toBeVisible();
   await two.goto(`/sessions/${sessionId}`);
-  await expect(two.getByText(/Read-only · another window/)).toBeVisible();
-  await two.getByRole("button", { name: "Take control" }).click();
+  await expect(two.getByText("Read-only terminal")).toBeVisible();
+  await two.getByRole("button", { name: "Control terminal", exact: true }).click();
   const handover = two.getByRole('dialog', { name: 'Take terminal control' });
   await handover.getByLabel('Reason').selectOption('manual_handover');
   await handover.getByRole('button', { name: 'Take control', exact: true }).click();
-  await expect(two.getByText("Read-write")).toBeVisible();
-  await expect(one.getByText("Another window took control of this terminal.", { exact: true })).toBeVisible();
+  await expect(two.getByText("You control this terminal")).toBeVisible();
+  await expect(one.getByText("Read-only terminal", { exact: true })).toBeVisible();
   await shot(one, testInfo.project.name, "control-taken");
   await ctx1.close();
   await ctx2.close();
@@ -166,10 +163,10 @@ test("second window is read-only until it takes control", async ({ browser }, te
 
 test("permission prompt reaches the inbox and clears on interrupt", async ({ page }, testInfo) => {
   await page.goto("/inbox");
-  const notice = page.getByText(`${fixture("e2e")} needs your input`, { exact: true });
+  const notice = page.getByRole("heading", { name: `${fixture("e2e")} needs your input`, exact: true });
   await expect(notice).toHaveCount(0);
-  const inbox = page.getByRole("navigation", { name: "Main", exact: true }).getByRole("link", { name: /^Inbox/ });
-  const badge = inbox.locator('[aria-label$=" open"]');
+  const inbox = page.getByRole("navigation", { name: "Rail", exact: true }).getByRole("button", { name: /^Inbox/ });
+  const badge = inbox.locator('.shell-inbox-count');
   const response = await page.request.get("/api/attention");
   expect(response.status()).toBe(200);
   const before = (await response.json()).length;
@@ -193,13 +190,13 @@ test("permission prompt reaches the inbox and clears on interrupt", async ({ pag
 
 test("activity and launch spec tabs", async ({ page }, testInfo) => {
   await page.goto(`/sessions/${sessionId}`);
-  await page.getByRole("tab", { name: "Activity" }).click();
+  await selectSessionView(page, 'Activity');
   await expect(page).toHaveURL(/\?tab=activity$/);
   await expect(page.getByText("Session started").first()).toBeVisible();
   await page.reload();
   await expect(page.getByText("Session started").first()).toBeVisible();  // tab survives a reload
   await shot(page, testInfo.project.name, "activity");
-  await page.getByRole("tab", { name: "Setup" }).click();
+  await selectSessionView(page, 'Setup');
   await page.getByRole("tabpanel").locator("summary").filter({ hasText: /^Generated files/ }).click();
   await page.getByRole("combobox", { name: "Generated file", exact: true }).selectOption("settings.json");
   await expect(page.getByRole("region", { name: "settings.json", exact: true })).toBeVisible();
@@ -266,12 +263,12 @@ test("grid shows live terminals side by side and remembers the choice", async ({
 test("wizard: a profile pre-fills skills, agents and MCPs and the preview shows them", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Rename", exact: true })).toBeVisible();  // the form starts clean after the earlier launch
-  await page.getByRole("dialog").getByRole("button", { name: "Rename", exact: true }).click();
-  await expect(page.getByRole("dialog").getByLabel("Name", { exact: true })).toHaveValue("");
-  await page.getByRole("dialog").getByLabel("Name", { exact: true }).fill("wizard");
+  await expect(page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: "Rename", exact: true })).toBeVisible();  // the form starts clean after the earlier launch
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New session", exact: true }).getByLabel("Name", { exact: true })).toHaveValue("");
+  await page.getByRole("region", { name: "New session", exact: true }).getByLabel("Name", { exact: true }).fill("wizard");
   await page.getByLabel("Profile").selectOption("qa");
-  await openAdvanced(page.getByRole("dialog"));
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
   await page.getByRole("button", { name: /Skills and tools/ }).click();
   await expect(page.getByRole("button", { name: "e2e-runner", pressed: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "playwright", pressed: true })).toBeVisible();
@@ -282,7 +279,7 @@ test("wizard: a profile pre-fills skills, agents and MCPs and the preview shows 
   await page.getByRole("combobox", { name: "Agent", exact: true }).selectOption("codex");
   await expect(page.getByRole("button", { name: "e2e-runner" })).toHaveCount(0);  // Claude-only agents disappear
   await shot(page, testInfo.project.name, "wizard");
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Back to workspace" }).click();
   await page.goto("/catalog");
   await expect(page.getByRole("tab", { name: /Profiles/ })).toBeVisible();
   await page.getByRole("tab", { name: /Skills/ }).click();
@@ -342,18 +339,19 @@ test("catalog: add an MCP server and a skill, assign them, edit a profile", asyn
 
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  await dialog.getByLabel("Profile").selectOption("frontend");
-  await openAdvanced(dialog);
-  await dialog.getByRole("button", { name: /Skills and tools/ }).click();
+  await page.getByRole("region", { name: "New session", exact: true }).getByLabel("Profile").selectOption("frontend");
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: /Skills and tools/ }).click();
   await expect(page.getByRole("button", { name: fixture("shadcn"), pressed: true })).toBeVisible();
   await shot(page, testInfo.project.name, "new-session-skills");
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Back to workspace" }).click();
 });
 
 async function promoteLocalWorkspace(page: Page, testInfo: TestInfo, topic: string) {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole("radio", { name: "Local workspace" }).click();
   await dialog.getByLabel("Topic").fill(topic);
   await expect(dialog.getByRole("combobox", { name: "Profile" })).toHaveValue("researcher");  // standalone profiles only
@@ -362,13 +360,16 @@ async function promoteLocalWorkspace(page: Page, testInfo: TestInfo, topic: stri
   await shot(page, testInfo.project.name, "new-workspace");
   await dialog.getByRole("button", { name: "Launch", exact: true }).dblclick();
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]{12}$/);
+  await page.getByRole("button", { name: "Session details", exact: true }).click();
   await expect(page.getByText("local workspace").first()).toBeVisible();
-  await page.getByRole("tab", { name: "Findings" }).click();
+  await page.getByRole("button", { name: "Session details", exact: true }).click();
+  await selectSessionView(page, "Findings");
   await expect(page.getByRole("heading", { name: "Findings" })).toBeVisible();
   await shot(page, testInfo.project.name, "workspace-findings");
+  await page.getByRole("button", { name: "Session details", exact: true }).click();
   await page.getByRole("button", { name: "Promote to project" }).click();
-  await expect(dialog.getByLabel("Project name", { exact: true })).toHaveValue(topic);
-  await expect(dialog.getByLabel("Slug", { exact: true })).toHaveValue(topic.toLowerCase().replaceAll(" ", "-"));
+  await expect(page.getByRole("dialog", { name: "Promote to project" }).getByLabel("Project name", { exact: true })).toHaveValue(topic);
+  await expect(page.getByRole("dialog", { name: "Promote to project" }).getByLabel("Slug", { exact: true })).toHaveValue(topic.toLowerCase().replaceAll(" ", "-"));
   await page.getByRole("dialog").getByRole("checkbox", { name: /Create a private GitHub repository/ }).uncheck();
   await shot(page, testInfo.project.name, "promote-dialog");
   await page.getByRole("dialog").getByRole("button", { name: "Promote" }).dblclick();
@@ -390,7 +391,8 @@ test("workspaces page: cards, and a second session in the same folder", async ({
   await card.getByRole("button", { name: `Workspace actions for ${fixture("Beyblade tournament apps cards")}`, exact: true }).click();
   await shot(page, testInfo.project.name, "workspace-actions");
   await page.getByRole("menuitem", { name: "Add session", exact: true }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await expect(dialog.getByRole("textbox", { name: "Workspace" })).toHaveValue(new RegExp(`^${fixture("beyblade-tournament-apps-cards")}-\\d{8}$`));
   await expect(dialog.getByRole("combobox", { name: "Profile" })).toHaveValue("council");
   await dialog.getByRole("button", { name: "Launch", exact: true }).dblclick();
@@ -439,10 +441,11 @@ test("installable app and notifications settings", async ({ page }, testInfo) =>
   expect(manifest.icons.some((i: { purpose?: string }) => i.purpose === "maskable")).toBe(true);
   // the service worker registers (it only shows notifications; no offline cache)
   await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.active)).toBe(true);
-  await page.getByRole("link", { name: "Settings" }).first().click();
+  await page.getByRole("navigation", { name: "Rail", exact: true }).getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await page.getByRole("combobox", { name: "Settings section", exact: true }).selectOption('all');
+  await page.getByRole("complementary", { name: "Context sidebar", exact: true }).getByRole("link", { name: "Notifications", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn on notifications" })).toBeVisible();
+  await page.getByRole("complementary", { name: "Context sidebar", exact: true }).getByRole("link", { name: "Notification devices", exact: true }).click();
   await expect(page.getByText("No notification devices yet")).toBeVisible();
   await shot(page, testInfo.project.name, "settings");
 });
@@ -453,7 +456,7 @@ test("project page lists the project's sessions", async ({ page }, testInfo) => 
   await expect(page).toHaveURL(/\/projects\/\d+$/);
   await expect(page.getByRole("heading", { name: fixture("Demo"), level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: /e2e/ }).first()).toBeVisible();  // Sessions: the first section tab
-  await page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues and pull requests", exact: true }).click();
+  await page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues & pull requests", exact: true }).click();
   await expect(page.getByText("No GitHub repository linked")).toBeVisible();
   await page.goto("/projects");
   await page.getByRole("button", { name: "New project" }).dblclick();
@@ -541,7 +544,8 @@ test("keys: add one, paste a .env, give it to a project, New session shows the v
   await shot(page, testInfo.project.name, "project-keys");
 
   await page.getByRole("button", { name: "New session" }).first().click();
-  await page.getByRole("dialog").getByRole("combobox", { name: "Project" }).selectOption({ label: fixture("Demo") });
+  await openAdvanced(page.getByRole("region", { name: "New session", exact: true }));
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("combobox", { name: "Project" }).selectOption({ label: fixture("Demo") });
   const sessionKeys = page.getByTestId("session-keys");
   await expect(sessionKeys).toContainText("OPENAI_API_KEY");
   await expect(sessionKeys).toContainText(fixture("OpenAI (work)"));
@@ -549,11 +553,11 @@ test("keys: add one, paste a .env, give it to a project, New session shows the v
   await expect(sessionKeys).not.toContainText("SEARCH_API_KEY");  // not given to this project
   expect(await page.content()).not.toContain(value);
   await shot(page, testInfo.project.name, "new-session-keys");
-  await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: "Back to workspace" }).click();
 });
 
 test("an issue or pull request opens New session pre-filled (nothing launches by itself)", async ({ page }) => {
-  // Own the project: this test must also run alone, without "register and trust a project".
+  // Own the project: this test must also run alone, without "register a project without implicitly trusting it".
   const created = await page.request.post("/api/projects/new", {
     headers: await csrfHeaders(page), data: { name: fixture("Issues"), source: "empty" },
   });
@@ -569,27 +573,37 @@ test("an issue or pull request opens New session pre-filled (nothing launches by
   await page.route("**/api/projects/*/github*", (route) => route.fulfill({ json: {
     repo: { full_name: "example/demo", html_url: "https://github.com/example/demo", private: true, default_branch: "main", pushed_at: updated },
     branches: [], commits: [], runs: [],
-    pulls: [{ number: 7, title: "Tidy the parser", author: "sam", draft: false, head: "tidy", updated_at: updated, url: "https://github.com/example/demo/pull/7" }],
+    pulls: [{ number: 7, title: "Tidy the parser", author: "sam", draft: false, head: "tidy", head_repo: "contributor/demo", updated_at: updated, url: "https://github.com/example/demo/pull/7" }],
     issues: [{ number: 12, title: "Crash on empty input", author: "alex", labels: ["bug"], updated_at: updated, url: "https://github.com/example/demo/issues/12" }],
   } }));
   await page.goto("/projects");
   await page.getByRole("link", { name: project.name, exact: true }).click();
-  await page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues and pull requests", exact: true }).click();
+  await page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues & pull requests", exact: true }).click();
   await page.getByRole("button", { name: "Start session for issue #12" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
   await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("issue-12");
   await expect(dialog.getByLabel(/^Task/)).toHaveValue(/gh issue view 12/);
-  await expect(dialog.getByTestId("advanced-summary")).toContainText("own worktree");  // said while Advanced is closed
+  await expect(dialog.getByRole("region", { name: "Agent or team", exact: true })).toContainText("own worktree");  // said while Advanced is closed
   await openAdvanced(dialog);
   await expect(dialog.getByRole("checkbox", { name: /Own worktree/ })).toBeChecked();
-  await page.keyboard.press("Escape");
+  await dialog.getByLabel(/^Task/).fill('Keep my issue investigation');
+  await dialog.getByLabel(/^Task/).press('Escape');
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "Start session for issue #12" }).click();
+  await expect(dialog.getByLabel(/^Task/)).toHaveValue('Keep my issue investigation');
+  await dialog.getByRole("button", { name: "Back to workspace", exact: true }).click();
   await page.getByRole("button", { name: "Review pull request #7" }).click();
-  await expect(page.getByRole("dialog").getByLabel("Name", { exact: true })).toHaveValue("review-7");
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("region", { name: "New session", exact: true }).getByLabel("Name", { exact: true })).toHaveValue("review-7");
+  await dialog.getByLabel(/^Task/).fill('Keep my PR review');
+  await dialog.getByLabel(/^Task/).press('Escape');
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "Review pull request #7" }).click();
+  await expect(dialog.getByLabel(/^Task/)).toHaveValue('Keep my PR review');
+  await dialog.getByRole("button", { name: "Back to workspace", exact: true }).click();
 });
 
 test("autostart: an owner approves the compose files, and a change holds the stack until approved", async ({ page }, testInfo) => {
-  // Own the project: this test must also run alone, without "register and trust a project".
+  // Own the project: this test must also run alone, without "register a project without implicitly trusting it".
   const created = await page.request.post("/api/projects/new", {
     headers: await csrfHeaders(page), data: { name: fixture("Autostart"), source: "empty" },
   });
@@ -619,9 +633,9 @@ test("autostart: an owner approves the compose files, and a change holds the sta
           diff: "--- approved/compose.yaml\n+++ now/compose.yaml\n@@ -1,3 +1,4 @@\n services:\n   web:\n     image: nginx\n+    volumes: [\"/home/sam:/h\"]\n" };
     await route.fulfill({ json: { containers: [{ Service: "web", Name: "demo-web-1", State: "running", Status: "Up 2 minutes" }], compose: review } });
   });
-  await page.goto("/projects");
-  // Scope to the owned project; neighboring cases may have added other projects.
-  const card = page.locator("section").filter({ has: page.getByRole("link", { name: project.name, exact: true }) });
+  await page.goto(`/projects/${project.id}#project-stack`);
+  // Autostart now lives in the project Runtime view.
+  const card = page.locator("#project-stack");
   const autostartBox = card.getByRole("checkbox", { name: "Autostart" });
   await expect(autostartBox).toBeEnabled();  // once the review has loaded
   await autostartBox.click();
@@ -648,7 +662,7 @@ test("inbox: a request that retargets a live site shows the change and needs con
   // tests/test_publish.py covers the server; here the Inbox shows one stand-in request.
   const now = new Date().toISOString();
   let posted: unknown = "nothing";
-  await page.route("**/api/attention?*", (route) => route.fulfill({ json: [{
+  await page.route("**/api/attention*", (route) => route.fulfill({ json: [{
     id: 9001, kind: "publish_request", severity: "critical", source: "session web", verified: true, session_id: null, session_name: null, project: null,
     title: "Retarget live site shop.example.com: port 8020 (storefront) → port 8004 (public internet)",
     detail: "Port 8004 is reserved for project demo. Asked for project demo. new preview",
@@ -742,7 +756,9 @@ test("add machine: one thing to copy per system, and a machine on another versio
   await shot(page, testInfo.project.name, "machines-version");
   await page.getByRole("button", { name: `Remove ${fixture("build-box")}` }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Remove" }).dblclick();
-  await expect(page.getByText(fixture("build-box"))).toHaveCount(0);
+  await expect(page.getByRole("main").getByText(fixture("build-box"), { exact: true })).toHaveCount(0);
+  // The Hosts context uses the board's existing ten-second refresh, independently of the node list.
+  await expect(page.getByText(fixture("build-box"))).toHaveCount(0, { timeout: 20_000 });
 });
 
 test("add machine: a release with installers links to them instead of the from-source commands", async ({ page }) => {
@@ -888,21 +904,22 @@ test("providers page shows login health (old /accounts link redirects)", async (
 test("new session dialog keeps focus while the page behind it polls", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Rename", exact: true }).click();
-  const name = page.getByRole("dialog").getByLabel("Name", { exact: true });
+  await page.getByRole("region", { name: "New session", exact: true }).getByRole("button", { name: "Rename", exact: true }).click();
+  const name = page.getByRole("region", { name: "New session", exact: true }).getByLabel("Name", { exact: true });
   await name.click();
   await name.pressSequentially("focus-");
   await page.waitForTimeout(7000);  // two 3 s polls of the overview behind the dialog
   await page.keyboard.type("kept");
   await expect(name).toBeFocused();
   await expect(name).toHaveValue("focus-kept");
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Back to workspace" }).click();
 });
 
 test("delete a local workspace after typing its folder name", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole("radio", { name: "Local workspace" }).click();
   await dialog.getByLabel("Topic").fill(fixture("Throwaway idea"));
   await dialog.getByRole("button", { name: "Launch", exact: true }).dblclick();
@@ -919,7 +936,6 @@ test("delete a local workspace after typing its folder name", async ({ page }) =
   await expect(confirm).toBeHidden({ timeout: 15_000 });  // stops its session first
   await expect(page.getByRole("link", { name: fixture("Throwaway idea") })).toHaveCount(0);
 });
-
 
 test("owner invites a member, who joins with their own sign-in", async ({ page, browser }, testInfo) => {
   // Two contexts and two deliberately slow password hashes: under parallel test load this ran past the 45 s budget.
@@ -947,12 +963,13 @@ test("owner invites a member, who joins with their own sign-in", async ({ page, 
   await joiner.getByRole("button", { name: "Join" }).dblclick();
   await joiner.getByRole("button", { name: "I saved the codes", exact: true }).click();
   await expect(joiner.getByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
-  expect((await joiner.request.put(info().origin + '/api/preferences/ui-shell', { headers: await csrfHeaders(joiner), data: { enabled: false } })).ok()).toBeTruthy();
   await joiner.reload();
-  const menu = joiner.getByRole("navigation", { name: "Main" });
-  await expect(menu.getByRole("link", { name: "Sessions" })).toBeVisible();
-  await expect(menu.getByRole("link", { name: "Host" })).toBeVisible();  // health is for everyone
-  await expect(menu.getByRole("link", { name: "Audit" })).toHaveCount(0);  // owners only
+  const menu = joiner.getByRole("navigation", { name: "Rail", exact: true });
+  await expect(menu.getByRole("button", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();  // health is for everyone
+  await menu.getByRole("button", { name: "Tools", exact: true }).click();
+  await expect(joiner.getByRole("complementary", { name: "Context sidebar" }).getByRole("link", { name: "Audit", exact: true })).toHaveCount(0);
+  await menu.getByRole("button", { name: "Overview", exact: true }).click();  // owners only
   await expect(joiner.getByText("Host CPU")).toBeVisible();
   await expect(joiner.getByText("No live sessions.")).toBeVisible();  // the owner's sessions aren't theirs
   await shot(joiner, testInfo.project.name, "member-overview");
@@ -986,9 +1003,10 @@ test("owner invites a member, who joins with their own sign-in", async ({ page, 
 test("new session: OpenCode with its own options, a private server and Rynhult's guard plugin", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New session" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
   await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await dialog.getByRole("textbox", { name: "Name", exact: true }).fill(fixture("oc"));
+  await openAdvanced(dialog);
   await dialog.getByRole("combobox", { name: "Project" }).selectOption({ label: fixture("Demo") });
   await dialog.getByRole("combobox", { name: "Agent", exact: true }).selectOption("opencode");
   await openAdvanced(dialog);

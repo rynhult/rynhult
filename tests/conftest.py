@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -16,7 +17,7 @@ import httpx
 import pytest
 from helpers import TOTP_AT, preview_listener, wait_for
 from host_isolation import home_environment
-from owned_tmux import Owner, alive, pin_process, signal_process
+from owned_tmux import Owner, alive, cleanup, owns_server, pin_process, signal_process
 from sqlalchemy.engine import make_url
 
 from acc.broker.config import BrokerConfig
@@ -26,9 +27,37 @@ from acc.server import supervisor as supervisor_module
 from acc.server.app import create_app
 from acc.server.config import Settings
 
-pytest_plugins = ["postgres_matrix", "signing_keys"]
+pytest_plugins = ["postgres_matrix", "owned_gpg", "signing_keys"]
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def pytest_addoption(parser):
+    parser.getgroup('relay native qualification').addoption('--relay-long-native-proofs', action='store_true',
+        help='Run explicitly selected multi-hour offline relay lifetime/incarnation proofs.')
+    group = parser.getgroup('account install qualification')
+    group.addoption('--install-qualification', action='store_true',
+                    help='Require the host node-tar oracle and explicit interpreter/record parameters.')
+    group.addoption('--install-accd-python', help='Absolute pinned accd interpreter path.')
+    group.addoption('--install-broker-python', help='Absolute pinned broker interpreter path.')
+    group.addoption('--install-qualification-record', help='JSON evidence path; role suffixes are added.')
+
+
+@pytest.fixture
+def install_test_uid_policy(monkeypatch):
+    """Positive disposable fixtures can run in root CI; production stays fenced.
+
+    Keep real kernel UIDs and inode ownership checks. Only the pure admission
+    predicate is replaced, explicitly in requesting tests, never via an env/RPC.
+    Negative identity tests restore the production predicate.
+    """
+    if os.geteuid() == 0:
+        from acc.broker import account_install
+        from acc.server import account_installs
+        def disposable_uid(uid):
+            return type(uid) is int and uid >= 0
+        monkeypatch.setattr(account_install, 'non_root_uid', disposable_uid)
+        monkeypatch.setattr(account_installs, 'non_root_uid', disposable_uid)
 
 
 def pytest_configure(config):
@@ -39,6 +68,7 @@ def pytest_configure(config):
     for key in PROTECTED_SESSION_VARIABLES:
         os.environ.pop(key, None)
     os.environ['ACC_TEST'] = '1'  # No real telemetry transport in any test process.
+    config.addinivalue_line('markers', 'relay_long_native: explicit multi-hour offline native qualification')
     config.addinivalue_line('markers', 'claude_launch_auth: the test controls Claude launch authentication itself')
     config.addinivalue_line('markers', 'claude_launch_cloud: fake Claude sessions launch with cloud (Bedrock) authentication')
     if config.option.basetemp is None:
@@ -46,6 +76,13 @@ def pytest_configure(config):
         root = tempfile.TemporaryDirectory(prefix="acc-pytest-")
         config.option.basetemp = str(Path(root.name) / "tmp")
         config.add_cleanup(root.cleanup)
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption('relay_long_native_proofs'):
+        for item in items:
+            if item.get_closest_marker('relay_long_native'):
+                item.add_marker(pytest.mark.skip(reason='Explicit qualification requires --relay-long-native-proofs'))
 
 
 def fake_cli_processes(directory: Path) -> dict[int, str]:
@@ -96,16 +133,66 @@ def no_leftover_fake_clis_at_session_end(tmp_path_factory):
     assert_no_fake_clis(directory)
 
 
+def assert_no_tmux_servers(directory):
+    """Only journals written below this run's exclusive basetemp convey authority."""
+    leaked = []
+    for journal in directory.glob('**/owned-tmux/*.json'):
+        info = json.loads(journal.read_text())
+        for socket in info['sockets']:
+            # A crashed worker's watchdog may still be reaping its children.
+            deadline = time.monotonic() + 5
+            while True:
+                result = subprocess.run(['tmux', '-L', socket, 'display-message', '-p', '#{pid}'],
+                                        capture_output=True, text=True, timeout=3)
+                if result.returncode or not owns_server(int(result.stdout.strip()), info['token']):
+                    break
+                if time.monotonic() >= deadline:
+                    leaked.append(socket)
+                    cleanup(socket, token=info['token'])
+                    break
+                time.sleep(.05)
+    if leaked:
+        pytest.fail(f'tmux server leak at session end: {leaked}', pytrace=False)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def no_leftover_tmux_at_session_end(tmp_path_factory):
+    directory = tmp_path_factory.getbasetemp()
+    yield directory / 'owned-tmux'
+    assert_no_tmux_servers(directory)
+
+
+def assert_no_git_backends(directory):
+    from owned_git_http import assert_no_git_backends as check
+
+    try:
+        check(directory)
+    except RuntimeError as error:
+        pytest.fail(str(error), pytrace=False)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def no_leftover_git_backends(tmp_path_factory):
+    directory = tmp_path_factory.getbasetemp()
+    yield
+    assert_no_git_backends(directory)
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session):
+    from owned_gpg import assert_no_gpg_agents
+
     if hasattr(session.config, "workerinput"):
         return
-    try:
-        # A crashed worker cannot run fixtures; its directories remain below the controller's base.
-        assert_no_fake_clis(Path(session.config.option.basetemp).resolve())
-    except pytest.fail.Exception as error:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
-        print(f"Fake agent leak at session end: {error}", file=sys.stderr)
+    # A crashed worker cannot run fixtures; its directories remain below the controller's base.
+    directory = Path(session.config.option.basetemp).resolve()
+    for check in (assert_no_tmux_servers, assert_no_fake_clis, assert_no_gpg_agents, assert_no_git_backends):
+        try:
+            check(directory)
+        except pytest.fail.Exception as error:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            print(f"Test resource leak at session end: {error}", file=sys.stderr)
+
 
 
 # Defined before owned_tmux, so its teardown runs after the tmux servers and their panes are gone.
@@ -153,10 +240,10 @@ def umask_is_restored():
 
 
 @pytest.fixture(autouse=True)
-def owned_tmux(monkeypatch):
+def owned_tmux(monkeypatch, no_leftover_tmux_at_session_end):
     from acc.broker import ops
 
-    owner = Owner()
+    owner = Owner(journal=no_leftover_tmux_at_session_end)
     original = ops.tmux
 
     def tmux(config, *args, **kwargs):

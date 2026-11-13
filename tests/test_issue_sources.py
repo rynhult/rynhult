@@ -445,7 +445,7 @@ async def test_non_github_remote_is_not_polled_with_dashboard_github_token(api, 
         row.remote_url = "https://notgithub.com/example/demo.git"
         db.commit()
     class NoGitHub:
-        async def snapshot(self, _):
+        async def snapshot(self, _, heads=()):
             pytest.fail("a non-GitHub remote must never use the dashboard GitHub token")
     api.app.state.supervisor._github = NoGitHub()
     await api.app.state.supervisor.refresh_github()

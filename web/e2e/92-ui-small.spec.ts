@@ -2,38 +2,42 @@ import { expect, test } from './fixtures';
 import { AUTH_FILE, expectAxeClean } from './helpers';
 test.use({ storageState: AUTH_FILE });
 
-test('shown notices: confirm, skip decisions, cancel, dismiss and Undo', async ({ page }) => {
+test('shown notices: cancel selection, exclude decisions, dismiss and Undo', async ({ page }) => {
   const at = new Date().toISOString();
   let dismissed = false;
   let calls = 0;
   const notice = { id: 801, kind: 'state', title: 'Demo notice', severity: 'info', source: 'test', verified: true,
     created_at: at, updated_at: at, acked_at: null, resolved_at: null, session_id: null, bulk_dismissible: true };
-  await page.route('**/api/attention?*', route => route.fulfill({ json: [
+  await page.route(/\/api\/attention(?:\?.*)?$/, route => route.fulfill({ json: [
     ...(!dismissed ? [notice] : []), { ...notice, id: 802, title: 'Answer needed', kind: 'needs_input', bulk_dismissible: false },
   ] }));
   await page.route('**/api/attention/dismiss', route => {
-    expect(route.request().postDataJSON().items).toEqual([{ id: 801, updated_at: at }, { id: 802, updated_at: at }]);
-    calls++; dismissed = true; return route.fulfill({ json: { batch: 33, dismissed: 1, skipped: 1 } });
+    expect(route.request().postDataJSON().items).toEqual([{ id: 801, updated_at: at }]);
+    calls++; dismissed = true; return route.fulfill({ json: { batch: 33, dismissed: 1, skipped: 0 } });
   });
   await page.route('**/api/attention/dismiss/undo', route => {
     expect(route.request().postDataJSON()).toEqual({ batch: 33 });
     dismissed = false; return route.fulfill({ json: { restored: 1 } });
   });
   await page.goto('/inbox');
-  await page.getByRole('button', { name: 'Dismiss all', exact: true }).click();
-  await expect(page.getByText('Dismiss 1 items?', { exact: true })).toBeVisible();
-  await expect(page.getByText(/1 skipped/)).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  // The classic confirmation modal is retired: selection can be cleared before dismissing,
+  // and the inline Undo reverses a completed batch without a bottom banner.
+  const list = page.getByRole('list', { name: 'Inbox items' });
+  const noticeRow = list.getByRole('button', { name: /Demo notice/ });
+  const decisionRow = list.getByRole('button', { name: /Answer needed/ });
+  const select = page.getByRole('checkbox', { name: 'Select Demo notice', exact: true });
+  await select.check();
+  await select.uncheck();
+  await expect(page.getByRole('button', { name: 'Dismiss selected (0)', exact: true })).toBeDisabled();
   expect(calls).toBe(0);
-  await page.getByRole('button', { name: 'Dismiss all', exact: true }).click();
-  await page.getByRole('button', { name: 'Dismiss 1 items', exact: true }).click();
-  await expect(page.getByText('Demo notice', { exact: true })).toBeHidden();
-  await expect(page.getByText('Answer needed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Select Answer needed', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss all shown', exact: true }).click();
+  await expect(noticeRow).toHaveCount(0);
+  await expect(decisionRow).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.getByText('Demo notice', { exact: true })).toBeVisible();
+  await expect(noticeRow).toBeVisible();
   await page.clock.install();
-  await page.getByRole('button', { name: 'Dismiss all', exact: true }).click();
-  await page.getByRole('button', { name: 'Dismiss 1 items', exact: true }).click();
+  await page.getByRole('button', { name: 'Dismiss all shown', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
   await page.clock.runFor(8000);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeHidden();
@@ -41,6 +45,7 @@ test('shown notices: confirm, skip decisions, cancel, dismiss and Undo', async (
 });
 
 for (const path of ['projects', 'workspaces']) test(`${path}: shared view control, keyboard and persistence`, async ({ page }) => {
+  test.fixme(path === 'projects', 'Classic Projects Cards/List control is retired; original assertions retained for Josh. Source directory coverage lives in shell-project-pages.');
   await page.goto(`/${path}`);
   const view = page.getByRole('radiogroup', { name: 'View' });
   await expect(view.getByRole('radio', { name: 'Cards', exact: true })).toBeChecked();
@@ -98,6 +103,7 @@ for (const path of ['projects', 'workspaces']) test(`${path}: populated views ke
   await page.route('**/api/projects', route => route.fulfill({ json: [project] }));
   await page.route('**/api/workspaces', route => route.fulfill({ json: [{ folder: 'demo-ui', path: '/tmp/demo-ui',
     created_at: new Date().toISOString(), project: null, sessions: [], docs: { research: 2, council: 1 } }] }));
+  test.fixme(path === 'projects', 'Classic Projects Cards/List control is retired; original assertions retained for Josh. Source directory coverage lives in shell-project-pages.');
   await page.goto(`/${path}`);
   const content = page.locator('[data-view]');
   await expect(content).toHaveAttribute('data-view', 'cards');

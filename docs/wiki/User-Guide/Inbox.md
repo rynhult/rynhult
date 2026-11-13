@@ -2,11 +2,11 @@
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
-**Dismiss all** appears only when the current view has at least one dismissible notice. It takes a snapshot of the items currently shown under Open or History. Confirm **Dismiss N items?** on the page, or Cancel. Decisions, active machine/backup alerts and already handled notices are skipped; the page shows how many. New or changed notices stay untouched. **Undo** is available for eight seconds and restores notices that have not changed since dismissal. It never answers a prompt or approves a request.
+Select the notices you want to dismiss, then choose **Dismiss selected**, or use **Dismiss all shown** for the current page and category under **Open** or **History**. Only eligible notices are sent; decisions, approvals, active machine/backup alerts and already handled items stay open. New or changed notices stay untouched, and the result reports items skipped because they changed. **Undo** appears inline for eight seconds and restores notices that have not changed since dismissal. It never answers a prompt or approves a request. There is no bulk-dismiss confirmation modal or bottom banner.
 
 The inbox lists everything that needs you. Items come from agent hooks, an agent's approval prompt on its screen (Cursor and Antigravity have no hook for it, and Copilot's fires even for tools it then approves itself), process state, login checks, CI results, host health, guardrails, budgets and agents' publishing or tool requests. An agent request is not authorization to execute it.
 
-Open items are grouped by type, in this order: **Waiting [sessions](/User-Guide/Glossary#session)** (an agent waiting for your answer, or a session needing recovery), **Approvals** (publishing and tool requests), **Alerts** (failures and warnings) and **Notes** (for your information, such as a guardrail refusal). Always-on offline and failed/stale backup alerts come first within Alerts; otherwise, newest first within each group. **History** lists past items by date.
+Use the sidebar categories **Decisions**, **Approvals**, **Blocked work**, **Failures** and **Information**, or **All items**. Select a row in the item list to review its details and actions. The current page shows up to 20 items; **Previous items** and **Next items** move through the returned results. **History** includes handled items.
 
 ## Compact status, without blocking the page
 
@@ -30,13 +30,11 @@ The optional usage-statistics prompt stays in Inbox: **Review privacy choices** 
 
 ![Individual machine and backup alerts with Review, Acknowledge and Snooze actions](/.attachments/inbox-operational-alerts.png)
 
-2. Use the action for the item you want to review; other alerts remain open.
-
-![The inbox, grouped into waiting sessions, approvals and notes](/.attachments/inbox.png)
+2. Select the item in the list, then use its action in the detail pane; other alerts remain open.
 
 | Item | What to do |
 |---|---|
-| *session* needs your input | Claude permission hooks show the tool and a shortened, key-redacted command or path. **Approve** or **Deny** answers that one live request; **Answer in terminal** opens the session for other prompts and providers, including Codex. |
+| *session* needs your input | Claude and Codex permission hooks show CLI details with a wrapped, key-redacted command when supplied. **Approve** or **Deny** answers that one live request; **Answer in terminal** opens the session for other prompts and providers, including Codex. |
 | Recovery needed | **Open session**, read its **Activity**, then **Resume** it |
 | Login expiring or logged out | Re-login on [Host and providers](/User-Guide/Host-and-Providers) |
 | CI failed | Open the run on GitHub from the [project](/User-Guide/Glossary#project) page |
@@ -126,7 +124,7 @@ and **Providers → Tools → Request history** show **Decided by**. Approval me
 permission to try the change; check the individual result before assuming success.
 
 The server also supports reviewed batches of up to 50 exact pending tool changes;
-the full selection controls will arrive with the new layout. A batch does not
+these tool-approval batches are separate from dismissing notices and do not share its selection controls. A batch does not
 authorize future changes, and a changed or expired preview must be reviewed again.
 
 ### Claude permission replies
@@ -138,8 +136,46 @@ the prompt to Claude immediately (checked on each half-second wait tick). If
 attachment state cannot be checked, use **Answer in terminal**. Container sessions
 currently use terminal-only permission replies.
 
-Read the complete redacted tool input in the scrollable panel before choosing
+Read the redacted **Complete tool input** before choosing (expand it for command requests)
 **Approve** or **Deny**. All tool fields are included, including file contents,
 edits, prompts and MCP arguments. If the complete input exceeds 8 kB or is missing,
 only **Deny** and **Answer in terminal** are available, with a reason. Expired
 requests cannot be answered from the Inbox. Success shows **Approved** or **Denied**.
+
+
+## Delegated team activity
+
+**Team activity** shows the latest 50 delegated operations with the deciding lead, permission issuer and observed outcome. Expand the digest to inspect originals. These entries do not need an answer. Failed or uncertain image checks remain failed or unknown; the activity digest cannot approve publication, root changes or a provider permission prompt.
+
+### Ready for review
+
+**Ready for review** has its own group, separate from approvals. It contains
+informational notices for sessions that finished with branch changes and no
+pending question. Each session produces at most one notice per process run, even
+if you dismiss it and the agent continues in that run. Dismiss it individually or
+with the existing bulk dismiss control. These notices do not send push alerts.
+Members see their own notices; owners see notices within their existing access.
+
+## CLI approval details
+
+Claude Code and Codex permission cards show the supplied command and working
+directory. A literal unified diff is shown only if the tool payload supplies one;
+Claude Edit supplies old/new text, so review its expanded tool input instead. Commands wrap without shortening; diffs over
+40 lines have **Show all**. Text is displayed literally. Missing or oversized
+fields are identified plainly; Rynhult never reconstructs a diff from file contents.
+Vault redaction still applies before storage. Complete tool input remains available
+for review. For tools with neither command nor diff, the tool name, file path and
+complete input appear expanded. Oversized input has an explanation and no empty panel.
+Hidden format/control characters appear as visible ⟨U+XXXX⟩ tokens with a
+**Hidden characters shown** warning in the card and Push. Newlines and tabs remain readable.
+
+Each card has one deterministic advisory label: Deletes files, Rewrites history,
+Network / external message, Installs packages, Restarts or stops services,
+Spends money, Touches secrets paths, or No specific hint. **Label is a hint, not a check**:
+it does not authorize anything or change policy. Both advisory classifiers appear
+under **Hints (not checks)**. Push includes a bounded command
+first non-empty line and label, with … for shortening and (+N more lines) for additional non-empty lines; open the app for the complete card. Phone Inbox uses the same card.
+
+Approve and Deny retain the existing Claude Code permission-hook transport and
+person audit. Codex cards do not add an answering transport: use **Answer in terminal**.
+No action simulates approval keystrokes. Oversized input cannot be approved in Inbox.

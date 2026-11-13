@@ -108,6 +108,7 @@ def router(ctx: Context) -> APIRouter:
                 raise HTTPException(409, "Cannot safely identify this workspace. The node must be online and updated before registering a folder. Check Host → Machines and update its agent service, then retry.") from error
             if identity.get("allowed") is False:
                 raise HTTPException(409, "Allow this folder in Security → Allowed folders, then register it again. Ask an owner if you cannot edit Security.")
+        body = body.model_copy(update={"workspace_path": identity["path"]})
         return await supervisor.workspace_operations.run(body.workspace_path,
             lambda: _create_project(body, who), body.host)
 
@@ -134,6 +135,24 @@ def router(ctx: Context) -> APIRouter:
                     await broker.call('scan_docs', account=account, path=canonical)
                 except BrokerError as error:
                     raise HTTPException(409, "That local workspace is no longer available. Reload Workspaces before registering it as a project.") from error
+        # Resolve legacy registrations through the owning machine too: accd must
+        # never inspect another account's filesystem. The canonical operation lock
+        # serializes registrations through different symlink spellings.
+        with db() as s:
+            candidates = list(s.scalars(select(Project).where(
+                Project.account == account, Project.host == body.host)))
+            visible = set(s.scalars(ctx.scope(select(Project.id), Project, who)))
+        for existing in candidates:
+            try:
+                known = await broker.call('workspace_identity', account=account, host=body.host,
+                                          path=existing.workspace_path)
+            except BrokerError as error:
+                raise HTTPException(409, "Cannot safely check existing registrations. Repair the agent service and retry.") from error
+            if known['path'] == body.workspace_path:
+                detail = {"message": "This folder is already registered for this agent account."}
+                if existing.id in visible:
+                    detail['existing_project_id'] = existing.id
+                raise HTTPException(409, detail)
         # A registration can reference a child of a deletion target, whose exact
         # operation key differs. Resolve aliases through the owning broker and
         # refuse that new reference while its ancestor is leased for removal.
@@ -350,10 +369,15 @@ def router(ctx: Context) -> APIRouter:
             return {"error": "GitHub views are available for owners' projects: they use the owner's GitHub token."}
         if refresh:
             with refresh_read():
-                await supervisor.refresh_github(project_id)
+                await supervisor.refresh_github(project_id, force=True)
         with db() as s:
             observation = s.get(Observation, f"github.{project_id}")
-            return observation.value if observation else {}
+            from ..github import same_repo
+            project = ctx.project_for(s, who, project_id)
+            value = observation.value or {} if observation else {}
+            if not same_repo((value.get('repo') or {}).get('full_name'), project.repo):
+                return {k: value[k] for k in ('error', 'error_at') if k in value}
+            return value
 
     async def machine_root(host: str, account: str) -> Path:
         """Where `account`'s new projects go on `host`: the first of its broker's allowed roots (its ping says, from

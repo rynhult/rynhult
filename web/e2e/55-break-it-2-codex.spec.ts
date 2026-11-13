@@ -18,7 +18,7 @@ test('phone terminal still detects Codex questions and turn errors', async ({ pa
   try {
     await expect.poll(async () => (await state()).observed_state).toBe('idle');
     await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+    await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
     // The real browser terminal resizes its tmux pane to phone columns before output arrives.
     const fixture = (name: string) => readFileSync(`../tests/fixtures/codex-${name}.txt`, 'utf8');
     for (const [name, expected, activity] of [

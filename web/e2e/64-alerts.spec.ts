@@ -10,6 +10,7 @@ for (const width of [1440, 390]) {
   test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, hasTouch: width === 390, isMobile: width === 390 });
   for (const installed of [false, true]) {
     test(`alerts stay compact and actionable at ${width}px${installed ? " in the installed app" : ""}`, async ({ page }, testInfo) => {
+      test.fixme(true, "Classic fixed alert stack and its collapse/placement controls are retired. Original assertions retained for Josh; rail counts and Inbox actions are exercised by shell-polish-3, shell-inbox and 26-ux-inbox.");
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       await page.addInitScript(() => localStorage.setItem("acc.getStarted", "hidden"));
       await page.route("**/api/preferences/phone-banner", route => route.fulfill({ json: { dismissed: true } }));
@@ -61,7 +62,7 @@ for (const width of [1440, 390]) {
       }
       const id = await sessionWithChanges(page, `alerts-${width}`);
       await page.goto(`/sessions/${id}`);
-      await expect(page.getByText("Read-write", { exact: true })).toBeVisible();
+      await expect(page.getByText("You control this terminal", { exact: true })).toBeVisible();
       for (const label of ["Machine offline: 1", "Backup failed: 1", "Backup stale: 1"]) {
         await expect(status.getByRole("link", { name: label, exact: true })).toBeInViewport();
       }
@@ -129,12 +130,12 @@ for (const width of [1440, 390]) {
       await route.fulfill({ response, json: { ...state, consent: { ...state.consent, usage: false, reports: false } } });
     });
     await page.goto("/");
-    const status = page.getByRole("region", { name: "Inbox status" });
-    await expect(status.getByRole("link", { name: "Inbox (1)" })).toBeVisible();
+    const status = page.getByRole("navigation", { name: width === 390 ? "Phone rail" : "Rail", exact: true }).getByRole("button", { name: /^Inbox/ });
+    await expect(status).toHaveAccessibleName("Inbox, 1 open");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect((await status.boundingBox())!.height).toBeLessThanOrEqual(64);
-    await status.getByRole("button", { name: "Collapse other notices" }).click();
-    await expect(status).toBeHidden();
+    // The sole frame uses a fixed rail; classic notice collapse has no counterpart.
+    await expect(page.getByRole("main").getByRole("heading", { name: "Overview", exact: true })).toBeInViewport();
     await page.goto("/inbox");
     await page.getByRole("main").getByRole("link", { name: "Review privacy choices" }).click();
     await expect(page.locator("#telemetry")).toBeFocused();

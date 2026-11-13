@@ -2,19 +2,10 @@ import {test, expect, type Page} from './fixtures';
 import {mkdirSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {AUTH_FILE, csrfHeaders, gitProject, sessionWithChanges, verifyAgain, expectAxeClean, info, PASSWORD, totp} from './helpers';
-test.use({ presentationChanges: ['admin_features', 'ui_shell', 'layouts'],storageState: AUTH_FILE});
-async function shell(page: Page, enabled=true) {
-  let state=await (await page.request.get('/api/admin-features')).json();
-  if (!state.features?.find((item:{id:string})=>item.id==='new_shell')?.enabled) {
-    await verifyAgain(page);
-    state=await (await page.request.get('/api/admin-features')).json();
-    const changed=await page.request.put('/api/admin-features/new_shell',{headers:await csrfHeaders(page),data:{enabled:true,revision:state.revision}});
-    expect(changed.ok()).toBe(true);
-  }
-  expect((await page.request.put('/api/preferences/ui-shell',{headers:await csrfHeaders(page),data:{enabled}})).ok()).toBe(true);
-}
+test.use({ presentationChanges: ['admin_features', 'layouts'],storageState: AUTH_FILE});
+
 for(const role of ['owner','member'] as const) for(const theme of ['light','dark'] as const) test(`task-first workspace launch ${role} ${theme}`,async({page,browser})=>{
-  await shell(page);
+
   let memberAccount: string | undefined;
   let member: Awaited<ReturnType<typeof browser.newContext>> | undefined;
   if(role==='member') {
@@ -26,7 +17,7 @@ for(const role of ['owner','member'] as const) for(const theme of ['light','dark
     const begin=await member.request.post('/api/auth/invite/begin',{headers:{Origin:info().origin},data:{token}});
     expect((await member.request.post('/api/auth/invite/complete',{headers:{Origin:info().origin},data:{token,username:`launch-${randomUUID().slice(0,6)}`,password:PASSWORD,code:totp((await begin.json()).totp_secret)}})).ok()).toBe(true);
     page=await member.newPage();
-    expect((await page.request.put('/api/preferences/ui-shell',{headers:await csrfHeaders(page),data:{enabled:true}})).ok()).toBe(true);
+
   }
   try {
   const project=await gitProject(page,'cedar-launch');
@@ -38,6 +29,10 @@ for(const role of ['owner','member'] as const) for(const theme of ['light','dark
   await expect(page.getByRole('dialog',{name:'New session',exact:true})).toHaveCount(0);
   const task=launch.getByRole('textbox',{name:'Task (optional)',exact:true});
   await expect(task).toBeFocused();await task.fill('Keep this task as a draft');
+  await page.keyboard.press('Escape');
+  await expect(launch).toBeHidden();
+  await page.getByRole('button',{name:/^New session/}).first().click();
+  await expect(task).toHaveValue('Keep this task as a draft');
   await expect(launch.getByRole('button',{name:'Launch',exact:true})).toBeEnabled({timeout:20000});
   await expect(launch.locator('summary:visible')).toHaveCount(3);
   const primaryBounds=await launch.getByRole('button',{name:'Launch',exact:true}).boundingBox();
@@ -67,7 +62,7 @@ for(const role of ['owner','member'] as const) for(const theme of ['light','dark
 
 for(const theme of ['light','dark'] as const)test(`offline retained target keeps task, account and observed path; reconnect never launches ${theme}`,async({page})=>{
   await page.setViewportSize({width:1440,height:1000});await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'});
-  const project=await gitProject(page,'offline-cedar'); await shell(page);
+  const project=await gitProject(page,'offline-cedar');
   const detail=(await (await page.request.get('/api/projects')).json()).find((item:{id:number})=>item.id===project.id);
   const local=(await (await page.request.get(`/api/nodes?launch=1&project_id=${project.id}`)).json())[0];
   const providers=await (await page.request.get(`/api/providers/registry?project_id=${project.id}&machine=local`)).json();
@@ -120,7 +115,7 @@ for(const theme of ['light','dark'] as const)test(`offline retained target keeps
 });
 
 for(const result of ['refused','uncertain'] as const)test(`launch ${result} retains draft without replay`,async({page})=>{
-  const project=await gitProject(page,`launch-${result}`);await shell(page);
+  const project=await gitProject(page,`launch-${result}`);
   let calls=0;
   await page.route('**/api/sessions',route=>{
     if(route.request().method()!=='POST')return route.continue();calls++;
@@ -140,7 +135,7 @@ for(const result of ['refused','uncertain'] as const)test(`launch ${result} reta
 });
 
 test('provider bypass still needs consent and cannot override Security',async({page})=>{
-  const project=await gitProject(page,'launch-security');await shell(page);
+  const project=await gitProject(page,'launch-security');
   await page.goto(`/projects/${project.id}`);await page.getByRole('button',{name:/^New session/}).first().click();
   const launch=page.getByRole('region',{name:'New session',exact:true});
   await launch.locator('summary').filter({hasText:'Permissions and limits'}).click();
@@ -152,7 +147,7 @@ test('provider bypass still needs consent and cannot override Security',async({p
 });
 
 test('explicit fake-provider launch uses existing defaults and clears the consumed draft',async({page})=>{
-  const project=await gitProject(page,'shell-success');await shell(page);
+  const project=await gitProject(page,'shell-success');
   await page.goto(`/projects/${project.id}`);await page.getByRole('button',{name:/^New session/}).first().click();
   const launch=page.getByRole('region',{name:'New session',exact:true});
   await launch.getByRole('textbox',{name:'Task (optional)',exact:true}).fill('A disposable launch');
@@ -175,22 +170,28 @@ test('explicit fake-provider launch uses existing defaults and clears the consum
   } finally {await page.request.post(`/api/sessions/${id}/stop`,{headers:await csrfHeaders(page)});}
 });
 
-test('cancelling brief navigation keeps the workspace instead of opening a hidden launch page',async({page})=>{
-  const project=await gitProject(page,'brief-launch-cancel');await shell(page);
+test('brief navigation cancellation and retained launch keep the workspace draft',async({page})=>{
+  const project=await gitProject(page,'brief-launch-cancel');
   await page.goto(`/projects/${project.id}#project-brief`);
   const brief=page.getByRole('textbox',{name:'Product or feature',exact:true});
   await brief.fill('Unsaved project context');
-  await page.getByRole('button',{name:/^New session/}).first().click();
+  await page.getByRole('link',{name:'Back to all projects',exact:true}).click();
   const warning=page.getByRole('dialog',{name:'Leave with an unsaved project brief?',exact:true});
   await expect(warning).toBeVisible();
   await warning.getByRole('button',{name:'Cancel',exact:true}).click();
   await expect(brief).toBeVisible();await expect(brief).toHaveValue('Unsaved project context');
   await page.screenshot({path:test.info().outputPath('cancelled-brief-navigation.png')});
   await expect(page.getByRole('region',{name:'New session',exact:true})).toHaveCount(0);
+  // Opening the retained launcher keeps this editor mounted and needs no leave consent.
+  await page.getByRole('button',{name:/^New session/}).first().click();
+  const launcher=page.getByRole('region',{name:'New session',exact:true});
+  await expect(launcher).toBeVisible();
+  await launcher.getByRole('button',{name:'Back to workspace',exact:true}).click();
+  await expect(brief).toBeVisible(); await expect(brief).toHaveValue('Unsaved project context');
 });
 
 test('workspace launch uses the draft reload warning and exposes the real helper grant',async({page})=>{
-  const project=await gitProject(page,'shell-retained-grant');await shell(page);
+  const project=await gitProject(page,'shell-retained-grant');
   await page.goto(`/projects/${project.id}`);await page.getByRole('button',{name:/^New session/}).first().click();
   const launch=page.getByRole('region',{name:'New session',exact:true}),task=launch.getByRole('textbox',{name:'Task (optional)',exact:true});
   await task.fill('Retain with native leave protection');
@@ -203,7 +204,7 @@ test('workspace launch uses the draft reload warning and exposes the real helper
 });
 
 test('a slow project list cannot turn a project launch into the first available project',async({page})=>{
-  await gitProject(page,'first-cedar');const project=await gitProject(page,'target-cedar');await shell(page);
+  await gitProject(page,'first-cedar');const project=await gitProject(page,'target-cedar');
   let release!:()=>void;const ready=new Promise<void>(resolve=>{release=resolve;});
   await page.route('**/api/projects',async route=>{await ready;await route.continue();});
   try {
@@ -214,7 +215,8 @@ test('a slow project list cannot turn a project launch into the first available 
 });
 
 test('L1 legacy modal keeps provider selects in its two-column model grid',async({page})=>{
-  const project=await gitProject(page,'legacy-options-grid');await shell(page,false);
+  test.fixme(true, 'Classic-only modal grid; Josh review: workspace launch uses Model and working location / Permissions and limits disclosures. Original assertions retained.');
+  const project=await gitProject(page,'legacy-options-grid');
   await page.setViewportSize({width:1440,height:1000});await page.goto(`/projects/${project.id}`);
   await page.getByRole('main').getByRole('button',{name:'New session',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'New session',exact:true});
@@ -233,7 +235,7 @@ test('L1 legacy modal keeps provider selects in its two-column model grid',async
 });
 
 test('L2 launch-only navigation preserves dirty file edits without a discard prompt',async({page})=>{
-  const id=await sessionWithChanges(page,'launch-dirty-file');await shell(page);
+  const id=await sessionWithChanges(page,'launch-dirty-file');
   try {
     await page.goto(`/sessions/${id}?tab=files&file=app.py`);
     const editor=page.getByRole('textbox',{name:'File content',exact:true});
@@ -262,7 +264,7 @@ test('L2 launch-only navigation preserves dirty file edits without a discard pro
 });
 
 test('sign-out clears global announcements',async({page})=>{
-  await gitProject(page,'announce-signout');await shell(page);
+  await gitProject(page,'announce-signout');
   await page.goto('/projects');
   const status=page.getByRole('status',{name:'Announcements',exact:true});
   await expect(status).toContainText('Projects');

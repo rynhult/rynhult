@@ -21,7 +21,7 @@ for (const width of [1440, 390]) test(`a wrong pairing code stays visibly explai
   const started = await page.request.post('/api/devices/pairings', { headers, data: { label: 'هاتف 🧪' } });
   expect(started.ok()).toBe(true);
   const pairing = await started.json();
-  const claimed = await page.request.post('/api/device-pairing/claim', { headers, data: { token: pairing.link.split('#')[1] } });
+  const claimed = await page.request.post('/api/device-pairing/claim', { headers, data: { token: pairing.link.split('#')[1], phone_confirmed: true } });
   expect(claimed.ok()).toBe(true);
   const code = (await claimed.json()).matching_code;
   await page.reload();

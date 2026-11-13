@@ -11,11 +11,11 @@ from acc.providers.codex import PROVIDER
 FIXTURE = json.loads((Path(__file__).parent / 'fixtures/codex-hook-trust.json').read_text())
 
 
-@pytest.fixture
-def qualified(monkeypatch):
+@pytest.fixture(params=["0.163.0", "0.164.0", "0.167.1"])
+def qualified(monkeypatch, request):
     def version(argv, **kwargs):
         assert argv == ['/qualified/codex', '--version']
-        return subprocess.CompletedProcess(argv, 0, 'codex-cli 0.163.0\n', '')
+        return subprocess.CompletedProcess(argv, 0, f'codex-cli {request.param}\n', '')
     monkeypatch.setattr('acc.providers.codex.run', version)
 
 
@@ -63,7 +63,7 @@ def test_existing_acc_hash_is_updated_without_enabling_disabled_hook(tmp_path, q
     assert '# comment' in config.read_text() and '# keep' in config.read_text()
 
 
-@pytest.mark.parametrize('version', ['0.162.0', '0.165.0', '0.164.1', '0.164.0-dev', 'garbage'])
+@pytest.mark.parametrize('version', ['0.162.0', '0.165.0', '0.164.1', '0.164.0-dev', '0.167.0', '0.167.2', '0.167.1-dev', 'garbage'])
 def test_unknown_version_never_writes_trust(tmp_path, monkeypatch, version):
     monkeypatch.setattr('acc.providers.codex.run', lambda *a, **kw: subprocess.CompletedProcess([], 0, f'codex-cli {version}\n', ''))
     PROVIDER.bootstrap(tmp_path, '/srv/acc/bin/acc-hook', exe='/qualified/codex')
@@ -171,3 +171,16 @@ def test_dangling_config_symlink_is_not_followed(tmp_path, qualified):
     config.symlink_to(tmp_path / 'elsewhere.toml')
     PROVIDER.bootstrap(tmp_path, '/srv/acc/bin/acc-hook', exe='/qualified/codex')
     assert config.is_symlink() and not (tmp_path / 'elsewhere.toml').exists()
+
+
+def test_0167_source_derived_identities_match_literal_upstream_hashes():
+    import hashlib
+
+    from acc.providers.codex import acc_hook_hash
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/codex-hook-trust-0167.json').read_text())
+    assert fixture['version'] == '0.167.1' and len(fixture['cases']) == 8
+    for row in fixture['cases']:
+        encoded = json.dumps(row['identity'], sort_keys=True, separators=(',', ':')).encode()
+        assert 'sha256:' + hashlib.sha256(encoded).hexdigest() == row['trusted_hash']
+        assert acc_hook_hash(row['event'], row['identity']['hooks'][0]['command']) == row['trusted_hash']

@@ -89,7 +89,7 @@ def test_installs_only_pinned_key_and_scoped_signed_repo(rpm_repo, tmp_path):
     # Real GnuPG checks the installed bytes, without consulting the user's keyring.
     home = tmp_path / 'inspect'
     home.mkdir(mode=0o700)
-    listing = subprocess.run(['/usr/bin/gpg', '--no-options', '--homedir', str(home), '--with-colons', '--show-keys', str(key)],
+    listing = subprocess.run(['/usr/bin/gpg', '--no-options', '--no-autostart', '--homedir', str(home), '--with-colons', '--show-keys', str(key)],
                              capture_output=True, text=True, check=True).stdout
     assert trusted.fingerprint in listing and rogue.fingerprint not in listing
     for path in (key, repo):

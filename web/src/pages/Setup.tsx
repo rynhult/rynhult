@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { post } from '../lib/api';
+import { api, post } from '../lib/api';
 import { RecoveryCodes } from '../components/RecoveryCodes';
 import { CopyBlock } from '../components/CopyBlock';
 import { Button, ErrorNote, Field, Input } from '../components/ui';
@@ -29,7 +29,9 @@ export default function Setup() {
       setCodes(result.recovery_codes);
     } catch (err) { setError(err); }
   };
-  if (codes) return <Shell title="Save recovery codes" subtitle="Keep access if you lose your authenticator"><RecoveryCodes codes={codes} onSaved={async () => { setCodes(null); await queryClient.invalidateQueries({ queryKey: ["auth"] }); navigate("/"); }} /></Shell>;
+  if (codes) return <Shell title="Save recovery codes" subtitle="Keep access if you lose your authenticator"><RecoveryCodes codes={codes} onSaved={async () => { const value = await postPreferenceAcknowledgement();
+      queryClient.setQueryData(['setup-level', value.username], value.preference);
+      setCodes(null); await queryClient.invalidateQueries({ queryKey: ["auth"] }); navigate("/setup/wizard"); }} /></Shell>;
   if (!enrol) {
     return (
       <Shell title="Set up Rynhult" subtitle="One-time setup">
@@ -58,4 +60,14 @@ export default function Setup() {
       </form>
     </Shell>
   );
+}
+
+async function postPreferenceAcknowledgement() {
+  const preference = await api<import('../lib/setupPreference').SetupPreference>('/api/preferences/setup-level');
+  const saved = await api<import('../lib/setupPreference').SetupPreference>('/api/preferences/setup-level', { method: 'PUT', json: {
+    level: preference.level, dismissed: preference.dismissed,
+    wizard: { revision: preference.wizard.revision, step: 'recovery', state: 'completed' },
+  } });
+  const auth = await api<{ username: string }>('/api/auth/state');
+  return { username: auth.username, preference: saved };
 }

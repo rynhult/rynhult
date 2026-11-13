@@ -147,3 +147,12 @@ async def test_saved_copilot_quota_no_longer_creates_a_budget_window(api):
             assert not any(w["provider"] == "copilot" for w in budgets.windows(db))
     finally:
         WRITE_INTENT.reset(intent)
+
+
+async def test_no_opt_in_budget_never_scans_usage_on_input_admission(api, monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError('No opt-in rules: admission must not scan provider usage or resolve a budget policy')
+    monkeypatch.setattr(budgets, 'windows', unexpected)
+    monkeypatch.setattr('acc.server.security_settings.resolve', unexpected)
+    with api.app.state.db() as db:
+        assert budgets.paused(db, '@api', 'codex') == []

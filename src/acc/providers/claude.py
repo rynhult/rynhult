@@ -208,7 +208,7 @@ PROVIDER = Claude(
             ("plan", "Plan only (read-only)"), ("auto", "Auto (classifier decides)"),
             ("dontAsk", "Don't ask (denies what isn't pre-approved)"),
             ("bypassPermissions", "Bypass all permissions ⚠")),
-            default="acceptEdits", dangerous=("bypassPermissions",)),
+            default="acceptEdits", permission_order=("plan", "dontAsk", "default", "acceptEdits", "auto", "bypassPermissions"), permission_levels=(0, 1, 1, 2, 3, 4), dangerous=("bypassPermissions",)),
         Option("remote_control", "Remote Control", kind="bool", default=True,
                help="claude.ai and the app"),
     ),

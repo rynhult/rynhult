@@ -19,10 +19,10 @@ test('unsaved brief launch offers Save and launch, Launch without the brief, and
   const { id, headers } = await gitProject(page, 'bi15-unsaved');
   await page.goto(`/projects/${id}#project-brief`);
   await page.getByRole('textbox', { name: 'Product or feature', exact: true }).fill('A room booking board');
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
   try {
     for (const name of ['Save and launch', 'Launch without the brief', 'Back']) {
@@ -42,10 +42,10 @@ test('empty project starts a team with an edited kickoff and resume sends no sec
   const projectDialog = page.getByRole('dialog', { name: 'New project', exact: true });
   await projectDialog.getByRole('textbox', { name: 'Name', exact: true }).fill(`bi15-${randomUUID()}`);
   await createProjectFromDialog(page, projectDialog);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await openAdvanced(dialog);
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   const task = dialog.getByRole('textbox', { name: 'Task (optional)', exact: true });
   await expect(task).toHaveValue(/no accepted brief/);
   await task.fill('Please investigate the room booking workflow first.');

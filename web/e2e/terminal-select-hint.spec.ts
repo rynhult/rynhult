@@ -1,6 +1,6 @@
 import {expect,test} from './fixtures';
 import {writeFileSync} from 'node:fs';
-import {AUTH_FILE,control,csrfHeaders,info,sessionWithChanges} from './helpers';
+import {openGridTerminal,AUTH_FILE,control,csrfHeaders,info,sessionWithChanges} from './helpers';
 test.use({storageState:AUTH_FILE});
 for(const platform of [
   {name:'Mac fallback',legacy:'MacIntel',modern:null,modifier:'Alt',hint:'Hold ⌥ Option while dragging to select text',copy:'⌘C'},
@@ -13,8 +13,9 @@ for(const platform of [
   },platform);
   const id=await sessionWithChanges(page,'selection-hint');
   try {
-    await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write',{exact:true})).toBeVisible();
+    await openGridTerminal(page, id!);
+    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
     const tree=page.locator('.xterm-accessibility-tree');
     await expect(tree).toContainText('fake-claude ready');
     const hint=page.getByRole('group',{name:'Terminal selection hint',exact:true});
@@ -48,7 +49,8 @@ for(const platform of [
     await expect(page.getByRole('button',{name:'Copy selection',exact:true})).toHaveAttribute('title',`Copy selected text (${platform.copy})`);
     await page.getByRole('button',{name:'Select text',exact:true}).click();
     await drag();await expect(hint).toHaveCount(0);
-    await page.reload();await expect(page.getByText('Read-write',{exact:true})).toBeVisible();
+    await page.reload();await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
     paint(' again');await expect(tree).toContainText('Selection hint marker again');
     if(platform.modern)await page.clock.install();
     await drag();await expect(hint).toBeVisible();

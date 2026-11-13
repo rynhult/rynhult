@@ -110,7 +110,7 @@ def write_grant(settings, session, generation: int, args: list[str], files: dict
     grant = {"version": 1, "session_id": session.id, "generation": generation, "policy_id": settings.containers_policy,
              "account": session.run_as, "provider": session.provider, "args": list(args), "checkout": session.cwd,
              "run_dir": str(settings.session_run_dir(session)), "guard_files": guard_hashes(files),
-             "limits": check(limits), "automated": automated}
+             "limits": check(limits), "automated": automated, "parent_session_id": getattr(session, "parent_session_id", None)}
     folder = settings.containers_dir / "grants"
     target = folder / f"{session.id}.json"
     tmp = folder / f".{session.id}.{os.getpid()}.tmp"

@@ -7,6 +7,9 @@ export type WorkingViewState = {
   /** This view was requested through navigation, rather than only restored. */
   explicit: boolean;
   intent?: string;
+  navigationState?: unknown;
+  /** Navigation requests focus in the newly mounted tab strip. */
+  focusTab?: string;
   documents: DocumentRegistry;
   terminals: TerminalOwner;
   person: string;

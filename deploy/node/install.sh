@@ -12,11 +12,22 @@
 #   --wsl-isolate       opt in: disable Windows interop and restrict Windows drives to root (WSL only)
 #   --no-wsl-isolate    keep WSL settings unchanged, without prompting
 #   --wsl-disable-automount  with --wsl-isolate: disable Windows drive automount instead of restricting it
+#   --check             check host acceptance only; no installation or settings changes
 #   --dry-run           print every step and change nothing (no root needed)
 # Then enroll the node with the command the dashboard shows (Host → Machines → Add machine); see docs/MULTIHOST.md.
 set -euo pipefail
 # Code and app trees must be readable by service accounts; secrets use explicit private modes.
 umask 022
+
+# Check the same host acceptance as primary setup before logging or account work.
+case " $* " in
+  *" --check "*)
+    export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    check_args=(--check)
+    case " $* " in *" --unqualified-distro "*) check_args+=(--unqualified-distro) ;; esac
+    exec bash "$(dirname "$0")/../setup.sh" "${check_args[@]}"
+    ;;
+esac
 
 # Phase B can be deployed independently of the normal installer: reload only,
 # never run setup, account helpers or restart services. Dry-run plans aliases only.
@@ -80,7 +91,7 @@ while [ $# -gt 0 ]; do
     --agent) AGENT=${2:?--agent needs a name}; shift ;;
     --roots) ROOTS=${2:?--roots needs folders}; shift ;;
     --unqualified-distro) UNQUALIFIED=1 ;;
-    -h|--help) sed -n '2,16s/^# \{0,1\}//p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "unknown option $1 (see --help)" >&2; exit 1 ;;
   esac
   shift
@@ -388,6 +399,12 @@ run systemctl daemon-reload
 for pair in "${KEEP[@]}"; do
   run env ACC_AGENT_CLIENT=acc-node ACC_AGENT_PREFIX="$PREFIX" /usr/local/sbin/acc-agent-add "${pair%% *}" --roots "${pair#* }"
 done
+
+# Keep test-install acceptance outside service-account writable settings.
+if [ -n "$UNQUALIFIED" ] && [ "$PKG" != apt ]; then
+  run install -o root -g root -m 0644 /dev/null /etc/acc-unqualified-distro
+  run_sh "printf '%s\\n' '$PKG' > /etc/acc-unqualified-distro"
+fi
 
 echo "== Rynhult updater (the primary supplies its version, build and checksum)"
 run install -o root -g root -m 0755 "$REPO/deploy/updates/acc-update" /usr/local/sbin/acc-update

@@ -5,6 +5,7 @@ import type { AttentionItem, ObservedState } from "./types";
 
 export const SESSION_GROUPS = [
   { key: "needs_you", label: "Needs you", states: ["waiting_input", "recovery_needed"] },
+  { key: "ready_for_review", label: "Ready for review", states: [] },
   { key: "working", label: "Working", states: ["starting", "active", "recovering"] },
   { key: "unknown", label: "Unknown", states: [] },
   { key: "idle", label: "Idle", states: ["idle"] },
@@ -13,12 +14,14 @@ export const SESSION_GROUPS = [
 export type GroupKey = (typeof SESSION_GROUPS)[number]["key"];
 
 type Orderable = {
+  ready_for_review?: boolean;
   id: string; observed_state: ObservedState; team_id?: string | null;
   status_stale_since?: string | null;
   activity_at?: string | null; last_output_at?: string | null; status_at?: string | null; created_at?: string | null;
 };
 
 const inGroup = (session: Orderable, key: GroupKey) => session.status_stale_since ? key === "unknown"
+  : session.ready_for_review ? key === "ready_for_review" : key === "ready_for_review" ? false
   : (SESSION_GROUPS.find((g) => g.key === key)!.states as readonly string[]).includes(session.observed_state);
 
 export const sessionCount = (sessions: Orderable[], key: GroupKey) => sessions.filter((s) => inGroup(s, key)).length;
@@ -49,6 +52,7 @@ export function groupSessions<T extends Orderable>(sessions: T[], keys: readonly
 /** Inbox rows by type: sessions waiting on you, then approvals, then alerts, with FYI notes last. */
 export const INBOX_GROUPS = [
   { key: "waiting", label: "Waiting sessions" },
+  { key: "ready_for_review", label: "Ready for review" },
   { key: "approvals", label: "Approvals" },
   { key: "alerts", label: "Alerts" },
   { key: "notes", label: "Notes" },
@@ -57,6 +61,7 @@ export type InboxGroupKey = (typeof INBOX_GROUPS)[number]["key"];
 
 export const inboxGroupOf = (item: Pick<AttentionItem, "kind" | "severity">): InboxGroupKey =>
   item.kind === "needs_input" || item.kind === "recovery_needed" || item.kind === "image_check" ? "waiting"
+    : item.kind === "ready_for_review" ? "ready_for_review"
     : item.kind === "publish_request" || item.kind === "tool_request" ? "approvals"
       : item.severity === "info" ? "notes" : "alerts";
 

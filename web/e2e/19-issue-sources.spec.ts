@@ -1,3 +1,4 @@
+import { selectSessionView } from './helpers';
 import { openAdvanced, wikiShotPath } from "./helpers";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "./fixtures";
@@ -29,9 +30,9 @@ async function launchIssueSession(page: Page, wizard: Locator) {
   await expect(page).toHaveURL(new RegExp(`/sessions/${id}$`));
 }
 
-// Issue sources live in the project's "Issues and pull requests" tab; hidden tab panels stay mounted but aren't visible.
+// Issue sources live in the project's "Issues & pull requests" tab; hidden tab panels stay mounted but aren't visible.
 const openIssues = (page: import("@playwright/test").Page) =>
-  page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues and pull requests", exact: true }).click();
+  page.getByRole("tablist", { name: "Project sections" }).getByRole("tab", { name: "Issues & pull requests", exact: true }).click();
 
 test("connect sources with vault keys, filter lists and launch from GitLab and Linear", async ({ page }, testInfo) => {
   // Two real provider launches, connection/filter journeys, desktop/phone captures and axe.
@@ -70,18 +71,19 @@ test("connect sources with vault keys, filter lists and launch from GitLab and L
     .withTags(["wcag2a", "wcag2aa", "wcag22aa"]).analyze();
   expect(axe.violations).toEqual([]);
   await list.getByRole("button", { name: "Start session for #7" }).click();
-  const wizard = page.getByRole("dialog", { name: "New session" });
+  const wizard = page.getByRole("region", { name: "New session" });
   await expect(wizard.getByLabel("Name", { exact: true })).toHaveValue("gitlab-7");
   await openAdvanced(wizard);
   await wizard.getByLabel("Own worktree").uncheck();
   await expect(wizard.getByText(/untrusted external issue data/).first()).toBeVisible();
   await launchIssueSession(page, wizard);
-  await page.getByRole("tab", { name: "Setup" }).click();
-  await page.getByRole("tabpanel").locator("summary").filter({ hasText: /^Exact inputs/ }).click();
+  await selectSessionView(page, 'Setup');
+  await page.getByRole("tabpanel", { name: "Setup", exact: true }).locator("summary").filter({ hasText: /^Exact inputs/ }).click();
   await expect(page.getByText(/Fix demo parser/).first()).toBeVisible();
   await expect(page.getByText("e2e-source-placeholder")).toHaveCount(0);
 
   await page.getByRole("button", { name: "New session", exact: true }).click();
+  await openAdvanced(wizard);
   await wizard.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(project.id));
   await wizard.getByLabel("Start from").selectOption("linear:issue");
   await wizard.getByRole("button", { name: "Use DEMO-7" }).click();
@@ -174,7 +176,7 @@ test("owner confirms a self-hosted server and connects Forgejo pull requests", a
   await list.screenshot({ path: wikiShotPath(testInfo, 'project-forge-issues-mobile.png') });
   await page.setViewportSize({ width: 1440, height: 900 });
   await list.getByRole('button', { name: 'Start session for #7' }).click();
-  const wizard = page.getByRole('dialog', { name: 'New session' });
+  const wizard = page.getByRole('region', { name: 'New session' });
   await openAdvanced(wizard);
   await wizard.getByLabel('Own worktree').uncheck();
   await expect(wizard.getByText('gitea PR 7', { exact: true })).toBeVisible();

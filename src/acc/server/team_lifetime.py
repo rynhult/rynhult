@@ -103,13 +103,17 @@ def preview(db, team):
 
 def set_limit(db, team, actor, value):
     value = hours(value)
+    from .child_caps import proof_refresh_plan, refresh_proofs
+    members = list(db.scalars(select(Session).where(Session.team_id == team.id)))
+    proof_plan = proof_refresh_plan(db, members)
     previous = team.expires_at
     team.expires_at = deadline(value, max(now(), previous) if previous else now())
     team.limits = {**team.limits, 'hours': value}
     team.lifetime_revision += 1
     attention.resolve(db, 'team_expiring:' + team.id)
+    changes = refresh_proofs(db, members, proof_plan)
     db.add(AuditLog(actor=actor, action='team.remove_limit' if value is None else 'team.extend', target=team.id,
-        detail={'hours': value, 'previous_expires_at': previous.isoformat() if previous else None,
+        detail={'hours': value, 'proof_digest_changes': changes, 'previous_expires_at': previous.isoformat() if previous else None,
                 'expires_at': team.expires_at.isoformat() if team.expires_at else None}))
 
 
@@ -157,6 +161,9 @@ async def _resume_locked(supervisor, team_id, actor, revision, value):
                 if session.parent_session_id:
                     assignments.require_resume(db, session)
             # No limit is a deliberate, explicit person choice, not an agent mutation.
+            from .child_caps import proof_refresh_plan, refresh_proofs
+            members = list(db.scalars(select(Session).where(Session.team_id == team.id)))
+            proof_plan = proof_refresh_plan(db, members)
             previous_deadline = team.expires_at
             team.expires_at = deadline(value)
             team.limits = {**team.limits, 'hours': hours(value)}
@@ -164,13 +171,14 @@ async def _resume_locked(supervisor, team_id, actor, revision, value):
             team.wrapup_until = None
             team.stop_reason = None
             team.lifetime_revision += 1
+            changes = refresh_proofs(db, members, proof_plan)
             attention.resolve(db, 'team_expired:' + team.id)
             attention.resolve(db, 'team_expiring:' + team.id)
             db.add(AuditLog(actor=actor, action='team.remove_limit' if value is None else 'team.extend', target=team.id,
                 detail={'reason': 'resume', 'hours': value, 'previous_expires_at': previous_deadline.isoformat() if previous_deadline else None,
                         'expires_at': team.expires_at.isoformat() if team.expires_at else None}))
             db.add(AuditLog(actor=actor, action='team.resume', target=team.id,
-                detail={'sessions': [s.id for s in sessions], 'hours': value}))
+                detail={'sessions': [s.id for s in sessions], 'hours': value, 'proof_digest_changes': changes}))
             db.commit()
         resumed, errors = [], {}
         for row in plan['sessions']:

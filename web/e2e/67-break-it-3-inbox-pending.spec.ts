@@ -16,17 +16,17 @@ test('an initial Inbox outage stays visible while a slow retry is pending', asyn
     await gate;
     return route.fulfill({ json: [] });
   });
-  await page.goto('/');
-  const status = page.getByRole('region', { name: 'Inbox status' });
+  await page.goto('/inbox');
+  const status = page.getByRole('main').getByRole('alert');
   await expect(status).toContainText('Inbox unavailable', { timeout: 10000 });
   hold = true;
   try {
-    await status.getByRole('button', { name: 'Retry Inbox', exact: true }).click();
+    await page.getByRole('main').getByRole('button', { name: 'Refresh Inbox', exact: true }).click();
     await requested;
     await expect(status).toContainText('Inbox unavailable');
-    await expect(status.getByRole('button', { name: 'Retry Inbox', exact: true })).toBeDisabled();
+    await expect(page.getByRole('main').getByRole('button', { name: 'Refresh Inbox', exact: true })).toBeDisabled();
   } finally {
     release();
   }
-  await expect(status).toBeHidden();
+  await expect(page.getByRole('main').getByText('Nothing needs you right now.', { exact: true })).toBeVisible();
 });

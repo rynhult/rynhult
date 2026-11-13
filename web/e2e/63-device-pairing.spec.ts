@@ -2,9 +2,9 @@ import { environmentValue } from "../../src/acc/env.mjs";
 import { expect, type BrowserContext, type Page } from './fixtures';
 import { test } from './shell-state';
 import { randomUUID } from 'node:crypto';
-import { AUTH_FILE, csrfHeaders, resetPairingThrottle, verifyAgain, wikiShotPath, expectAxeClean, freshStep, PASSWORD, loadSecret, totp } from './helpers';
+import { selectSettingsSection, AUTH_FILE, csrfHeaders, resetPairingThrottle, verifyAgain, wikiShotPath, expectAxeClean, freshStep, PASSWORD, loadSecret, totp } from './helpers';
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 type PairingSettings = {
   pairing_enabled: boolean; machine_identities: boolean; public_hostname: string;
@@ -87,7 +87,7 @@ async function setScheme(page: Page, colorScheme: 'light' | 'dark') {
 test('remote access stays off while an owner prepares LAN pairing', async ({ page }, testInfo) => {
   test.skip(environmentValue("ACC_E2E_DEVICE_CA") === '1', 'This probe expects the production helper to be absent.');
   await page.goto('/settings');
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('remote-access');
+  await selectSettingsSection(page, 'remote-access');
   await expect(page).toHaveURL(/\/settings#remote-access$/);
   await page.locator('#remote-access').getByRole('link', { name: 'Remote access', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Remote access', exact: true, level: 1 })).toBeVisible();
@@ -110,16 +110,23 @@ test('remote access stays off while an owner prepares LAN pairing', async ({ pag
   await expect(page.getByText('Pairing settings saved. Public routing was not changed.')).toBeVisible();
   await expect(page.locator('p', { hasText: 'Public access' }).first()).toContainText(/\bOff\b/);
   await page.getByLabel('Device name', { exact: true }).fill('Alex phone');
-  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair a phone', exact: true }).click();
   await expect(page.getByRole('img', { name: 'One-use device pairing QR code' })).toBeVisible();
   const link = await page.getByLabel('One-use pairing link').inputValue();
   expect(link).toMatch(/^https:\/\/acc\.example\.lan\/pair-device#[A-Za-z0-9_-]{43}$/);
-  receiver = await page.context().browser()!.newContext();
+  receiver = await page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
   const phone = await receiver.newPage();
   await phone.goto(new URL('/pair-device#' + link.split('#')[1], page.url()).href);
   await expect(phone.getByRole('button', { name: 'Request pairing' })).toBeVisible();
   expect(new URL(phone.url()).hash).toBe('');
+  const desktopCode = await page.getByRole('dialog').locator('code').textContent();
+  await expect(phone.getByText(/Installation:/)).toContainText('https://acc.example.lan');
+  await expect(phone.getByText(/Installation:/)).toContainText(`Desktop match code: ${desktopCode}`);
+  await expect(phone.getByRole('button', { name: 'Request pairing' })).toBeDisabled();
+  await phone.getByLabel('The installation, person and desktop match code match my trusted screen').check();
+  const claimRequest = phone.waitForRequest(request => request.url().endsWith('/api/device-pairing/claim'));
   await phone.getByRole('button', { name: 'Request pairing' }).click();
+  expect((await claimRequest).postDataJSON().phone_confirmed).toBe(true);
   await expect(phone.getByRole('paragraph').filter({ hasText: 'Waiting for owner confirmation.' })).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Confirm Alex phone' })).toBeVisible();
   const receiverCode = await phone.locator('code').textContent();
@@ -146,7 +153,6 @@ test('remote access stays off while an owner prepares LAN pairing', async ({ pag
   await page.screenshot({ path: wikiShotPath(testInfo, 'settings-remote-access-phone.png'), fullPage: true });
 });
 
-
 test('browser pairing delivers an encrypted identity only once with temporary test CA', async ({ page }, testInfo) => {
   test.skip(environmentValue("ACC_E2E_DEVICE_CA") !== '1', 'Run with the test-only temporary CA fixture.');
   const suffix = randomUUID().slice(0, 8);
@@ -161,13 +167,20 @@ test('browser pairing delivers an encrypted identity only once with temporary te
   await expect(page.getByText('Pairing settings saved. Public routing was not changed.')).toBeVisible();
   await expect(page.locator('p', { hasText: 'Public access' }).first()).toContainText(/\bOff\b/);
   await page.getByLabel('Device name', { exact: true }).fill(deviceName);
-  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair a phone', exact: true }).click();
   const link = await page.getByLabel('One-use pairing link').inputValue();
-  receiver = await page.context().browser()!.newContext();
+  receiver = await page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
   const phone = await receiver.newPage();
   await phone.goto(new URL('/pair-device#' + link.split('#')[1], page.url()).href);
   await expect(phone.getByRole('status', { name: 'Announcements' })).toHaveCount(1);
+  const desktopCode = await page.getByRole('dialog').locator('code').textContent();
+  await expect(phone.getByText(/Installation:/)).toContainText('https://acc.example.lan');
+  await expect(phone.getByText(/Installation:/)).toContainText(`Desktop match code: ${desktopCode}`);
+  await expect(phone.getByRole('button', { name: 'Request pairing' })).toBeDisabled();
+  await phone.getByLabel('The installation, person and desktop match code match my trusted screen').check();
+  const claimRequest = phone.waitForRequest(request => request.url().endsWith('/api/device-pairing/claim'));
   await phone.getByRole('button', { name: 'Request pairing' }).click();
+  expect((await claimRequest).postDataJSON().phone_confirmed).toBe(true);
   await expect(phone.getByRole('status', { name: 'Announcements' })).toContainText('Waiting for owner confirmation.');
   const receiverCode = await phone.locator('code').textContent();
   expect(receiverCode).toMatch(/^[0-9]{6}$/);

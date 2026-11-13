@@ -1,6 +1,6 @@
 import {writeFileSync} from 'node:fs';
 import {expect,test,type Page} from './fixtures';
-import {AUTH_FILE,control,info as serverInfo,csrfHeaders,sessionWithChanges,wikiShotPath,expectAxeClean} from './helpers';
+import {openGridTerminal,AUTH_FILE,control,info as serverInfo,csrfHeaders,sessionWithChanges,wikiShotPath,expectAxeClean} from './helpers';
 test.use({storageState:AUTH_FILE});
 function terminalRows(page:Page,id:string) {
   let rows=0,tail='';
@@ -17,6 +17,7 @@ function terminalRows(page:Page,id:string) {
   return ()=>rows;
 }
 for (const view of ['session','grid']) test(`${view} terminal expands without reconnecting and remembers this device`,async({page},info)=>{
+  test.fixme(view==='session', 'Single-session expansion is temporary and Escape reaches the terminal; the original remembered/fullscreen-preference assertions below do not apply. Current session expansion is covered in terminal-input; Grid still exercises this shared primitive.');
   const id=await sessionWithChanges(page,'termfull');
   try {
     const frames:{t:string;rows?:number;cols?:number;d?:string}[]=[];
@@ -26,6 +27,7 @@ for (const view of ['session','grid']) test(`${view} terminal expands without re
     });}});
     const url=view==='session'?`/sessions/${id}`:`/grid?ids=${id}`;
     await page.goto(url);
+    await expect(page.getByRole('navigation', { name: info.project.name.endsWith('phone') ? 'Phone rail' : 'Rail', exact: true })).toBeVisible();
     const input=page.locator('.xterm-helper-textarea');
     await expect(input).toBeAttached();
     await expect.poll(()=>frames.filter(f=>f.t==='r').length).toBeGreaterThan(0);
@@ -52,7 +54,7 @@ for (const view of ['session','grid']) test(`${view} terminal expands without re
       await page.evaluate(()=>document.exitFullscreen());
       await expect(expanded).toBeVisible();
     }
-    await expect(page.getByRole('navigation',{name:'Main',exact:true})).toBeHidden();
+    await expect(page.getByRole('navigation',{name:'Rail',exact:true})).toBeHidden();
     await input.focus();await page.keyboard.press('c');await page.keyboard.press('Escape');
     await expect(expanded).toBeVisible();
     await page.keyboard.press('F6');await expect(collapse).toBeFocused();
@@ -130,8 +132,9 @@ test('selection mode copies plain wrapped text with shortcuts and denied clipboa
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   const id=await sessionWithChanges(page,'term-select');
   try {
-    await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write',{exact:true})).toBeVisible();
+    await openGridTerminal(page,id);
+    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
     // The write lease precedes tmux's first repaint; injecting before it can lose the marker during reflow.
     await expect(page.locator('.xterm-accessibility-tree')).toContainText('fake-claude ready');
     const long='Wrapped selection '.repeat(20).trimEnd();
@@ -185,13 +188,13 @@ test('Shift drag selects through application mouse mode and interrupt stays with
     const paintedRows=terminalRows(page,id);
     const inputs:string[]=[];
     page.on('websocket',socket=>socket.on('framesent',event=>{try{const f=JSON.parse(String(event.payload));if(f.t==='i')inputs.push(f.d);}catch{/* binary */}}));
-    await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write',{exact:true})).toBeVisible();
-    await expect(page.locator('.xterm-accessibility-tree')).toContainText('fake-claude ready');
+    await page.goto(`/grid?ids=${id}`);
+    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
+    const beforeHeight=(await page.locator('.xterm').boundingBox())!.height;
     const screenRows=page.locator('.xterm-accessibility-tree > div');
-    const beforeRows=await screenRows.count();
     await page.getByRole('button',{name:'Expand terminal',exact:true}).click();
-    await expect.poll(()=>screenRows.count()).toBeGreaterThan(beforeRows);
+    await expect.poll(async()=>(await page.locator('.xterm').boundingBox())!.height).toBeGreaterThan(beforeHeight);
     // Tmux resets mouse tracking while repainting a resize, which clears an in-progress selection.
     await expect.poll(paintedRows).toBe(await screenRows.count());
     writeFileSync(`${serverInfo().run_dir}/${id}/fake.screen`,'\x1b[2J\x1b[HMouse selection marker\r\n\x1b[?1000h');control(id,'screen');
@@ -216,8 +219,9 @@ test('Shift drag selects through application mouse mode and interrupt stays with
 test('expanding and collapsing keeps the scrolled reading position',async({page})=>{
   const id=await sessionWithChanges(page,'terminal-scroll');
   try {
-    await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write',{exact:true})).toBeVisible();
+    await openGridTerminal(page,id);
+    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
     writeFileSync(`${serverInfo().run_dir}/${id}/fake.screen`, '\x1b[2J\x1b[H'+Array.from({length:300},(_,i)=>`Reading marker ${i}`).join('\r\n')+'\r\n');
     control(id,'screen');
     const top=page.locator('.xterm-accessibility-tree > div').first();
@@ -225,9 +229,8 @@ test('expanding and collapsing keeps the scrolled reading position',async({page}
     await page.locator('.xterm-viewport').evaluate(el=>{el.scrollTop=150;el.dispatchEvent(new Event('scroll'));});
     await expect(top).toHaveText(/Reading marker/);
     const before=await top.innerText();
-    await page.getByRole('button',{name:'Expand terminal',exact:true}).click();
-    await expect(top).toHaveText(before);
     await page.getByRole('button',{name:'Collapse terminal',exact:true}).click();
+    await page.getByRole('button',{name:'Expand terminal',exact:true}).click();
     await expect(top).toHaveText(before);
   } finally {if(!page.isClosed())await page.request.post(`/api/sessions/${id}/stop`,{headers:await csrfHeaders(page)}).catch(()=>{});}
 });
@@ -235,7 +238,7 @@ test('expanding and collapsing keeps the scrolled reading position',async({page}
 test('expanded terminal allows a global dialog above it and restores focus',async({page})=>{
   const id=await sessionWithChanges(page,'expanded-palette');
   try {
-    await page.goto(`/sessions/${id}`);
+    await page.goto(`/grid?ids=${id}`);
     await page.getByRole('button',{name:'Expand terminal',exact:true}).click();
     const collapse=page.getByRole('button',{name:'Collapse terminal',exact:true});
     await expect(collapse).toBeFocused();
@@ -249,4 +252,37 @@ test('expanded terminal allows a global dialog above it and restores focus',asyn
     await expect(page.getByRole('dialog',{name:'Expanded terminal',exact:true})).toBeVisible();
     await expectAxeClean(page);
   } finally {if(!page.isClosed())await page.request.post(`/api/sessions/${id}/stop`,{headers:await csrfHeaders(page)}).catch(()=>{});}
+});
+
+test('current session offers plain buffered output and a denied-copy fallback', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const id = await sessionWithChanges(page, 'registered-output');
+  try {
+    const paintedRows = terminalRows(page, id);
+    await page.goto(`/sessions/${id}`);
+    await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
+    await expect(page.locator('.xterm-accessibility-tree')).toContainText('fake-claude ready');
+    await expect.poll(paintedRows).toBe(await page.locator('.xterm-accessibility-tree > div').count());
+    const long = 'Wrapped current output '.repeat(15);
+    writeFileSync(`${serverInfo().run_dir}/${id}/fake.screen`, `\x1b[2J\x1b[HCurrent copy marker\r\n${long}\r\n`);
+    control(id, 'screen');
+    await expect(page.locator('.xterm-accessibility-tree')).toContainText('Current copy marker');
+    await page.getByRole('button', { name: 'Open as text', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Terminal output', exact: true });
+    const output = dialog.getByRole('textbox', { name: 'Terminal output', exact: true });
+    await expect(output).toHaveValue(/Current copy marker/);
+    // Tmux can pad soft wraps when the frame changes its viewport width.
+    // The text snapshot must preserve every printed character, including the full long line.
+    expect((await output.inputValue()).replace(/\s/g, '')).toContain(long.replace(/\s/g, ''));
+    expect(await output.inputValue()).not.toContain('\x1b');
+    await dialog.getByRole('button', { name: 'Copy output', exact: true }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('Current copy marker');
+    await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; });
+    await dialog.getByRole('button', { name: 'Copy output', exact: true }).click();
+    await expect(dialog).toContainText('Clipboard access was denied. Select and copy the text below.');
+    await expect(output).toBeVisible();
+    await expectAxeClean(page);
+  } finally {
+    if (!page.isClosed()) await page.request.post(`/api/sessions/${id}/stop`, { headers: await csrfHeaders(page) }).catch(() => {});
+  }
 });

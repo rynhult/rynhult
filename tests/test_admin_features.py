@@ -369,3 +369,27 @@ async def test_issue_source_background_comments_pause_without_touching_saved_sta
     await PollingMixin.refresh_issue_comments(worker)
     await PollingMixin.comment_linear_pulls(worker, 1, [])
     worker.db.assert_not_called()
+
+
+def test_session_relay_preview_is_sensitive_off_and_obeys_operator_override(monkeypatch):
+    from acc.server.admin_features import FEATURES, Features
+    monkeypatch.delenv('ACC_FEATURE_SESSION_RELAY', raising=False)
+    monkeypatch.delenv('RYNHULT_FEATURE_SESSION_RELAY', raising=False)
+    assert FEATURES['session_relay'].preview and FEATURES['session_relay'].sensitive
+    assert not Features(Settings()).enabled('session_relay')
+    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true')
+    assert Features(Settings()).enabled('session_relay')
+    assert Features(Settings()).locked('session_relay')
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+async def test_relay_opt_in_never_launches_legacy_even_when_flag_is_on(api, project, monkeypatch, enabled):
+    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true' if enabled else 'false')
+    body = {'project_id': project['id'], 'provider': 'codex', 'name': 'Relay', 'session_relay': True}
+    for route in ('/api/sessions/preview', '/api/sessions'):
+        response = await api.post(route, json=body)
+        assert response.status_code == (403 if enabled else 409), response.text
+        assert ('person sign-in' if enabled else 'turned off') in response.text
+    assert (await api.get('/api/sessions')).json() == []
+    body['session_relay'] = 'true'
+    assert (await api.post('/api/sessions', json=body)).status_code == 422

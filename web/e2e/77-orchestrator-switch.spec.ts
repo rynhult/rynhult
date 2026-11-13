@@ -2,7 +2,7 @@ import { expect, type Page } from "./fixtures";
 import { test } from './shell-state';
 import { AUTH_FILE, gitProject, openAdvanced } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 // Orchestrator v2 is on by default; explicit Off hides its entries.
 // with it off, /api/auth/state says so and every v2 entry is absent: the Settings nav entry, its section and the
@@ -17,7 +17,7 @@ async function orchestratorOff(page: Page) {
 
 test("Orchestrator entries show by default and hide when the server turns it off", async ({ page }) => {
   const { id } = await gitProject(page, `orchestrator-${Date.now()}`);
-  const nav = page.getByRole("navigation", { name: "Settings sections" });
+  const nav = page.getByRole("complementary", { name: "Context sidebar", exact: true }).getByRole("region", { name: "Installation settings", exact: true });
   const gateCard = page.getByRole("heading", { name: "Gate queue" });
 
   await page.goto("/settings#all");  // every section and the full list of links
@@ -37,7 +37,6 @@ test("Orchestrator entries show by default and hide when the server turns it off
   await expect(page.locator("#project-ports")).toBeVisible();  // the settings beside it have loaded
   await expect(gateCard).toHaveCount(0);
 });
-
 
 for (const width of [1440, 390]) for (const theme of ["dark", "light"] as const) {
   test(`gate queue deep link and keyboard navigation at ${width} ${theme}`, async ({ page }) => {
@@ -59,18 +58,18 @@ for (const width of [1440, 390]) for (const theme of ["dark", "light"] as const)
   });
 }
 
-
 test("New session offers helpers as a normal feature", async ({ page }) => {
   const { id } = await gitProject(page, `helpers-default-${Date.now()}`);
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
   await openAdvanced(dialog);
-  const helpers = dialog.getByRole("radio", { name: /^With helpers/ });
-  await expect(helpers).toHaveAccessibleName("With helpers This session may start a team of helper agents within limits you set.");
-  await helpers.check();
+  const helpers = dialog.getByRole("combobox", { name: "Run", exact: true });
+  await expect(helpers.getByRole("option", { name: "With helpers", exact: true })).toBeAttached();
+  await helpers.selectOption("helpers");
   await expect(dialog.getByRole("group", { name: "Team limits", exact: true })).toBeVisible();
-  await expect(dialog.getByRole("group", { name: "Run", exact: true }).getByText(/preview/i)).toHaveCount(0);
+  await expect(helpers.getByRole("option").filter({ hasText: /preview/i })).toHaveCount(0);
   await expect(dialog.getByRole("group", { name: "Team limits", exact: true }).getByText(/preview/i)).toHaveCount(0);
   await page.keyboard.press("Escape");
 });

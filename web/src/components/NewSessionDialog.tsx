@@ -111,9 +111,9 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const locationPanel = useRef<HTMLDetailsElement>(null);
   const permissionsPanel = useRef<HTMLDetailsElement>(null);
   const [draftId] = useState(() => schedule ? `new-session:schedule:${schedule.id ?? 'new'}`
-    : preset ? `new-session:preset:${JSON.stringify([preset.mode ?? 'project', preset.project_id, preset.workspace, preset.issue_source])}` : 'new-session:launcher');
-  // Restore only this target's draft. Every explicitly supplied preset field
-  // wins; another project's retained task can never become this launch.
+    : preset ? `new-session:preset:${JSON.stringify([preset.mode ?? 'project', preset.project_id, preset.workspace, preset.issue_source ?? preset.draft_target])}` : 'new-session:launcher');
+  // Restore only this target's draft. Reopening the same issue/PR keeps edits;
+  // the target-scoped ID and project pin prevent another project's task leaking in.
   const readField = <T,>(id: string, field: string, fallback: T): T => {
     const retained = draftField(id, field, fallback);
     if (!preset) return retained;
@@ -121,7 +121,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     if (field === 'form') {
       const value = { ...retained as Record<string, unknown> };
       for (const key of ['project_id', 'name', 'initial_prompt', 'worktree'] as const)
-        if (preset[key] !== undefined) value[key] = preset[key];
+        if (preset[key] !== undefined && (key === 'project_id' || !preset.issue_source && !preset.draft_target || !unsavedWork.read(id))) value[key] = preset[key];
       return value as T;
     }
     if (field === 'profile' && preset.profile !== undefined || field === 'issue' && preset.issue_source !== undefined) return fallback;
@@ -131,6 +131,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const saved = schedule?.launch;
   const feature = useFeatures();
   const featureState = useInstance().features;
+  const [relayOptIn, setRelayOptIn] = useState(false);
   const [scheduleConfig, setScheduleConfig] = useState(() => readField(draftId, "scheduleConfig", schedule ?? defaultSchedule()));
   const queryClient = useQueryClient();
   const instance = useInstance();
@@ -235,16 +236,20 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
   const scheduling = !!schedule || (run === "schedule" && !workspace);
   const task = form.initial_prompt.trim();
   const autoName = existing ? profile || "session" : workspace ? [...topic.trim()].slice(0, 40).join("") || "session" : suggestedName(task);
-  const body = useMemo(() => ({ ...form, machine, clone_on_machine: cloneOnMachine, worktree: form.worktree || otherMachine,
+  const body = useMemo(() => ({ ...form,
+    ...(featureState?.session_relay === true && relayOptIn && run === "once" && ["codex", "claude"].includes(form.provider) ? { session_relay: true } : {}), machine, clone_on_machine: cloneOnMachine, worktree: form.worktree || otherMachine,
     endpoint: feature("local_models") ? form.endpoint : "", name: form.name.trim() || autoName,
     ...Object.fromEntries(Object.entries(options).filter(([k]) => LEGACY_OPTIONS.includes(k))),
     options: Object.fromEntries(Object.entries(options).filter(([k]) => !LEGACY_OPTIONS.includes(k))),
     ...(feature("teams") && orchestrator && !workspace ? { orchestrator: teamGrant, worktree: true } : {}),
-    automation: { autoresume: feature("automation") && !form.endpoint && ["claude", "codex", "copilot"].includes(form.provider) && !!automation.autoresume, ...(feature("automation") && automation.goal?.text.trim() ? { goal: automation.goal } : {}) },
+    // An inactive legacy default is not an automation grant. Relay enrollment
+    // requires absence; keep active automation visible to its ordinary refusal.
+    automation: relayOptIn && !(feature("automation") && ((!form.endpoint && ["claude", "codex", "copilot"].includes(form.provider) && automation.autoresume) || automation.goal?.text.trim()))
+      ? undefined : { autoresume: feature("automation") && !form.endpoint && ["claude", "codex", "copilot"].includes(form.provider) && !!automation.autoresume, ...(feature("automation") && automation.goal?.text.trim() ? { goal: automation.goal } : {}) },
     confirm_dangerous: confirmBypass, budget_ok: budgetOk, profile: profile || null, ...picks,
     issue_source: feature("issue_sources") && !workspace && issue.projectId === form.project_id ? issue.ref : undefined,
     ...(workspace ? { project_id: null, worktree: false, ...(existing ? { workspace: existing } : { topic: topic.trim() || "untitled" }) } : {}) }),
-  [featureState, form, machine, cloneOnMachine, otherMachine, options, automation, orchestrator, teamGrant, confirmBypass, budgetOk, profile, picks, workspace, topic, existing, issue, autoName]);  // eslint-disable-line react-hooks/exhaustive-deps
+  [relayOptIn, run, featureState, form, machine, cloneOnMachine, otherMachine, options, automation, orchestrator, teamGrant, confirmBypass, budgetOk, profile, picks, workspace, topic, existing, issue, autoName]);  // eslint-disable-line react-hooks/exhaustive-deps
   const compatible = (kind: "skills" | "agents" | "mcps", ids: string[], provider: Provider) =>
     ids.filter((id) => catalog?.[kind].find((i) => i.id === id)?.providers.includes(provider));
   const chooseProfile = (id: string) => {
@@ -403,7 +408,7 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
     ? (sessions.data ?? []).filter((x) => x.project_id === project.id && isLive(x) && !x.worktree) : [];
   const runsOn = machine === "local" ? instance.host : machine;
   const runsAs = workspace ? (inline ? person.account ?? instance.agent_user : instance.agent_user) : project?.account ?? instance.agent_user;
-  const activeDraftId = preset ? `new-session:preset:${JSON.stringify([mode, mode === 'project' ? form.project_id : undefined, existing, issue.ref])}` : draftId;
+  const activeDraftId = preset ? `new-session:preset:${JSON.stringify([mode, mode === 'project' ? form.project_id : undefined, existing, issue.ref ?? preset.draft_target])}` : draftId;
   // A target change inside this mounted dialog moves its draft. Unmounting
   // or opening another preset still retains that other dialog's own work.
   const previousDraftId = useRef(activeDraftId);
@@ -517,10 +522,8 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
           {otherMachine && !needsClone && preview.data?.machine === machine && <p className="text-xs text-muted">Using an existing checkout on {machine}.</p>}
   </>;
   const agentFields = <>
-          {multi ? <MultiRunFields value={runChoices} onChange={value => { beginEdit(); setRunChoices(value); }} catalog={catalog} providers={registry.list}
-            models={(p) => modelsFor(models.data, p)} /> : <>
             <div className={clsx("grid grid-cols-1 gap-3", inline ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
-              <Field label="Agent">
+              {!multi && <><Field label="Agent">
                 <Select value={form.provider} onChange={(e) => {
                   const provider = e.target.value as Provider;
                   set("provider", provider); setBudgetAck(null); set("model", ""); set("effort", ""); set("endpoint", ""); setCustomModel(false);
@@ -543,14 +546,15 @@ export function NewSessionDialog({ open, onClose, onLaunched, onDiscard, preset,
                   {profiles.map((p) => <option key={p.id} value={p.id} title={p.description}>{p.name}</option>)}
                 </Select>
               </Field>
-              {inline && <>
-            <Field label="Run">
+              </>}
+              {inline && <Field label="Run">
               <Select value={run} onChange={event => chooseRun(event.target.value as RunMode)}>
                 {runModes.map(item => <option key={item.id} value={item.id} disabled={item.id === 'helpers' && (registry.isPending || !!registry.error)}>{item.label}</option>)}
               </Select>
-            </Field>
-              </>}
+            </Field>}
             </div>
+          {multi ? <MultiRunFields value={runChoices} onChange={value => { beginEdit(); setRunChoices(value); }} catalog={catalog} providers={registry.list}
+            models={(p) => modelsFor(models.data, p)} /> : <>
             {!inline && (profile ? <p className="-mt-1 text-xs text-muted">{catalog?.profiles.find((p) => p.id === profile)?.description}</p>
               : !workspace && profiles.length > 0 && <p className="-mt-1 text-xs text-muted">Optional: a profile gives the agent a role, with its own skills and tools. Not sure? Leave None, or choose Full-stack to build an app end to end.</p>)}
             {info?.preview && (
@@ -765,6 +769,7 @@ ${preview.data.command.map(shellQuote).join(" ")}`} label="Copy launch command" 
       </> : <div className="min-w-0 space-y-6" onChangeCapture={beginEdit} onClickCapture={event => {
         if ((event.target as HTMLElement).closest('button[role="radio"], button[aria-pressed]')) beginEdit();
       }}>
+        {featureState?.session_relay === true && run === "once" && ["codex", "claude"].includes(form.provider) && <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={relayOptIn} onChange={e => setRelayOptIn(e.target.checked)} />Use shared Chat and Terminal for this new session (preview)</label>}
         {inline ? <>
           <div><p className="text-xs text-muted">{project?.name ?? (workspace ? 'Local workspace' : 'Choose a project below')}</p><h2 className="mt-2 text-xl font-semibold">What would you like to work on?</h2></div>
           <div className={offlineReview ? "grid items-start gap-6 lg:grid-cols-2" : "space-y-4"}><div className="space-y-4">{taskField}
@@ -784,13 +789,13 @@ ${preview.data.command.map(shellQuote).join(" ")}`} label="Copy launch command" 
           </section>
           {nameFields}
           <details ref={locationPanel} open={locationOpen} onToggle={event => setLocationOpen(event.currentTarget.open)} className="border-b border-line pb-4">
-            <summary className="cursor-pointer text-sm font-medium">Model and working location</summary>
+            <summary data-testid="launch-location-toggle" className="cursor-pointer text-sm font-medium">Model and working location</summary>
             <div className="mt-4 space-y-4">{locationFields}{machineFields}{worktreeFields}{!multi && modelFields}</div>
           </details>
-          <details ref={permissionsPanel} className="border-b border-line pb-4"><summary className="cursor-pointer text-sm font-medium">Permissions and limits</summary>
+          <details ref={permissionsPanel} className="border-b border-line pb-4"><summary data-testid="launch-permissions-toggle" className="cursor-pointer text-sm font-medium">Permissions and limits</summary>
             <div className="mt-4 space-y-4">{grantFields}{!multi && permissionFields}<p className="text-xs text-muted">{optionWords.join(' · ') || 'The selected agent’s defaults apply.'} Consent and Security checks still apply before launching.</p></div>
           </details>
-          <details className="border-b border-line pb-4"><summary className="cursor-pointer text-sm font-medium">More options</summary>
+          <details className="border-b border-line pb-4"><summary data-testid="launch-more-toggle" className="cursor-pointer text-sm font-medium">More options</summary>
             <div className="mt-4 space-y-4">{!multi && extraFields}{commandFields}</div>
           </details>
           {sharing.length > 0 && <Note icon={ShieldAlert}>Other sessions already work in this checkout. Review Own worktree under Model and working location.</Note>}

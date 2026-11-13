@@ -11,15 +11,41 @@ from urllib.parse import urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
+from sqlalchemy import select, update
 
 from acc.remote_access_helper import revision
 
 from . import auth
-from .models import Setting
+from .models import AuditLog, DevicePairing, Setting
 
 DEFAULTS = {'pairing_enabled': False, 'machine_identities': False, 'public_hostname': '', 'private_origin': '', 'certificate_days': 90}
 PAIRING_SECONDS = 300
 IMPORT_SECONDS = 300
+
+
+def move_pairing(s, row, before, after, **values):
+    """Compare-and-set shared by claims, issuance and sign-out cancellation."""
+    moved = s.execute(update(DevicePairing).where(DevicePairing.id == row.id, DevicePairing.status == before)
+                      .values(status=after, **values)).rowcount == 1
+    if moved:
+        row.status = after
+        for key, value in values.items():
+            setattr(row, key, value)
+    return moved
+
+
+def cancel_person_pairings(s, person, reason):
+    """Cancel only live unconfirmed browser pairings. Drop returned imports after commit."""
+    cancelled = []
+    for row in s.scalars(select(DevicePairing).where(
+            DevicePairing.person == person, DevicePairing.kind == 'browser',
+            DevicePairing.expires_at > auth.now(),
+            DevicePairing.status.in_(('pending', 'claimed', 'signing')))):
+        if move_pairing(s, row, row.status, 'cancelled'):
+            cancelled.append(row.id)
+            s.add(AuditLog(actor=person, action='device.pairing_cancel', target=row.id,
+                           detail={'person': person, 'reason': reason}))
+    return cancelled
 
 
 def settings(s):

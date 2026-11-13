@@ -8,13 +8,25 @@ from acc.server.models import AuditLog, Session, User
 
 
 async def seed(api, project):
-    response = await api.post("/api/sessions", json={"project_id": project["id"], "provider": "claude", "name": "Tools"})
+    # Bind the owning person at creation: 0092 makes recorded root ownership
+    # immutable. This fixture must not simulate a later ownership transfer.
+    with write_db(api.app.state.db) as db:
+        db.add(User(username="alex", password_hash="unused", totp_secret="unused", role="member", account="alex-agent"))
+        db.commit()
+    principal = api.app.state.ctx.principal
+    previous = api.app.dependency_overrides.get(principal)
+    api.app.dependency_overrides[principal] = lambda: Principal('alex', 'owner', 'alex-agent')
+    try:
+        response = await api.post("/api/sessions", json={"project_id": project["id"], "provider": "claude", "name": "Tools"})
+    finally:
+        if previous is None:
+            api.app.dependency_overrides.pop(principal, None)
+        else:
+            api.app.dependency_overrides[principal] = previous
     assert response.status_code == 201, response.text
     sid = response.json()["id"]
     with write_db(api.app.state.db) as db:
-        db.add(User(username="alex", password_hash="unused", totp_secret="unused", role="member", account="alex-agent"))
-        session = db.get(Session, sid)
-        session.owner, session.run_as = "alex", "alex-agent"
+        db.get(Session, sid).run_as = "alex-agent"
         db.commit()
     return sid
 
@@ -219,11 +231,20 @@ async def test_system_change_is_deduplicated_across_accounts(api, project):
     service.request_session(sid, manager="apt", name="ripgrep", reason="Search")
     with write_db(api.app.state.db) as db:
         db.add(User(username="blair", password_hash="unused", totp_secret="unused", role="owner", account="blair-agent"))
-        session = db.get(Session, sid)
-        session.owner, session.run_as = "blair", "blair-agent"
+        db.commit()
+    principal = api.app.state.ctx.principal
+    api.app.dependency_overrides[principal] = lambda: Principal('blair', 'owner', 'blair-agent')
+    try:
+        response = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'claude', 'name': 'Other account'})
+        assert response.status_code == 201, response.text
+        other = response.json()['id']
+    finally:
+        api.app.dependency_overrides.pop(principal, None)
+    with write_db(api.app.state.db) as db:
+        db.get(Session, other).run_as = 'blair-agent'
         db.commit()
     with pytest.raises(ToolRefused, match="already"):
-        service.request_session(sid, manager="apt", name="ripgrep", reason="Search from another account")
+        service.request_session(other, manager="apt", name="ripgrep", reason="Search from another account")
 
 
 async def test_owner_can_remove_system_tool_after_original_requester_is_demoted(api, project, monkeypatch):

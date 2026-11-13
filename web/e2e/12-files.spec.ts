@@ -45,7 +45,7 @@ test("Files: browse, Markdown preview, save, personal commit, conflict and phone
   await page.getByLabel("Commit email").fill("alex@example.com");
   await page.getByRole("button", { name: "Save identity" }).dblclick();
   await editor.fill("# Committed\n\nLocal history.");
-  await page.getByLabel("Commit message").fill("Update demo notes");
+  await page.getByRole("textbox", { name: "Commit message", exact: true }).fill("Update demo notes");
   await page.getByRole("button", { name: "Save and commit", exact: true }).dblclick();
   await expect(page.getByRole("status", { name: "File save status" })).toContainText("Committed");
   const log = execFileSync("git", ["-C", root, "log", "-1", "--format=%an <%ae> %s"]).toString();
@@ -53,7 +53,8 @@ test("Files: browse, Markdown preview, save, personal commit, conflict and phone
   await editor.fill("# My draft\n\nKeep this version.");
   writeFileSync(`${root}/notes.md`, "# Agent edit\n\nConcurrent version.");
   await page.getByRole("button", { name: "Save", exact: true }).dblclick();
-  await expect(page.getByRole("heading", { name: "File changed on disk" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resolve a save conflict" })).toBeVisible();
+  await page.getByRole("button", { name: "Review changes", exact: true }).click();
   await expect(page.getByLabel("Current version on disk")).toContainText("Concurrent version.");
   await expect(page.getByRole("region", { name: "Current version on disk" })).toHaveAttribute("tabindex", "0");
   await expect(editor).toContainText("Keep this version.");
@@ -154,9 +155,10 @@ test("Files downloads keep their name and safe media uses native players", async
     await page.getByRole("button", { name: fileRow("sample.mp4") }).click();
     await expect(page.locator("video")).toBeVisible();
     await expect(page.locator("video")).toHaveAttribute("controls", "");
-    await expect(page.locator("audio")).toHaveCount(0);
+    await expect(page.locator("audio")).toBeHidden();
     await page.getByRole("button", { name: fileRow("unsafe.svg") }).click();
-    await expect(page.locator("audio, video, iframe, object, embed")).toHaveCount(0);
+    await expect(page.locator("audio, video").filter({ visible: true })).toHaveCount(0);
+    await expect(page.locator("iframe, object, embed")).toHaveCount(0);
     await expect(page.getByRole("img", { name: "unsafe.svg", exact: true })).toHaveCount(0);
   } finally {
     await page.request.post(`/api/sessions/${session.id}/stop`, { headers: { "x-acc-csrf": csrf } });

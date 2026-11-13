@@ -136,7 +136,8 @@ test("Files upload completion preserves an editor draft made during transfer", a
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
     expect(readFileSync(`${root}/notes.txt`, "utf8")).toBe("external edit during refresh");
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "File changed on disk" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Resolve a save conflict" })).toBeVisible();
+    await page.getByRole("button", { name: "Review changes", exact: true }).click();
     await expect(page.getByRole("region", { name: "Current version on disk" })).toContainText("external edit during refresh");
     await expect(editor).toContainText("unsaved draft during upload");
   } finally { releaseRead(); release(); }
@@ -159,7 +160,7 @@ test("Files upload error stays scoped beside an editor conflict alert", async ({
   await editor.fill("keep my draft");
   writeFileSync(`${root}/notes.txt`, "changed on disk");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "File changed on disk" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resolve a save conflict" })).toBeVisible();
   const drop = await page.evaluateHandle(() => {
     const data = new DataTransfer(); data.items.add(new File(["denied"], "denied.txt")); return data;
   });
@@ -168,7 +169,7 @@ test("Files upload error stays scoped beside an editor conflict alert", async ({
   const error = page.getByRole("alert", { name: "File upload error", exact: true });
   await expect(error).toHaveCount(1);
   await expect(error).toContainText("That destination is protected.");
-  await expect(page.getByRole("heading", { name: "File changed on disk" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resolve a save conflict" })).toBeVisible();
   await expect(editor).toContainText("keep my draft");
   const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
   expect(accessibility.violations).toEqual([]);

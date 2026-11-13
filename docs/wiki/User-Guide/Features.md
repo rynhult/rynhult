@@ -243,7 +243,7 @@ Who did what, when: sign-ins, terminal attaches, launches, approvals, catalog ch
 More: [Audit](/User-Guide/Audit).
 
 ## Jump to and shortcuts
-**Jump to…** (<kbd>⌘K</kbd> / <kbd>Ctrl K</kbd>) opens pages, projects, sessions and commands. Its separate **Search conversation content** link opens **Search** for full-text conversation results.
+**Go to…** (<kbd>⌘K</kbd> / <kbd>Ctrl K</kbd>) opens the **Jump to…** palette for pages, projects, sessions and commands. Its separate **Search conversation content** link opens **Search** for full-text conversation results.
 
 ![Jump to navigation and its separate link to conversation Search](/.attachments/command-palette.png)
 

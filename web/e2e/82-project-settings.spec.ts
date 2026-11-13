@@ -31,7 +31,7 @@ async function fixture(page: Page, overrides = {}) {
   await page.route('**/api/ports', r => r.fulfill({ json: [] }));
   await page.route('**/api/containers', r => r.fulfill({ json: { enabled: false, accounts: [], member_defaults: {},
     qualification: { passed: false, reason: 'this example host has no qualification record' } } }));
-  await page.route('**/api/projects/91/knowledge', r => r.fulfill({ json: { groups: [], files: [] } }));
+  await page.route('**/api/projects/91/knowledge', r => r.fulfill({ json: { docs: {}, files: [] } }));
   await page.route('**/api/projects/91/issue-sources', r => r.fulfill({ json: {} }));
 }
 
@@ -46,26 +46,26 @@ for (const width of [390, 1440]) for (const theme of ['dark', 'light'] as const)
     await page.addInitScript(t => localStorage.setItem('acc-theme', t), theme);
     await fixture(page);
     await gotoLoadedPage(page, '/projects/91', ['ProjectPage'], ['/api/projects']);
-    await expect(page.getByRole('region', { name: 'Project summary', exact: true })).toContainText('CI failing');
+    await expect(page.getByRole('region', { name: 'Project overview', exact: true })).toContainText('CI failing');
     await expect(sectionTab(page, 'Sessions')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Pull requests', exact: true })).toBeHidden();
     for (const section of ['repository', 'knowledge', 'keys', 'backup', 'ports', 'stack']) await expect(page.locator(`#project-${section}`)).toBeHidden();
     expect(await sections(page).getByRole('tab').allTextContents()).toEqual(
-      ['Sessions', 'Issues and pull requests', 'Knowledge', 'Keys', 'Backup', 'Ports', 'Runtime']);
+      ['Sessions', 'Issues & pull requests', 'Knowledge', 'Keys', 'Backup', 'Ports', 'Runtime']);
     // Keyboard: the arrow keys move along the tab list and show that section; the address follows.
     await sectionTab(page, 'Sessions').focus();
     await page.keyboard.press('ArrowRight');
-    await expect(sectionTab(page, 'Issues and pull requests')).toBeFocused();
-    await expect(sectionTab(page, 'Issues and pull requests')).toHaveAttribute('aria-selected', 'true');
+    await expect(sectionTab(page, 'Issues & pull requests')).toBeFocused();
+    await expect(sectionTab(page, 'Issues & pull requests')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('heading', { name: 'Pull requests', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeHidden();
-    await expect(page).toHaveURL(/#project-repository$/);
-    await expect(sectionTab(page, 'Issues and pull requests')).toHaveCSS('outline-style', 'solid');
+    await expect(page).toHaveURL(/\?section=repository$/);
+    await expect(sectionTab(page, 'Issues & pull requests')).toHaveCSS('outline-style', 'solid');
     await expectAxeClean(page);
     await sectionTab(page, 'Ports').click();
     await expect(page.getByRole('button', { name: '+ Dev port', exact: true })).toBeVisible();
-    await expect(page).toHaveURL(/#project-ports$/);
+    await expect(page).toHaveURL(/\?section=ports$/);
     // A link to a section (a bookmark, the status line) opens that tab and puts focus on it, even from Files.
     await gotoLoadedPage(page, '/projects/91?tab=files#project-ports', ['ProjectPage'], ['/api/projects']);
     await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -79,7 +79,7 @@ for (const width of [390, 1440]) for (const theme of ['dark', 'light'] as const)
     await expect(sectionTab(page, 'Keys')).toHaveAttribute('aria-selected', 'true');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     for (const name of ['Files', 'Preview']) await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Wiki', exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: 'Wiki', exact: true })).toBeVisible();
     await expectAxeClean(page);
     await page.getByRole('tab', { name: 'Files', exact: true }).click();
     await expect(page.getByRole('tab', { name: 'Files', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -124,7 +124,7 @@ test('Readonly and offline projects retain scope and safe launch boundaries', as
   await expect(page.getByRole('button', { name: /^Review pull request/ })).toHaveCount(0);
   for (const section of ['ports', 'stack']) await expect(page.locator(`#project-${section}`)).toHaveCount(0);
   await expect(page.getByText('Machine offline', { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Wiki', exact: true })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('link', { name: 'Wiki', exact: true })).toBeVisible();
 });
 
 

@@ -15,8 +15,8 @@ for (const width of [1440, 390]) {
       const alerts = page.locator("#notification-devices");
       await expect(access.getByRole("heading", { name: "Access devices", exact: true })).toBeVisible();
       await expect(alerts.getByRole("heading", { name: "Notification devices", exact: true })).toBeVisible();
-      await expect(access.getByRole("button", { name: "Pair device", exact: true })).toBeVisible();
-      await expect(alerts.getByRole("button", { name: "Pair device" })).toHaveCount(0);
+      await expect(access.getByRole("button", { name: "Pair a phone", exact: true })).toBeVisible();
+      await expect(alerts.getByRole("button", { name: "Pair a phone" })).toHaveCount(0);
 
       await access.getByRole("link", { name: "Notification devices", exact: true }).click();
       await expect(page).toHaveURL(/#notification-devices$/);

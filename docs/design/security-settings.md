@@ -1,6 +1,6 @@
 # Security settings
 
-Status: **design for owner approval; no implementation**. Date: 2026-10-30.
+Status: **implemented in Settings → Security; historical design rationale below**. Date: 2026-10-30.
 Target: rc.3, Friday November 6. Branch: `secsettings-design`, based on
 `existingrepos-design` (`769b32f5`, itself main `5e81a727`).
 

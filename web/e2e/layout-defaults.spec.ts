@@ -1,16 +1,16 @@
-import { test, expect, chooseLayout } from './fixtures';
+import { test, expect } from './fixtures';
 import { AUTH_FILE } from './helpers';
 
-test.use({ storageState: AUTH_FILE, signedInLayout: 'new', extraHTTPHeaders: { 'x-acc-e2e-layout': 'release' }, presentationChanges: ['ui_shell', 'setup_level', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['setup_level', 'layouts'] });
 
-// The disposable server honors this test-only header to use production semantics.
+// All journeys use the production frame; the retired preference API is absent.
 test.describe('release layout defaults', () => {
-  test.use({ signedInLayout: 'unchosen' });
+  test.use({ });
 
-  test('saved classic choices use the new layout and Settings has no layout choice', async ({ page, isolatedOwner }) => {
+  test('the new layout is unconditional and Settings has no layout choice', async ({ page, isolatedOwner }) => {
     void isolatedOwner;
-    await chooseLayout(page.context(), false);
-    expect((await (await page.request.get('/api/preferences/ui-shell')).json()).enabled).toBe(true);
+
+    expect((await page.request.get('/api/preferences/ui-shell')).status()).toBe(404);
     await page.goto('/settings#layout');
     await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
     await expect(page.getByRole('checkbox', { name: 'Use the classic layout' })).toHaveCount(0);

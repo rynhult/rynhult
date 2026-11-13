@@ -9,7 +9,18 @@ from helpers import pause_supervisor
 from sqlalchemy import event, select
 from test_member_views import member  # noqa: F401 (fixture)
 
-from acc.server.models import AuditLog, Group, GroupLaunch, GroupOperation, Node, Session, Setting, Team, utcnow
+from acc.server.models import (
+    AuditLog,
+    Group,
+    GroupLaunch,
+    GroupOperation,
+    LaunchSpec,
+    Node,
+    Session,
+    Setting,
+    Team,
+    utcnow,
+)
 from acc.server.source_models import SessionTarget
 from acc.server.supervisor_common import LaunchRefused
 
@@ -18,6 +29,31 @@ def snapshot(db):
     # Include every table, not just sessions: quota/audit/assignment writes count.
     return {table.name: [tuple(row) for row in db.execute(select(table))]
             for table in Session.metadata.sorted_tables}
+
+
+def legacy_child(db, parent):
+    """Bind a synthetic pre-Sources helper at INSERT, never reparent a saved root."""
+    import uuid
+    values = {column.name: getattr(parent, column.name) for column in Session.__table__.columns
+              if column.name not in {'id', 'launch_spec_id', 'parent_session_id', 'parent_chain', 'root_owner', 'team_id'}}
+    child = Session(**values, id=uuid.uuid4().hex[:12], parent_session_id=parent.id, team_id=parent.id)
+    child.tmux_name = 'acc-preflight-' + child.id
+    child.launch_spec = LaunchSpec(provider=parent.provider, inputs=dict(parent.launch_spec.inputs),
+                                   files=dict(parent.launch_spec.files), digest=parent.launch_spec.digest)
+    db.add(child)
+    parent.team_id = parent.id
+    return child
+
+
+def bind_child_proof(db, session):
+    if session.parent_session_id:
+        import json
+
+        from acc.server import child_caps, session_caps
+        files = {**session.launch_spec.files, child_caps.FILE: json.dumps(child_caps.proof(db, db.get(Session, session.parent_session_id)))}
+        files[session_caps.FILE] = session_caps.attach(db, session)
+        session.launch_spec.files = files
+        session.launch_spec.digest = child_caps.digest(files)
 
 
 @pytest.mark.parametrize('case', [
@@ -36,6 +72,11 @@ async def test_resume_preflight_equivalence_and_no_writes(api, project, monkeypa
     supervisor = api.app.state.supervisor
     with api.app.state.db() as db:
         session = db.get(Session, sid)
+        needs_parent = case in ('team-stopped', 'team-expired', 'team-limit', 'team-limit-stopping') or case.startswith(('assignment-', 'cancelled', 'prepare-'))
+        if needs_parent:
+            session = legacy_child(db, session)
+            sid = session.id
+        parent_id = session.parent_session_id
         # These fixtures synthesize legacy remote/replacement rows after creation.
         # They predate Sources target freezing; location drift has its own route regression.
         if case.startswith('replacement') or case == 'group-offline':
@@ -69,20 +110,20 @@ async def test_resume_preflight_equivalence_and_no_writes(api, project, monkeypa
         if case == 'sleep-stop':
             session.sleep_paused_at, session.last_error = utcnow(), 'stop not confirmed: offline'
         if case in ('team-stopped', 'team-expired', 'team-limit', 'team-limit-stopping'):
-            session.parent_session_id, session.team_id = 'b' * 32, 'b' * 32
-            db.add(Team(id='b' * 32, stopped=case == 'team-stopped', limits={'at_once': 1 if case.startswith('team-limit') else 2},
+            session.team_id = parent_id
+            db.add(Team(id=parent_id, stopped=case == 'team-stopped', limits={'at_once': 1 if case.startswith('team-limit') else 2},
                         expires_at=utcnow() - timedelta(seconds=1) if case == 'team-expired' else None))
         if case.startswith('team-limit'):
             db.add(Session(id='c' * 32, project_id=session.project_id, provider=session.provider, name='Other helper',
-                           tmux_name='other-helper', launch_spec_id=session.launch_spec_id, run_as=session.run_as,
+                           tmux_name='other-helper', launch_spec=session.launch_spec, run_as=session.run_as,
                            team_id=session.team_id, parent_session_id=session.parent_session_id,
                            desired_state='running' if case == 'team-limit' else 'stopped',
                            team_stop_pending=case == 'team-limit-stopping', observed_state='stopped'))
         if case.startswith(('assignment-', 'cancelled', 'prepare-')):
             from acc.server.orchestrator.assignments import Assignment, Attempt
             from acc.server.orchestrator.planning import OrchestrationPlan
-            session.parent_session_id, session.team_id = 'b' * 32, 'b' * 32
-            db.add(Team(id='b' * 32, limits={'at_once': 2}))
+            session.team_id = parent_id
+            db.add(Team(id=parent_id, limits={'at_once': 2}))
             db.flush()
             if case not in ('prepare-write', 'prepare-unassigned'):
                 db.add(Assignment(id='c' * 32, team_id=session.team_id, created_by=sid,
@@ -116,6 +157,7 @@ async def test_resume_preflight_equivalence_and_no_writes(api, project, monkeypa
             if case == 'group-ceiling':
                 group.override_until = utcnow() + timedelta(hours=1)
                 group.concurrent_ceiling = 0
+        bind_child_proof(db, session)
         db.commit()
     with api.app.state.db() as db:
         before = snapshot(db)
@@ -204,7 +246,8 @@ async def test_resume_check_member_only_sees_their_session(api, project, member)
     assert (await member.get('/api/sessions/missing/resume-check')).status_code == 404
     with api.app.state.db() as db:
         session = db.get(Session, sid)
-        session.owner = 'dana'
+        from acc.server.child_caps import transfer_owner
+        transfer_owner(db, [session], 'dana', '@api')
         session.desired_state = 'archived'
         db.commit()
     checked = await member.get(path)
@@ -228,13 +271,16 @@ async def test_lost_group_capacity_preserves_replacement_grant_and_cancelled_att
     monkeypatch.setattr(group_remote, 'source_placement', lambda *a: object())
     monkeypatch.setattr(group_remote, 'connected', lambda *a: True)
     with api.app.state.db() as db:
-        session = db.get(Session, sid)
+        session = legacy_child(db, db.get(Session, sid))
+        sid, team_id = session.id, session.parent_session_id
         # Model an existing pre-Sources replacement session, not a local-to-remote retarget.
-        db.delete(db.get(SessionTarget, sid))
+        target = db.get(SessionTarget, sid)
+        if target is not None:
+            db.delete(target)
         session.desired_state = session.observed_state = 'archived'
         session.placement, session.team_host = None, 'example'
-        session.parent_session_id = session.team_id = team_id
-        db.add(Group(id=group_id, name='Replacement group', created_by='@api', concurrent=1))
+        session.team_id = team_id
+        db.add(Group(id=group_id, name='Replacement group', created_by='@api', concurrent=2))
         db.add(Team(id=team_id, limits={'at_once': 2}))
         db.add(Node(id=node_id, name='example', status='active', public_key=base64.b64encode(b'public key').decode()))
         session.project.group_id, session.project.owner = group_id, None
@@ -246,6 +292,7 @@ async def test_lost_group_capacity_preserves_replacement_grant_and_cancelled_att
                           task_type='implementation', goal='continue', need={}, state='blocked'))
         db.flush()
         db.add(Attempt(id=attempt_id, assignment_id=assignment_id, session_id=sid, sequence=0, state='cancelled'))
+        bind_child_proof(db, session)
         db.commit()
         before = snapshot(db)
     # Capacity is available in GET, which must not reserve or change any table.
@@ -291,7 +338,7 @@ async def test_lost_group_capacity_preserves_replacement_grant_and_cancelled_att
     with api.app.state.db() as db:
         assert snapshot(db) == after
         group = db.get(Group, group_id)
-        group.concurrent, group.paused = 1, False  # simulate the maintainer resolving the pause
+        group.concurrent, group.paused = 2, False  # simulate the maintainer resolving the pause
         db.commit()
     monkeypatch.setattr(group_board, 'reserve', real_reserve)
     await supervisor._resume(sid, '@api')

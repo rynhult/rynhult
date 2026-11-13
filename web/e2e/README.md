@@ -10,32 +10,20 @@ The control request uses a separate context and a random fixture capability;
 there is no production reset endpoint. It never uses a live server.
 
 The default is the release's feature defaults (with the fixture server's explicit
-configuration pins preserved), new ui-shell, no chosen setup level, default
+configuration pins preserved), no chosen setup level, default
 header order/visibility, built-in theme and no personal layouts/file references.
 All people are covered, including members created during a test. Chat is an
 admin feature when present. P2 terminal hosting is an immutable build flag
 (`VITE_P2_TERMINAL_HOST`), not an admin feature or runtime setting; it cannot leak
 between tests in one build. The reset covers personal P2 layouts/file references
-when those tables exist, and `new_shell` through admin features.
+when those tables exist.
 
-The disposable server alone preserves classic preference responses for these
-legacy journeys. `layout-defaults.spec.ts` sends the test-only
-`x-acc-e2e-layout: release` header to use the production preference resolver
-(saved classic choices resolve to new). The production server ignores this header. There is no production UI or runtime classic switch. Remove
-this test-server override when the classic journeys migrate after rc.4.
-
-The shared signed-in fixture saves an explicit classic preference for the test
-owner after each presentation reset and restores the original effective choice
-before the leak check. Ordinary desktop/mobile journeys keep the explicit classic
-baseline between tests. Existing classic journeys therefore keep their coverage.
-New-layout journeys must explicitly choose it: use `./shell-state` (defaults to
-`shellLayout: 'new'`), `signedInLayout: 'new'`, or their own preference API setup.
-`signedInLayout: 'unchosen'` skips this seeding for release-default tests; use a
-fresh `isolatedOwner` to prove the absence of a saved choice. Otherwise
-`isolatedOwner` follows `signedInLayout` too. Invited people and additional
-signed-in contexts are not seeded and must choose their own layout
-with `chooseLayout(context, enabled)` (false means classic), then restore it.
-Layout changes still need declaration/restoration like other presentation state.
+Every journey uses the production layout. The fixture does not seed a layout
+preference, and the disposable server does not override the production frame.
+Authenticated state supplies `person_id` for person-fenced local arrangements.
+Additional people use the same frame automatically. The fixture owns and resets
+automatic working-layout/file-reference writes from mounting that frame. Other
+presentation changes still require explicit declaration.
 
 Prefer restoring changes explicitly in `finally`. Tests intentionally exercising
 temporary non-default presentation may instead declare the groups the fixture
@@ -43,11 +31,11 @@ owns for them:
 
 ```ts
 import { test, expect } from './fixtures';
-test.use({ presentationChanges: ['admin_features', 'ui_shell'] });
-// The test still explicitly enables the feature/preference through the real API.
+test.use({ presentationChanges: ['admin_features', 'layouts'] });
+// The test still explicitly changes the declared setting through the real API.
 ```
 
-Valid groups: `admin_features`, `ui_shell`, `setup_level`, `ui_header`, `theme`,
+Valid groups: `admin_features`, `setup_level`, `ui_header`, `theme`,
 `layouts`. Declare only groups the test actually changes. This is not a blanket
 leak exemption: the fixture restores declared groups, then checks for remaining
 drift **before** the final unconditional cleanup. An undeclared changed setting
@@ -147,9 +135,11 @@ It does not suppress failures. Release test-owned gates in `finally` first.
 Tests that deliberately hold loading requests indefinitely must own their
 release/abort policy instead of requesting this fixture.
 
-Use `arrangeTeam('member' | 'history', lead, helper)` for synthetic team membership
+Use `createTeamHelper(lead)` to create a managed child with its immutable parent
+and compiled proof. Then use `arrangeTeam('member' | 'history', lead, helper)` for synthetic team membership
 and the large assignment-history fixture. These capability-protected disposable
-routes run short synchronous database mutations through normal writer admission.
+membership/history routes run short synchronous database mutations through normal writer admission.
+Membership refuses a helper created under another parent; fixtures never reparent persisted sessions.
 Do not seed the shared browser database from a separate SQLite process: its
 commit can invalidate another test's in-flight tool result and leave a correctly
 refused interrupted request. Wait for the owned Team/Selections responses before
@@ -189,3 +179,10 @@ The fixture owns its resources and stops sessions, deletes schedules/projects,
 archives groups, rejects its pending tool request and dismisses its refusal notice
 in teardown. It uses the disposable fake-provider harness;
 no accumulated state from earlier specs or live installation is needed.
+
+Git backup CGI children belong to their HTTP request's process group. Request
+cleanup and server shutdown reap that group, including receive-pack helpers.
+Global teardown independently checks the run's private `GIT_PROJECT_ROOT` paths
+for surviving Git CGI/helpers, reports leaks as failures, and kills only those
+processes using pinned identities. It runs even if tmux teardown fails. Always
+use a unique `ACC_E2E_BASE` when running alongside another checkout.

@@ -5,6 +5,13 @@ health, explicit promotion/demotion, independent crash fencing, node reconnects
 and returning to the original main. See the [Guide](wiki/User-Guide/High-Availability.md)
 for the status screen. No automatic failover is implemented.
 
+Relay replay cursors are signed with the installation key at
+`data/secrets/session_relay_cursor.key` (under the configured data directory).
+Copy this key to HA standbys with the other installation secrets before promotion;
+keep the directory owner-private (0700) and the key 0600. It is separate from the
+vault encryption key. A missing or different key invalidates existing cursors,
+requiring an authorized fresh snapshot; it does not grant session access.
+
 ## Automatic failover
 
 ### Boundary and split-brain argument

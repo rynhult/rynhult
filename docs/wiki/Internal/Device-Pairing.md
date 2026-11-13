@@ -73,6 +73,67 @@ a private peer and reject the configured public hostname, case variants and its
 trailing-dot DNS alias. TCP requests cannot spoof a private source through
 forwarding headers. Registry views remain normal signed-in person/owner resources.
 
+## QR phone confirmation
+
+The browser flow is also the phone QR flow; no additional enrollment or migration
+is introduced. Settings → Access devices offers **Pair a phone** after recent
+verification. The QR contains only the configured private installation URL and
+single-use token in the fragment. The receiving page removes that fragment before
+posting a no-store, rate-limited `/api/device-pairing/preview` request. Preview
+shows the installation host label, configured address, bound person, device label and a
+six-digit desktop comparison code. The code derives from a domain-separated hash
+of the token hash; it is a visual check, not an authorization capability.
+The receiving page shows no claim controls until preview succeeds. Temporary
+network/server preview failures offer **Retry pairing preview**, still requiring
+comparison before claim. A terminal preview or claim refusal discards the token,
+shows the error and asks for a fresh QR. A successful claim immediately drops the
+original token; leaving the page clears both token and receipt state, including
+browser-history restoration. Neither capability is persisted or reconstructed
+from navigation history.
+
+The phone explicitly acknowledges those details before requesting pairing. Claim
+requires the strict boolean `phone_confirmed: true`; missing, false or coerced
+values are refused without consuming the token. The successful claim audit records
+that acknowledgement. This records what the phone asserts, not proof that someone
+read either screen: a token holder can send true directly. The server-enforced
+issuance check remains the owner typing the winning phone's receipt-bound code.
+The existing receipt-bound matching code and recent owner confirmation still
+gate certificate issuance. The two codes have separate purposes: checking the
+trusted desktop before claim, then checking the winning phone claim before issue.
+Neither check prevents someone knowingly following an attacker's relayed screen.
+
+A newer browser QR cancels that person's live pending, claimed and signing
+pairings. Signing out from any session for that person does the same. Both use
+the shared compare-and-set transition and skip expired rows. Ready pairings have
+already been confirmed and keep their import until download or expiry, matching
+the existing Close pairing semantics. Transient imports for cancelled rows are
+dropped only after commit; a rejected per-person limit check leaves them intact;
+expiry, device revocation and removal retain their existing enforcement. Start,
+claim and cancellation are audited without tokens, receipts or comparison codes.
+The existing private-peer, configured-public-host refusal, person-only management,
+owner issuance and opt-in public-access policies remain in force. In particular,
+an owner still confirms for a member; the member cannot issue their own identity. A pairing QR
+never makes an unreachable installation reachable or establishes HTTPS trust.
+
+### PostgreSQL row-lock order
+
+`api/devices.py:recent()` locks the acting User before checking session freshness.
+`put_settings` then locks Setting(`remote_access`) and finally updates pairings:
+**User → Setting → DevicePairing**. Start/renew/replacement and sign-out take the
+same person's User before pairing transitions. Claim and download take only the
+pairing write lock. The signing transaction commits before the signer call;
+the post-signing transaction takes no User or settings row lock.
+
+The explicit `with_for_update` sites in the server were inspected for a reverse
+Setting → User acquisition. The other explicit Setting lock is Admin features:
+it locks Setting(`admin_features`) and calls `passkeys.recently_verified`, which
+only reads User/session/policy rows and takes no User lock. The remote-access
+controller and edge settings paths do not acquire User row locks. No reversed
+settings/User row-lock acquisition was found in these paths. Ordinary MVCC reads
+of settings before `recent()` are not settings row locks. SQLite checks exercise
+transactional behavior but do not validate PostgreSQL row-lock scheduling; no live
+PostgreSQL deadlock test was run.
+
 ## Uninstalled edge helper contract
 
 The next apply layer is implemented in `src/acc/remote_access_helper.py`; its

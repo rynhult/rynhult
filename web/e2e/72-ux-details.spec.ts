@@ -1,6 +1,6 @@
 import { gotoLoadedPage } from './loaded-page';
 import { expect, test } from "./fixtures";
-import { AUTH_FILE, expectAxeClean, fileRow, gitProject, freshStep, loadSecret, PASSWORD, totp, wikiShotPath } from "./helpers";
+import { AUTH_FILE, expectAxeClean, fileRow, gitProject, sessionWithChanges, csrfHeaders, freshStep, loadSecret, PASSWORD, totp, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -54,12 +54,16 @@ for (const width of [1440, 390]) {
         await editor.fill("# My draft\n\nKeep this.");
         if (width === 390) await page.getByRole("button", { name: "Show tree", exact: true }).click();
         await page.getByRole("button", { name: fileRow("app.py") }).click();
+        // Each file has its own retained draft. Switching does not discard it.
+        await expect(editor).toContainText("hello");
+        await page.getByRole("tab", { name: /notes.md/ }).click();
+        await expect(editor).toContainText("Keep this.");
+        const activeColumn = page.getByRole("region", { name: /^Column/ }).filter({ has: page.getByRole("tab", { name: /notes.md/, selected: true }) });
+        await activeColumn.getByRole("button", { name: "Close view", exact: true }).click();
         const confirmation = page.getByRole("dialog", { name: "Discard unsaved edits?" });
         await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
         await expect(editor).toContainText("Keep this.");
-        await expect(page).toHaveURL(/file=notes.md$/);
-        await expect(page.getByRole("button", { name: "Hide tree", exact: true })).toBeVisible();
-        await page.getByRole("button", { name: fileRow("app.py") }).click();
+        await activeColumn.getByRole("button", { name: "Close view", exact: true }).click();
         await confirmation.getByRole("button", { name: "Discard draft", exact: true }).click();
         await expect(editor).toContainText("hello");
         await expect(page.getByRole("button", { name: width === 390 ? "Show tree" : "Hide tree", exact: true })).toBeVisible();
@@ -70,13 +74,15 @@ for (const width of [1440, 390]) {
 
       test(`workspace Files uses a readable title and truthful breadcrumb in ${theme}`, async ({ page }, testInfo) => {
         await page.emulateMedia({ colorScheme: theme });
-        await page.route("**/api/files/workspace/demo-session", r => r.fulfill({ json: { entries: [], working: false } }));
-        await page.goto("/workspaces/market-scan-20261025/files?session=demo-session");
+        const id = await sessionWithChanges(page, `workspace-files-${width}-${theme}`);
+        await page.route(`**/api/files/workspace/${id}`, r => r.fulfill({ json: { entries: [], working: false } }));
+        await page.goto(`/workspaces/market-scan-20261025/files?session=${id}`);
         await expect(page.getByRole("heading", { name: "Market scan", exact: true })).toBeVisible();
-        const crumbs = page.getByRole("navigation", { name: "Breadcrumb", exact: true });
+        const crumbs = page.getByRole("main");
         await expect(crumbs).toContainText("Market scan");
         await expect(crumbs).toContainText("Files");
-        await expect(crumbs).not.toContainText("Wiki");
+        await expect(page.getByRole("link", { name: "Back to Workspaces", exact: true })).toBeVisible();
+        expect((await page.request.post(`/api/sessions/${id}/stop`, { headers: await csrfHeaders(page) })).ok()).toBe(true);
         await expectAxeClean(page);
         if (theme === "dark") await page.screenshot({ animations: "disabled", fullPage: true,
           path: wikiShotPath(testInfo, width === 390 ? "workspace-files-phone.png" : "workspace-files.png") });
@@ -93,7 +99,7 @@ for (const width of [1440, 390]) {
         await tabs.getByRole("tab", { name: "Knowledge", exact: true }).click();
         await expect(page.locator("#project-knowledge")).toBeVisible();
         await expect(page.locator("#project-ports")).toBeHidden();
-        await expect(page).toHaveURL(/#project-knowledge$/);
+        await expect(page).toHaveURL(/\?section=knowledge$/);
         await expectAxeClean(page);
         if (theme === "dark") {
           await page.evaluate(() => window.scrollTo(0, 0));

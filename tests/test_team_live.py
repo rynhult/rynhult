@@ -96,7 +96,13 @@ async def test_poll_wakes_on_committed_update_and_cancels_without_holding_databa
 
 async def test_foreign_members_events_and_unrelated_provider_payloads_are_not_disclosed(api, tree, project):
     with write_db(api.app.state.db) as db:
-        db.add(member('d' * 32, project['id'], ROOT, 1, owner='another-person'))
+        from acc.server.child_caps import Refused
+        with pytest.raises(Refused, match='ownership changed'):
+            with db.begin_nested():
+                db.add(member('d' * 32, project['id'], ROOT, 1, owner='another-person'))
+                db.flush()
+        # A foreign legacy root claiming this team still must not leak through the view.
+        db.add(member('d' * 32, project['id'], owner='another-person'))
         db.add(Event(session_id=CHILD, source='claude_hook', kind='secret', payload={'token': 'DO-NOT-RETURN'}))
         db.commit()
     snapshot = (await api.get(f'/api/teams/{ROOT}/tree')).json()

@@ -38,3 +38,21 @@ new admission being denied; it does not claim previously dispatched work stopped
 Binding a saved project permission to a team records the verified person as the
 actor and names the target lead separately. Team coordination records the actual
 acting session and whether it was the lead or a helper, alongside the root lead.
+
+
+### Delegated operation outcomes
+
+`approval.use` records the actual deciding lead, consent issuer/revision, normalized request digest and operation identity. `approval.result` records the separate bounded outcome. Dispatch is not completion. Revocation and availability Off preserve this evidence; retained delegated operation records fence downgrade.
+
+
+`approval.refused` records fixed explanations for refused delegated admissions after rollback. Repeated entries are bounded to one per lead/action/reason per minute. These refusals are also visible in Security; no request prose or unexpected exception text is copied into them.
+
+Reviewed account installs retain `approval.claim`, `approval.use`,
+`approval.result` and `tool.result` separately from the operation's staged manifest,
+per-path publication intents and observations. `approval.configure` records an
+atomic enable/consent save. `approval.recipe.publish` records the independent
+reviewer and owner publication; `approval.recipe.withdraw` blocks new use.
+`approval.reconcile` records proved restoration. Failed and uncertain outcomes
+remain visible; matching already-installed admissions are bounded and audited.
+All installed outcomes are observations at a point in time, not lasting integrity
+attestation against another process in the same Unix account.

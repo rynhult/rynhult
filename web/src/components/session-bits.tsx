@@ -39,6 +39,7 @@ const SOURCES: Record<string, string> = {
   supervisor: "Rynhult supervisor",
   api: "your action",
   screen: "approval prompt on screen",
+  osc7501: "script status (OSC 7501, unverified)",
 };
 
 export function StateBadge({ session }: { session: Pick<SessionSummary, "observed_state" | "status_source" | "status_at" | "status_stale_since" | "machine_offline" | "sleep_paused_at" | "last_error"> }) {
@@ -113,7 +114,7 @@ export function liveSessionsByProject(sessions: readonly SessionSummary[]) {
 }
 
 /** The shared live groups: needs you, working, unknown, then idle. */
-export const groupLive = (sessions: SessionSummary[]) => groupSessions(sessions, ["needs_you", "working", "unknown", "idle"]);
+export const groupLive = (sessions: SessionSummary[]) => groupSessions(sessions, ["needs_you", "ready_for_review", "working", "unknown", "idle"]);
 
 /** Claude's permission modes in words; the raw value stays in a tooltip (UX review SE-6). */
 export const permissionWords = (mode: string) => settingWords("permission_mode", mode);

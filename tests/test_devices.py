@@ -108,10 +108,10 @@ async def test_pair_confirmation_download_rename_revoke(api, env, monkeypatch, s
     with api.app.state.db() as s:
         row = s.get(DevicePairing, pending['id'])
         assert row.token_hash != token
-    claim = await api.post('/api/device-pairing/claim', headers={'Origin': headers['Origin']}, json={'token': token})
+    claim = await api.post('/api/device-pairing/claim', headers={'Origin': headers['Origin']}, json={'phone_confirmed': True, 'token': token})
     assert claim.status_code == 200, claim.text
     receipt = claim.json()['receipt']
-    assert (await api.post('/api/device-pairing/claim', json={'token': token})).status_code == 410
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token})).status_code == 410
     assert (await api.post('/api/device-pairing/download', json={'receipt': receipt})).status_code == 409
     confirmed = await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers, json=await confirmation_body(api, pending))
     assert confirmed.status_code == 200, confirmed.text
@@ -145,10 +145,10 @@ async def test_expired_pairing_and_address_limit(api, env, monkeypatch):
     with write_db(api.app.state.db) as s:
         s.get(DevicePairing, pending['id']).expires_at = auth.now() - timedelta(seconds=1)
         s.commit()
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 410
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 410
     for _ in range(10):
-        await api.post('/api/device-pairing/claim', json={'token': 'x' * 43})
-    assert (await api.post('/api/device-pairing/claim', json={'token': 'x' * 43})).status_code == 429
+        await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': 'x' * 43})
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': 'x' * 43})).status_code == 429
 
 
 async def test_public_host_cannot_pair_even_with_spoofed_private_headers(api, env, monkeypatch):
@@ -165,7 +165,7 @@ async def test_public_host_cannot_pair_even_with_spoofed_private_headers(api, en
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app, client=('203.0.113.5', 1234)),
                                   base_url='http://acc', cookies=api.cookies) as external:
         assert (await external.post('/api/device-pairing/claim', headers={'X-Forwarded-For': '10.0.0.1'},
-                                    json={'token': pending['link'].split('#')[1]})).status_code == 403
+                                    json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 403
 
 
 
@@ -221,7 +221,7 @@ async def test_manual_renewal_preserves_device_and_audits(api, env, monkeypatch,
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     async def finish(pending):
-        claim = await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})
+        claim = await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})
         assert claim.status_code == 200
         result = await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers, json=await confirmation_body(api, pending))
         assert result.status_code == 200, result.text
@@ -254,7 +254,7 @@ async def test_members_only_see_their_devices_and_owner_must_confirm(api, env, m
             s.commit()
         assert (await member.get('/api/remote-access')).status_code == 403
         pending = await start(member, csrf(member))
-        claim = await member.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})
+        claim = await member.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})
         assert claim.status_code == 200
         assert (await member.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=csrf(member), json={})).status_code == 403
         confirmed = await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers, json=await confirmation_body(api, pending))
@@ -310,7 +310,7 @@ async def test_racing_receivers_get_only_one_identity(api, env, monkeypatch, sig
     with guard_database(api, monkeypatch) as db:
         with transaction_rendezvous(db, 'UPDATE device_pairing'):
             claims = await asyncio.gather(*[
-                api.post('/api/device-pairing/claim', json={'token': token}) for _ in range(2)])
+                api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token}) for _ in range(2)])
         assert sorted(r.status_code for r in claims) == [200, 410]
         receipt = next(r.json()['receipt'] for r in claims if r.status_code == 200)
         body = await confirmation_body(api, pending)
@@ -341,7 +341,7 @@ async def test_expired_identity_is_not_reported_active_or_rendered(api, env, mon
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     assert (await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers, json=await confirmation_body(api, pending))).status_code == 200
     id = (await api.get('/api/devices')).json()['devices'][0]['id']
     with write_db(api.app.state.db) as s:
@@ -364,7 +364,7 @@ async def test_concurrent_claims_issue_exactly_one_receipt(api, env, monkeypatch
     pending = await start(api, headers)
     token = pending['link'].split('#')[1]
     with guard_database(api, monkeypatch) as db, transaction_rendezvous(db, 'UPDATE device_pairing'):
-        claims = await asyncio.gather(*[api.post('/api/device-pairing/claim', json={'token': token}) for _ in range(2)])
+        claims = await asyncio.gather(*[api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token}) for _ in range(2)])
     assert sorted(r.status_code for r in claims) == [200, 410], [r.text for r in claims]
     receipt = next(r.json()['receipt'] for r in claims if r.status_code == 200)
     with api.app.state.db() as s:
@@ -380,7 +380,7 @@ async def test_concurrent_confirmations_sign_once(api, env, monkeypatch, signer,
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     calls = []
     sign = devices.sign
     monkeypatch.setattr(devices, 'sign', lambda body: calls.append(body) or sign(body))
@@ -402,7 +402,7 @@ async def test_signer_call_does_not_hold_the_database_write_lock(api, env, monke
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     path = api.app.state.db.kw['bind'].url.database
     seen = []
     sign = devices.sign
@@ -429,7 +429,7 @@ async def test_failed_signing_leaves_the_claim_confirmable(api, env, monkeypatch
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     for bad in ([], {'certificate': 7}, OSError('down')):
         def fail(body, bad=bad):
             if isinstance(bad, Exception):
@@ -489,7 +489,7 @@ async def test_rename_audit_names_person_and_label(api, env, monkeypatch, signer
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     assert (await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers, json=await confirmation_body(api, pending))).status_code == 200
     device = (await api.get('/api/devices')).json()['devices'][0]
     assert (await api.patch('/api/devices/' + device['id'], headers=headers, json={'label': 'Travel phone'})).status_code == 200
@@ -504,7 +504,7 @@ async def test_policy_failure_during_signing_discards_identity(api, env, monkeyp
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     body = await confirmation_body(api, pending)
     original = devices.sign
     def interrupted(message):
@@ -530,12 +530,12 @@ async def test_device_removed_during_renewal_is_not_resurrected(api, env, monkey
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     initial = await start(api, headers)
-    assert (await api.post('/api/device-pairing/claim', json={'token': initial['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': initial['link'].split('#')[1]})).status_code == 200
     assert (await api.post('/api/devices/pairings/' + initial['id'] + '/confirm', headers=headers,
                           json=await confirmation_body(api, initial))).status_code == 200
     device_id = (await api.get('/api/devices')).json()['devices'][0]['id']
     pending = (await api.post('/api/devices/' + device_id + '/renew', headers=headers, json={})).json()
-    assert (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).status_code == 200
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).status_code == 200
     body = await confirmation_body(api, pending)
     original = devices.sign
     def removed(message):
@@ -553,3 +553,155 @@ async def test_device_removed_during_renewal_is_not_resurrected(api, env, monkey
     with api.app.state.db() as s:
         assert s.get(Device, device_id) is None
     assert api.app.state.ctx.device_imports.get(pending['id']) is None
+
+
+async def test_qr_preview_matches_desktop_and_newer_code_cancels_old(api, env, monkeypatch):
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    first = await start(api, headers)
+    token = first['link'].split('#')[1]
+    preview = await api.post('/api/device-pairing/preview', json={'token': token})
+    assert preview.status_code == 200, preview.text
+    assert preview.headers['cache-control'] == 'no-store'
+    assert preview.json() == {'installation': 'https://acc.example.lan',
+                              'installation_name': env['settings'].host_label, 'person': 'casey',
+                              'label': 'Alex phone', 'desktop_code': first['desktop_code']}
+    assert len(first['desktop_code']) == 6
+    await start(api, headers)
+    assert (await api.post('/api/device-pairing/preview', json={'token': token})).status_code == 410
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token})).status_code == 410
+
+
+async def test_signout_cancels_claimed_qr(api, env, monkeypatch):
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    claim = await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})
+    assert claim.status_code == 200
+    result = await api.post('/api/auth/logout', headers={**headers, 'Origin': 'http://acc'})
+    assert result.status_code == 200, result.text
+    assert (await api.post('/api/device-pairing/status', json={'receipt': claim.json()['receipt']})).status_code == 410
+
+
+async def test_qr_preview_expires_and_shares_claim_rate_limit(api, env, monkeypatch):
+    from acc.server.models import DevicePairing
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    token = pending['link'].split('#')[1]
+    with write_db(api.app.state.db) as s:
+        s.get(DevicePairing, pending['id']).expires_at = auth.now() - timedelta(seconds=1)
+        s.commit()
+    assert (await api.post('/api/device-pairing/preview', json={'token': token})).status_code == 410
+    for _ in range(9):
+        await api.post('/api/device-pairing/preview', json={'token': 'x' * 43})
+    assert (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token})).status_code == 429
+
+
+async def test_qr_wrong_receiving_code_cancels_before_issuance(api, env, monkeypatch):
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    token = pending['link'].split('#')[1]
+    claim = await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': token})
+    assert claim.status_code == 200
+    assert (await api.post('/api/device-pairing/preview', json={'token': token})).status_code == 410
+    actual = claim.json()['matching_code']
+    wrong = '000000' if actual != '000000' else '111111'
+    result = await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers,
+                            json={'matching_code': wrong})
+    assert result.status_code == 409
+    assert (await api.post('/api/device-pairing/status', json={'receipt': claim.json()['receipt']})).status_code == 410
+    with api.app.state.db() as s:
+        assert s.scalar(select(AuditLog).where(AuditLog.action == 'device.pairing_mismatch',
+                                              AuditLog.target == pending['id']))
+
+
+async def test_phone_confirmation_is_required_and_recorded_without_consuming_on_refusal(api, env, monkeypatch):
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    token = pending['link'].split('#')[1]
+    for acknowledgement in ({}, {'phone_confirmed': False}, {'phone_confirmed': 'true'}, {'phone_confirmed': 1}):
+        result = await api.post('/api/device-pairing/claim', json={'token': token, **acknowledgement})
+        assert result.status_code == 422, result.text
+    claim = await api.post('/api/device-pairing/claim', json={'token': token, 'phone_confirmed': True})
+    assert claim.status_code == 200, claim.text
+    with api.app.state.db() as s:
+        event = s.scalar(select(AuditLog).where(AuditLog.target == pending['id'], AuditLog.action == 'device.pairing_claim'))
+        assert event.actor == 'pairing-link'
+        assert event.detail == {'person': 'casey', 'label': 'Alex phone', 'phone_confirmed': True}
+
+
+@pytest.mark.parametrize('action', ['newer code', 'sign-out'])
+async def test_confirmed_phone_import_survives_newer_code_and_signout(api, env, monkeypatch, signer, action):
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    receipt = (await api.post('/api/device-pairing/claim', json={
+        'token': pending['link'].split('#')[1], 'phone_confirmed': True})).json()['receipt']
+    result = await api.post(f"/api/devices/pairings/{pending['id']}/confirm", headers=headers,
+                            json=await confirmation_body(api, pending))
+    assert result.status_code == 200, result.text
+    if action == 'newer code':
+        await start(api, headers)
+    else:
+        assert (await api.post('/api/auth/logout', headers={**headers, 'Origin': 'http://acc'})).status_code == 200
+    assert (await api.post('/api/device-pairing/status', json={'receipt': receipt})).json()['available'] is True
+    assert (await api.post('/api/device-pairing/download', json={'receipt': receipt})).status_code == 200
+
+
+async def test_pairing_limit_rollback_keeps_existing_import_and_pending_row(api, env, monkeypatch):
+    from acc.server.models import DevicePairing
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    # A synthetic transient value catches premature pop even when the DB rolls back.
+    imports = api.app.state.ctx.device_imports
+    imports.put(pending['id'], {'password': 'artificial import'})
+    with write_db(api.app.state.db) as s:
+        for number in range(9):
+            s.add(DevicePairing(id=f'{number:032x}', person='casey', label='Other pending phone',
+                                token_hash=auth.digest(f'artificial-{number}'),
+                                expires_at=auth.now() + timedelta(minutes=5)))
+        s.commit()
+    result = await api.post('/api/devices/pairings', headers=headers, json={'label': 'Over limit'})
+    assert result.status_code == 429, result.text
+    assert imports.get(pending['id']) == {'password': 'artificial import'}
+    with api.app.state.db() as s:
+        assert s.get(DevicePairing, pending['id']).status == 'pending'
+        assert s.scalar(select(AuditLog).where(AuditLog.target == pending['id'], AuditLog.action == 'device.pairing_cancel')) is None
+    imports.pop(pending['id'])
+
+
+async def test_signout_skips_expired_pairings_and_does_not_audit_them(api, env, monkeypatch):
+    from acc.server.models import DevicePairing
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    with write_db(api.app.state.db) as s:
+        s.get(DevicePairing, pending['id']).expires_at = auth.now() - timedelta(days=30)
+        s.commit()
+    assert (await api.post('/api/auth/logout', headers={**headers, 'Origin': 'http://acc'})).status_code == 200
+    with api.app.state.db() as s:
+        assert s.get(DevicePairing, pending['id']).status == 'pending'
+        assert s.scalar(select(AuditLog).where(AuditLog.target == pending['id'], AuditLog.action == 'device.pairing_cancel')) is None
+
+
+async def test_pairing_cancel_compare_and_set_preserves_a_completed_transition(api, env, monkeypatch):
+    from sqlalchemy import update
+
+    from acc.server import devices
+    from acc.server.models import DevicePairing
+    headers, _ = await setup(api, env, monkeypatch)
+    await enable(api, headers)
+    pending = await start(api, headers)
+    with write_db(api.app.state.db) as s:
+        row = s.get(DevicePairing, pending['id'])
+        s.execute(update(DevicePairing).where(DevicePairing.id == row.id).values(status='ready'),
+                  execution_options={'synchronize_session': False})
+        # The stale snapshot must not overwrite the transition that already won.
+        assert not devices.move_pairing(s, row, 'pending', 'cancelled')
+        s.expire_all()
+        assert row.status == 'ready'
+        s.rollback()

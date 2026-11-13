@@ -1,9 +1,10 @@
-import { useWorkingView } from "../lib/workingView";
-import { useEffect, useRef, useState } from "react";
+import { useArtifacts } from "./useArtifacts";
+export { useArtifacts } from "./useArtifacts";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, FileText, Image as ImageIcon } from "lucide-react";
-import { api, ApiError } from "../lib/api";
-import type { Artifact, SessionArtifacts, SessionDetail } from "../lib/types";
+import { ApiError } from "../lib/api";
+import type { Artifact, SessionDetail } from "../lib/types";
 import { Card, Dialog, Empty, ErrorNote, Skeleton } from "./ui";
 
 const TEXT_SHOWN = 256 * 1024;  // characters of a text artifact shown in the page; Download has all of it
@@ -14,24 +15,6 @@ const versioned = (session: SessionDetail, a: Artifact) => `${url(session, a)}?v
 
 const size = (bytes: number) =>
   bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-
-/** The files the session's agent left in .acc/artifacts, polled like Changes: often during a turn, slowly when idle, and
- * once more when a turn ends. Shared by the tab and its count. */
-export function useArtifacts(session: SessionDetail) {
-  const view = useWorkingView();
-  const working = ["active", "waiting_input"].includes(session.observed_state);
-  const query = useQuery({
-    queryKey: ["artifacts", session.id], queryFn: () => api<SessionArtifacts>(`/api/sessions/${session.id}/artifacts`),
-    refetchInterval: working ? 10000 : 60000, retry: false, enabled: !view || view.visible,
-  });
-  const { refetch } = query;
-  const wasWorking = useRef(working);
-  useEffect(() => {
-    if ((!view || view.visible) && wasWorking.current && !working) void refetch();
-    wasWorking.current = working;
-  }, [working, refetch]);
-  return query;
-}
 
 function DownloadLink({ session, artifact }: { session: SessionDetail; artifact: Artifact }) {
   return (

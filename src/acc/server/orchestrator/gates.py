@@ -71,6 +71,21 @@ def sandboxed(project: Project, settings) -> bool:
     return bool(project.containers)
 
 
+def source_capabilities(db, job):
+    if not job.requested_by.startswith('session:'):
+        return {}
+    from ..session_caps import authorize
+    source = db.get(Session, job.requested_by.removeprefix('session:'))
+    if source is None:
+        raise ValueError('delegated gate source no longer exists')
+    caps = authorize(db, source, 'expires_at')
+    if source.desired_state != 'running' or source.team_stop_pending:
+        raise ValueError(f'limited by {source.id}: delegated gate source is stopped')
+    if any(caps[key] is not None for key in ('folders', 'network', 'installs', 'ports')):
+        raise ValueError(f'limited by {source.id}: gate executor cannot enforce these session capabilities')
+    return caps
+
+
 class GateJob(Base):
     __tablename__ = 'gate_job'
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -358,6 +373,12 @@ class Gates:
                 _finish(db, job, 'refused', 'the project gate commands were removed; queue a fresh job')
                 db.commit()
                 return
+            try:
+                source_capabilities(db, job)
+            except ValueError as error:
+                _finish(db, job, 'refused', str(error))
+                db.commit()
+                return
             host, account, repo = job.host, job.account, project.workspace_path
             suite, branch, base, team_id = job.suite, job.branch, job.base, job.team_id
         try:
@@ -367,6 +388,14 @@ class Gates:
                     with sup.db() as db:
                         db.get(GateJob, job_id).waiting = f'load {load:.1f} over {config["load_ceiling"]:g}'
                         db.commit()
+                    return
+            with sup.db() as db:
+                job = db.get(GateJob, job_id)
+                try:
+                    source_capabilities(db, job)
+                except ValueError as error:
+                    _finish(db, job, 'refused', str(error))
+                    db.commit()
                     return
             prepared = await sup.broker.call('gate_prepare', account=account, host=host, path=repo, job=job_id,
                                              branch=branch, base=base)
@@ -450,8 +479,25 @@ class Gates:
         if blocked:
             await self._cleanup(account, host, job_id)
             return
+        # Agent-requested gate subprocesses are delegated execution too. The
+        # native gate runner cannot honor a private folder/network/install/port
+        # allow-list, so never dispatch one outside the source's ceiling.
+        with sup.db() as db:
+            job = db.get(GateJob, job_id)
+            try:
+                caps = source_capabilities(db, job)
+            except ValueError as error:
+                _finish(db, job, 'refused', str(error))
+                db.commit()
+                caps = None
+        if caps is None:
+            await self._cleanup(account, host, job_id)
+            return
         limits = {'seconds': config['job_minutes'] * 60, 'log_bytes': config['log_mib'] << 20,
                   'memory_bytes': config['memory_gib'] << 30}
+        if caps.get('expires_at') is not None:
+            limits['seconds'] = max(1, min(limits['seconds'], int(caps['expires_at'] - utcnow().timestamp())))
+            limits['expires_at'] = caps['expires_at']
         try:
             record = await sup.broker.call('gate_start', account=account, host=host, job=job_id, argv=_argv(argv, tests),
                                            limits=limits)
@@ -485,6 +531,12 @@ class Gates:
             if row.team_id and (not team or team.stopped or (team.expires_at is not None and utcnow() >= team.expires_at)):
                 cancel(db, row, 'supervisor', 'cancelled: team stopped')
                 db.commit()
+            if row.waiting != 'cancel':
+                try:
+                    source_capabilities(db, row)
+                except ValueError as error:
+                    cancel(db, row, 'supervisor', str(error))
+                    db.commit()
             job['waiting'] = row.waiting
         record = job['pid_record'] or {}
         try:

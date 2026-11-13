@@ -1,0 +1,185 @@
+{
+  "A1": {
+    "modules": [
+      "test_session_relay_codex",
+      "test_session_relay_claude_terminal",
+      "test_session_relay_writer_lease",
+      "test_screen_prompt",
+      "test_copilot",
+      "test_osc_status",
+      "test_session_relay_writer_routes",
+      "test_session_relay_owned_native",
+      "test_session_relay_native_turn",
+      "test_session_relay_native_input_host",
+      "test_session_relay_terminal_grants",
+      "test_session_relay_public_writer",
+      "test_session_relay_native_ingress",
+      "test_session_relay_tui_placement"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G1 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete.",
+    "scoped_evidence": "docs/handoffs/2026-11-12-relay-m3-joint-results.json; per-component source hashes and unchanged native decoder20/20. Unselected profiles and later source revisions are not inherited."
+  },
+  "A2": {
+    "modules": [
+      "test_session_relay_hub",
+      "test_session_relay_authority",
+      "test_terminal_lifecycle",
+      "test_terminal_run_attach"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G2 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "A3-A6-A8": {
+    "modules": [
+      "test_session_relay_broker",
+      "test_session_relay_runtime",
+      "test_session_relay_ownership",
+      "test_terminal_fencing",
+      "test_session_relay_terminal_grants",
+      "test_session_relay_native_ingress"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G3 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "A4-A7-A9": {
+    "modules": [
+      "test_session_relay_protocol",
+      "test_session_relay_store",
+      "test_session_relay_hub",
+      "test_session_relay_ownership",
+      "test_terminal_fencing"
+    ],
+    "missing": null
+  },
+  "A5-A10": {
+    "modules": [
+      "test_session_relay_delivery",
+      "test_session_relay_migration",
+      "test_session_relay_writer_lease"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G4 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "F4": {
+    "modules": [
+      "test_node_link",
+      "test_session_relay_broker",
+      "test_session_relay_recovery",
+      "test_session_relay_node_runtime",
+      "test_session_relay_process_restart",
+      "test_session_relay_broker_lifetime",
+      "test_session_relay_node_pipe_failure"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G5 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "F5-F6": {
+    "modules": [
+      "test_session_relay_broker",
+      "test_session_relay_store",
+      "test_session_relay_runtime_cleanup"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G6 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "F7": {
+    "modules": [
+      "test_session_relay_codex",
+      "test_session_relay_runtime",
+      "test_session_relay_protocol"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G7 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "authority": {
+    "modules": [
+      "test_session_relay_authority",
+      "test_session_relay_review",
+      "test_session_relay_runtime",
+      "test_session_relay_ownership",
+      "test_session_relay_native_ingress"
+    ],
+    "missing": null
+  },
+  "private-placement": {
+    "modules": [
+      "test_session_relay_enrolled_partition",
+      "test_session_relay_broker",
+      "test_session_relay_native_socket",
+      "test_node_link"
+    ],
+    "missing": null,
+    "qualified_evidence": "docs/handoffs/2026-11-11-relay-r1-group8-native-20.json"
+  },
+  "frozen-security": {
+    "modules": [
+      "test_session_relay_metadata_security",
+      "test_session_relay_installed_security",
+      "test_session_relay_temporary_claude",
+      "test_session_relay_guard_files",
+      "test_session_relay_native_isolation",
+      "test_session_relay_ownership",
+      "test_session_relay_claude_agent",
+      "test_session_relay_owned_native",
+      "test_session_relay_native_turn",
+      "test_session_relay_native_input_host"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G9 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "decisions": {
+    "modules": [
+      "test_session_relay_enrolled_decisions",
+      "test_session_relay_hook_races",
+      "test_session_relay_hub",
+      "test_session_relay_ownership",
+      "test_session_relay_protocol"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G10 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "bounded-redacted-storage": {
+    "modules": [
+      "test_session_relay_store",
+      "test_session_relay_broker",
+      "test_session_relay_review"
+    ],
+    "missing": null
+  },
+  "duplicates-crashes": {
+    "modules": [
+      "test_session_relay_safety",
+      "test_session_relay_recovery",
+      "test_session_relay_hub",
+      "test_session_relay_native_ingress"
+    ],
+    "missing": null
+  },
+  "unsupported-controls": {
+    "modules": [
+      "test_session_relay_enrolled_controls",
+      "test_session_relay_transport_refusals",
+      "test_session_relay_protocol",
+      "test_session_relay_native_socket",
+      "test_session_relay_ownership",
+      "test_session_relay_native_turn"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G11 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete."
+  },
+  "selector": {
+    "modules": [
+      "test_session_relay_integration",
+      "test_session_relay_writer_lease",
+      "test_session_relay_writer_routes",
+      "test_session_relay_owned_native",
+      "test_session_relay_public_writer"
+    ],
+    "missing": null,
+    "qualified_evidence": "docs/handoffs/2026-11-11-relay-r1-group12-native-20.json"
+  },
+  "claude-L1": {
+    "modules": [
+      "test_session_relay_enrolled_handover",
+      "test_session_relay_owner_plans",
+      "test_session_relay_ownership",
+      "test_session_relay_claude_switch",
+      "test_session_relay_claude_terminal",
+      "test_session_relay_enclosure",
+      "test_session_relay_claude_native_enclosure"
+    ],
+    "missing": "Current remaining R1 criteria and owners: G13 in docs/handoffs/2026-11-12-relay-m3-joint.md#single-enablement-checklist. Scoped worker closures do not qualify a newer combined source or real deployment. Keep feature/public/Host/socket qualifications and terminalMediated false until automated and Josh manual release gates are complete.",
+    "scoped_evidence": "docs/handoffs/2026-11-12-relay-m3-joint-results.json; production flags and terminalMediated false; synthetic API-key/native isolation and fake-CLI scheduler scopes remain distinct."
+  }
+}

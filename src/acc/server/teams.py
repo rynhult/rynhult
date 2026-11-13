@@ -24,7 +24,7 @@ from .supervisor_common import LaunchRefused, now
 
 # Also the exact tool-name source for OpenCode's normalized MCP permission actions.
 LEGACY_TEAM_FIELDS = {
-    'start': {'name', 'agent', 'profile', 'task', 'kind', 'machine', 'claude_auth'}, 'list': set(),
+    'start': {'name', 'agent', 'profile', 'task', 'kind', 'machine', 'claude_auth', 'permissions'}, 'list': set(),
     'status': {'helper'}, 'read': {'helper', 'last'}, 'message': {'helper', 'text'},
     'stop': {'helper'}, 'finish': {'helper'}, 'merge': {'helper'},
 }
@@ -95,7 +95,7 @@ def validate_grant(value, catalog, host, hook_path, confirmed=False):
     return {**limits, 'agents': allowed}
 
 
-TEAM_READ_TOOLS = frozenset(('list', 'status', 'read', 'worklist', 'selection_status',
+TEAM_READ_TOOLS = frozenset(('delegated_status', 'list', 'status', 'read', 'worklist', 'selection_status',
                              'gate_status', 'plan', 'plan_version', 'brief', 'brief_documents'))
 
 
@@ -328,7 +328,16 @@ class TeamMixin:
         action = payload.get('action')
         from .orchestrator.verification import require_action
         with self.db() as db:
-            require_action(db, self._get(db, caller_id), action)
+            caller = self._get(db, caller_id)
+            if action == 'start' and orchestrator.selection.refuse_changed_authority(db, caller, payload.get('selection')):
+                db.commit()
+                raise LaunchRefused('selection account or person changed')
+            from .child_caps import Refused, check
+            try:
+                check(db, caller)
+            except Refused as error:
+                raise LaunchRefused(str(error)) from None
+            require_action(db, caller, action)
         orchestrator.admit_write(self, caller_id, action)  # one write budget per team (security review OV-7)
         with self.db() as db:
             caller = db.get(Session, caller_id)
@@ -454,7 +463,9 @@ class TeamMixin:
                     assignments.event(db, assignment, caller, 'started', attempt=attempt_id)
                 # Reserve before awaiting the broker. All team mutations use the same accd lock.
                 team.started += 1
-                detail = {'name': name, 'agent': allowed['agent'], 'profile': allowed['profile'], 'parent': caller.id}
+                detail = {'name': name, 'agent': allowed['agent'], 'profile': allowed['profile'], 'parent': caller.id,
+                          'dropped_mcps': sorted(set(allowed['inputs'].get('mcps', []))
+                                                 - set(caller.launch_spec.inputs.get('mcps', [])))}
                 detail.update({'selection': selection_id, 'task_digest': orchestrator.selection.task_digest(task)} if selected else {'task': task})
                 audit(db, caller, 'start', detail)
                 team_id, parent, depth, project_id, cwd = team.id, caller.id, caller.team_depth + 1, caller.project_id, caller.cwd
@@ -596,7 +607,8 @@ class TeamMixin:
                                                                     'team_host': machine, 'team_repo': helper_repo,
                                                                     'planning_assignment': payload.get('assignment'),
                                                                     **({'attempt_id': attempt_id} if attempt_id else {})},
-                                                       container=container, claude_auth=payload.get("claude_auth", "subscription"))
+                                                       container=container, claude_auth=payload.get("claude_auth", "subscription"),
+                                                       permissions=payload.get("permissions"))
                 except Exception:
                     with self.db() as db:
                         # Once session creation commits, that session owns its checkout,

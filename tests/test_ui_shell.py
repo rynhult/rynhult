@@ -1,40 +1,30 @@
-"""The new shell is always on; legacy storage remains caller-scoped."""
+"""Retired layout state is removed; stable presentation identity is authenticated."""
 from acc.server.admin_features import FEATURES, Features
 from acc.server.config import Settings
 
 
-def test_new_shell_is_preview_and_default_on():
-    assert 'new_shell' in FEATURES
-    assert FEATURES['new_shell'].preview
-    assert Features(Settings(), {}).enabled('new_shell')
+def test_layout_feature_is_absent():
+    assert 'new_shell' not in FEATURES
+    assert all(row['id'] != 'new_shell' for row in Features(Settings()).rows())
 
-
-async def test_ui_shell_auth_csrf_and_person_isolation(api, env, member_accounts):
+async def test_presentation_identity_is_authenticated_and_caller_scoped(api, env, member_accounts):
     from test_auth import cookie_client, do_setup
     from test_users import browser, csrf, join
     async with browser(api) as anonymous:
-        assert (await anonymous.get('/api/preferences/ui-shell')).status_code == 401
-        assert (await anonymous.put('/api/preferences/ui-shell', json={'enabled': True})).status_code in (401, 403)
+        state = (await anonymous.get('/api/auth/state')).json()
+        assert not state['authenticated'] and 'person_id' not in state
     await do_setup(api, env)
     owner = cookie_client(api)
-    initial = await owner.get('/api/preferences/ui-shell')
-    assert initial.status_code == 200
-    assert initial.json()['enabled'] is True
-    owner_id = initial.json()['person_id']
+    owner_id = (await owner.get('/api/auth/state')).json()['person_id']
     assert isinstance(owner_id, str) and len(owner_id) == 36
-    assert (await owner.put('/api/preferences/ui-shell', json={'enabled': True})).status_code == 403
-    saved = await owner.put('/api/preferences/ui-shell', headers=csrf(owner), json={'enabled': True})
-    assert saved.status_code == 200 and saved.json()['enabled'] is True
     invite = await owner.post('/api/users/invites', headers=csrf(owner), json={'role': 'member', 'account': 'dana-agent'})
     async with browser(api) as member:
         assert (await join(member, invite.json()['link'], 'alex')).status_code == 200
-        own = (await member.get('/api/preferences/ui-shell')).json()
-        assert own['enabled'] is True and own['person_id'] != owner_id
-        assert (await member.put('/api/preferences/ui-shell', headers=csrf(member), json={'enabled': False, 'username': 'casey'})).status_code == 200
-        assert (await member.put('/api/preferences/ui-shell', headers=csrf(member), json={'enabled': 'yes'})).status_code == 422
-    assert (await owner.get('/api/preferences/ui-shell')).json() == {'enabled': True, 'person_id': owner_id}
-    assert (await owner.put('/api/preferences/ui-shell', headers=csrf(owner), json={'enabled': False})).json()['enabled'] is True
-
+        assert (await member.get('/api/auth/state')).json()['person_id'] != owner_id
+    assert (await owner.get('/api/auth/state')).json()['person_id'] == owner_id
+    assert (await owner.get('/api/preferences/ui-shell')).status_code == 404
+    assert (await owner.put('/api/preferences/ui-shell', headers=csrf(owner), json={'enabled': False})).status_code == 404
+    assert (await owner.put('/api/admin-features/new_shell', headers=csrf(owner), json={'enabled': True, 'revision': 0})).status_code == 404
 
 async def test_shell_identity_is_not_reassigned_when_sqlite_reuses_user_id(api, env, member_accounts):
     from test_auth import cookie_client, do_setup
@@ -47,7 +37,7 @@ async def test_shell_identity_is_not_reassigned_when_sqlite_reuses_user_id(api, 
         invite = await owner.post('/api/users/invites', headers=csrf(owner), json={'account': 'dana-agent'})
         async with browser(api) as member:
             assert (await join(member, invite.json()['link'], name)).status_code == 200
-            identities.append((await member.get('/api/preferences/ui-shell')).json()['person_id'])
+            identities.append((await member.get('/api/auth/state')).json()['person_id'])
             users = (await owner.get('/api/users')).json()['users']
             ids.append(next(u['id'] for u in users if u['username'] == name))
             if name == 'alex':
@@ -56,34 +46,35 @@ async def test_shell_identity_is_not_reassigned_when_sqlite_reuses_user_id(api, 
     assert ids[0] == ids[1]  # SQLite really did recycle the numeric primary key.
     assert identities[0] != identities[1]
 
+def test_upgrade_removes_only_retired_choices(tmp_path):
+    from alembic import command
+    from sqlalchemy.orm import Session
 
-async def test_upgrade_preserves_explicit_layout_choices(api, env):
-    from test_auth import cookie_client, do_setup
-
+    from acc.server.db import alembic_config, make_engine
     from acc.server.models import Setting
-    await do_setup(api, env)
-    owner = cookie_client(api)
-    username = (await owner.get('/api/auth/state')).json()['username']
-    for choice in (False, True):
-        with api.app.state.ctx.db() as db:
-            db.merge(Setting(key=f'ui_shell.{username}', value={'enabled': choice}))
-            db.commit()
-        assert (await owner.get('/api/preferences/ui-shell')).json()['enabled'] is True
-        with api.app.state.ctx.db() as db:
-            assert db.get(Setting, f'ui_shell.{username}').value['enabled'] is choice
-    # An existing person who never chose adopts the new default without a backfill.
-    with api.app.state.ctx.db() as db:
-        db.delete(db.get(Setting, f'ui_shell.{username}'))
+
+    url = f'sqlite:///{tmp_path}/upgrade.db'
+    config = alembic_config(url)
+    command.upgrade(config, '0087')
+    engine = make_engine(url)
+    with Session(engine) as db:
+        db.add_all([
+            Setting(key='ui_shell.alex', value={'enabled': False}),
+            Setting(key='ui_shell.blair', value={'enabled': True}),
+            Setting(key='uiXshell.alex', value={'unrelated': True}),
+            Setting(key='ui_header.alex', value={'order': ['preserved']}),
+            Setting(key='setup_level.alex', value={'level': 3}),
+            Setting(key='admin_features', value={'choices': {'new_shell': False, 'publishing': False}, 'revision': 7}),
+        ])
         db.commit()
-    assert (await owner.get('/api/preferences/ui-shell')).json()['enabled'] is True
-
-
-def test_explicit_admin_rollout_choice_cannot_disable_shell():
-    for choice in (False, True):
-        features = Features(Settings(), {'new_shell': choice})
-        assert features.enabled('new_shell') is True
-        assert all(row['id'] != 'new_shell' for row in features.rows())
-
-
-def test_server_override_cannot_disable_shell():
-    assert Features(Settings(feature_overrides={'new_shell': False})).enabled('new_shell')
+    engine.dispose()
+    command.upgrade(config, 'head')
+    engine = make_engine(url)
+    with Session(engine) as db:
+        assert db.get(Setting, 'ui_shell.alex') is None
+        assert db.get(Setting, 'ui_shell.blair') is None
+        assert db.get(Setting, 'uiXshell.alex').value == {'unrelated': True}
+        assert db.get(Setting, 'ui_header.alex').value == {'order': ['preserved']}
+        assert db.get(Setting, 'setup_level.alex').value == {'level': 3}
+        assert db.get(Setting, 'admin_features').value == {'choices': {'publishing': False}, 'revision': 7}
+    engine.dispose()

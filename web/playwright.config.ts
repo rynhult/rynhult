@@ -11,6 +11,7 @@ process.env.ACC_E2E_DEVICE_CA = environmentValue("ACC_E2E_DEVICE_CA") ?? "1";
 process.env.ACC_E2E_REMOTE_EDGE = environmentValue("ACC_E2E_REMOTE_EDGE") ?? "1";
 
 const statefulSpecs = [
+  "**/session-relay.spec.ts",
   "**/terminal-height.spec.ts",
   "**/terminal-writer.spec.ts",
   "**/terminal-paste-upload.spec.ts",
@@ -44,6 +45,7 @@ const statefulSpecs = [
   "**/93-settings-small.spec.ts",
   "**/settings-authority.spec.ts",
   "**/setup-levels.spec.ts",
+  "**/setup-wizard.spec.ts",
   "**/layout-defaults.spec.ts",
   "**/setup-levels-units.spec.ts",
   "**/shell-units.spec.ts",
@@ -72,6 +74,7 @@ const statefulSpecs = [
   "**/23-groups.spec.ts",
   "**/29-first-run.spec.ts",
   "**/35-terminal-output.spec.ts",
+  "**/osc-status.spec.ts",
   "**/40-dns.spec.ts",
   "**/41-agent-steps.spec.ts",
   "**/41-containers.spec.ts",
@@ -87,6 +90,7 @@ const statefulSpecs = [
   "**/64-remote-access-apply.spec.ts",
   "**/67-break-it-3-chaos.spec.ts",
   "**/67-break-it-3-pairing-mismatch.spec.ts",
+  "**/67-break-it-3-pairing-recovery.spec.ts",
   "**/67-break-it-3-remote-conflict.spec.ts",
   "**/75-verification.spec.ts",
   "**/89-orch-ux.spec.ts",
@@ -100,6 +104,9 @@ const mobileStatefulSpecs = [
 
 export default defineConfig({
   testDir: "e2e",
+  // Native labs require the locked .acc runtime and explicit qualification opt-in.
+  // Apply to every default project, including imported shared suites.
+  grepInvert: environmentValue("ACC_E2E_RELAY_NATIVE") === "1" ? undefined : /@relay-native/,
   // Secure-cookie proofs need the separate HTTPS harness; plain HTTP has no __Host- cookies.
   testIgnore: /csrf\.spec\.ts$/,
   globalSetup: "./e2e/global-setup.ts",
@@ -125,14 +132,14 @@ export default defineConfig({
       use: { ...devices["Pixel 7"] } },
     // Persistent-terminal qualification uses the normal harness/config, one file per focused run.
     { name: "terminal-chromium", dependencies: ["setup"], workers: 1,
-      testMatch: /(?:termfull|terminal-input|terminal-polling|terminal-host|terminal-wheel)\.spec\.ts$/,
+      testMatch: /(?:termfull|terminal-input|terminal-polling|terminal-host|terminal-wheel|terminal-select-hint)\.spec\.ts$/,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
     { name: "terminal-webkit", dependencies: ["setup"], workers: 1,
-      metadata: { presentationIsolation: true }, testMatch: /terminal-height\.spec\.ts$/,
+      metadata: { presentationIsolation: true }, testMatch: /(?:terminal-height|terminal-predictive)\.spec\.ts$/,
       use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } } },
     // Orchestrator v2 and acknowledged delivery are default-on. Include their real
     // spool/brief/adversarial cases here; focused configs remain available for isolated reruns.
-    { name: "desktop", dependencies: ["setup"], testIgnore: [/mobile|00-setup\.spec\.ts/, /csrf\.spec\.ts$/, /view-registry\.spec\.ts$/, /(?:termfull|terminal-input|terminal-polling|terminal-host|terminal-wheel)\.spec\.ts$/, ...statefulSpecs],
+    { name: "desktop", dependencies: ["setup"], testIgnore: [/mobile|00-setup\.spec\.ts/, /csrf\.spec\.ts$/, /view-registry\.spec\.ts$/, /terminal-predictive\.spec\.ts$/, /(?:termfull|terminal-input|terminal-polling|terminal-host|terminal-wheel|terminal-select-hint)\.spec\.ts$/, ...statefulSpecs],
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
     { name: "mobile", testMatch: [/mobile/, /44-quality-routes\.spec\.ts/], testIgnore: mobileStatefulSpecs,
       use: { ...devices["Pixel 7"] }, dependencies: ["setup"] },

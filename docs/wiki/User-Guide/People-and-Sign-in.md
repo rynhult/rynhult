@@ -190,7 +190,7 @@ same QR code for 15 minutes from the first request. Repeated clicks and a second
 tab do not replace it. After it expires, start again and scan the new QR code.
 
 ## Signing out
-**Sign out** (bottom of the sidebar) ends this browser's sign-in and closes its terminals. If Rynhult doesn't confirm it (the connection dropped, or the server was busy), Rynhult says **You're still signed in** instead of showing the sign-in page: nothing was ended, so choose **Try again**. On a shared computer, don't walk away until it works.
+**Sign out** (in the header account menu) ends this browser's sign-in and closes its terminals. If Rynhult doesn't confirm it (the connection dropped, or the server was busy), Rynhult says **You're still signed in** instead of showing the sign-in page: nothing was ended, so choose **Try again**. On a shared computer, don't walk away until it works.
 
 Older browser sign-in cookies are removed automatically. If a page's request token
 is stale, Rynhult refreshes it and retries that action once. **Sign out** can end
@@ -215,7 +215,7 @@ Follow **1. Verify your sign-in**, **2. Add a passkey**, then **3. Save a recove
 ## If you lose your authenticator
 
 First-run owner setup shows ten recovery codes once. Save them offline with your
-password before continuing. To replace them later, open **Settings → Account → Security** (**Sign-in security** in the section chooser),
+password before continuing. To replace them later, open **Settings → Account → Security** (your personal sign-in security),
 then **Sign-in recovery codes**, verify again with your
 password and authenticator or a passkey, and save the new set. Every code is single
 use; generating a new set invalidates all codes in the previous set. Rynhult stores

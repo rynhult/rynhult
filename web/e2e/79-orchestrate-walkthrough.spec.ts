@@ -24,7 +24,7 @@ const test = base.extend<{ lead: string }>({
 // each saving its screenshot. The browser suite's server runs with the Orchestrator v2 on (tests/e2e_server.py)
 // and fake providers; the team's plan, working list, tree and selections are answered in the page (route), with
 // artificial names only, because the wiki is public.
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 async function teamLead(page: Page) {
   const { id, headers } = await gitProject(page, 'orchestrate');
@@ -124,7 +124,7 @@ test('step 3: answering one card while the others keep their defaults', async ({
 });
 
 test("step 4: talking to the lead in its own terminal", async ({ page, lead }, testInfo) => {
-  await gotoLoadedPage(page, `/sessions/${lead}`, ['SessionPage', 'Terminal']);
+  await gotoLoadedPage(page, `/sessions/${lead}`, ['SessionPage', 'RegisteredTerminal']);
   await expect(page.locator('.xterm')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Team' })).toBeVisible();
   // What a conversation with the lead looks like, printed by the fake provider (its "screen" control).

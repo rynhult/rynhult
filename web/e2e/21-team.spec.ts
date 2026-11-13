@@ -3,7 +3,7 @@ import { expect, test } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState, waitForTeamStopped, gitProject, settleSession, teamRequest, expectAxeClean } from './helpers';
+import { AUTH_FILE, control, csrfHeaders, info, waitForSessionState, waitForTeamStopped, gitProject, verifyAgain, settleSession, teamRequest, expectAxeClean } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 const owned: string[] = [];
@@ -14,7 +14,7 @@ test.afterEach(async ({ page }) => {
     await waitForTeamStopped(page, id);
   }
 });
-test('person explicitly grants Orchestrator and stops the team', async ({ page }, testInfo) => {
+test('person explicitly grants Orchestrator and stops the team', async ({ page, isolatedOwner }, testInfo) => {
   const suffix = randomUUID().slice(0, 8);
   const projectName = `Team demo ${suffix}`;
   const folder = `${info().workspace}/team-demo-${suffix}`;
@@ -29,35 +29,42 @@ test('person explicitly grants Orchestrator and stops the team', async ({ page }
   await page.getByLabel('Name', { exact: true }).fill(projectName);
   await page.getByLabel('Workspace path').fill(folder);
   await page.getByRole('button', { name: 'Register', exact: true }).dblclick();
-  await page.getByPlaceholder('Filter projects').fill(projectName);
-  await page.getByRole('button', { name: 'Trust', exact: true }).click();
-  const trusted = page.waitForResponse(response => response.request().method() === 'POST'
-    && /\/api\/projects\/\d+\/trust$/.test(new URL(response.url()).pathname));
-  await page.getByRole('button', { name: 'Trust this workspace', exact: true }).dblclick();
-  expect((await trusted).ok()).toBe(true);
-  await expect(page.getByText('not trusted', { exact: true })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Find a project or repository', exact: true }).fill(projectName);
+  await expect(page.getByRole('table', { name: 'Project directory', exact: true }).getByRole('link', { name: projectName, exact: true })).toBeVisible();
   const projects = await (await page.request.get('/api/projects')).json();
   const project = projects.find((x: { name: string }) => x.name === projectName);
+  expect(project.trusted).toBe(false);
+  // A permissive helper grant requires the same reviewed, project-scoped Security exception as multi-run.
+  await verifyAgain(page, isolatedOwner.secret);
+  const headers = await csrfHeaders(page);
+  const policy = await (await page.request.get('/api/security/scopes')).json();
+  const reviewed = await page.request.post('/api/security/changes/preview', { headers, data: {
+    scope: { kind: 'project', project_id: project.id }, overrides: { provider_prompts: false }, preset: 'custom', revision: policy.revision,
+  } });
+  expect(reviewed.ok(), await reviewed.text()).toBe(true);
+  const preview = await reviewed.json();
+  const applied = await page.request.post(`/api/security/changes/${preview.id}/apply`, { headers, data: { digest: preview.digest } });
+  expect(applied.ok(), await applied.text()).toBe(true);
 
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const launchDialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const launchDialog = page.getByRole('region', { name: 'New session', exact: true });
   await launchDialog.getByRole('button', { name: 'Rename', exact: true }).click();
   await launchDialog.getByLabel('Name', { exact: true }).fill('Taylor lead');
   await openAdvanced(launchDialog);
   await expect(page.getByText('--session-id', { exact: false }).first()).toBeVisible();
   await launchDialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(project.id));
   await expect(launchDialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(project.id));
-  const role = launchDialog.getByRole('radio', { name: /With helpers/ });
-  await expect(role).not.toBeChecked();
-  await role.check();
-  await expect(launchDialog.getByRole('button', { name: 'Launch', exact: true })).toBeEnabled();
+  const role = launchDialog.getByRole('combobox', { name: 'Run', exact: true });
+  await expect(role).toHaveValue('once');
+  await role.selectOption('helpers');
+  await expect(launchDialog.getByRole('button', { name: /^(Trust and launch|Launch)$/ })).toBeEnabled();
   await expect(launchDialog.getByLabel('At once', { exact: true })).toHaveValue('3');
   await expect(launchDialog.getByLabel('In total', { exact: true })).toHaveValue('10');
   await expect(launchDialog.getByLabel('Depth', { exact: true })).toHaveValue('2');
   await expect(launchDialog.getByLabel('Hours', { exact: true })).toHaveValue('');
   await page.getByRole('combobox', { name: 'Helper 1: Permissions', exact: true }).selectOption('bypassPermissions');
-  await expect(page.getByRole('button', { name: 'Launch', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^(Trust and launch|Launch)$/ })).toBeDisabled();
   await page.getByRole('combobox', { name: 'Helper 1: Permissions', exact: true }).selectOption('acceptEdits');
   await page.getByRole('combobox', { name: 'Helper agent 1', exact: true }).selectOption('cursor');
   await expect(page.getByRole('checkbox', { name: /Helper 1: Run everything without asking/ })).not.toBeChecked();
@@ -72,7 +79,13 @@ test('person explicitly grants Orchestrator and stops the team', async ({ page }
   await page.screenshot({ path: wikiShotPath(testInfo, "orchestrator-new-session.png"), fullPage: true });
   await expect(launchDialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(project.id));
   const launched = page.waitForResponse(response => new URL(response.url()).pathname === '/api/sessions' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Launch', exact: true }).dblclick();
+  const trusted = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/trust`);
+  await launchDialog.getByRole('button', { name: 'Trust and launch', exact: true }).dblclick();
+  const trust = page.getByRole('dialog', { name: `Trust ${projectName}?`, exact: true });
+  await expect(trust).toContainText(folder);
+  await trust.getByRole('button', { name: 'Trust and launch', exact: true }).dblclick();
+  expect((await trusted).ok()).toBe(true);
   const response = await launched;
   expect(response.ok()).toBe(true);
   expect(response.request().postDataJSON().orchestrator).toMatchObject({ at_once: 3, total: 10, depth: 2, hours: null });
@@ -161,8 +174,7 @@ runtimeTest('a granted team reports a helper permission and stops every member',
   owned.length = 0;
   await expect(page.getByRole('heading', { name: 'Stop confirmed', exact: true })).toBeVisible({ timeout: testInfo.timeout });
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  await openAdvanced(page.getByRole('dialog', { name: 'New session', exact: true }));
-  await expect(page.getByRole('radio', { name: /With helpers/ })).not.toBeChecked();
-  await expect(page.getByRole('radio', { name: /Once/ })).toBeChecked();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await openAdvanced(page.getByRole('region', { name: 'New session', exact: true }));
+  await expect(page.getByRole('region', { name: 'New session', exact: true }).getByRole('combobox', { name: 'Run', exact: true })).toHaveValue('once');
+  await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
 });

@@ -4,7 +4,7 @@ import { emptyLayout, openView, referenceFor, type ViewReference, type WorkingLa
 /** Between the live layout, whose hrefs and keys may name files, and the saved one, which never does. */
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TAB = /^[a-z][a-z-]{0,31}$/;
-const placeholder = (saved: LayoutView): ViewReference => ({ key: `unavailable:${saved.id}`, href: '', kind: 'unavailable', minWidth: 320, saved });
+const placeholder = (saved: LayoutView, unrestorable = false): ViewReference => ({ key: `unavailable:${saved.id}`, href: '', kind: 'unavailable', minWidth: 320, saved, unrestorable });
 
 /** Where a file view lives, for asking the server for its opaque reference. */
 export function fileTarget(view: ViewReference): LayoutFile | null {
@@ -70,7 +70,7 @@ export function fromServer(record: Pick<LayoutRecord, 'layout' | 'resources'>, l
     const resolved = record.resources[view.id];
     const target = resolved?.available === false ? null : href(view, resolved?.file);
     const reference = target ? referenceFor(target) : null;
-    const item = reference && !views[reference.key] ? reference : placeholder(view);
+    const item = reference && !views[reference.key] ? reference : placeholder(view, resolved?.available === false);
     views[item.key] = item; keys.set(view.id, item.key);
     if (view.file_ref && reference) refs.set(reference.key, view.file_ref);
   }
@@ -86,6 +86,10 @@ export function resolvePlaceholders(layout: WorkingLayout, resources: LayoutReco
   const refs = new Map<string, string>(), swapped = new Map<string, ViewReference>();
   for (const view of Object.values(layout.views)) {
     if (view.kind !== 'unavailable' || !view.saved?.file_ref) continue;
+    if (resources[view.saved.id]?.available === false) {
+      if (!view.unrestorable) swapped.set(view.key, { ...view, unrestorable: true });
+      continue;
+    }
     const target = href(view.saved, resources[view.saved.id]?.file); const reference = target ? referenceFor(target) : null;
     if (reference && !layout.views[reference.key]) { swapped.set(view.key, reference); refs.set(reference.key, view.saved.file_ref); }
   }

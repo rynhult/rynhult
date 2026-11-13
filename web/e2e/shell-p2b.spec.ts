@@ -1,22 +1,12 @@
 import { expect, test, type BrowserContext, type Page } from './fixtures';
-import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, sessionWithChanges, verifyAgain } from './helpers';
-test.use({ presentationChanges: ['admin_features', 'ui_shell', 'layouts'], storageState: AUTH_FILE, viewport: { width: 1440, height: 900 } });
+import { AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, sessionWithChanges, verifyAgain } from './helpers';
+test.use({ presentationChanges: ['admin_features', 'layouts'], storageState: AUTH_FILE, viewport: { width: 1440, height: 900 } });
 
-async function enable(page: Page) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-  };
-  let result = await put();
-  if (result.status() === 403) { await verifyAgain(page); result = await put(); }
-  expect(result.ok()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-}
 const layouts = (id: number) => `/api/projects/${id}/layouts/desktop/wide`;
 const record = async (page: Page, id: number) => (await page.request.get(layouts(id))).json();
 const revision = (page: Page, id: number, value: number) => expect.poll(async () => (await record(page, id)).revision).toBe(value);
 async function project(page: Page, name: string, files = ['one.txt', 'two.txt']) {
-  await enable(page); const made = await gitProject(page, name);
+   const made = await gitProject(page, name);
   for (const path of files) expect((await page.request.post(`/api/files/project/${made.id}`, { headers: await csrfHeaders(page), data: { action: 'create', path, content: `Saved ${path}` } })).ok()).toBeTruthy();
   return made;
 }
@@ -124,7 +114,7 @@ test('reset is explicit, audited, keeps the open views and the next window start
   await other.close();
 });
 
-test('unknown and unauthorized references restore as placeholders, never content', async ({ page }) => {
+test('unavailable references stay neutral while active and are pruned once hidden', async ({ page }) => {
   const { id } = await project(page, 'cedar-unavailable');
   await open(page, id, 'one.txt'); await revision(page, id, 1);
   const current = (await record(page, id)).layout;
@@ -133,15 +123,19 @@ test('unknown and unauthorized references restore as placeholders, never content
   expect((await page.request.put(layouts(id), { headers: await csrfHeaders(page), data: { expected_revision: 1, layout } })).ok()).toBeTruthy();
   const reads: string[] = []; page.on('request', request => { if (/not-a-session|unknown-reference/.test(request.url())) reads.push(request.url()); });
   await page.goto(`/projects/${id}?tab=files&file=one.txt`);
-  await expect(page.getByRole('tab', { name: 'View unavailable' })).toHaveCount(2);
-  await page.getByRole('tab', { name: 'View unavailable' }).first().click();
+  await expect(page.getByRole('tab', { name: 'View unavailable' })).toHaveCount(1);
+  await page.getByRole('tab', { name: 'View unavailable' }).click();
   await expect(page.locator('[data-working-view="unavailable:f-gone"]').getByText('View unavailable. Access may have ended')).toBeVisible();
+  await page.getByRole('tab', { name: /one.txt/ }).click();
+  await expect(page.getByRole('tab', { name: 'View unavailable' })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'File content' })).toHaveText('Saved one.txt');
+  await expect(page.getByText('Tabs removed', { exact: true })).toBeVisible();
+  await expect.poll(async () => (await record(page, id)).layout.views.filter((view: { id: string }) => ['f-gone', 't-lost'].includes(view.id)).length).toBe(0);
   expect(reads).toEqual([]);
-  // Selecting the file and moving it are separate saves when the server is fast.
-  // Wait for each revision rather than relying on debounce coalescing.
-  await page.getByRole('tab', { name: /one.txt/ }).click(); await revision(page, id, 3);
-  await move(page, '1'); await revision(page, id, 4);
-  expect((await record(page, id)).layout.views.map((view: { id: string }) => view.id)).toEqual(expect.arrayContaining(['f-gone', 't-lost'])); // kept for when access returns
+  await move(page, '1');
+  await expect.poll(async () => (await record(page, id)).layout.columns.length).toBe(2);
+  const savedIds = (await record(page, id)).layout.views.map((view: { id: string }) => view.id);
+  expect(savedIds).not.toContain('f-gone'); expect(savedIds).not.toContain('t-lost');
 });
 
 test('F1: a full newer layout that cannot keep a draft stays a conflict and is never overwritten', async ({ page, context }) => {
@@ -227,7 +221,7 @@ async function frames(context: BrowserContext, page: Page) {
 }
 
 test('restoring and choosing a layout never takes input, changes the writer or starts work', async ({ page, context }) => {
-  await enable(page); const session = await sessionWithChanges(page, 'cedar-observer');
+   const session = await sessionWithChanges(page, 'cedar-observer');
   const detail = await (await page.request.get(`/api/sessions/${session}`)).json(); const id = detail.project_id;
   await page.goto(`/sessions/${session}`);
   await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
@@ -300,8 +294,81 @@ test('saved session tabs stay neutral while checking cached names, then name or 
     await expect(page.getByRole('tab', { name: 'View unavailable' })).toHaveCount(0);
     release();
     await expect(page.getByRole('tab', { name: 'Cached allowed session · Setup', exact: true })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'View unavailable', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('tab', { name: 'View unavailable', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Tabs removed', { exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Saved view', exact: true })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /Cached refused/ })).toHaveCount(0);
   } finally { release(); }
 });
+
+
+test('P2 polish caps restored strips and drops a deleted file with an explanation', async ({ page }) => {
+  test.setTimeout(90000);
+  const files = Array.from({ length: 14 }, (_, i) => `polish-${i}.txt`);
+  const { id, folder } = await project(page, 'cedar-polish-strip', files);
+  for (const [index, file] of files.entries()) {
+    await open(page, id, file);
+    await expect(page.getByRole('textbox', { name: 'File content' })).toBeVisible();
+    await expect.poll(async () => (await record(page, id)).layout?.views.length).toBe(Math.min(index + 1, 12));
+  }
+  await expect(page.locator('[data-view-tab]')).toHaveCount(12);
+  await expect(page.getByRole('tab', { name: /polish-0.txt/ })).toHaveCount(0);
+  await expect(page.getByText('Tabs removed', { exact: true })).toHaveAttribute('title', /oldest first/);
+  // Validate a hidden saved file without mounting its editor.
+  const { unlinkSync } = await import('node:fs');
+  unlinkSync(`${folder}/polish-12.txt`);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: /polish-12.txt/ })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: /polish-13.txt/ })).toBeVisible();
+  await expect.poll(async () => (await record(page, id)).layout?.views.length).toBe(11);
+  await expect(page.getByText('Tabs removed', { exact: true })).toHaveAttribute('title', /unavailable views/);
+});
+
+test('P2 polish duplicate registration offers the existing project', async ({ page }) => {
+  const made = await gitProject(page, 'cedar-polish-duplicate');
+  await page.goto('/projects');
+  await page.getByRole('button', { name: 'Register folder' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Register a folder' });
+  await dialog.getByLabel('Name', { exact: true }).fill('Duplicate registration');
+  await dialog.getByLabel('Workspace path', { exact: true }).fill(made.folder);
+  await dialog.getByRole('button', { name: 'Register', exact: true }).click();
+  const existing = dialog.getByRole('link', { name: 'Open the existing project' });
+  await expect(existing).toHaveAttribute('href', `/projects/${made.id}`);
+  await existing.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/projects/${made.id}$`));
+});
+
+test('P2 polish sign-in help is public and software repair links to the Guide', async ({ page, browser }) => {
+  const signedOut = await browser.newContext({ baseURL: info().origin, storageState: { cookies: [], origins: [] } });
+  try {
+    const login = await signedOut.newPage();
+    await login.goto('/login');
+    await expect(login.getByRole('link', { name: 'Trouble signing in?' })).toHaveAttribute('href',
+      'https://rynhult.dev/docs/User-Guide/Troubleshooting/#sign-in-and-launch-policy');
+  } finally { await signedOut.close(); }
+  await page.route('**/api/packages?*', route => route.fulfill({ json: { packages: {}, pending: [], helper: false, reported: true } }));
+  await page.goto('/providers');
+  await expect(page.getByRole('link', { name: 'Installer re-run steps' })).toHaveAttribute('href', '/guide/User-Guide/Updating#repair-agent-software');
+});
+
+for (const action of ['rename', 'delete'] as const) {
+  test(`P2 recovery keeps a dirty file after agent ${action}`, async ({ page }) => {
+    test.setTimeout(90000);
+    const { id, folder } = await project(page, `cedar-draft-${action}`);
+    await open(page, id, 'one.txt');
+    const editor = page.getByRole('textbox', { name: 'File content' });
+    await editor.fill('Precious unsaved edits');
+    const fs = await import('node:fs');
+    if (action === 'rename') fs.renameSync(`${folder}/one.txt`, `${folder}/moved.txt`);
+    else fs.unlinkSync(`${folder}/one.txt`);
+    await expect(page.getByText('File moved or removed - your changes are kept', { exact: true })).toBeVisible({ timeout: 45000 });
+    await expect(page.getByRole('textbox', { name: 'Retained file draft' })).toHaveValue('Precious unsaved edits');
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Save as', exact: true }).click();
+    const saved = await download;
+    expect(fs.readFileSync((await saved.path())!, 'utf8')).toBe('Precious unsaved edits');
+    await expect(page.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discard', exact: true })).toBeVisible();
+  });
+}

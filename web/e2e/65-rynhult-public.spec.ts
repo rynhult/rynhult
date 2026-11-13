@@ -44,7 +44,7 @@ test('Rynhult shell and Guide use the public name; refresh remaining artificial-
   await page.getByRole('heading', { name: 'Budgets', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ animations: 'disabled', path: wikiShotPath(testInfo, 'settings-budgets.png') });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Jump to…' }).first().click();
+  await page.getByRole('button', { name: 'Go to…' }).first().click();
   const palette = page.getByRole('dialog');
   await expect(palette).toBeVisible();
   await page.screenshot({ animations: 'disabled', path: wikiShotPath(testInfo, 'command-palette.png') });
@@ -58,11 +58,12 @@ test('brand assets load and the mark follows the surface theme', async ({ page }
   await page.goto('/');
   for (const dark of [true, false]) {
     await page.evaluate(value => document.documentElement.classList.toggle('dark', value), dark);
-    const ink = dark ? 'light' : 'dark';
+    // The frame mark sits on the accent tile: dark ink on its light dark-theme tile.
+    const ink = dark ? 'dark' : 'light';
     const mark = page.locator(`img[src="/rynhult-mark-${ink}.svg"]`).first();
     await expect(mark).toBeVisible();
     await expect.poll(() => mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
-    await expect(page.locator(`img[src="/rynhult-mark-${dark ? 'dark' : 'light'}.svg"]`).first()).toBeHidden();
+    await expect(page.locator(`img[src="/rynhult-mark-${dark ? 'light' : 'dark'}.svg"]`).first()).toBeHidden();
   }
   for (const path of ['/favicon.svg', '/favicon.ico', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png']) {
     const response = await page.request.get(path);

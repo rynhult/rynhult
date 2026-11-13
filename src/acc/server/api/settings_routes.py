@@ -1,21 +1,22 @@
 """Settings that apply across sessions: guardrails (owner-chosen, instance-wide)."""
 from __future__ import annotations
 
+import time
 from typing import Literal, get_args
-from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
+from sqlalchemy import select
 
 from .. import budgets, guardrails, risk_labels
-from ..models import AuditLog, Setting
+from ..models import AuditLog, Setting, User
+from ..setup_wizard import ProgressIn, initial
 from .context import Context
 
 
 class CustomRuleIn(BaseModel):
     pattern: str = Field(min_length=1, max_length=300)
     reason: str = Field("", max_length=200)
-
 
 class BudgetRuleIn(BaseModel):
     mode: str = Field("cap", pattern=r"^(cap|pace)$")
@@ -24,36 +25,21 @@ class BudgetRuleIn(BaseModel):
     extra: float | None = None
     extra_until: float | None = None
 
-
 class BudgetsIn(BaseModel):
     rules: dict[str, BudgetRuleIn] = Field(default_factory=dict, max_length=20)
 
-
 class ExtraIn(BaseModel):
     window: str = Field(min_length=1, max_length=40)
-
 
 class GuardrailsIn(BaseModel):
     rules: dict[str, StrictBool] = {}
     custom: list[CustomRuleIn] = Field(default_factory=list, max_length=guardrails.MAX_CUSTOM)
     revision: int | None = Field(default=None, ge=0, strict=True)
 
-
 class RiskLabelsIn(BaseModel):
     enabled: bool = Field(strict=True)
 
-
-def shell_enabled(value, request):
-    """Classic choices remain stored; the released layout is always new."""
-    return True
-
-
-class UIShellIn(BaseModel):
-    enabled: bool = Field(strict=True)
-
-
 HeaderModule = Literal['machine_load', 'plan_usage', 'go_to', 'conversation_search', 'file_search']
-
 
 class UIHeaderIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -67,26 +53,51 @@ class UIHeaderIn(BaseModel):
             raise ValueError('Each header module may appear only once.')
         return value
 
-
 def default_header() -> dict:
     return {'order': list(get_args(HeaderModule)), 'hidden': []}
-
 
 class SetupLevelIn(BaseModel):
     # No names, policy fields or launch options may cross this boundary.
     model_config = ConfigDict(extra="forbid")
     level: int | None = Field(ge=0, le=6, strict=True)
     dismissed: bool = Field(default=True, strict=True)
+    wizard: ProgressIn | None = None
+
+class ClaudeSubscriptionIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: bool = Field(strict=True)
+    version: str | None = None
 
 
 class PhoneBannerIn(BaseModel):
     dismissed: bool = Field(strict=True)
 
-
 def router(ctx: Context) -> APIRouter:
     from .security_settings import audited_router
     api = audited_router(ctx, audit_paths=('/api/guardrails',))
     db = ctx.db
+
+    @api.get('/api/preferences/claude-subscription')
+    def get_claude_subscription(who=Depends(ctx.principal)):
+        from .. import claude_subscription as consent
+        if who.user_id is None:
+            raise HTTPException(403, 'Sign in as a person to manage Claude Chat consent.')
+        with db() as s:
+            return {**consent.read(s, who.user_id), 'available': ctx.settings.features.enabled('claude_subscription_chat'),
+                    'notice': consent.NOTICE, 'risk': consent.RISK, 'current_version': consent.VERSION}
+
+    @api.put('/api/preferences/claude-subscription')
+    def put_claude_subscription(body: ClaudeSubscriptionIn, who=Depends(ctx.principal)):
+        from .. import claude_subscription as consent
+        if body.enabled and not ctx.settings.features.enabled('claude_subscription_chat'):
+            raise HTTPException(403, 'The owner has disabled subscription Chat.')
+        with db() as s:
+            try:
+                value = consent.update(s, who, body.enabled, body.version)
+            except ValueError as error:
+                raise HTTPException(403, str(error)) from error
+            s.commit()
+            return value
 
     @api.get("/api/preferences/risk-labels")
     def get_risk_labels(who=Depends(ctx.principal)):
@@ -118,27 +129,7 @@ def router(ctx: Context) -> APIRouter:
             s.commit()
             return value
 
-    def shell_person_id(who) -> str | None:
-        # SQLite can reuse User.id after removal. Usernames are immutable and
-        # permanently reserved by RetiredUser; this opaque presentation ID cannot
-        # be reassigned. The browser also namespaces it by installation origin.
-        return str(uuid5(NAMESPACE_URL, f"urn:rynhult:ui-shell:{who.username}")) if who.user_id is not None else None
-
-    @api.get("/api/preferences/ui-shell")
-    def get_ui_shell(request: Request, who=Depends(ctx.principal)):
-        with db() as s:
-            row = s.get(Setting, f"ui_shell.{who.username}")
-            return {"enabled": shell_enabled(row.value if row else {}, request), "person_id": shell_person_id(who)}
-
-    @api.put("/api/preferences/ui-shell")
-    def put_ui_shell(body: UIShellIn, request: Request, who=Depends(ctx.principal)):
-        with db() as s:
-            value = body.model_dump()
-            s.merge(Setting(key=f"ui_shell.{who.username}", value=value, updated_by=who.username))
-            s.commit()
-            return {"enabled": shell_enabled(value, request), "person_id": shell_person_id(who)}
-
-    # Presentation only, with exactly the same caller-scoped principal contract as ui-shell.
+    # Presentation only, with a caller-scoped authenticated principal and CSRF protection.
     # Required controls and role authorization are deliberately absent from this schema.
     @api.get('/api/preferences/ui-header')
     def get_ui_header(who=Depends(ctx.principal)):
@@ -173,12 +164,39 @@ def router(ctx: Context) -> APIRouter:
             level = value.get("level") if value.get("version") == 1 else None
             if type(level) is not int or not 0 <= level <= 6:
                 level = None
-            return {"level": level, "dismissed": value.get("dismissed") is True, "version": 1}
+            return {"level": level, "dismissed": value.get("dismissed") is True, "version": 1,
+                    "wizard": value.get("wizard", initial())}
 
     @api.put("/api/preferences/setup-level")
     def put_setup_level(body: SetupLevelIn, who=Depends(setup_person)):
         with db() as s:
-            value = {**body.model_dump(), "version": 1}
+            # Also serialize the first preference insert on PostgreSQL. SQLite
+            # mutating requests already hold write intent before reading.
+            s.scalar(select(User).where(User.id == who.user_id).with_for_update())
+            row = s.get(Setting, f"setup_level.{who.username}")
+            progress = dict(row.value.get('wizard', initial())) if row else initial()
+            if body.wizard is not None:
+                change = body.wizard
+                if progress.get('version') != 1 or progress.get('preset_version') != 1:
+                    raise HTTPException(409, 'This setup version needs review in a newer application. Saved choices were preserved.')
+                if change.revision != progress['revision']:
+                    raise HTTPException(409, 'Setup changed in another browser. Reload and review before saving again.')
+                if (change.step in ('level', 'finish') or change.step == 'recovery' and progress.get('recovery_required')) and change.state == 'deferred':
+                    raise HTTPException(422, 'This acknowledgement cannot be deferred.')
+                steps = dict(progress['steps'])
+                if progress.get('recovery_required') and change.step != 'recovery' and steps.get('recovery', {}).get('state') != 'completed':
+                    raise HTTPException(409, 'Save your recovery codes before continuing setup.')
+                if change.step == 'finish' and any(steps.get(step, {}).get('state', 'pending') == 'pending'
+                                                  for step in ('level', 'security', 'machine', 'provider', 'project', 'backups', 'updates', 'features')):
+                    raise HTTPException(409, 'Complete or explicitly defer each setup step first.')
+                now = time.time()
+                steps[change.step] = {'state': change.state, 'updated_at': now}
+                progress.update(steps=steps, revision=progress['revision'] + 1, updated_at=now)
+                if 'binding' in change.model_fields_set:
+                    progress['binding'] = change.binding.model_dump() if change.binding else None
+                if 'project_id' in change.model_fields_set:
+                    progress['project_id'] = change.project_id
+            value = {"level": body.level, "dismissed": body.dismissed, "version": 1, "wizard": progress}
             s.merge(Setting(key=f"setup_level.{who.username}", value=value, updated_by=who.username))
             s.commit()
             return value

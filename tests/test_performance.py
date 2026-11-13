@@ -92,6 +92,7 @@ async def test_inbox_batching_keeps_project_risk_policies_distinct(seeded):
             db.add(AttentionItem(dedupe_key=title, title=title, session_id=sid, kind='needs_input', source='test',
                                  risk={'label': 'Review', 'reason': 'Synthetic prompt'}))
         for sid in (hidden_session, shown_session):
+            db.get(Session, sid).provider = "claude"
             db.add(Event(session_id=sid, source='claude_hook', kind='PermissionRequest',
                          payload={'acc_permission_id': 'a' * 32, 'acc_complete_input': '{"command":"true"}'}))
         db.flush()

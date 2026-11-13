@@ -14,8 +14,8 @@ import { THEME_LABEL } from '../../lib/themeChoice';
 import { NewSessionContext, type NewSessionPreset } from '../newSession';
 import { UnsavedBriefGuard } from '../UnsavedBriefGuard';
 import { CurrentSecurityShield } from './SecurityShield';
-import { ConnectionBanner, LiveIndicator, useTheme } from '../Layout';
-import { CommandPalette } from '../CommandPalette';
+import { ConnectionBanner, LiveIndicator, useTheme } from '../ConnectionStatus';
+const CommandPalette = lazy(() => lazyImport(() => import('../CommandPalette')).then(m => ({ default: m.CommandPalette })));
 import { ErrorBoundary } from '../ErrorBoundary';
 import { announce, Button, Dialog, Dot, ErrorNote, IconButton, Popover, useMedia } from '../ui';
 import { useUpdates } from '../Updates';
@@ -127,7 +127,7 @@ export function Shell({ username, personId, children }: { username: string; pers
   };
   const inboxCount = attention.data?.length ?? 0;
   const inboxCountLabel = `${inboxCount > 99 ? '99+ shown, ' : ''}${inboxCount} open`;
-  const inboxLabel = attention.isError
+  const inboxLabel = attention.errorUpdatedAt > attention.dataUpdatedAt
     ? `Inbox${attention.data ? `, ${inboxCountLabel}, count may be out of date` : ', unavailable'}`
     : inboxCount ? `Inbox, ${inboxCountLabel}` : 'Inbox';
   const rail = (items: typeof nav) => items.map(({ id, label, icon: Icon }) => <button key={id} type="button" className="shell-rail-button" data-shell-mode={id} aria-label={id === 'inbox' ? inboxLabel : undefined} title={id === 'inbox' ? inboxLabel : label} aria-pressed={mode === id} onClick={() => select(id)}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === 'inbox' && inboxCount > 0 && <> <span className="shell-inbox-count" aria-hidden="true">{inboxCount > 99 ? '99+' : inboxCount}</span></>}</button>);
@@ -172,7 +172,7 @@ export function Shell({ username, personId, children }: { username: string; pers
     </div>
     <nav id="shell-phone-rail" tabIndex={-1} aria-label="Phone rail" className="shell-phone-rail" onKeyDown={railKeys}>{rail(nav.filter(n => ['overview', 'inbox', 'sessions', 'projects'].includes(n.id)))}<button className="shell-rail-button" onClick={() => setDrawer(true)} aria-haspopup="dialog" aria-expanded={drawer}><Menu size={18} aria-hidden="true" />More</button></nav>
     <Dialog sheet open={drawer} onClose={() => setDrawer(false)} title="Browse"><div className="shell-sheet-body" data-shell-browse><nav aria-label="Rail modes" className="shell-sheet-modes" onKeyDown={railKeys}>{rail(nav)}</nav>{phone && sidebar}</div></Dialog>
-    <Dialog open={signOut.isError} onClose={() => signOut.reset()} title="You're still signed in"><ErrorNote error={signOut.error} /><Button onClick={() => signOut.mutate()}>Try again</Button></Dialog>
-    <CommandPalette open={palette} onClose={() => setPalette(false)} onNewSession={() => newSession()} onToggleTheme={toggle} />
+    <Dialog open={signOut.isError} onClose={() => signOut.reset()} title="You're still signed in" description="Rynhult didn't confirm the sign-out. Try again."><ErrorNote error={signOut.error} /><Button onClick={() => signOut.mutate()}>Try again</Button></Dialog>
+    {palette && <Suspense fallback={null}><CommandPalette open onClose={() => setPalette(false)} onNewSession={() => newSession()} onToggleTheme={toggle} /></Suspense>}
   </div></NewSessionContext.Provider></UnsavedBriefGuard>;
 }

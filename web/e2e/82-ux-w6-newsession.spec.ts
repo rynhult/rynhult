@@ -13,7 +13,8 @@ for (const width of [1440, 390]) {
       const project = await gitProject(page, `w6-${width}`);
       await page.goto("/");
       await page.getByRole("button", { name: "New session", exact: true }).first().click();
-      let dialog = page.getByRole("dialog", { name: "New session" });
+      let dialog = page.getByRole("region", { name: "New session" });
+      await openAdvanced(dialog);
       await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(project.id));
       await dialog.getByRole("textbox", { name: "Task (optional)", exact: true }).fill("Fix the login form error");
       const rename = dialog.getByRole("button", { name: "Rename", exact: true });
@@ -22,7 +23,7 @@ for (const width of [1440, 390]) {
       const top = async (name: string) => (await dialog.getByRole("combobox", { name, exact: true }).boundingBox())!.y;
       expect(await top("Agent")).toBeLessThan((await rename.boundingBox())!.y);
       expect(await top("Profile")).toBeLessThanOrEqual((await rename.boundingBox())!.y);
-      await expectAxeClean(page, '[role="dialog"]');
+      await expectAxeClean(page, 'main');
 
       await rename.click();
       const name = dialog.getByRole("textbox", { name: "Name", exact: true });
@@ -34,11 +35,11 @@ for (const width of [1440, 390]) {
 
       await rename.click();
       await name.fill("login-fix");
-      await expectAxeClean(page, '[role="dialog"]');
+      await expectAxeClean(page, 'main');
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await page.getByRole("button", { name: "New session", exact: true }).first().click();
-      dialog = page.getByRole("dialog", { name: "New session" });
+      dialog = page.getByRole("region", { name: "New session" });
       await expect(dialog.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("login-fix");  // the draft keeps it
       await dialog.getByRole("button", { name: "Discard draft" }).click();
       await page.getByRole("dialog", { name: "Discard this draft?" }).getByRole("button", { name: "Discard draft" }).click();
@@ -47,20 +48,21 @@ for (const width of [1440, 390]) {
     test("a local workspace uses the same Rename row, named from the topic", async ({ page }) => {
       await page.goto("/");
       await page.getByRole("button", { name: "New session", exact: true }).first().click();
-      const dialog = page.getByRole("dialog", { name: "New session" });
+      const dialog = page.getByRole("region", { name: "New session" });
+      await openAdvanced(dialog);
       await dialog.getByRole("radio", { name: "Local workspace" }).click();
       await dialog.getByRole("textbox", { name: "Topic", exact: true }).fill("Tournament apps");
       await expect(dialog.getByTestId("automatic-name")).toHaveText("Tournament apps");
       await expect(dialog.getByRole("textbox", { name: "Session name", exact: true })).toHaveCount(0);
       await dialog.getByRole("button", { name: "Rename", exact: true }).click();
       await expect(dialog.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
-      await dialog.getByRole("button", { name: "Close" }).click();
+      await dialog.getByRole("button", { name: "Back to workspace" }).click();
     });
   });
 }
 
 for (const width of [1440, 390]) for (const theme of ["dark", "light"]) {
-  test(`launch warnings stay visible when Advanced is closed, ${width}px ${theme}`, async ({ page }) => {
+  test(`launch warnings stay visible when model/location details are closed, ${width}px ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.addInitScript(t => localStorage.setItem("acc-theme", t), theme);
     const project = await gitProject(page, `launch-warnings-${width}-${theme}`);
@@ -74,27 +76,28 @@ for (const width of [1440, 390]) for (const theme of ["dark", "light"]) {
     });
     await page.goto("/");
     await page.getByRole("button", { name: "New session", exact: true }).first().click();
-    const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+    const dialog = page.getByRole("region", { name: "New session", exact: true });
+    await openAdvanced(dialog);
     await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(project.id));
     const warning = dialog.getByRole("status").filter({ hasText: "Example instructions cannot be delivered." });
     await expect(warning).toBeVisible();
     await openAdvanced(dialog);
     await expect(warning).toBeVisible();
-    await dialog.getByRole("radio", { name: /Several agents/ }).check();
+    await dialog.getByRole("combobox", { name: "Run", exact: true }).selectOption("several");
     await dialog.getByRole("textbox", { name: "Task", exact: true }).fill("Review this example");
     await dialog.getByRole("combobox", { name: "Run 1: Agent", exact: true }).selectOption("claude");
     await dialog.getByRole("combobox", { name: "Run 2: Agent", exact: true }).selectOption("codex");
     const error = dialog.getByRole("alert").filter({ hasText: "Example launch policy refused this run." });
     await expect(error).toBeVisible();
     await expect(dialog.getByText(/Example remote key: not sent to other machines/)).toBeVisible();
-    const advanced = dialog.getByRole("button", { name: /^Advanced/ });
+    const advanced = dialog.locator("summary").filter({ hasText: "Model and working location" });
     await advanced.focus();
     await page.keyboard.press("Enter");
-    await expect(advanced).toHaveAttribute("aria-expanded", "false");
+    expect(await advanced.evaluate(node => (node.parentElement as HTMLDetailsElement).open)).toBe(false);
     await expect(error).toBeVisible();
     await expect(warning).toBeVisible();
     await expect(dialog.getByText(/Example remote key: not sent to other machines/)).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeDisabled();
-    await expectAxeClean(page, '[role="dialog"]');
+    await expectAxeClean(page, 'main');
   });
 }

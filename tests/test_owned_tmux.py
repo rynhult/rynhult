@@ -9,10 +9,11 @@ import pytest
 
 
 @pytest.mark.parametrize('exit_kind', ['normal', 'failure', 'interrupt'])
-def test_cleanup_leaves_no_owned_processes(tmp_path, exit_kind):
-    from owned_tmux import cleanup, live_processes
+def test_cleanup_leaves_no_owned_processes(tmp_path, exit_kind, owned_tmux):
+    from owned_tmux import cleanup, live_processes, socket_path
 
     socket = 'acc-test-clean-' + uuid.uuid4().hex[:8]
+    owned_tmux.register(socket)
     stubborn = tmp_path / 'fake-cli.py'
     stubborn.write_text('import signal, time\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\n'
                         'signal.signal(signal.SIGTERM, signal.SIG_IGN)\nwhile True: time.sleep(1)\n')
@@ -29,6 +30,7 @@ def test_cleanup_leaves_no_owned_processes(tmp_path, exit_kind):
                 raise KeyboardInterrupt
         finally:
             cleanup(socket)
+            assert not socket_path(socket).exists()
     except (AssertionError, KeyboardInterrupt):
         pass
     try:
@@ -106,7 +108,7 @@ os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
                 pass
 
 
-@pytest.mark.parametrize('failure', ['test', 'setup', 'interrupt'])
+@pytest.mark.parametrize('failure', ['test', 'setup', 'interrupt', 'worker_crash'])
 def test_pytest_fixture_collects_processes_on_unsuccessful_exit(tmp_path, failure):
     import sys
     from pathlib import Path
@@ -118,6 +120,7 @@ def test_pytest_fixture_collects_processes_on_unsuccessful_exit(tmp_path, failur
     case = tmp_path / 'test_failure.py'
     case.write_text('''
 import json
+import os
 import subprocess
 from pathlib import Path
 import pytest
@@ -129,6 +132,8 @@ def launched(env):
     ops.tmux(env['broker'], 'new-session', '-d', '-s', 'owned', 'sleep 120', check=True)
     pid = subprocess.check_output(['tmux', '-L', env['broker'].tmux_socket, 'display-message', '-p', '#{pid}'])
     Path(IDENTITY).write_text(json.dumps(sorted(live_processes(int(pid)))))
+    if FAILURE == 'worker_crash':
+        os._exit(7)
     if FAILURE == 'setup':
         raise RuntimeError('deliberate setup failure')
     return env
@@ -138,7 +143,8 @@ def test_failure(launched):
         raise KeyboardInterrupt
     raise AssertionError('deliberate test failure')
 '''.replace('IDENTITY', repr(str(identity))).replace('FAILURE', repr(failure)))
-    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '--color=no', '-p', 'host_isolation', '-p', 'conftest', str(case)],
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '--color=no', '-p', 'host_isolation', '-p', 'conftest',
+                             *(['-n', '1', '--max-worker-restart=0'] if failure == 'worker_crash' else []), str(case)],
                             cwd=tmp_path, env=os.environ | {'PYTHONPATH': os.pathsep.join([str(root / 'tests'), str(root / 'src'), *sys.path])},
                             capture_output=True, text=True, timeout=30)
     assert result.returncode in (1, 2), result.stdout + result.stderr
@@ -146,6 +152,9 @@ def test_failure(launched):
     import json
     pids = json.loads(identity.read_text())
     assert len(pids) >= 2
+    deadline = time.monotonic() + 5
+    while any(live_processes(pid) for pid in pids) and time.monotonic() < deadline:
+        time.sleep(.02)
     assert sum(bool(live_processes(pid)) for pid in pids) == 0, result.stdout + result.stderr
 
 
@@ -226,3 +235,61 @@ def test_leak(tmp_path):
                 signal_process(handle, signal.SIGKILL)
             finally:
                 os.close(handle)
+
+
+def test_cleanup_removes_an_authenticated_stale_socket(tmp_path):
+    from owned_tmux import Owner, socket_path
+
+    owner = Owner()
+    socket = 'acc-test-stale-' + uuid.uuid4().hex
+    owner.register(socket)
+    try:
+        subprocess.run(['tmux', '-L', socket, 'new-session', '-d', 'sleep 120'], check=True)
+        server = int(subprocess.check_output(['tmux', '-L', socket, 'display-message', '-p', '#{pid}']))
+        subprocess.run(['tmux', '-L', socket, 'set-option', '-g', 'exit-empty', 'off'], check=True)
+        time.sleep(.3)  # watchdog records the authenticated entry before the server dies
+        # Stop its pane first so this regression doesn't itself orphan a child.
+        subprocess.run(['tmux', '-L', socket, 'kill-session'], check=True)
+        os.kill(server, signal.SIGKILL)
+    finally:
+        owner.close()
+    assert not socket_path(socket).exists()
+
+
+def test_unlink_preserves_a_replaced_socket_entry(tmp_path):
+    from owned_tmux import socket_identity, socket_path, unlink_socket
+
+    socket = 'acc-test-replaced-' + uuid.uuid4().hex
+    path = socket_path(socket)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    path.touch()
+    identity = socket_identity(socket)
+    replacement = tmp_path / 'replacement'
+    replacement.touch()
+    replacement.replace(path)
+    try:
+        unlink_socket(socket, identity)
+        assert path.exists()
+    finally:
+        path.unlink()
+
+
+def test_session_guard_detects_a_tmux_teardown_regression(tmp_path):
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    case = tmp_path / 'test_leak.py'
+    case.write_text("""
+from acc.broker import ops
+
+def test_leak(env, owned_tmux):
+    ops.tmux(env['broker'], 'new-session', '-d', '-s', 'leak', 'sleep 120', check=True)
+    owned_tmux.close = lambda: None  # simulate a broken fixture teardown
+""")
+    result = subprocess.run(
+        [sys.executable, '-m', 'pytest', '-q', '-p', 'host_isolation', '-p', 'conftest', str(case)],
+        cwd=tmp_path, env=os.environ | {'PYTHONPATH': os.pathsep.join([str(root / 'tests'), str(root / 'src'), *sys.path])},
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'tmux server leak at session end' in result.stdout + result.stderr

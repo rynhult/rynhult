@@ -6,13 +6,10 @@ import pytest
 
 
 @pytest.fixture(scope='session')
-def signing_keys(tmp_path_factory):
-    homes = []
+def signing_keys(gpg_home):
 
     def make(*, at=None, expiry='0'):
-        home = tmp_path_factory.mktemp('release-test-key')
-        home.chmod(0o700)
-        homes.append(home)
+        home = gpg_home()
         args = ['/usr/bin/gpg', '--no-options', '--homedir', str(home), '--batch', '--yes',
                 '--pinentry-mode', 'loopback', '--passphrase', '']
         if at:
@@ -34,10 +31,7 @@ def signing_keys(tmp_path_factory):
 
         return SimpleNamespace(home=home, run=run, fingerprint=fingerprint, public=public, sign=sign)
 
-    yield make
-    for home in homes:
-        subprocess.run(['/usr/bin/gpgconf', '--homedir', str(home), '--kill', 'gpg-agent'],
-                       capture_output=True, timeout=10, check=True)
+    return make
 
 
 @pytest.fixture

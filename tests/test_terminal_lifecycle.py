@@ -285,3 +285,107 @@ async def test_bridge_cancels_only_human_input_before_forwarding_exact_bytes(dat
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_relay_terminal_preserves_bytes_and_refuses_unproven_drain():
+    from acc.session_relay.adapters.base import InputGrant, TerminalRun
+    from acc.session_relay.protocol import Actor, ActorKind, Channel, Fence, RelayError
+    from acc.session_relay.terminal_host import TmuxTerminalHost
+    run = TerminalRun('session1', 'run1')
+    grant = InputGrant(run, 'attachment1', Actor(ActorKind.PERSON, 'person1', Channel.TERMINAL),
+                       'fixture-grant', 1, Fence(1, 'broker1', 'hub1'))
+    written = []
+    class Writer:
+        def write(self, data):
+            written.append(data)
+        async def drain(self):
+            pass
+        def close(self):
+            pass
+        async def wait_closed(self):
+            pass
+    async def opener(run):
+        return asyncio.StreamReader(), Writer()
+    current = [True]
+    async def valid(grant):
+        return current[0]
+    host = TmuxTerminalHost(run, opener, valid, valid)
+    await host.claim_input(grant)
+    data = b'\x1b[200~hello\r\n\xc3\xa5\x1b[201~\x1b[D'
+    result = await host.write_frames(grant, 1, data)
+    assert written == [pty.frame(b'd', data)]
+    assert result.watermark.admitted == 1 and result.watermark.processed == 0
+    with pytest.raises(RelayError):
+        await host.drain(grant, 1)
+    with pytest.raises(RelayError):
+        await host.write_frames(grant, 1, data)
+    current[0] = False
+    with pytest.raises(RelayError):
+        await host.write_frames(grant, 2, data)
+    assert len(written) == 1
+    await host.detach(run)
+
+
+async def test_relay_unknown_frame_write_blocks_replay_and_takeover():
+    from dataclasses import replace
+
+    from acc.session_relay.adapters.base import InputGrant, TerminalRun
+    from acc.session_relay.protocol import Actor, ActorKind, Channel, Fence, RelayError
+    from acc.session_relay.terminal_host import TmuxTerminalHost
+    run = TerminalRun('session1', 'run1')
+    grant = InputGrant(run, 'attachment1', Actor(ActorKind.PERSON, 'person1', Channel.TERMINAL),
+                       'fixture-grant', 1, Fence(1, 'broker1', 'hub1'))
+    class Writer:
+        def write(self, data):
+            pass
+        async def drain(self):
+            raise ConnectionError('partial write')
+    async def opener(run):
+        return asyncio.StreamReader(), Writer()
+    async def valid(grant):
+        return True
+    host = TmuxTerminalHost(run, opener, valid, valid)
+    await host.claim_input(grant)
+    assert (await host.write_frames(grant, 1, b'hello')).partial
+    with pytest.raises(RelayError):
+        await host.write_frames(grant, 2, b'hello')
+    with pytest.raises(RelayError):
+        await host.claim_input(replace(grant, epoch=2))
+
+
+async def test_relay_stop_and_unmediated_terminal_paths_with_real_fixture_broker(api, project):
+    from helpers import wait_for, write_db
+
+    from acc.server import security_settings
+    from acc.server.models import RelaySession, Session
+    from acc.server.session_relay import store
+
+    created = await api.post('/api/sessions', json={'project_id': project['id'], 'provider': 'codex', 'name': 'Relay boundary'})
+    assert created.status_code == 201, created.text
+    identifier = created.json()['id']
+    async def verified():
+        with api.app.state.db() as db:
+            session = db.get(Session, identifier)
+            return bool(session.runs and session.runs[-1].verified_at and session.native_id)
+    await wait_for(verified)
+    with write_db(api.app.state.db) as db:
+        session = db.get(Session, identifier)
+        store.enroll(db, identifier, session.runs[-1].id, 'fixture-binding', identity={'fixture': True},
+                     frozen_policy={}, policy_revision=security_settings.revision(db))
+        db.commit()
+    detail = await api.get(f'/api/sessions/{identifier}')
+    assert detail.json()['session_relay'] is True
+    listed = (await api.get('/api/sessions')).json()
+    assert next(row for row in listed if row['id'] == identifier)['session_relay'] is True
+    assert (await api.get(f'/api/sessions/{identifier}/terminal-reference')).status_code == 409
+    supervisor = api.app.state.supervisor
+    assert (await api.post(f'/api/sessions/{identifier}/message', json={'text': 'Must not type'})).status_code == 409
+    assert (await api.post(f'/api/sessions/{identifier}/interrupt')).status_code == 409
+    await supervisor.stop(identifier, 'supervisor', for_sleep=True)
+    with api.app.state.db() as db:
+        assert not db.get(RelaySession, identifier).sealed
+        assert db.get(Session, identifier).desired_state == 'running'
+    assert (await api.post(f'/api/sessions/{identifier}/stop')).status_code == 200
+    with api.app.state.db() as db:
+        assert db.get(RelaySession, identifier).sealed
+        assert db.get(Session, identifier).desired_state == 'stopped'

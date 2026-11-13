@@ -12,9 +12,9 @@ export const LEVELS: { id: SetupLevel; name: string; description: string; team: 
   { id: 1, name: 'Hobbyist', description: 'Start a project. Ask an agent to help. We’ll guide you.', team: 'One ready agent on your chosen machine. Add optional helpers later.' },
   { id: 2, name: 'Solo developer', description: 'Keep several projects moving, with the tools close by.', team: 'One ready lead with optional review and specialist roles. Review each launch’s limits.' },
   { id: 3, name: 'Small team', description: 'Give each person their own agents, and work together.', team: 'Personal leads and optional shared role suggestions. Each person keeps their own sign-ins and grants.' },
-  { id: 4, name: 'Growing company', description: 'See how your people, machines and work are doing.', team: 'Personal leads with explicit machine placement and reviewed helper limits.' },
-  { id: 5, name: 'Organization', description: 'Bring your sign-in and access rules together.', team: 'Personal leads with existing group and machine grants. Identity provisioning is Later.' },
-  { id: 6, name: 'Enterprise', description: 'Show the full operational and access picture.', team: 'Personal leads with reviewed operational roles and limits. Automatic failover is unavailable.' },
+  { id: 4, name: 'Growing company', description: 'Use the small-team flow. Enterprise provisioning is unavailable.', team: 'Personal leads with explicit machine placement and reviewed helper limits.' },
+  { id: 5, name: 'Organization', description: 'Use the small-team flow. Enterprise identity is unavailable.', team: 'Personal leads with existing group and machine grants. Identity provisioning is Later.' },
+  { id: 6, name: 'Enterprise', description: 'Use the small-team flow. Delegated administration and automatic failover are unavailable.', team: 'Personal leads with reviewed operational roles and limits. Automatic failover is unavailable.' },
 ];
 const minimum: Record<string, number> = {
   '/grid': 2, '/workspaces': 2, '/schedules': 2, '/publishing': 2, '/catalog': 2,

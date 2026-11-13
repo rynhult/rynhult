@@ -66,6 +66,17 @@ M17_TOOLS = {
     'finish': ('Stop and archive a helper; retain its branch and preserve dirty worktrees.', {'helper': STRING}, ['helper']),
     'merge': ('Merge a stopped helper into your branch; conflicts abort cleanly.', {'helper': STRING}, ['helper']),
 }
+# Typed delegation uses the same authenticated team spool and retained replies.
+DELEGATION_TOOLS = {
+    'delegated_image': ('Run one bounded exact-model image check under saved consent. Unknown results remain unknown; retries share request_key.',
+                        {'request_key': STRING, 'provider': STRING, 'model': STRING}, ['request_key', 'provider', 'model']),
+    'delegated_install': ('Install one exact reviewed recipe under account consent. Unqualified recipes refuse; reuse request_key for retained results.',
+                          {'request_key': STRING, 'recipe_id': STRING, 'recipe_digest': STRING}, ['request_key', 'recipe_id', 'recipe_digest']),
+    'delegated_port': ('Reserve the next free local port under exact saved consent. Reuse request_key for retries; reservation grants no publishing authority.',
+                       {'request_key': STRING, 'range': {'type': 'string', 'enum': ['dev', 'prod']}}, ['request_key', 'range']),
+    'delegated_status': ('Inspect a retained delegated operation, including after availability is disabled.',
+                         {'operation': STRING}, ['operation']),
+}
 # Orchestrator v2, slice 1: working list and NOW.
 OPTIONS = {'type': 'array', 'maxItems': 6, 'items': {'type': 'object', 'properties': {
     'id': STRING, 'label': STRING, 'consequence': STRING}, 'required': ['id', 'label']}}
@@ -212,13 +223,13 @@ if not PREVIEW or '--orchestrator-v2' not in sys.argv[1:]:
     BRIEF_TOOLS = {}
     WORKLIST_TOOLS = {}
     PLAN_TOOLS = {}
-TOOLS = ({**M17_TOOLS, **WORKLIST_TOOLS, **SELECTION_TOOLS, **DELIVERY_TOOLS, **GATE_TOOLS, **PLAN_TOOLS, **BRIEF_TOOLS} if PREVIEW
+TOOLS = ({**M17_TOOLS, **WORKLIST_TOOLS, **SELECTION_TOOLS, **DELIVERY_TOOLS, **GATE_TOOLS, **PLAN_TOOLS, **BRIEF_TOOLS, **DELEGATION_TOOLS} if PREVIEW
          else dict(M17_TOOLS))
 
 
 # Originals delivered by brief_reference create private files. Reports,
 # proposals and reference sharing persist state and must not claim to be reads.
-READ_ONLY_TOOLS = frozenset(('list', 'status', 'read', 'worklist', 'selection_status',
+READ_ONLY_TOOLS = frozenset(('delegated_status', 'list', 'status', 'read', 'worklist', 'selection_status',
                             'gate_status', 'plan', 'plan_version', 'brief', 'brief_documents'))
 
 

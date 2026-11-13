@@ -38,7 +38,7 @@ export function PullRequestPanel({ session }: { session: SessionDetail }) {
       return (
         <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
           {data.pull?.state === "open" && <section aria-label="Pull request readiness" className="min-w-0 lg:col-span-2"><Card className="space-y-3 p-4">
-            <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold">Pull request readiness</h2>
+            <div className="flex flex-wrap items-center gap-2"><MakeMergeable session={session} status={data} onChange={refresh} /><h2 className="text-sm font-semibold">Pull request readiness</h2>
               <Badge tone={data.merge?.allowed ? "ok" : "wait"}>{data.merge?.allowed ? "Ready to merge" : data.merge ? "Not ready to merge" : "Merge status unavailable"}</Badge></div>
             {!!data.merge?.blockers.length && <ul className="space-y-1 text-xs text-wait" aria-label="Merge readiness blockers">{data.merge.blockers.map(b => <li key={b}>{b}</li>)}</ul>}
             <nav aria-label="Pull request sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -59,7 +59,7 @@ export function PullRequestPanel({ session }: { session: SessionDetail }) {
             {data.pull?.state === "open" && data.merge && <div id="pull-merge" tabIndex={-1} className="scroll-mt-4"><Merge pull={data.pull} merge={data.merge} sessionId={session.id} onMerged={refresh} /></div>}
             <Card className="space-y-1.5 p-4 text-xs text-muted">
               <p><span className="font-medium text-fg">{data.repo}</span> · branch <span className="font-mono text-fg">{data.branch}</span></p>
-              <p>Rynhult acts on GitHub only when you click, with {signedIn}. Agents can't merge from here.</p>
+              <p>Rynhult uses {signedIn}. Guided failure delivery follows the session’s automation policy. Only you can confirm a merge.</p>
               <Button size="sm" variant="ghost" onClick={refresh} disabled={status.isFetching}><RefreshCw size={13} aria-hidden="true" /> Refresh</Button>
             </Card>
           </div>
@@ -179,21 +179,23 @@ function Reviews({ session, threads }: { session: SessionDetail; threads: number
 }
 
 /** Preview, then send: what the dialog shows is exactly the text the agent receives. */
-function SendToAgent({ session, kind, label }: { session: SessionDetail; kind: "checks" | "reviews"; label: string }) {
+function SendToAgent({ session, kind, label }: { session: SessionDetail; kind: "checks" | "reviews" | "conflicts"; label: string }) {
   const [open, setOpen] = useState(false);
   const preview = useMutation({ mutationFn: () => post<{ id: string | null; text: string; items: number; omitted: number }>(`/api/sessions/${session.id}/pull/feedback`, { kind }) });
   const send = useMutation({ mutationFn: () => post(`/api/sessions/${session.id}/pull/feedback/${preview.data!.id}/send`), onSuccess: () => setOpen(false) });
   const live = isLive(session);
+  const subscription = session.provider === "claude" && !["api_key", "cloud"].includes(session.auth?.mode ?? "unknown");
   const show = () => { send.reset(); preview.mutate(); setOpen(true); };
   return (
     <>
       <Button size="sm" onClick={show}><Send size={13} aria-hidden="true" /> {label}</Button>
       {send.isSuccess && !open && <span role="status" className="text-xs text-ok">Sent</span>}
       <Dialog open={open} onClose={() => setOpen(false)} wide title={label}
-        description="This exact text is typed into the agent's terminal as one message. It is redacted and trimmed, and it tells the agent that the content is untrusted input to evaluate."
+        description="Review the redacted, bounded message. Subscription Claude requires you to copy and paste it into the terminal; other sessions use the existing delivery policy."
         footer={<>
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button variant="primary" disabled={!live || !preview.data?.id || send.isPending} onClick={() => send.mutate()}>
+          {preview.data?.text && <Button onClick={() => navigator.clipboard.writeText(preview.data!.text)}>Copy message</Button>}
+          <Button variant="primary" disabled={subscription || !live || !preview.data?.id || send.isPending} onClick={() => send.mutate()}>
             <Send size={13} aria-hidden="true" /> {send.isPending ? "Sending…" : "Send to agent"}</Button>
         </>}>
         {preview.isPending ? <Skeleton className="h-48" /> : preview.data && (preview.data.id ? (
@@ -237,4 +239,86 @@ function Merge({ pull, merge, sessionId, onMerged }: { pull: Pull; merge: NonNul
       </div>
     </Card>
   );
+}
+
+
+/** A person advances each step; the existing PR state and merge confirmation stay authoritative. */
+function MakeMergeable({ session, status, onChange }: { session: SessionDetail; status: PullStatus; onChange: () => void }) {
+  const confirm = useConfirm();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const readiness = useQuery({ queryKey: ["mergeable", session.id], enabled: open,
+    queryFn: () => api<{ behind: number; base: string; automatic: boolean; mode: "merge" | "rebase"; force_push_blocked: boolean; head: string; conflicts: string[]; summary: { before_count: number | null; after_count: number | null; subjects: string[]; omitted: number } }>(`/api/sessions/${session.id}/pull/mergeable`) });
+  const path = `/api/sessions/${session.id}/pull/mergeable`;
+  const refresh = () => { onChange(); void readiness.refetch(); };
+  const base = useMutation({ mutationFn: () => post<{ ok: boolean; mode: string; conflicts: string[]; output: string; push_ticket?: string; finish_instructions?: string }>(`${path}/base`, { mode: readiness.data!.mode }), onSuccess: refresh });
+  const push = useMutation({ mutationFn: () => post<{ ok: boolean; output: string }>(`${path}/push/${base.data!.push_ticket}`), onSuccess: refresh });
+  const completed = useMutation({ mutationFn: (sha: string) => post<{ ok: boolean; output: string }>(`${path}/completed-rebase`, { sha, confirm: true }), onSuccess: refresh });
+  const askCompleted = async () => {
+    const reviewed = readiness.data;
+    if (!reviewed) return;
+    const summary = reviewed.summary;
+    if (await confirm({ title: "Push completed rebase?", confirm: "Push with --force-with-lease",
+      body: <div className="space-y-2"><p>Push this session’s reviewed commit {reviewed.head.slice(0, 7)} using the hardened transport. Rynhult rechecks the current PR head, base ancestry, branch protection and Security switch.</p>
+        <p>Commits before / after: {summary?.before_count ?? "unavailable"} / {summary?.after_count ?? "unavailable"} (relative to the rebase base).</p>
+        {!!summary?.subjects.length && <ul aria-label="Rebased commit subjects" className="max-h-40 overflow-auto space-y-1 [overflow-wrap:anywhere]">{summary.subjects.map((subject, index) => <li key={index}>{subject}</li>)}</ul>}
+        {!!summary?.omitted && <p>{summary.omitted} more commit subjects omitted.</p>}
+      </div> })) completed.mutate(reviewed.head);
+  };
+  const rerun = useMutation({ mutationFn: () => post<{ runs: number[] }>(`${path}/rerun`), onSuccess: refresh });
+  const feedback = useMutation({ mutationFn: () => post<{ id: string | null; text: string; items: number; sent: boolean; refused?: string }>(`${path}/feedback`) });
+  const send = useMutation({ mutationFn: () => post(`/api/sessions/${session.id}/pull/feedback/${feedback.data!.id}/send`) });
+  const busy = base.isPending || push.isPending || rerun.isPending || feedback.isPending || send.isPending || completed.isPending;
+  return <>
+    <Button size="sm" onClick={() => setOpen(true)}>Make it mergeable</Button>
+    <Dialog open={open} onClose={() => setOpen(false)} wide title="Make it mergeable"
+      description="Work through the checklist. Each action records who requested it. Merge always needs your separate confirmation."
+      footer={<Button onClick={() => setOpen(false)}>Close</Button>}>
+      <ol className="space-y-5 text-sm [overflow-wrap:anywhere]">
+        <li className="space-y-2"><h3 className="font-semibold">1. Up to date with the base branch</h3>
+          <p className="text-xs text-muted">{readiness.data ? `${readiness.data.behind} commits behind ${readiness.data.base}.` : "Read base status to continue."} Commit changes first. {readiness.data?.force_push_blocked ? "Block force pushes is on: only Merge base in is offered, so history stays pushable." : "The project’s Git pull.rebase=false preference selects Merge base in; otherwise Rebase is used."}</p>
+          <Button disabled={busy || !readiness.data} onClick={() => base.mutate()}>{readiness.data?.mode === "merge" ? "Merge base in" : "Rebase"}</Button>
+          {base.data && <>
+            <p role="status">{base.data.ok ? `${base.data.mode} completed locally. Push the branch before checking CI.` : "Base update stopped. Resolve or abort it before retrying."}</p>
+            {!!base.data.conflicts.length && <><ul aria-label="Conflicted files">{base.data.conflicts.map(file => <li key={file} className="font-mono text-xs">{file}</li>)}</ul>
+              <SendToAgent session={session} kind="conflicts" label="Ask the agent to resolve" /></>}
+            <pre tabIndex={0} aria-label="Base update output" className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">{base.data.output}</pre>
+            {base.data.finish_instructions && <p role="note" className="whitespace-pre-wrap text-xs text-muted">{base.data.finish_instructions}</p>}
+            {base.data.push_ticket && <Button disabled={busy || push.data?.ok} onClick={() => push.mutate()}>Push rebased branch with --force-with-lease</Button>}
+            {base.data.ok && !base.data.push_ticket && <p className="text-xs text-muted">Use Push branch in Changes.</p>}
+          </>}
+          {!base.data && !!readiness.data?.conflicts.length && <><ul aria-label="Conflicted files">{readiness.data.conflicts.map(file => <li key={file} className="font-mono text-xs">{file}</li>)}</ul><SendToAgent session={session} kind="conflicts" label="Ask the agent to resolve" /></>}
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={busy} onClick={refresh}>Refresh checklist</Button>
+            <Button disabled={busy || !readiness.data || readiness.data.force_push_blocked || !!readiness.data.conflicts.length || completed.data?.ok} onClick={askCompleted}>Push completed rebase</Button>
+          </div>
+          {completed.data && <pre role="status" className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{completed.data.ok ? "Pushed." : "Push failed."} {completed.data.output}</pre>}
+          {push.data && <pre role="status" className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{push.data.ok ? "Pushed." : "Push failed."} {push.data.output}</pre>}
+        </li>
+        <li className="space-y-2"><h3 className="font-semibold">2. Checks</h3>
+          <p className="text-xs text-muted">{status.checks.length} checks reported. Rerun failed GitHub Actions jobs on the pushed commit. Other checks keep their provider’s controls.</p>
+          <Button disabled={busy} onClick={() => rerun.mutate()}>Rerun failed CI checks</Button>
+          {rerun.data && <p role="status">{rerun.data.runs.length ? `Requested ${rerun.data.runs.length} CI reruns. Refresh checks to see the result.` : "No failed GitHub Actions runs are available to rerun."}</p>}
+        </li>
+        <li className="space-y-2"><h3 className="font-semibold">3. Send failures to the agent</h3>
+          <p className="text-xs text-muted">API-key Claude, Codex and OpenCode can receive failures automatically when you run this step. Subscription Claude requires you to copy the preview and paste it into the terminal.</p>
+          <Button disabled={busy} onClick={() => { setCopied(false); feedback.mutate(); }}>Send to agent</Button>
+          {feedback.data && <>
+            <p role="status">{feedback.data.sent || send.isSuccess ? "Sent to the agent." : feedback.data.items ? "Review the bounded, redacted failure message below." : "No failed checks to send."}</p>
+            {feedback.data.refused && <p role="status" className="text-xs text-wait">Automatic send refused: {feedback.data.refused} Copy the preview or retry sending after resolving the refusal.</p>}
+            {!!feedback.data.items && <pre tabIndex={0} aria-label="Guided failure preview" className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-line p-3 text-xs">{feedback.data.text}</pre>}
+            {!!feedback.data.items && !feedback.data.sent && !send.isSuccess && <div className="flex flex-wrap gap-2">
+              <Button onClick={async () => { await navigator.clipboard.writeText(feedback.data!.text); setCopied(true); }}>{copied ? "Copied — paste into terminal" : "Copy message"}</Button>
+              {readiness.data?.automatic && <Button disabled={busy} onClick={() => send.mutate()}>Confirm send to agent</Button>}
+            </div>}
+          </>}
+        </li>
+        <li className="space-y-2"><h3 className="font-semibold">4. Your merge decision</h3>
+          <p className="text-xs text-muted">{status.merge?.allowed ? "GitHub reports this PR ready to merge." : status.merge?.blockers.join(" ") || "Refresh the PR status."} The merge card rechecks branch rules and the commit you reviewed when you confirm. Nothing merges automatically.</p>
+          <Button onClick={() => { setOpen(false); document.getElementById("pull-merge")?.focus(); }}>Review merge decision</Button>
+        </li>
+      </ol>
+      <ErrorNote error={readiness.error ?? base.error ?? push.error ?? completed.error ?? rerun.error ?? feedback.error ?? send.error} />
+    </Dialog>
+  </>;
 }

@@ -1,19 +1,9 @@
 import { test, expect } from './fixtures';
 import { AUTH_FILE, csrfHeaders, sessionWithChanges, verifyAgain } from './helpers';
 
-test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'ui_shell', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'layouts'] });
 
-for (const layout of ['legacy', 'new'] as const) test(`${layout}: file paste/drop, unchanged text, read-only refusal and no Enter`, async ({ page, context }) => {
-  if (layout === 'new') {
-    const enable = async () => {
-      const state = await (await page.request.get('/api/admin-features')).json();
-      return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: state.revision } });
-    };
-    let result = await enable();
-    if (result.status() === 403) { await verifyAgain(page); result = await enable(); }
-    expect(result.ok()).toBeTruthy();
-    expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
-  }
+for (const layout of ['new'] as const) test(`${layout}: file paste/drop, unchanged text, read-only refusal and no Enter`, async ({ page, context }) => {
   const id = await sessionWithChanges(page, 'terminal-upload');
   const frames: string[] = [];
   const uploadIds: string[] = [];

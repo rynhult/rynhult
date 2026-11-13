@@ -53,7 +53,7 @@ PACKAGES_EVERY = 2.0  # how often the agent software state is looked at (sent on
 HOST_LIGHT_EVERY = 60.0  # the periodic host summary (the status board's CPU, memory and fullest disk)
 HOST_MIN_INTERVAL = 10.0  # a full host snapshot is collected at most this often; requests in between get the last one
 MAX_HOST_TEXT = 60 * 1024  # under the primary's text frame limit
-CAPABILITIES = ["rename-compat-1", "preview-v1", "host-v1", "backup-v1", "git-backup-v1", "update"]
+CAPABILITIES = ["rename-compat-1", "preview-v1", "host-v1", "backup-v1", "git-backup-v1", "update", "session-runtime-v1"]
 AUTO = object()
 
 
@@ -209,6 +209,9 @@ class Relay:
                 await self.drop(channel)  # never half-close ordinary broker channels
         elif kind == b"c":
             if (channel := self.channels.pop(channel_id, None)) is not None:
+                if getattr(channel, 'session_runtime', False):
+                    channel.abort()  # never drain buffered relay mutations after link close
+                    return
                 channel.finish()
                 self.draining[channel] = self.own(self._drain(channel))
         else:
@@ -237,6 +240,8 @@ class Relay:
             if request.get('type') == 'backup-v1':
                 await self.open_backup(channel_id, request)
                 return
+            if request.get('type') not in (None, 'session-runtime-v1'):
+                raise ValueError('unsupported channel type')
             account = request.get("account")
         except (ValueError, AttributeError):
             account = None
@@ -255,6 +260,7 @@ class Relay:
             await self.send(frame(b"e", channel_id, f"no broker for {account}: {reason}".encode()))
             return
         channel = Channel(self, channel_id, reader, writer)
+        channel.session_runtime = request.get('type') == 'session-runtime-v1'
         self.channels[channel_id] = channel
         await self.send(frame(b"k", channel_id))
         channel.start()

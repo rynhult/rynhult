@@ -23,10 +23,6 @@ const bundle = 'window.layoutTest = {};' + ['draftIdentity', 'layoutStore', 'api
 test.use({ presentationChanges: ['layouts'], storageState: AUTH_FILE });
 const one = (id: string) => ({ schema_version: 2 as const, views: [{ id, kind: 'page' as const }], columns: [{ tabs: [id], active: id, width: 1 }], focused: 0, filled: null });
 test('personal arrangement survives offline reload and requires an explicit CAS conflict choice', async ({ page, context }) => {
-  // The standard layout clears retained layout copies when it mounts, which can land mid-test on a fresh server.
-  const features = async () => page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled: true, revision: (await (await page.request.get('/api/admin-features')).json()).revision } });
-  if ((await features()).status() === 403) { await verifyAgain(page); expect((await features()).ok()).toBeTruthy(); }
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled: true } })).ok()).toBeTruthy();
   await page.goto('/projects');
   const project = await gitProject(page, 'layout-library');
   const path = `/api/projects/${project.id}/layouts/desktop/wide`;

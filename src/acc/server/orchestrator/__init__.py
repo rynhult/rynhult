@@ -18,10 +18,21 @@ number when it is built and names main's head at that time as down_revision (orc
 """
 from __future__ import annotations
 
-from . import assignments, delivery, gates, live, planning, project_briefs, reservations, selection, worklist
+from . import (
+    assignments,
+    delegation,
+    delivery,
+    gates,
+    live,
+    planning,
+    project_briefs,
+    reservations,
+    selection,
+    worklist,
+)
 from .switch import enabled as orchestrator_enabled
 
-SLICES = (worklist, live, selection, delivery, gates, reservations, planning, project_briefs, assignments)
+SLICES = (worklist, live, selection, delivery, gates, reservations, planning, project_briefs, assignments, delegation)
 
 
 def _merged(name: str) -> dict:
@@ -53,6 +64,7 @@ def team_actions() -> dict:
 # One write budget per team, whoever calls (security review 2026-10-25, OV-7; threat review X-2, X-8): every team
 # member shares one Unix account, so a helper can act as its lead, and a limit per caller would bound nothing.
 WRITE_ACTIONS = frozenset({
+    'delegated_port', 'delegated_image', 'delegated_install',
     'start', 'message', 'stop', 'finish', 'merge',                                    # M17
     'worklist_add', 'worklist_update', 'worklist_ingest', 'worklist_done', 'now',      # slice 1
     'assign', 'give', 'select', 'report', 'gate', 'restack', 'reserve', 'release',                       # slices 3-5

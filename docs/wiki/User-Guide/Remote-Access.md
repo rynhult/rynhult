@@ -58,16 +58,23 @@ tab cannot turn them back on.
 ## Pair a browser
 
 1. In **Settings → Access devices**, enter a **Device name**, such as “Alex phone”,
-   then select **Pair device**. Owners can also use the registry on **Remote access**.
+   then select **Pair a phone**. Owners can also use the registry on **Remote access**.
    Names use letters, numbers, spaces and punctuation; Rynhult refuses invisible or
    text-direction characters so an owner sees exactly what they confirm.
 2. On the new device, scan the QR code or open the **One-use pairing link** while
    connected to the LAN. Keep this link private; it expires after five minutes.
+   Creating a newer code or signing out anywhere, including another browser or
+   phone, cancels unconfirmed pairings for that person. An already-confirmed
+   identity waiting for download stays available until its own expiry.
    **Close pairing**, or leaving the page before an owner confirms, ends the link at
    once; once confirmed, the import stays for the new device to download.
    The token is removed from the browser address before claiming it. Refreshing
-   the receiving page loses the capability; start again if needed.
-3. Select **Request pairing** on the new device. It shows a six-digit **Matching
+   the receiving page loses the capability; start again if needed. A cancelled or
+   used link shows an error and asks for a fresh QR. A temporary connection failure
+   while checking the link offers **Retry pairing preview** before confirmation.
+3. Check the installation address, person and **Desktop match code** on the phone
+   against the trusted desktop. Stop if any detail differs. Check the confirmation
+   box, then select **Request pairing** on the new device. It shows a six-digit **Matching
    code**; only the new device shows it. An owner reads the code on that device
    (or has the person read it out), types it into **Matching code shown on …**,
    then selects **Confirm** and **Confirm device**. If the new device shows an

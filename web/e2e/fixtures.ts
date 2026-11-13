@@ -1,71 +1,28 @@
 import { test as base, expect, type BrowserContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { AUTH_FILE, BASE } from './fixture-paths';
+import { BASE } from './fixture-paths';
 import { assertCleanBoundary, presentationProject } from './isolation-policy';
 
 export * from '@playwright/test';
-type PresentationGroup = 'admin_features' | 'ui_shell' | 'setup_level' | 'ui_header' | 'theme' | 'layouts';
-
-/** Explicit choice for additional people created by a journey. */
-export async function chooseLayout(context: BrowserContext, enabled: boolean) {
-  const { origin } = JSON.parse(readFileSync(`${BASE}/info.json`, 'utf8'));
-  const csrf = (await context.cookies()).find(cookie => cookie.name === 'acc_csrf' || cookie.name === '__Host-acc_csrf')!.value;
-  const response = await context.request.put(`${origin}/api/preferences/ui-shell`, {
-    headers: { 'X-ACC-CSRF': csrf, Origin: origin }, data: { enabled },
-  });
-  expect(response.ok(), 'Save personal layout choice').toBe(true);
-}
+type PresentationGroup = 'admin_features' | 'setup_level' | 'ui_header' | 'theme' | 'layouts';
 
 /** Declare temporary settings owned by this test; everything else is a leak. */
-export const test = base.extend<{ signedInLayout: 'classic' | 'new' | 'unchosen'; _signedInLayout: void; presentationChanges: PresentationGroup[]; _presentationIsolation: void;
+export const test = base.extend<{ presentationChanges: PresentationGroup[]; _presentationIsolation: void;
   isolatedOwner: { username: string; secret: string };
   otherOwner: BrowserContext;
   _drainRoutes: void;
+  createTeamHelper: (lead: string) => Promise<string>;
   arrangeTeam: (action: 'member' | 'history', lead: string, helper: string) => Promise<void> }>({
-  signedInLayout: ['classic', { option: true }],
-  // Run after the presentation reset and restore before its leak check. Use a
-  // separate signed-in control so logout, member cookies and route mocks cannot
-  // prevent cleanup. The unchosen option also leaves isolated owners untouched.
-  _signedInLayout: [async ({ playwright, signedInLayout, presentationChanges, _presentationIsolation }, use, testInfo) => {
-    if (testInfo.project.name === 'setup' || testInfo.project.name === 'view-registry' || signedInLayout === 'unchosen') {
-      await use(); return;
-    }
+  createTeamHelper: async ({ context }, use) => {
     const fixture = JSON.parse(readFileSync(`${BASE}/info.json`, 'utf8'));
-    const signedInControl = () => playwright.request.newContext({ baseURL: fixture.origin, storageState: AUTH_FILE });
-    let control = await signedInControl();
-    try {
-      const original = await control.get('/api/preferences/ui-shell');
-      expect(original.ok(), 'Read signed-in layout').toBe(true);
-      const saved = await original.json();
-      const enabled = signedInLayout === 'new';
-      const choose = async (value: boolean) => {
-        const cookies = (await control.storageState()).cookies;
-        const csrf = cookies.find(cookie => cookie.name === 'acc_csrf' || cookie.name === '__Host-acc_csrf')!.value;
-        const headers = { 'X-ACC-CSRF': csrf, Origin: fixture.origin };
-        const response = await control.put('/api/preferences/ui-shell', { headers, data: { enabled: value } });
-        expect(response.ok(), 'Save signed-in layout').toBe(true);
-      };
-      await choose(enabled);
-      try { await use(); }
-      finally {
-        // Authentication journeys save replacement sign-ins in AUTH_FILE in
-        // afterEach (recovery can revoke every earlier sign-in).
-        await control.dispose();
-        control = await signedInControl();
-        try {
-          if (!presentationChanges.includes('ui_shell')) {
-            expect((await (await control.get('/api/preferences/ui-shell')).json()).enabled,
-              'Undeclared signed-in layout change').toBe(enabled);
-          }
-        } finally {
-          // Ordinary desktop/mobile tests may share this owner concurrently.
-          // Keep their common classic baseline instead of restoring the first
-          // test's unchosen default while another classic journey is running.
-          await choose(presentationProject(testInfo.project) ? saved.enabled : false);
-        }
-      }
-    } finally { await control.dispose(); }
-  }, { auto: true }],
+    await use(async lead => {
+      const response = await context.request.post(`/e2e-test/teams/${lead}/helpers`, {
+        headers: { 'x-e2e-isolation': fixture.isolation_token },
+      });
+      expect(response.ok(), await response.text()).toBe(true);
+      return (await response.json()).id;
+    });
+  },
   arrangeTeam: async ({ context }, use) => {
     const fixture = JSON.parse(readFileSync(`${BASE}/info.json`, 'utf8'));
     await use(async (action, lead, helper) => {
@@ -77,21 +34,13 @@ export const test = base.extend<{ signedInLayout: 'classic' | 'new' | 'unchosen'
   },
   // Opt in before navigating. BrowserContext.request shares this context's cookie
   // jar, so the real login/reauth/logout paths operate on this test's owner only.
-  isolatedOwner: async ({ context, browser, signedInLayout }, use) => {
+  isolatedOwner: async ({ context }, use) => {
     const fixture = JSON.parse(readFileSync(`${BASE}/info.json`, 'utf8'));
     const response = await context.request.post('/e2e-test/identity', {
       headers: { 'x-e2e-isolation': fixture.isolation_token },
     });
     expect(response.ok(), 'Disposable owner creation failed').toBe(true);
-    if (signedInLayout === 'unchosen') { await use(await response.json()); return; }
-    const cleanup = await browser.newContext({ storageState: await context.storageState() });
-    try {
-      await chooseLayout(context, signedInLayout === 'new');
-      await use(await response.json());
-    } finally {
-      try { await chooseLayout(cleanup, true); }
-      finally { await cleanup.close(); }
-    }
+    await use(await response.json());
   },
   // Different people may share the owners' default agent account. Never borrow
   // a named member account from another spec just to exercise person fencing.
@@ -140,10 +89,11 @@ export const test = base.extend<{ signedInLayout: 'classic' | 'new' | 'unchosen'
       assertCleanBoundary(initial.before, initial.previous_test, current);
       try { await use(); }
       finally {
-        // The fixture owns only declared temporary changes. Detect other drift
+        // The mounted frame owns its automatic layout writes; tests declare
+        // other temporary changes. Detect other drift
         // before the unconditional reset, so it fails the responsible test.
         let leaked: string[] = [];
-        try { leaked = (await reset(presentationChanges)).changed; }
+        try { leaked = (await reset([...new Set<PresentationGroup>([...presentationChanges, 'layouts'])])).changed; }
         finally { expect((await reset()).changed, 'Presentation cleanup failed').toEqual([]); }
         expect(leaked, `Unowned shared presentation state leaked: ${leaked.join(', ')}`).toEqual([]);
       }

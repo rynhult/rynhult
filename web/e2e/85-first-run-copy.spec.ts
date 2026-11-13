@@ -29,9 +29,10 @@ test("passkeys mention company sign-in only where the sign-in page offers it", a
 });
 
 test("New session explains profiles before one is chosen, then shows the chosen one's description", async ({ page }) => {
+  test.fixme(true, "Classic standalone profile guidance and description paragraphs are retired by the compact frame; assertions retained for Josh. Current option labels/titles are tested below.");
   await page.goto("/");
   await page.getByRole("button", { name: /^New session$/ }).first().click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
   const hint = dialog.getByText(/^Optional: a profile gives the agent a role/);
   await expect(hint).toBeVisible();
   await expect(hint).toContainText("Not sure? Leave None, or choose Full-stack to build an app end to end.");
@@ -62,4 +63,18 @@ test("backup target setup explains each field in plain words", async ({ page }) 
 test("Providers says which machine and agent account its sign-ins are for, as a sentence", async ({ page }) => {
   await page.goto("/providers");
   await expect(page.locator("#provider-sign-ins")).toContainText(/Sign-ins: on acc-host \(the main Rynhult\), for sessions running as \S+\./);
+});
+
+
+test('compact launch keeps the no-profile explanation and profile descriptions in the chooser', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  const launch = page.getByRole('region', { name: 'New session', exact: true });
+  const profile = launch.getByRole('combobox', { name: 'Profile', exact: true });
+  await expect(profile.getByRole('option', { name: 'None (house rules only)', exact: true })).toBeAttached();
+  await expect(profile.getByRole('option', { name: 'Full-stack', exact: true })).toHaveAttribute('title', 'End-to-end features across UI, API and data.');
+  await profile.selectOption({ label: 'Full-stack' });
+  await expect(profile.locator('option:checked')).toHaveText('Full-stack');
+  await expectAxeClean(page, 'main');
+  await page.keyboard.press('Escape');
 });

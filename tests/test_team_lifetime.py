@@ -37,7 +37,7 @@ async def test_expiry_warning_and_resume_preview(api, project, env):
     assert (await api.get(f'/api/sessions/{sid}')).json()['desired_state'] == 'running'
 
 
-async def test_expired_team_reactivates_same_grant_and_resumes_only_eligible_helpers(api, project, env):
+async def test_expired_team_reactivates_same_grant_and_resumes_only_eligible_helpers(api, project, env, monkeypatch):
     from helpers import pause_supervisor, wait_for
     from test_orchestrator_selection_api import assigned_start
     from test_supervisor import state_is
@@ -58,12 +58,21 @@ async def test_expired_team_reactivates_same_grant_and_resumes_only_eligible_hel
         db.get(Session, failed['id']).desired_state = 'stopped'
         db.get(Session, failed['id']).observed_state = 'recovery_needed'
         db.merge(Setting(key=WRAPUP_KEY, value=0))
-        db.get(Team, owner['id']).expires_at = utcnow() - timedelta(seconds=1)
+        expired_now = db.get(Team, owner['id']).expires_at + timedelta(seconds=1)
         db.commit()
+    from types import SimpleNamespace
+
+    from acc import session_capabilities
+    from acc.server import child_caps, team_lifetime, teams
+    monkeypatch.setattr(teams, 'now', lambda: expired_now)
+    monkeypatch.setattr(team_lifetime, 'now', lambda: expired_now)
+    monkeypatch.setattr(child_caps, 'utcnow', lambda: expired_now)
+    monkeypatch.setattr(session_capabilities, 'time', SimpleNamespace(time=lambda: expired_now.timestamp()))
     sup = api.app.state.supervisor
     await sup.expire_teams()
     # Exact reported regression: a lead alone resumes but helper is blocked by the old grant.
-    assert (await api.post(f"/api/sessions/{owner['id']}/resume")).status_code == 200
+    lead_resume = await api.post(f"/api/sessions/{owner['id']}/resume")
+    assert lead_resume.status_code == 409 and 'time limit ended' in lead_resume.text
     blocked = await api.post(f"/api/sessions/{helper['id']}/resume")
     assert blocked.status_code == 409 and 'Resume team' in blocked.text
     url = f"/api/sessions/{owner['id']}/team/resume"
@@ -193,3 +202,33 @@ async def test_resume_preview_includes_provider_permissions_without_arbitrary_op
     assert 'acceptEdits' not in saved['permissions'].values()
     assert 'workspace-write' not in saved['permissions'].values()
     assert 'DO-NOT-EXPOSE-fixture' not in response.text
+
+
+async def test_team_resume_preserves_stale_helper_generation(api, project, env):
+    import json
+
+    from helpers import pause_supervisor, wait_for
+    from test_orchestrator_selection_api import assigned_start
+    from test_supervisor import state_is
+
+    from acc.server import child_caps
+    from acc.server.models import Session
+    owner = await lead(api, project, env)
+    helper = (await assigned_start(api, env, owner, name='Stale helper', task='Work'))['result']
+    await wait_for(state_is(api, helper['id'], 'idle'))
+    await pause_supervisor(api)
+    await api.app.state.supervisor.stop_team(owner['id'], '@api')
+    with write_db(api.app.state.db) as db:
+        row = db.get(Session, helper['id'])
+        row.launch_spec.files = {**row.launch_spec.files, child_caps.FILE: json.dumps({})}
+        row.launch_spec.digest = child_caps.digest(row.launch_spec.files)
+        db.commit()
+    url = f"/api/sessions/{owner['id']}/team/resume"
+    plan = (await api.get(url)).json()
+    result = await api.post(url, json={'revision': plan['revision'], 'hours': None})
+    assert result.status_code == 200, result.text
+    assert helper['id'] in result.json()['errors']
+    with api.app.state.db() as db:
+        row = db.get(Session, helper['id'])
+        assert row.desired_state == 'stopped'
+        assert json.loads(row.launch_spec.files[child_caps.FILE]) == {}

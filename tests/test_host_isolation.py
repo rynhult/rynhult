@@ -173,6 +173,14 @@ def test_postgres_probe_uses_disposable_store(tmp_path_factory, monkeypatch):
 
     import postgres_matrix
 
+    # This unit test exercises the synthetic runtime probe, not driver availability.
+    # Actual PostgreSQL fixtures retain their real importorskip gate.
+    importorskip = postgres_matrix.pytest.importorskip
+    def synthetic_driver(name, *args, **kwargs):
+        if name == 'psycopg':
+            return None
+        return importorskip(name, *args, **kwargs)
+    monkeypatch.setattr(postgres_matrix.pytest, 'importorskip', synthetic_driver)
     calls = []
     monkeypatch.setattr(postgres_matrix.shutil, 'which', lambda name: '/usr/bin/podman' if name == 'podman' else None)
 

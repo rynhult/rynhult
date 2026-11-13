@@ -4,21 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { AUTH_FILE, csrfHeaders, gitProject, expectAxeClean, info, PASSWORD, totp, verifyAgain } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
-async function rollout(page: Page, enabled = true) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await csrfHeaders(page), data: { enabled, revision: state.revision } });
-  };
-  let result = await put();
-  if (enabled && result.status() === 403 && (await result.json()).detail?.startsWith('Verify your sign-in')) {
-    await verifyAgain(page); result = await put();
-  }
-  expect(result.ok()).toBeTruthy();
-  await preference(page, enabled);
-}
-async function preference(page: Page, enabled: boolean) {
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await csrfHeaders(page), data: { enabled } })).ok()).toBeTruthy();
-}
+
 async function project(page: Page, prefix: string) {
   const p = await gitProject(page, prefix);
   mkdirSync(`${p.folder}/src`, { recursive: true });
@@ -41,7 +27,7 @@ async function shot(page: Page, name: string) {
 }
 
 test('project filename search stays scoped while browsing; keyboard opens encoded Files deep links and preserves dirty guards', async ({ page }) => {
-  await rollout(page);
+
   const a = await project(page, 'cedar-search'); const b = await project(page, 'birch-search');
   await page.goto(`/projects/${a.id}`);
   await expect(page.getByRole('button', { name: 'Find project files', exact: true })).toBeVisible();
@@ -91,7 +77,7 @@ test('project filename search stays scoped while browsing; keyboard opens encode
 });
 
 test('explicit project selection, bounded debounce, cancellation and truthful partial/unavailable/error states', async ({ page, context }) => {
-  await rollout(page);
+
   const a = await project(page, 'states-search');
   await page.goto('/projects'); await open(page);
   await expect(dialog(page)).toContainText('Choose a project');
@@ -145,7 +131,7 @@ test('explicit project selection, bounded debounce, cancellation and truthful pa
 });
 
 for (const role of ['owner', 'member']) test(`${role} filename search at 1440/390 light/dark uses the authorized API and is shell-only`, async ({ page, context }) => {
-  test.slow(); await rollout(page);
+  test.slow();
   const foreign = await project(page, 'private-search');
   if (role === 'member') {
     const account = `file-search-${Date.now()}-agent`;
@@ -155,7 +141,7 @@ for (const role of ['owner', 'member']) test(`${role} filename search at 1440/39
     await context.clearCookies();
     const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
     const joined = await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-search-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } });
-    expect(joined.ok()).toBeTruthy(); await preference(page, true);
+    expect(joined.ok()).toBeTruthy();
     expect((await page.request.get(`/api/projects/${foreign.id}/files/search?q=notes`)).status()).toBe(404);
   }
   const own = await project(page, `filename-${role}`);
@@ -174,10 +160,9 @@ for (const role of ['owner', 'member']) test(`${role} filename search at 1440/39
     await expect(page.getByRole('textbox', { name: 'File content' })).toContainText('export const cedar = 2;');
   }
   try {
-    await preference(page, false); await page.reload();
+     await page.reload();
     await expect(page.getByRole('button', { name: /^Find project files/ })).toHaveCount(0);
   } finally {
     // shell-state restores the owner; this newly invited member owns its choice.
-    if (role === 'member') await preference(page, true);
-  }
+    }
 });

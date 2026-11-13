@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { AUTH_FILE, control, csrfHeaders, gitProject, info } from './helpers';
+import { openGridTerminal, AUTH_FILE, control, csrfHeaders, gitProject, info } from './helpers';
 test.use({ storageState: AUTH_FILE });
 test('Codex wheel scrolls tmux history instead of sending prompt-history arrows', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -15,8 +15,9 @@ test('Codex wheel scrolls tmux history instead of sending prompt-history arrows'
     try { const value = JSON.parse(String(frame.payload)); if (value.t === 'i') input.push(value.d); if (value.t === 'wheel') scroll.push(value.lines); } catch { /* control frame */ }
   }));
   try {
-    await page.goto(`/sessions/${id}`);
-    await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+    await openGridTerminal(page, id!);
+    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/^Read-only/)).toHaveCount(0);
     const tree = page.locator('.xterm-accessibility-tree');
     await expect(tree).toContainText('fake-codex ready');
     // Captured Codex 0.163.0 inline modes: paste/focus, no mouse or alt
@@ -46,6 +47,7 @@ test('Codex wheel scrolls tmux history instead of sending prompt-history arrows'
     await page.mouse.wheel(0, -800);
     await expect(tree).not.toContainText('wheel-bottom-marker');
 
+    await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.type('wheel-input-still-works');
     await page.keyboard.press('Enter');
     const received = `${info().run_dir}/${id}/fake.received`;

@@ -293,8 +293,9 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
         finally:
             WRITE_INTENT.reset(token)
 
-    from .api import chat
+    from .api import chat, session_relay
     app.include_router(chat.router(ctx))
+    app.include_router(session_relay.router(ctx))
     for module in (auth_routes, admin_features, passkeys, groups, group_exchange, group_board, group_machines, source_views, projects, sessions, schedules, inbox, operations, board, catalog, publishing, accounts, terminal, wiki, push, users, ports, preview,
                    endpoints, dns, packages, settings_routes, layouts, security_settings, security_folders, security_access, devices, telemetry, nodes, organizations, mobile, certificate, containers, vault_routes, backups, host_backups, updates, tools, files, issue_sources, pulls, approval_routes):
         app.include_router(module.router(ctx))

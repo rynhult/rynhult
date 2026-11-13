@@ -12,6 +12,7 @@ test('refresh session and passkey Guide details with artificial metadata only',a
  await page.goto(`/sessions/${session.id}?tab=handoffs`);await expect(page.getByRole('button',{name:new RegExp(`2026-10-24-${session.id}-example.md`)})).toBeVisible();
  await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-handoffs.png')});
  await page.goto(`/sessions/${session.id}`);await expect(page.locator('.xterm-rows')).toContainText('fake-claude ready',{timeout:15000});
+ await page.getByRole('button',{name:'Session details',exact:true}).click();
  await expect(page.getByRole('button',{name:'Copy conversation ID'})).toBeVisible();
  await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-page.png')});
  await page.screenshot({animations:'disabled',path:wikiShotPath(testInfo,'session-worktree.png')});

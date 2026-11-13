@@ -3,15 +3,10 @@ import {writeFileSync} from 'node:fs';
 import {expect,type Page} from '@playwright/test';
 import {AUTH_FILE,csrfHeaders,gitProject,info,PASSWORD,totp,verifyAgain,waitForSessionState} from './helpers';
 // Each demotion pair deliberately opts a second person into the shell.
-test.use({storageState:AUTH_FILE,presentationChanges:['layouts','ui_shell']});
-async function shell(page:Page){
-  const state=await(await page.request.get('/api/admin-features')).json();
-  let response=await page.request.put('/api/admin-features/new_shell',{headers:await csrfHeaders(page),data:{enabled:true,revision:state.revision}});
-  if(!response.ok()){await verifyAgain(page);const fresh=await(await page.request.get('/api/admin-features')).json();response=await page.request.put('/api/admin-features/new_shell',{headers:await csrfHeaders(page),data:{enabled:true,revision:fresh.revision}});}
-  expect(response.ok(),await response.text()).toBeTruthy();
-}
+test.use({storageState:AUTH_FILE,presentationChanges:['layouts',]});
+
 async function pair(owner:Page,browser:import('@playwright/test').Browser){
-  await shell(owner);const foreign=await gitProject(owner,'cedar-private');
+  const foreign=await gitProject(owner,'cedar-private');
   const suffix=crypto.randomUUID().slice(0,8);const account=`demotion-${suffix}-agent`;writeFileSync(`${info().state}/fixture-accounts/${account}`,'');
   const inviteBody={role:'owner',account};
   let invite=await owner.request.post('/api/users/invites',{headers:await csrfHeaders(owner),data:inviteBody});
@@ -22,7 +17,7 @@ async function pair(owner:Page,browser:import('@playwright/test').Browser){
   const username=`blair-demotion-${suffix}`;
   const joined=await page.request.post('/api/auth/invite/complete',{headers:{Origin:info().origin},data:{token,username,password:PASSWORD,code:totp((await begin.json()).totp_secret)}});
   expect(joined.ok(),await joined.text()).toBeTruthy();
-  expect((await page.request.put('/api/preferences/ui-shell',{headers:await csrfHeaders(page),data:{enabled:true}})).ok()).toBeTruthy();
+
   const own=await gitProject(page,'maple-own');
   const users=await(await owner.request.get('/api/users')).json();const user=users.users.find((u:{username:string})=>u.username===username);
   async function demote(){

@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from acc.remote_access_helper import revision
@@ -44,6 +44,17 @@ class LabelIn(BaseModel):
 class TokenIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     token: str = Field(min_length=43, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
+
+
+class ClaimIn(TokenIn):
+    phone_confirmed: bool = Field(strict=True)
+
+    @field_validator('phone_confirmed')
+    @classmethod
+    def acknowledged(cls, value):
+        if not value:
+            raise ValueError('Confirm the installation, person and desktop code on the phone first.')
+        return value
 
 
 class ReceiptIn(BaseModel):
@@ -101,6 +112,10 @@ def router(ctx: Context):
         return config
 
     def recent(s, request, who):
+        # Lock order: User before Setting(remote_access), then DevicePairing.
+        # Settings writes call this before taking the settings row lock.
+        # Check session freshness after serializing against sign-out and QR replacement.
+        s.scalar(select(User).where(User.username == who.username).with_for_update())
         passkeys.recently_verified(s, getattr(request.state, 'session_hash', None), s.get(User, who.user_id))
 
     def limit(request, who=None):
@@ -128,15 +143,7 @@ def router(ctx: Context):
             raise HTTPException(410, 'This pairing has expired or was already used. Start again on the trusted device.')
         return row
 
-    def move(s, row, before, after, **values):
-        # Compare-and-set, so two racing requests can't both pass a status check (PostgreSQL reads committed).
-        moved = s.execute(update(DevicePairing).where(DevicePairing.id == row.id, DevicePairing.status == before)
-                          .values(status=after, **values)).rowcount == 1
-        if moved:
-            row.status = after
-            for key, value in values.items():
-                setattr(row, key, value)
-        return moved
+    move = devices.move_pairing
 
     @api.get('/api/remote-access')
     def get_settings(who=Depends(owner)):
@@ -172,6 +179,7 @@ def router(ctx: Context):
                 devices.validate_names(body.public_hostname, body.private_origin)
             except ValueError as error:
                 raise HTTPException(422, str(error)) from None
+            # Preserve User → Setting → DevicePairing order (recent() took User).
             s.scalar(select(Setting).where(Setting.key == 'remote_access').with_for_update())
             old = devices.settings(s)
             if body.expected_revision is not None and body.expected_revision != old['settings_revision']:
@@ -217,18 +225,14 @@ def router(ctx: Context):
                     'pairing_enabled': config['pairing_enabled'], 'policy_pending': pending_policy}
 
     def begin(s, who, label, renew_id=None):
+        # Serialize replacement and sign-out for this person on PostgreSQL too.
+        s.scalar(select(User).where(User.username == who.username).with_for_update())
+        cancelled = devices.cancel_person_pairings(s, who.username, 'newer code')
         # Bound pending records per person, purge expired capabilities on each start.
         s.execute(delete(DevicePairing).where(DevicePairing.expires_at <= auth.now()))
         count = len(list(s.scalars(select(DevicePairing.id).where(DevicePairing.person == who.username))))
         if count >= 10:
             raise HTTPException(429, 'Finish a pending pairing or wait five minutes.')
-        if renew_id:
-            # One live renewal per device: tapping Renew again replaces the earlier link, so two confirmations can't
-            # replace the identity twice and strand the first import (break-it 10, B10-2).
-            for earlier in s.scalars(select(DevicePairing).where(DevicePairing.renew_id == renew_id,
-                                                                 DevicePairing.status.in_(('pending', 'claimed')))):
-                if move(s, earlier, earlier.status, 'cancelled'):
-                    imports.pop(earlier.id)
         token = secrets.token_urlsafe(32)
         row = DevicePairing(id=secrets.token_hex(16), person=who.username, label=label,
                             token_hash=auth.digest(token), expires_at=auth.now() + timedelta(seconds=devices.PAIRING_SECONDS),
@@ -236,8 +240,13 @@ def router(ctx: Context):
         s.add(row)
         s.flush()
         origin = devices.settings(s)['private_origin']
-        result = {'id': row.id, 'label': row.label, 'link': origin + '/pair-device#' + token, 'expires_at': row.expires_at, 'qr_svg': auth.qr_image_svg(origin + '/pair-device#' + token)}
+        result = {'id': row.id, 'label': row.label, 'link': origin + '/pair-device#' + token, 'expires_at': row.expires_at, 'qr_svg': auth.qr_image_svg(origin + '/pair-device#' + token),
+                  'desktop_code': desktop_code(row)}
+        s.add(AuditLog(actor=who.username, action='device.pairing_start', target=row.id,
+                       detail={'person': row.person, 'label': row.label}))
         s.commit()
+        for pairing_id in cancelled:
+            imports.pop(pairing_id)
         return result
 
     @api.post('/api/devices/pairings')
@@ -297,8 +306,26 @@ def router(ctx: Context):
             return {'status': row.status, 'label': row.label, 'person': row.person,
                     'password': value['password'] if value else None}
 
+    def desktop_code(row):
+        # Separate from the receipt-bound issuance code; this is not an authorization secret.
+        return f"{int(auth.digest('desktop:' + row.token_hash)[:12], 16) % 1000000:06d}"
+
+    @api.post('/api/device-pairing/preview')
+    def preview(body: TokenIn, request: Request, response: Response):
+        response.headers['Cache-Control'] = 'no-store'
+        with ctx.db() as s:
+            config = private(request, s)
+            limit(request)
+            row = live(s.scalar(select(DevicePairing).where(DevicePairing.token_hash == auth.digest(body.token))))
+            if row.status != 'pending':
+                raise HTTPException(410, 'This pairing link was already used.')
+            if s.scalar(select(User.id).where(User.username == row.person)) is None:
+                raise HTTPException(410, 'This person no longer has a Rynhult account.')
+            return {'installation': config['private_origin'], 'installation_name': ctx.settings.host_label, 'person': row.person,
+                    'label': row.label, 'desktop_code': desktop_code(row)}
+
     @api.post('/api/device-pairing/claim')
-    def claim(body: TokenIn, request: Request, response: Response):
+    def claim(body: ClaimIn, request: Request, response: Response):
         response.headers['Cache-Control'] = 'no-store'
         with ctx.db() as s:
             private(request, s)
@@ -309,6 +336,8 @@ def router(ctx: Context):
             receipt = secrets.token_urlsafe(32)
             if not move(s, row, 'pending', 'claimed', receipt_hash=auth.digest(receipt)):
                 raise HTTPException(410, 'This pairing link was already used.')
+            s.add(AuditLog(actor='pairing-link', action='device.pairing_claim', target=row.id,
+                           detail={'person': row.person, 'label': row.label, 'phone_confirmed': body.phone_confirmed}))
             s.commit()
             return {'receipt': receipt, 'label': row.label, 'matching_code': devices.matching_code(row)}
 

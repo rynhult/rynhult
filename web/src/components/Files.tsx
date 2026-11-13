@@ -3,7 +3,6 @@ import { useUnsavedDraft } from '../lib/useUnsaved';
 import { unsavedWork } from '../lib/unsaved';
 import { UnavailableView, unavailableResource } from './shell/RecoveryStates';
 import { Surface as Card } from './shell/PagePrimitives';
-import { useNewShell } from '../lib/uiShell';
 import { useFileDocument } from "../lib/useFileDocument";
 import type { FileRead } from "../lib/documentRegistry";
 import { useWorkingView } from "../lib/workingView";
@@ -33,9 +32,9 @@ const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 102
 function Directory({ base, path, selected, onSelect, onManage, onFolder }: {
   base: string; path: string; selected: string; onSelect: (entry: Entry) => void; onManage: (entry: Entry) => void; onFolder: (path: string) => void;
 }) {
-  const newShell = useNewShell();
+
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const query = useQuery({ queryKey: ["files-tree", base, path], queryFn: () => api<Listing>(`${base}?path=${encodeURIComponent(path)}`), ...(newShell ? { retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 } : {}) });
+  const query = useQuery({ queryKey: ["files-tree", base, path], queryFn: () => api<Listing>(`${base}?path=${encodeURIComponent(path)}`), ...({ retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 }) });
   return <QueryState query={query} isEmpty={(d) => !d.entries.length} empty={<p className="px-3 py-2 text-xs text-muted">Empty folder</p>}>
     {(data) => <ul className="min-w-0">{data.entries.map((entry) => {
       const isDir = entry.kind === "directory";
@@ -65,7 +64,7 @@ function Directory({ base, path, selected, onSelect, onManage, onFolder }: {
 }
 
 export function Files({ kind, scopeKey }: { kind: "project" | "session" | "workspace"; scopeKey: string }) {
-  const newShell = useNewShell();
+
   const [reviewConflict, setReviewConflict] = useState(false);
   const working = useWorkingView();
   const base = `/api/files/${kind}/${encodeURIComponent(scopeKey)}`;
@@ -106,19 +105,22 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
   const dirtyNow = useRef(dirty);
   dirtyNow.current = dirty;
   useEffect(() => { setUploadFolder(""); }, [base]);
-  const tree = useQuery({ queryKey: ["files-tree", base, ""], queryFn: () => api<Listing>(base), ...(newShell ? { retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 } : {}) });
-  const file = useQuery({ queryKey: ["files-read", base, selected], queryFn: () => api<Read>(`${base}/read?path=${encodeURIComponent(selected)}`), enabled: !!selected, refetchOnWindowFocus: !!working, staleTime: working ? 30000 : Infinity, refetchInterval: working ? 30000 : false, ...(newShell ? { retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 } : {}) });
+  const tree = useQuery({ queryKey: ["files-tree", base, ""], queryFn: () => api<Listing>(base), ...({ retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 }) });
+  const file = useQuery({ queryKey: ["files-read", base, selected], queryFn: () => api<Read>(`${base}/read?path=${encodeURIComponent(selected)}`), enabled: !!selected, refetchOnWindowFocus: !!working, staleTime: working ? 30000 : Infinity, refetchInterval: working ? 30000 : false, ...({ retry: (count: number, error: unknown) => !unavailableResource(error) && count < 1 }) });
   useEffect(() => {
     if (!selected || !file.isSuccess) return;
     const frame = focusSelected();
     return () => { if (frame !== undefined) cancelAnimationFrame(frame); };
   }, [selected, file.isSuccess, focusSelected]);
+  const parent = selected.includes('/') ? selected.slice(0, selected.lastIndexOf('/')) : '';
+  const parentListing = useQuery({ queryKey: ['files-tree', base, parent], queryFn: () => api<Listing>(`${base}?path=${encodeURIComponent(parent)}`), enabled: !!selected && !!working, retry: false, refetchInterval: 30000 });
+  const absent = !!selected && (parentListing.isSuccess && !parentListing.data.entries.some(entry => entry.name === selected.split('/').pop()) || unavailableResource(parentListing.error));
   const resourceUnavailable = unavailableResource(tree.error) || unavailableResource(file.error);
   const accessEnded = working && file.error instanceof ApiError && [401, 403, 404].includes(file.error.status);
-  useEffect(() => { if (accessEnded) { working?.setAvailable(false); working?.documents.close(working.key); setDocumentError('File unavailable. Access ended or the file was removed.'); client.removeQueries({ queryKey: ['files-read', base, selected] }); } }, [accessEnded]);
+  useEffect(() => { if (accessEnded) { working?.setAvailable(false); setDocumentError('File unavailable. Access ended or the file was removed.'); client.removeQueries({ queryKey: ['files-read', base, selected] }); } }, [accessEnded]);
   // Folder denial must also hide the retained tab's filename. Keep the buffer
   // while a read-only recheck determines whether access has returned.
-  useEffect(() => { working?.setAvailable(!resourceUnavailable && !accessEnded && (!selected || !!file.data)); }, [resourceUnavailable, accessEnded, selected, file.data, working?.setAvailable]);
+  useEffect(() => { if (resourceUnavailable || accessEnded) working?.setAvailable(false); else if (!selected || file.data) working?.setAvailable(true); }, [resourceUnavailable, accessEnded, selected, file.data, working?.setAvailable]);
   const identity = useQuery({ queryKey: ["files-identity"], queryFn: () => api<{ name: string; email: string }>("/api/files/identity") });
   useEffect(() => {
     if (working && file.data) {
@@ -176,26 +178,41 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
   const mediaType = opened?.media_type ?? "";
   const text = opened?.content !== undefined;
   const canSave = text && !opened?.redacted && !save.isPending && !conflict;
-  if (newShell && resourceUnavailable) return <UnavailableView onRetry={() => { void tree.refetch(); if (selected) void file.refetch(); }} />;
+  if (working && (dirty || save.isPending) && (resourceUnavailable || accessEnded || absent || documentError.startsWith('File unavailable.'))) return <div className="space-y-3">
+    <h1 className="text-lg font-semibold">This saved view can’t be opened</h1>
+    <p role="status">File moved or removed - your changes are kept</p>
+    <textarea aria-label="Retained file draft" readOnly value={draft} className="h-64 w-full bg-panel font-mono text-xs" />
+    <Button onClick={() => {
+      const url = URL.createObjectURL(new Blob([draft], { type: 'text/plain;charset=utf-8' }));
+      const link = document.createElement('a'); link.href = url; link.download = selected.split('/').pop() || 'draft.txt'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }}>Save as</Button>
+    <Button onClick={() => void navigator.clipboard.writeText(draft).then(() => setNotice('Draft copied')).catch(() => setNotice('Copy failed. Select and copy the draft above.'))}>Copy</Button>
+    <Button disabled={save.isPending} onClick={async () => {
+      if (await confirm({ title: 'Discard draft?', body: 'This permanently discards your retained edits.', confirm: 'Discard draft', danger: true })) {
+        clearUnsaved(); setDraft(opened?.content ?? ''); setConflict(null);
+      }
+    }}>Discard</Button>
+    <Button onClick={() => {
+      setDocumentError(''); void tree.refetch(); void parentListing.refetch(); void file.refetch();
+    }}>Recheck availability</Button>
+    <p>Save as downloads your draft to keep in another location.</p>
+    {notice && <p role="status">{notice}</p>}
+  </div>;
+  if (resourceUnavailable) return <UnavailableView onRetry={() => { void tree.refetch(); if (selected) void file.refetch(); }} />;
   if (documentError || accessEnded) return <div className="space-y-3"><p>{documentError}</p>{dirty && !accessEnded && <><p>Your draft is retained. Copy it before closing and reopening this file.</p><textarea aria-label="Retained file draft" readOnly value={draft} className="h-64 w-full bg-panel font-mono text-xs" /></>}<Button onClick={() => { setDocumentError(''); void file.refetch(); }}>Recheck file</Button></div>;
   if (canonical && working) return <div className="space-y-3"><p>This file is already open in another view.</p><Button onClick={() => working.focusExisting(canonical)}>Focus existing editor</Button><Button onClick={() => void file.refetch()}>Recheck file</Button></div>;
-  return <div data-shell-files={newShell || undefined} className="min-w-0 space-y-3">
+  return <div data-shell-files={true} className="min-w-0 space-y-3">
     {!working && <LegacyFileGuard dirty={dirty} clearUnsaved={clearUnsaved} />}
-    {tree.data?.working && <p className={newShell ? "text-xs text-muted" : "rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-xs text-wait"}>A session is working in this folder. You can edit; saves check for concurrent changes.</p>}
-    {!newShell && <div className="flex flex-wrap gap-2">
-      <Button size="sm" onClick={() => setShowTree(!showTree)}>{showTree ? "Hide tree" : "Show tree"}</Button>
-      <Button size="sm" onClick={() => { setTarget(null); setPathInput(""); mutation.reset(); setDialog("create"); }}>New file</Button>
-      <Button size="sm" onClick={() => { setTarget(null); setPathInput(""); mutation.reset(); setDialog("mkdir"); }}>New folder</Button>
-      <Button size="sm" onClick={() => { void refresh(); if (selected && !dirty) void file.refetch(); }}>Refresh files</Button>
-      <Button size="sm" variant="ghost" onClick={() => { setCommitName(identity.data?.name ?? ""); setCommitEmail(identity.data?.email ?? ""); personal.reset(); setDialog("identity"); }}>Commit identity</Button>
-    </div>}
-    <FileUploads key={base} base={base} folder={uploadFolder} onFolder={setUploadFolder} tools={newShell ? <>
+    {tree.data?.working && <p className={"text-xs text-muted"}>A session is working in this folder. You can edit; saves check for concurrent changes.</p>}
+
+    <FileUploads key={base} base={base} folder={uploadFolder} onFolder={setUploadFolder} tools={<>
       <IconButton label={showTree ? "Hide tree" : "Show tree"} icon={showTree ? PanelLeftClose : PanelLeftOpen} onClick={() => setShowTree(!showTree)} />
       <IconButton label="New file" icon={FilePlus} onClick={() => { setTarget(null); setPathInput(""); mutation.reset(); setDialog("create"); }} />
       <IconButton label="New folder" icon={Folder} onClick={() => { setTarget(null); setPathInput(""); mutation.reset(); setDialog("mkdir"); }} />
       <IconButton label="Refresh files" icon={RefreshCw} onClick={() => { void refresh(); if (selected && !dirty) void file.refetch(); }} />
       <IconButton label="Commit identity" icon={UserRoundPen} onClick={() => { setCommitName(identity.data?.name ?? ""); setCommitEmail(identity.data?.email ?? ""); personal.reset(); setDialog("identity"); }} />
-    </> : undefined} onSaved={() => { void refresh(); if (!dirtyNow.current) void client.invalidateQueries({ queryKey: ["files-read", base] }); }}>
+    </>} onSaved={() => { void refresh(); if (!dirtyNow.current) void client.invalidateQueries({ queryKey: ["files-read", base] }); }}>
     <div className={`working-files-grid grid min-w-0 gap-3 ${showTree ? "files-tree-grid" : "grid-cols-1"}`}>
       {showTree && <div data-upload-tree="true" role="region" aria-label="Folder tree" className="min-w-0"><Card className="max-h-[32rem] min-w-0 overflow-auto p-2">
         <Directory base={base} path="" selected={selected} onFolder={setUploadFolder} onSelect={(e) => void select(e)} onManage={(e) => { setTarget(e); setPathInput(e.path); mutation.reset(); setDialog("manage"); }} />
@@ -217,16 +234,16 @@ export function Files({ kind, scopeKey }: { kind: "project" | "session" | "works
           {opened?.redacted && <p className="text-wait">Protected values were redacted. This file is read-only; ask your agent to edit it.</p>}
           {text && <>
             {conflict && <div role="alert" className="space-y-2 rounded-md border border-wait p-3">
-              {newShell && <p className="text-xs font-medium text-wait">Save paused · draft kept</p>}
-              <h2 className="font-semibold">{newShell ? 'Resolve a save conflict' : 'File changed on disk'}</h2><p className="text-xs text-muted">Your draft is kept in the editor below. Compare it with the current version before retrying.</p>
-              {newShell && <>
+              {<p className="text-xs font-medium text-wait">Save paused · draft kept</p>}
+              <h2 className="font-semibold">{'Resolve a save conflict'}</h2><p className="text-xs text-muted">Your draft is kept in the editor below. Compare it with the current version before retrying.</p>
+              {<>
                 <p className="text-sm text-muted">Keep both versions while you review. Review changes and Keep editing never discard your draft or choose a revision.</p>
                 <dl className="space-y-2 break-all text-xs text-muted"><div><dt>Draft base revision</dt><dd className="font-mono">{opened?.revision}</dd></div><div><dt>Current disk revision</dt><dd className="font-mono">{conflict.revision}</dd></div><div><dt>Observed time</dt><dd>Not supplied by the current file service.</dd></div></dl>
                 <div className="flex flex-wrap gap-2"><Button size="sm" aria-expanded={reviewConflict} onClick={() => setReviewConflict(true)}>Review changes</Button><Button size="sm" onClick={() => { setReviewConflict(false); filePanel.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus(); }}>Keep editing</Button></div>
               </>}
-              {(!newShell || reviewConflict) && <pre tabIndex={0} role="region" aria-label="Current version on disk" className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{conflict.content ?? "The file is no longer editable text."}</pre>}
-              <Button size="sm" disabled={(newShell && !reviewConflict) || conflict.content === undefined || conflict.redacted} onClick={() => { setOpened({ ...conflict!, file_identity: opened?.file_identity, workspace_revision: opened?.workspace_revision }); setConflict(null); }}>Keep draft and use current revision</Button>
-              <Button size="sm" disabled={newShell && !reviewConflict} onClick={async () => { if (await confirm({ title: "Discard draft?", body: "Replace your draft with the current version on disk.", confirm: "Discard draft", danger: true })) { setOpened({ ...conflict!, file_identity: opened?.file_identity, workspace_revision: opened?.workspace_revision }); setDraft(conflict.content ?? ""); setConflict(null); setEditorVersion((v) => v + 1); } }}>Use disk version</Button>
+              {(reviewConflict) && <pre tabIndex={0} role="region" aria-label="Current version on disk" className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{conflict.content ?? "The file is no longer editable text."}</pre>}
+              <Button size="sm" disabled={(!reviewConflict) || conflict.content === undefined || conflict.redacted} onClick={() => { setOpened({ ...conflict!, file_identity: opened?.file_identity, workspace_revision: opened?.workspace_revision }); setConflict(null); }}>Keep draft and use current revision</Button>
+              <Button size="sm" disabled={!reviewConflict} onClick={async () => { if (await confirm({ title: "Discard draft?", body: "Replace your draft with the current version on disk.", confirm: "Discard draft", danger: true })) { setOpened({ ...conflict!, file_identity: opened?.file_identity, workspace_revision: opened?.workspace_revision }); setDraft(conflict.content ?? ""); setConflict(null); setEditorVersion((v) => v + 1); } }}>Use disk version</Button>
             </div>}
             <div className={`working-markdown-grid grid min-w-0 gap-3 ${/\.(md|markdown)$/i.test(selected) ? "xl:grid-cols-2" : ""}`}>
               <div className="min-w-0"><p className="mb-2 text-xs text-muted">Editor{conflict ? " · your draft" : ""}</p>

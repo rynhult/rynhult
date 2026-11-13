@@ -29,6 +29,22 @@ NON_DOWNLOAD_DIGESTS = {
     'deploy/containers/policy.example.json',
     'scripts/check_pins.py',  # This inventory describes URL templates; it downloads nothing.
 }
+# Local qualification compares installed binaries and frozen source; none of these
+# scripts downloads artifacts. Inventory every reviewed literal rather than
+# exempting the directory: a new digest or any URL still requires review.
+QUALIFICATION_DIGESTS = {
+    'scripts/session_relay_qualification/execution_crash_driver.py': {
+        'controller-source': '552fb9bdf8d2c124a1d4e0fad8953dfa7ea42cbb49aebe486fd7372901dd5877'},
+    'scripts/session_relay_qualification/native_restart_controller.py': {
+        'controller-source': '552fb9bdf8d2c124a1d4e0fad8953dfa7ea42cbb49aebe486fd7372901dd5877'},
+    'scripts/session_relay_qualification/metadata_security_probe.py': {
+        'claude-2.1.308': '356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58'},
+    'scripts/session_relay_qualification/temporary_claude_probe.py': {
+        'claude-2.1.308': '356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58'},
+    'scripts/session_relay_qualification/probe.py': {
+        'claude-2.1.308': '356733f185fa988e6bf3aa9a555269fdd167982a2e2a80d3c8a78037bb92ad58',
+        'codex-0.167.1': 'dd5bfdf19d794dcc6fb482d2d5a2d9fb31d11f6caa44b303bb72890d461e8a02'},
+}
 SCOPES = ('deploy', 'desktop', 'scripts')
 # Locks outside SCOPES that CI and Dependabot install from (the rest of web/ is the app, not installers).
 LOCKS = ('web/package-lock.json',)
@@ -336,6 +352,16 @@ def inventory(root: Path) -> list[dict]:
                 normalized = re.sub(r'[-_.]+', '-', name).lower()
                 if relative.startswith('desktop/requirements-') and path.name != 'requirements-build.lock' and normalized in main_versions:
                     agree(name, [ver, main_versions[normalized]], relative)
+        elif relative in QUALIFICATION_DIGESTS:
+            text = path.read_text()
+            identities = QUALIFICATION_DIGESTS[relative]
+            observed = set(re.findall(r'\b[0-9a-fA-F]{64}\b', text))
+            if observed != set(identities.values()) or re.search(r'https?://', text):
+                raise InvalidPin(f'{relative}: uninventoried qualification digest or URL; update its inventory adapter')
+            for name, sha in identities.items():
+                pins.append(dict(name='relay-qualification', variant=name, version=None, url=None,
+                                 sha256=digest(sha, relative), source=relative,
+                                 verification='local installed binary/source identity; no download'))
         elif relative not in handled and relative not in NON_DOWNLOAD_DIGESTS:
             # Detect additions instead of letting an adapter list silently go stale.
             # Package locks above have dedicated parsers; docs and tests aren't installers.

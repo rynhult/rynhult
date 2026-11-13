@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
+from contextvars import ContextVar
 
 from sqlalchemy import func, select
 
@@ -14,11 +16,14 @@ from . import attention, host, vault
 from .broker_client import BrokerError, BrokerUnavailable
 from .compose import CHANGED, ComposeChanged
 from .db import write_in_thread, write_intent
-from .github import GitHub, GitHubError, ci_failures
+from .github import GitHub, GitHubError, ci_failures, same_repo
 from .issue_sources import IssueSourceError, github_remote, source_key
-from .models import API_PRINCIPAL, AttentionItem, Event, Observation, Project, PushSubscription, Session, User
+from .models import API_PRINCIPAL, AttentionItem, Event, Observation, Project, PushSubscription, Session, Setting, User
 from .push import link_for
 from .supervisor_common import log, now
+
+# Task-local so a concurrent test-send request cannot acknowledge an attention claim.
+_push_outcome = ContextVar("push_outcome", default=None)
 
 
 class PollingMixin:
@@ -108,7 +113,7 @@ class PollingMixin:
         """ACC has the dashboard's GitHub token (owners' GitHub views and pull request actions)."""
         return self._github is not None or self.settings.github_token_path.exists()
 
-    async def refresh_github(self, project_id: int | None = None) -> None:
+    async def refresh_github(self, project_id: int | None = None, *, force: bool = False) -> None:
         """Snapshot each project's repo; raise/resolve CI failure items (default branch and open PRs)."""
         with self.db() as db:
             # Only owners' projects (and ACC's own): snapshots use the owner's GitHub token, so a member's project
@@ -118,15 +123,27 @@ class PollingMixin:
                                           (Project.owner.is_(None)) | (Project.owner.not_in(members)))
             if project_id is not None:
                 query = query.where(Project.id == project_id)
-            projects = [(p.id, p.slug, p.repo) for p in db.scalars(query)
-                        if github_remote(p.remote_url) and not (p.issue_sources or {}).get("gitlab")]
-        for pid, slug, repo in projects:
+            projects = []
+            for project in db.scalars(query):
+                if not github_remote(project.remote_url) or (project.issue_sources or {}).get("gitlab"):
+                    continue
+                sessions = db.scalars(select(Session).where(Session.project_id == project.id,
+                                                           Session.desired_state != 'archived'))
+                heads = {(session.changes or {}).get('branch') or session.worktree_branch for session in sessions}
+                projects.append((project.id, project.slug, project.repo, tuple(sorted(head for head in heads if head))))
+        for pid, slug, repo, heads in projects:
             try:
-                snapshot = await self.github.snapshot(repo)
+                kwargs = {'force': True} if force else {}
+                snapshot = await self.github.snapshot(repo, heads, **kwargs) if heads else await self.github.snapshot(repo, **kwargs)
             except (GitHubError, OSError) as error:
                 log.warning("github %s: %s", repo, error)
                 with self.db() as db:
-                    db.merge(Observation(key=f"github.{pid}", value={"error": str(error)[:300], "fetched_at": time.time()},
+                    previous = db.get(Observation, f"github.{pid}")
+                    kept = dict(previous.value or {}) if previous else {}
+                    if not same_repo((kept.get('repo') or {}).get('full_name'), repo):
+                        kept = {}
+                    db.merge(Observation(key=f"github.{pid}", value={**kept, "error": str(error)[:300],
+                                                                  "error_at": time.time()},
                                          source="github", observed_at=time.time()))
                     db.commit()
                 continue
@@ -144,7 +161,7 @@ class PollingMixin:
                     if key not in failures:
                         attention.resolve(db, key)
                 db.commit()
-            await self.comment_linear_pulls(pid, snapshot.get("pulls", []))
+            await self.comment_linear_pulls(pid, [p for p in snapshot.get("pulls", []) if p.get("state", "open") == "open"])
 
     async def refresh_issue_comments(self) -> None:
         from .admin_features import enabled
@@ -333,11 +350,13 @@ class PollingMixin:
     # ---------------------------------------------------------------- push notifications
 
     async def notify(self, payload: dict, only: str | None = None, everyone: bool = True,
-                     username: str | None = None) -> int:
+                     username: str | None = None, on_result=None) -> int:
         """Send one message to subscribed devices (or one endpoint); drop devices the push service says are gone.
         everyone=False: owners' devices only; username: that person's devices only."""
         if self.push is None:
             return 0
+        if on_result is None:
+            on_result = _push_outcome.get()
         with self.db() as db:
             query = select(PushSubscription)
             if only:
@@ -358,6 +377,8 @@ class PollingMixin:
             except Exception as error:  # network or encryption trouble: keep the device, count the failure
                 log.warning("push to device %s failed: %s", device_id, error)
                 status = 0
+            if on_result is not None:
+                on_result(status)
             with self.db() as db:
                 device = db.get(PushSubscription, device_id)
                 if device is None:
@@ -373,20 +394,38 @@ class PollingMixin:
         return delivered
 
     async def push_attention(self) -> None:
-        """New inbox items that matter become notifications (the cursor starts at the newest item, so a restart
-        never replays old ones)."""
+        """Durable recipient queue with summary releases and bounded leased retries."""
         if self.push is None:
             return
+        async with self._push_lock:
+            await self._push_attention_locked()
+
+    async def _push_attention_locked(self) -> None:
+        messages = []
+        stamp = time.time()
         with self.db() as db:
+            state = db.get(Setting, "push.delivery")
             newest = db.scalar(select(func.max(AttentionItem.id))) or 0
-            if self._push_cursor is None:
+            if state is None:
+                db.add(Setting(key="push.delivery", value={"cursor": newest, "pending": [], "inflight": []}))
+                db.commit()
                 self._push_cursor = newest
                 return
-            items = list(db.scalars(select(AttentionItem).where(
-                AttentionItem.id > self._push_cursor, AttentionItem.severity.in_(("warn", "critical")),
-                AttentionItem.resolved_at.is_(None),
-                (AttentionItem.snoozed_until.is_(None)) | (AttentionItem.snoozed_until <= now())).order_by(AttentionItem.id)))
-            self._push_cursor = newest
+            cursor = state.value["cursor"]
+            # Upgrade the original pair-only queue conservatively as previously held.
+            pending = [entry if isinstance(entry, dict) else
+                       {"item": entry[0], "person": entry[1], "seen": True, "attempts": 0}
+                       for entry in state.value["pending"]]
+            inflight = []
+            for claim in state.value.get("inflight", []):
+                if stamp - claim["claimed_at"] < 120:
+                    inflight.append(claim)
+                    continue
+                exhausted = [entry for entry in claim["items"] if entry["attempts"] >= 3]
+                if exhausted:
+                    log.warning("push delivery exhausted after 3 attempts: %s items recipient %s",
+                                len(exhausted), claim["person"])
+                pending.extend(entry for entry in claim["items"] if entry["attempts"] < 3)
             def current_group_recipient(item):
                 if item.source != 'group_board':
                     return True
@@ -400,10 +439,131 @@ class PollingMixin:
                 user = db.scalar(select(User).where(User.username == item.owner))
                 member = db.get(GroupMembership, (group.id, user.id)) if group and user else None
                 return bool(group and not group.archived and member and member.role == 'maintainer')
-            messages = [({"title": i.title, "body": i.detail or i.source, "url": link_for(i), "tag": i.dedupe_key,
-                          "critical": i.severity == "critical"}, i.owner) for i in items if current_group_recipient(i)]
-        for message, owner in messages[:10]:  # a burst (e.g. a reboot) shouldn't become a flood
-            if owner:  # someone's own item (their session, their account): only their devices
-                await self.notify(message, username=owner)
-            else:      # host-wide and approvals: owners' devices
-                await self.notify(message, everyone=False)
+            from .api.inbox import permission_info
+            from .approval_cards import push_body
+
+            def notification_body(item):
+                facts = permission_info(db, item.session_id).get("approval_card") if item.kind == "needs_input" else None
+                if item.kind == "needs_input":
+                    body = push_body(facts or {"command": None, "label": "No specific hint"}, item.detail or item.source)
+                    session = db.get(Session, item.session_id) if facts else None
+                    if session and session.parent_session_id:
+                        body += " · Parent chain: " + " → ".join([*session.parent_chain, session.id])
+                    return body
+                return item.detail or item.source
+
+            def security_notice(item):
+                return item.kind in {"sign_in", "backup"} or attention.persistent_reason(item) is not None
+
+            recipients = set(db.scalars(select(PushSubscription.username)))
+            owners = set(db.scalars(select(User.username).where(User.role == "owner"))) | {API_PRINCIPAL}
+            for item in db.scalars(select(AttentionItem).where(AttentionItem.id > cursor, AttentionItem.id <= newest,
+                    AttentionItem.severity.in_(("warn", "critical")), AttentionItem.resolved_at.is_(None),
+                    (AttentionItem.snoozed_until.is_(None)) | (AttentionItem.snoozed_until <= now()))
+                    .order_by(AttentionItem.id)):
+                # None denotes the existing owners-only broadcast, not a person's subscription.
+                audience = [None] if not item.owner and security_notice(item) else sorted(
+                    recipients & ({item.owner} if item.owner else owners))
+                for person in audience:
+                    pending.append({"item": item.id, "person": person, "seen": False, "attempts": 0})
+            remaining, sendable = [], {}
+            inflight = [claim for claim in inflight if claim["person"] in recipients or
+                        (claim["person"] is None and recipients & owners)]
+            for entry in pending:
+                item_id, person = entry["item"], entry["person"]
+                item = db.get(AttentionItem, item_id)
+                if item is None or item.resolved_at or item.acked_at or not current_group_recipient(item):
+                    continue
+                if person is None:
+                    if item.owner or not security_notice(item):
+                        continue
+                elif person not in recipients or person not in ({item.owner} if item.owner else owners):
+                    continue
+                if item.snoozed_until and item.snoozed_until > now():
+                    remaining.append(entry)
+                    continue
+                preference = db.get(Setting, f"push.active.{person}") if person is not None else None
+                always = bool(preference and preference.value.get("always"))
+                exempt = item.severity == "critical" or security_notice(item)
+                if not exempt and not always and self.push_presence.watching(person, item.session_id):
+                    remaining.append({**entry, "seen": True})
+                    continue
+                sendable.setdefault(person, []).append((entry, item))
+
+            def claim_message(person, entries, message):
+                claimed = [{**entry, "attempts": entry["attempts"] + 1} for entry in entries]
+                claim = {"id": uuid.uuid4().hex, "person": person, "claimed_at": stamp,
+                         "attempts": max(entry["attempts"] for entry in claimed), "items": claimed}
+                inflight.append(claim)
+                messages.append((message, person, claim["id"]))
+
+            def individual(person, entry, item):
+                claim_message(person, [entry], {"title": item.title, "body": notification_body(item),
+                              "url": f"/inbox?item={item.id}" if item.kind == "needs_input" and item.session_id else link_for(item), "tag": item.dedupe_key, "critical": item.severity == "critical"})
+
+            def summary(person, entries, critical=False):
+                count = len(entries)
+                noun = "item still needs" if count == 1 else "items still need"
+                title = f"{count} {'critical ' if critical else ''}{noun} you"
+                claim_message(person, entries, {"title": title, "url": "/inbox",
+                              "tag": "critical-summary" if critical else "presence-summary", "critical": critical})
+
+            for person, ready in sendable.items():
+                ordinary, critical_overflow = [], []
+                critical_sent = 0
+                for entry, item in ready:
+                    if security_notice(item):
+                        individual(person, entry, item)
+                    elif item.severity == "critical":
+                        if critical_sent < 5 and not entry.get("critical_summary"):
+                            individual(person, entry, item)
+                            critical_sent += 1
+                        else:
+                            critical_overflow.append({**entry, "critical_summary": True, "seen": True})
+                    else:
+                        ordinary.append((entry, item))
+                if critical_overflow:
+                    summary(person, critical_overflow, critical=True)
+                if len(ordinary) > 3 or any(entry["seen"] for entry, _ in ordinary):
+                    summary(person, [{**entry, "seen": True} for entry, _ in ordinary])
+                else:
+                    for entry, item in ordinary:
+                        individual(person, entry, item)
+            value = {"cursor": newest, "pending": remaining, "inflight": inflight}
+            if state.value != value:
+                state.value = value
+                db.commit()
+            self._push_cursor = newest
+        for message, person, claim_id in messages:
+            accepted, retryable = False, False
+
+            def outcome(status):
+                nonlocal accepted, retryable
+                retryable |= status == 0 or status == 429 or status >= 500
+                if 200 <= status < 300 and not accepted:
+                    self._finish_push_claim(claim_id)
+                    accepted = True
+
+            token = _push_outcome.set(outcome)
+            try:
+                if person is None:
+                    await self.notify(message, everyone=False)
+                else:
+                    await self.notify(message, username=person)
+            finally:
+                _push_outcome.reset(token)
+            if not accepted:
+                with self.db() as db:
+                    audience = (PushSubscription.username.in_(owners) if person is None else
+                                PushSubscription.username == person)
+                    devices = db.scalar(select(PushSubscription.id).where(audience).limit(1))
+                if not devices or not retryable:
+                    self._finish_push_claim(claim_id)
+
+    def _finish_push_claim(self, claim_id):
+        """Persist first-device acceptance before another device's network request."""
+        with self.db() as db:
+            state = db.get(Setting, "push.delivery")
+            state.value = {**state.value, "inflight": [claim for claim in state.value.get("inflight", [])
+                                                     if claim["id"] != claim_id]}
+            db.commit()

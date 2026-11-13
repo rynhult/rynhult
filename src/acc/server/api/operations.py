@@ -26,6 +26,107 @@ class ImageCheck(BaseModel):
     model: str = Field(pattern=r'^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$')
 
 
+async def run_image_check(supervisor, body: ImageCheck, *, actor: str, authorize=None, budget_owner=None, expected_identity=None):
+    """Existing bounded probe and evidence validation; optional current delegated admission."""
+    db = supervisor.db
+    if body.provider not in registry.ids():
+        raise HTTPException(422,'Unknown provider')
+    with db() as s:
+        project=s.get(Project,body.project_id)
+        if project is None:
+            raise HTTPException(404,'Project unavailable')
+        if not project.trusted or project.import_mode!='managed' or project.archived:
+            raise HTTPException(409,'Choose a trusted managed project on the execution machine')
+        if project.containers:
+            raise HTTPException(409,'Choose a native execution project; native checks do not qualify per-session containers')
+        account,machine=project.account,project.host or 'local'
+        if budgets.paused(s,budget_owner or actor,body.provider,project_id=body.project_id):
+            raise HTTPException(409,'Your budget pauses this provider; adjust it before checking image access')
+    lock=supervisor.__dict__.setdefault('_image_check_lock',asyncio.Lock())
+    cooldown=key(account,machine,body.provider,'*')+'.cooldown'
+    async with lock:
+        with db() as s:
+            previous=s.get(Setting,cooldown)
+            if previous and time.time()-previous.value['at']<60:
+                raise HTTPException(429,'Wait one minute between image checks for this machine/provider')
+            s.merge(Setting(key=cooldown,value={'at':time.time()},updated_by=actor))
+            s.add(AuditLog(actor=actor,action='image.check.started',target=machine,
+                          detail={'account':account,'provider':body.provider,'model':body.model}))
+            s.commit()
+    try:
+        catalog=await supervisor.broker.call('model_catalog',account=account,host=machine)
+        chosen=next((m for m in catalog.get(body.provider,[]) if isinstance(m,dict) and m.get('id')==body.model),None)
+        if chosen is None:
+            raise HTTPException(409,'Model is not in this execution machine/account catalog; refresh and choose again')
+        if expected_identity is not None:
+            if (type(chosen.get('uid')) is not int
+                    or chosen.get('delegation_protocol') != 'image-check-delegation-v1'
+                    or any(chosen.get(k) != v for k, v in expected_identity.items())
+                    or not isinstance(chosen.get('adapter_version'), str)
+                    or not re.fullmatch('[0-9a-f]{64}', chosen['adapter_version'])
+                    or not isinstance(chosen.get('cli_version'), str) or not 1 <= len(chosen['cli_version']) <= 120):
+                raise HTTPException(409, 'Image probe account/runtime or delegation protocol changed')
+        if authorize is not None:
+            from ..db import write_in_thread
+            await write_in_thread(authorize, account, machine)
+        binding = ({'expected_uid':expected_identity['uid'], 'expected_runtime_id':expected_identity['runtime_id']}
+                   if expected_identity is not None else {})
+        result=await supervisor.broker.call('image_probe',account=account,host=machine,provider=body.provider,model=body.model,**binding)
+        identity_fields = ('adapter_version','cli_version','runtime_id') + (('uid',) if expected_identity is not None else ())
+        if any(result.get(k)!=chosen.get(k) for k in identity_fields):
+            result={**result,'image_input':None,'evidence':{'outcome':'runtime changed; check again'}}
+    except BrokerError:
+        result={'image_input':None,'checked_at':time.time(),'evidence':{'outcome':'broker unavailable or reply uncertain'}}
+    evidence=result.get('evidence') if isinstance(result.get('evidence'),dict) else {}
+    safe_evidence={'outcome':evidence.get('outcome') if evidence.get('outcome') in (
+        'pass','pass, 1 character misread','fail','error','unsupported','runtime changed during probe','runtime changed; check again',
+        'broker unavailable or reply uncertain') else 'error'}
+    for field in ('image_sha256','response_sha256'):
+        value=evidence.get(field)
+        if isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value):
+            safe_evidence[field]=value
+    if evidence.get('error_kind') in ('sign-in required','unsupported arguments','CLI error','claude_subscription_automation'):
+        safe_evidence['error_kind']=evidence['error_kind']
+    if type(evidence.get('exit_code')) is int and -255<=evidence['exit_code']<=255:
+        safe_evidence['exit_code']=evidence['exit_code']
+    if isinstance(evidence.get('unsupported_argument'),str) and re.fullmatch(r'--[a-zA-Z][a-zA-Z-]{1,60}',evidence['unsupported_argument']):
+        safe_evidence['unsupported_argument']=evidence['unsupported_argument']
+    for field in ('expected','observed'):
+        proof=evidence.get(field)
+        if (isinstance(proof,dict) and isinstance(proof.get('code'),str)
+                and re.fullmatch('[A-Z0-9]{0,4}',proof['code']) and isinstance(proof.get('shapes'),list)
+                and len(proof['shapes'])<=3 and all(v in {
+                    color+' '+shape for color in ('red','green','blue') for shape in ('circle','square','triangle')
+                } for v in proof['shapes'] if isinstance(v,str))
+                and all(isinstance(v,str) for v in proof['shapes'])):
+            safe_evidence[field]={'code':proof['code'],'shapes':list(proof['shapes'])}
+    if result.get('image_input') is True:
+        decision=image_check.assessment(safe_evidence.get('expected'),safe_evidence.get('observed'),0)
+        if decision not in image_check.PASS_OUTCOMES:
+            result={**result,'image_input':None}
+            safe_evidence['outcome']='error'
+        else:
+            safe_evidence['outcome']=decision
+    result={k:result.get(k) for k in ('image_input','adapter_version','cli_version','runtime_id')}
+    result={**result,'checked_at':time.time(),'evidence':safe_evidence,
+            'account':account,'machine':machine,'provider':body.provider,'model':body.model,'scope':'native'}
+    result['image_input']=capability(result,{'id':body.model,**result},account=account,machine=machine,provider=body.provider)
+    if result['image_input'] is None and result['evidence']['outcome'] in (*image_check.PASS_OUTCOMES,'fail'):
+        result['evidence']['outcome']='error'
+    with db() as s:
+        s.merge(Setting(key=key(account,machine,body.provider,body.model),value=result,updated_by=actor))
+        if result['image_input'] is not None:
+            from ..image_capabilities import resolve_check
+            resolve_check(s, body.project_id, account, machine, body.provider, body.model)
+        s.add(AuditLog(actor=actor,action='image.check.finished',target=machine,detail=result))
+        s.commit()
+    if result['evidence'].get('error_kind') == 'claude_subscription_automation':
+        from ...providers.claude_auth import detail
+        raise HTTPException(409, detail())
+    return result
+
+
+
 def router(ctx: Context) -> APIRouter:
     db, supervisor, refused = ctx.db, ctx.supervisor, ctx.refused
     api = APIRouter()
@@ -149,86 +250,10 @@ def router(ctx: Context) -> APIRouter:
 
 
     @api.post('/api/providers/image-check')
-    async def check_image(body:ImageCheck, who=Depends(ctx.owner)):
-        if body.provider not in registry.ids():
-            raise HTTPException(422,'Unknown provider')
+    async def check_image(body: ImageCheck, who=Depends(ctx.owner)):
         with db() as s:
-            project=ctx.project_for(s,who,body.project_id)
-            if not project.trusted or project.import_mode!='managed' or project.archived:
-                raise HTTPException(409,'Choose a trusted managed project on the execution machine')
-            if project.containers:
-                raise HTTPException(409,'Choose a native execution project; native checks do not qualify per-session containers')
-            account,machine=project.account,project.host or 'local'
-            if budgets.paused(s,who.username,body.provider,project_id=body.project_id):
-                raise HTTPException(409,'Your budget pauses this provider; adjust it before checking image access')
-        lock=supervisor.__dict__.setdefault('_image_check_lock',asyncio.Lock())
-        cooldown=key(account,machine,body.provider,'*')+'.cooldown'
-        async with lock:
-            with db() as s:
-                previous=s.get(Setting,cooldown)
-                if previous and time.time()-previous.value['at']<60:
-                    raise HTTPException(429,'Wait one minute between image checks for this machine/provider')
-                s.merge(Setting(key=cooldown,value={'at':time.time()},updated_by=who.username))
-                s.add(AuditLog(actor=who.username,action='image.check.started',target=machine,
-                              detail={'account':account,'provider':body.provider,'model':body.model}))
-                s.commit()
-        try:
-            catalog=await ctx.broker.call('model_catalog',account=account,host=machine)
-            chosen=next((m for m in catalog.get(body.provider,[]) if isinstance(m,dict) and m.get('id')==body.model),None)
-            if chosen is None:
-                raise HTTPException(409,'Model is not in this execution machine/account catalog; refresh and choose again')
-            result=await ctx.broker.call('image_probe',account=account,host=machine,provider=body.provider,model=body.model)
-            if any(result.get(k)!=chosen.get(k) for k in ('adapter_version','cli_version','runtime_id')):
-                result={**result,'image_input':None,'evidence':{'outcome':'runtime changed; check again'}}
-        except BrokerError:
-            result={'image_input':None,'checked_at':time.time(),'evidence':{'outcome':'broker unavailable or reply uncertain'}}
-        evidence=result.get('evidence') if isinstance(result.get('evidence'),dict) else {}
-        safe_evidence={'outcome':evidence.get('outcome') if evidence.get('outcome') in (
-            'pass','pass, 1 character misread','fail','error','unsupported','runtime changed during probe','runtime changed; check again',
-            'broker unavailable or reply uncertain') else 'error'}
-        for field in ('image_sha256','response_sha256'):
-            value=evidence.get(field)
-            if isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value):
-                safe_evidence[field]=value
-        if evidence.get('error_kind') in ('sign-in required','unsupported arguments','CLI error','claude_subscription_automation'):
-            safe_evidence['error_kind']=evidence['error_kind']
-        if type(evidence.get('exit_code')) is int and -255<=evidence['exit_code']<=255:
-            safe_evidence['exit_code']=evidence['exit_code']
-        if isinstance(evidence.get('unsupported_argument'),str) and re.fullmatch(r'--[a-zA-Z][a-zA-Z-]{1,60}',evidence['unsupported_argument']):
-            safe_evidence['unsupported_argument']=evidence['unsupported_argument']
-        for field in ('expected','observed'):
-            proof=evidence.get(field)
-            if (isinstance(proof,dict) and isinstance(proof.get('code'),str)
-                    and re.fullmatch('[A-Z0-9]{0,4}',proof['code']) and isinstance(proof.get('shapes'),list)
-                    and len(proof['shapes'])<=3 and all(v in {
-                        color+' '+shape for color in ('red','green','blue') for shape in ('circle','square','triangle')
-                    } for v in proof['shapes'] if isinstance(v,str))
-                    and all(isinstance(v,str) for v in proof['shapes'])):
-                safe_evidence[field]={'code':proof['code'],'shapes':list(proof['shapes'])}
-        if result.get('image_input') is True:
-            decision=image_check.assessment(safe_evidence.get('expected'),safe_evidence.get('observed'),0)
-            if decision not in image_check.PASS_OUTCOMES:
-                result={**result,'image_input':None}
-                safe_evidence['outcome']='error'
-            else:
-                safe_evidence['outcome']=decision
-        result={k:result.get(k) for k in ('image_input','adapter_version','cli_version','runtime_id')}
-        result={**result,'checked_at':time.time(),'evidence':safe_evidence,
-                'account':account,'machine':machine,'provider':body.provider,'model':body.model,'scope':'native'}
-        result['image_input']=capability(result,{'id':body.model,**result},account=account,machine=machine,provider=body.provider)
-        if result['image_input'] is None and result['evidence']['outcome'] in (*image_check.PASS_OUTCOMES,'fail'):
-            result['evidence']['outcome']='error'
-        with db() as s:
-            s.merge(Setting(key=key(account,machine,body.provider,body.model),value=result,updated_by=who.username))
-            if result['image_input'] is not None:
-                from ..image_capabilities import resolve_check
-                resolve_check(s, body.project_id, account, machine, body.provider, body.model)
-            s.add(AuditLog(actor=who.username,action='image.check.finished',target=machine,detail=result))
-            s.commit()
-        if result['evidence'].get('error_kind') == 'claude_subscription_automation':
-            from ...providers.claude_auth import detail
-            raise HTTPException(409, detail())
-        return result
+            ctx.project_for(s, who, body.project_id)
+        return await run_image_check(supervisor, body, actor=who.username)
 
     @api.get("/api/models")
     async def models(refresh: int = 0, project_id: int | None = None, machine: str | None = None, who=Depends(ctx.principal)):

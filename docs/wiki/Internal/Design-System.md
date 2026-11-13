@@ -1,6 +1,6 @@
 # Design system
 
-Rynhult is an operations surface: dense, calm and legible, closer to Linear or Vercel than to a marketing site. Everything visual is defined once, in `web/src/index.css` (tokens) and `web/src/components/ui.tsx` (primitives).
+Rynhult is an operations surface: dense, calm and legible, closer to Linear or Vercel than to a marketing site. Shared tokens live in `web/src/index.css`, controls in `web/src/components/ui.tsx`, and page surfaces in `web/src/components/shell/PagePrimitives.tsx` with their accompanying CSS.
 
 ## Principles
 1. **Status first.** The first screen answers what needs me, what is running and whether the host is healthy.
@@ -37,7 +37,9 @@ non-regression. The browser suite also measures solid Inbox count contrast.
 Type is Inter and JetBrains Mono, self-hosted.
 
 ## Components
-`Page` and `PageHeader`, `Card` and `CardHeader`, `Stat`, `Meter`, `Badge`, `Dot`, `Tabs`, `Segmented`, `Toolbar`, `SearchInput`, `Button` and `IconButton`, `Dialog` (focus trap, pinned footer, no accidental dismissal for forms), `useConfirm`, `QueryState`, `Empty`, `Skeleton`, `SessionList`, `Wiki`.
+`ShellPage` and `Workbar`, `Surface` and `SurfaceHeader`, `PaneTabs` and `PageStack` compose the application pages. The shared controls include `Stat`, `Meter`, `Badge`, `Dot`, `Segmented`, `Toolbar`, `SearchInput`, `Button` and `IconButton`, `Dialog` (focus trap, pinned footer, no accidental dismissal for forms), `useConfirm`, `QueryState`, `Empty`, `Skeleton`, `SessionList`, `Wiki`.
+
+`Tabs` is imported directly from `components/Tabs.tsx`; `PaneTabs` preserves its roving focus and phone overflow. Settings, Providers, Hosts and categorized Inbox use compact titles and flat panel edges. Settings adds Account, Project or Installation context; Providers identifies machine and account.
 
 `Dialog` always focuses an in-dialog target, falling back to Close or the panel while asynchronous content loads. Tab recovers focus moved outside the panel; closing restores the original outside trigger even when React `autoFocus` moved it before the opening effect.
 

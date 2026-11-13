@@ -1,7 +1,9 @@
 import type { LayoutView } from './layoutStore.ts';
 /** Versioned presentation only. Runtime resources, drafts and authority never enter this record. */
 export type ViewReference = { key: string; href: string; kind: 'terminal' | 'file' | 'chat' | 'page' | 'unavailable'; minWidth: number;
-  /** A saved reference that could not be resolved. Kept so a later save does not lose it; never rendered as content. */
+  /** Confirmed unavailable; unresolved offline references leave this false. */
+  unrestorable?: boolean;
+  /** Kept while resolution is pending so a later save does not lose it. */
   saved?: LayoutView };
 export type Column = { tabs: string[]; active: string | null; width: number };
 export type WorkingLayout = { version: 1; columns: Column[]; focused: number; filled: string | null; views: Record<string, ViewReference> };
@@ -18,7 +20,7 @@ export function referenceFor(href: string): ViewReference | null {
     const match = /^\/(sessions|projects)\/([\w-]+)$/.exec(url.pathname);
     const workspace = /^\/workspaces\/([^/]+)\/files$/.exec(url.pathname);
     if (!match && !workspace || workspace && !url.searchParams.get('session')) return null;
-    if ([...url.searchParams.keys()].some(key => !['tab', 'file', 'session', 'delivery'].includes(key))) return null;
+    if ([...url.searchParams.keys()].some(key => !['tab', 'file', 'session', 'delivery', 'section', 'brief_review'].includes(key))) return null;
     if ([...url.searchParams.keys()].some(key => url.searchParams.getAll(key).length !== 1)) return null;
     const tab = url.searchParams.get('tab') ?? (match?.[1] === 'sessions' ? 'terminal' : 'overview');
     const file = url.searchParams.get('file');
@@ -33,7 +35,8 @@ export function referenceFor(href: string): ViewReference | null {
     if (match?.[1] === 'sessions' && tab === 'terminal') return { key: `session:${match[2]}:terminal`, href: url.pathname, kind: 'terminal', minWidth: 320 };
     if (match?.[1] === 'sessions' && tab === 'chat') return { key: `session:${match[2]}:chat`, href: `${url.pathname}?tab=chat`, kind: 'chat', minWidth: 360 };
     const canonical = `${url.pathname}${url.search}${url.hash}`;
-    return { key: `page:${canonical}`, href: canonical, kind: 'page', minWidth: tab === 'preview' ? 400 : tab === 'files' ? 360 : 320 };
+    const pageKey = match?.[1] === 'projects' && tab === 'overview' ? url.pathname : `${url.pathname}${url.search}`;
+    return { key: `page:${pageKey}`, href: canonical, kind: 'page', minWidth: tab === 'preview' ? 400 : tab === 'files' ? 360 : 320 };
   } catch { return null; }
 }
 
@@ -41,7 +44,7 @@ const copy = (layout: WorkingLayout): WorkingLayout => ({ ...layout, columns: la
 export function openView(layout: WorkingLayout, view: ViewReference): WorkingLayout {
   const next = copy(layout);
   const existing = next.columns.findIndex(c => c.tabs.includes(view.key));
-  if (existing >= 0) { next.focused = existing; next.columns[existing].active = view.key; next.filled = null; return next; }
+  if (existing >= 0) { next.views[view.key] = view; next.focused = existing; next.columns[existing].active = view.key; next.filled = null; return next; }
   if (Object.keys(next.views).length >= MAX_VIEWS) throw new Error('The open view limit is reached. Close a view before opening another.');
   next.views[view.key] = view;
   next.columns[next.focused].tabs.push(view.key); next.columns[next.focused].active = view.key;
@@ -88,5 +91,26 @@ export function resizeColumns(layout: WorkingLayout, divider: number, delta: num
     sizes[divider] += change; sizes[divider + 1] -= change;
   }
   next.columns.forEach((c, i) => { c.width = sizes[i] / usable; });
+  return next;
+}
+
+/** Drop confirmed dead references, then oldest unprotected placements first.
+ * Object insertion order records opening order independently of column moves.
+ * Drafts and terminal writers are protected by the caller, never discarded here.
+ */
+export function pruneViews(layout: WorkingLayout, unavailable: Set<string>, protectedKeys: Set<string>, limit = 12): WorkingLayout {
+  let next = layout;
+  const active = new Set(layout.columns.map(column => column.active));
+  if (layout.filled) active.add(layout.filled);
+  for (const key of Object.keys(layout.views)) {
+    if (!active.has(key) && (unavailable.has(key) || layout.views[key].unrestorable === true) && !protectedKeys.has(key)) next = closeView(next, key);
+  }
+  for (let index = 0; index < next.columns.length; index++) {
+    for (const key of Object.keys(next.views)) {
+      const current = next.columns[index];
+      if (current.tabs.length <= limit) break;
+      if (current.tabs.includes(key) && !protectedKeys.has(key) && current.active !== key) next = closeView(next, key);
+    }
+  }
   return next;
 }

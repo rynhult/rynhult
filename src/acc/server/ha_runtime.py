@@ -93,6 +93,9 @@ class Runtime:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        relay = getattr(supervisor, 'relay_manager', None)
+        if relay:
+            await relay.close()
         await self.ctx.broker.close()
         self.tasks.clear()
 
@@ -183,9 +186,7 @@ class Gate:
                    or (method == 'POST' and path in ('/api/ha/promote', '/api/ha/demote'))))
         if exempt:
             return await self.app(scope, receive, send)
-        task = asyncio.current_task()
-        if scope['type'] == 'websocket' and self.runtime:
-            self.runtime.sockets.add(task)
+        task = None
         started = False
         async def output(message):
             nonlocal started
@@ -201,7 +202,15 @@ class Gate:
             return message
         try:
             with self.authority.activity():
-                await self.app(scope, input_message, output)
+                if scope['type'] == 'websocket' and self.runtime:
+                    # Demotion owns this handler, not the server's ASGI task.
+                    # Canceling the latter can cancel the transport's request
+                    # future even after we send its reconnect close frame.
+                    task = asyncio.create_task(self.app(scope, input_message, output), name='ha:socket')
+                    self.runtime.sockets.add(task)
+                    await task
+                else:
+                    await self.app(scope, input_message, output)
         except (Fenced, SQLAlchemyError):
             if scope['type'] == 'websocket':
                 await send({'type': 'websocket.close', 'code': 1013})

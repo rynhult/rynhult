@@ -540,3 +540,26 @@ Built on acc-host (Ubuntu 24.04, no containers, no installs) from `main` at `3b8
   configuration ([Arch AppArmor](https://wiki.archlinux.org/title/AppArmor)). Absence of both means no MAC protection;
   it must not be reported as confined. Qualify cgroup v2/delegation, user namespaces, subordinate IDs, linger, Podman
   socket and broker ACLs on the tester's real system. Do not disable a configured LSM to pass qualification.
+
+## Updating owner-accepted test installs
+
+Owner-accepted test installs on dnf, zypper and pacman record the package manager in
+`/etc/acc-unqualified-distro` (root-owned, writable only by root). Settings updates,
+offline updates and node updates reuse `--unqualified-distro` only while that record
+matches the host's package manager. Acceptance is read once before maintenance and
+kept for the transaction, so a later record change cannot block rollback.
+The same acceptance is used when reinstalling
+the previous source after a failed update. Host acceptance is checked before backup
+or download and checked again against the downloaded source before activation.
+These distributions remain unqualified.
+
+Older test installs have no record. Upgrade those releases once by hand using the
+documented manual upgrade procedure, passing `--unqualified-distro` to the installer.
+Rerunning an older installer alone cannot create the record. The owner can rerun the matching installed
+`deploy/setup.sh --unqualified-distro` (main) or
+`deploy/node/install.sh --update --unqualified-distro` (node) from a release that
+includes this fix before using automatic updates. Review the installation and take
+a backup first; never add this acceptance through a service account. A changed
+package manager requires a new owner review. `deploy/setup.sh --check` checks host
+acceptance without installing or changing settings; include `--unqualified-distro`
+when checking an owner-accepted test host.

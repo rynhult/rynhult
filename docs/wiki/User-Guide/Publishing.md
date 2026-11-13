@@ -132,3 +132,8 @@ Saved tool permissions, port reservations and main-push consent do not approve
 publication, even for private addresses. For example, **Demo Garden** still needs
 its own reviewed publication request for `garden.example.lan`. DNS, access changes
 and the protected publication helper keep their existing approval boundaries.
+
+
+### Delegated port reservations
+
+When delegation is available, a bound local native Build lead may reserve the next free dev or prod port under exact saved pool/count consent. The cap is shared across derived team permissions. Another project’s and outside-service ports stay reserved. Reservation grants no publication or firewall access; pool exhaustion makes no reservation.

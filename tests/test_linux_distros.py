@@ -52,7 +52,10 @@ def test_debian_keeps_its_exact_commands(system):
     out = node_dry_run(system('apt-get')).stdout
     assert '+ apt-get update -q\n+ env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tmux git gh\n' in out
     assert '+ sh ' + str(REPO / 'deploy/lib/install-node.sh') in out
-    assert 'qualified' not in out and 'LINUX-DISTROS' not in out
+    # Checkout paths in displayed commands may themselves contain 'unqualified'.
+    # Check qualification messages, rather than unrelated path components.
+    assert "isn't qualified yet" not in out and "hasn't qualified yet" not in out
+    assert 'LINUX-DISTROS' not in out
 
 
 @pytest.mark.parametrize('manager,install,node', [

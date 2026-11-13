@@ -90,7 +90,7 @@ test('offline session does not mount a terminal or poll remote files', async ({ 
   let sockets = 0;
   page.on('websocket', () => sockets++);
   await page.goto('/sessions/offline-demo');
-  await expect(page.getByText('Machine offline. This view returns when the machine checks in.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Offline host', exact: true })).toBeVisible();
   await expect(page.getByText('old transport failure')).toHaveCount(0);
   await expect(page.locator('.xterm')).toHaveCount(0);
   expect(sockets).toBe(0);

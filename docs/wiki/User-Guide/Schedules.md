@@ -1,12 +1,12 @@
 # Schedules
 
-Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project and explicitly choose **API key** for that session or schedule; this uses API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude sign-in and automation](/User-Guide/Host-and-Providers#claude-sign-in-and-automation).
 
 Schedules start ordinary [sessions](/User-Guide/Glossary#session) at times you choose. Every schedule belongs to its creator and runs under that person's [agent account](/User-Guide/Glossary#agent-account). Only that person or a Rynhult owner can edit, pause or delete it.
 
 Before you start, register and trust a managed [project](/User-Guide/Glossary#project) in your agent account. Each run uses its own [worktree](/User-Guide/Glossary#worktree) by default, so the project needs a git repository. Sign in to the chosen agent first.
 
-1. Open **Schedules** under **Operate**, then **New schedule**. (In **New session**, **Advanced → Run → On a schedule** does the same.)
+1. Open **Schedules** under **Operate**, then **New schedule**. (In **New session**, **Agent or team → Run → On a schedule** does the same.)
 2. Choose the project and the **Task**, then the agent and [profile](/User-Guide/Glossary#profile), just as in **New session**. Under **Advanced**, leave **Own worktree** checked for an isolated branch per run.
 3. Under the task, choose **Timing**: once, daily, weekly or a cron expression. Enter your **Timezone** as an IANA name, such as `America/Chicago`. Cron has five numeric fields: minute, hour, day of month, month, weekday (Sunday is 0 or 7). Lists, ranges and steps are supported; for example, `0 9 * * 1-5` runs at 09:00 on weekdays.
 4. Choose **Missed runs**. **Run once on recovery** coalesces missed occurrences into one run. **Skip missed runs** skips occurrences at least a minute late. Rynhult never replays a backlog. During daylight-saving transitions, missing local times are skipped and repeated local times run once, at the first occurrence.

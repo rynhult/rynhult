@@ -113,8 +113,10 @@ def policy_choice(policy, profile, task_type, agent, model):
     return None
 
 
-def grant_digest(choice):
+def grant_digest(choice, parent_digest=None):
     value={key:choice.get(key) for key in ('agent','profile','inputs')}
+    if parent_digest is not None:
+        value['parent_digest'] = parent_digest
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
@@ -438,8 +440,23 @@ async def select_action(supervisor,caller_id,payload):
         for candidate in result['candidates']:
             candidate['reasons']=[redactor.text(text) for text in candidate['reasons']]
             candidate['rejections']=[redactor.text(text) for text in candidate['rejections']]
+            from ...session_capabilities import require
+            from .. import child_caps, session_caps
+            caps = session_caps.effective(db, caller)
+            try:
+                require(caps, 'providers', candidate['agent'], parent=caller.id)
+                require(caps, 'models', f"{candidate['agent']}:{candidate['model']}" if candidate['model'] else None, parent=caller.id)
+            except ValueError as error:
+                candidate['eligible'] = False
+                candidate['rejections'].append(str(error))
+            candidate['parent_grant_digest'] = child_caps.grant_digest(db, caller)
+            candidate['grant_digest'] = grant_digest(limits['agents'][candidate['grant_index']], candidate['parent_grant_digest'])
             candidate['catalog_revision'] = supervisor.catalog.revision
             candidate['profile_digest'] = profile_digest(supervisor.catalog, limits['agents'][candidate['grant_index']])
+        if result['chosen'] is not None and not result['candidates'][result['chosen']]['eligible']:
+            result['chosen'] = next((i for i, c in enumerate(result['candidates']) if c['eligible']), None)
+            if result['chosen'] is None:
+                result['reason'] = 'limited by parent session capabilities; no eligible frozen choice'
         row=Selection(id=uuid.uuid4().hex,team_id=team.id,requested_by=caller.id,
             request_id=payload.get('id') or uuid.uuid4().hex,need=safe_need,task_digest=digest,
             assignment_id=assignment_id, catalog_revision=supervisor.catalog.revision,
@@ -505,7 +522,15 @@ def check_candidate(db,caller,team,row,candidate,ready,*,default_account=None,ca
                 candidate.get('profile_digest') != profile_digest(catalog, choice)):
             raise LaunchRefused('candidate profile/catalog changed; request a fresh selection')
         choice['roles'] = catalog.profiles.get(choice.get('profile'), {}).get('roles', [])
-    if candidate.get('grant_digest')!=grant_digest(choice):
+    from ...session_capabilities import require
+    from .. import child_caps, session_caps
+    caps = session_caps.authorize(db, caller, 'expires_at')
+    require(caps, 'providers', candidate['agent'], parent=caller.id)
+    require(caps, 'models', f"{candidate['agent']}:{candidate['model']}" if candidate['model'] else None, parent=caller.id)
+    parent_digest = candidate.get('parent_grant_digest')
+    if parent_digest is not None and parent_digest != child_caps.grant_digest(db, caller):
+        raise LaunchRefused(f'limited by {caller.id}: parent grant changed since selection')
+    if candidate.get('grant_digest')!=grant_digest(choice, parent_digest):
         raise LaunchRefused('frozen selection inputs changed')
     if (candidate['agent']!=choice['agent'] or candidate['profile']!=choice.get('profile')
             or candidate['machine'] not in team.limits['machines'] or candidate['permission']!=permission(choice)):
@@ -541,6 +566,26 @@ def check_plain_start(db,supervisor,caller,choice,machine):
     if rules['enabled'] and reading['status']=='fresh' and reading['used_percent']>=rules['max_used_percent']:
         raise LaunchRefused(f"{agent} on {machine} has used {reading['used_percent']:g}% of its plan, at or above the "
                             f"owner's {rules['max_used_percent']:g}% threshold: wait for it to reset, or use select")
+
+
+def refuse_changed_authority(db, caller, identifier):
+    """Record immutable owner/account revocation even if execution was fenced first.
+
+    This only closes the caller's own pending proposal. It grants no operational
+    authority and runs before the live-caller check, so ordering cannot retain a
+    misleading proposed selection after its frozen person/account changed.
+    """
+    if not isinstance(identifier, str):
+        return False
+    row = db.scalar(select(Selection).where(Selection.id == identifier).with_for_update())
+    if (row is None or row.requested_by != caller.id or row.team_id != caller.team_id
+            or row.state not in ('proposed', 'overridden')
+            or row.budget.get('owner') == caller.owner and row.budget.get('account') == caller.run_as):
+        return False
+    row.state = 'refused'
+    row.reason = 'Selection account or person changed; request a fresh selection'
+    record_event(db, row, 'session:' + caller.id, 'refused')
+    return True
 
 
 def claim_start(db,supervisor,caller,team,payload,candidate,ready):
@@ -591,7 +636,7 @@ def complete_start(db,selection_id,session_id=None):
 
 
 TEAM_FIELDS = {'select': {'assignment','pin'}, 'selection_status': {'selection'},
-               'start': {'assignment','attempt','selection','name','task','kind','fresh','machine','agent','profile','claude_auth'}}
+               'start': {'assignment','attempt','selection','name','task','kind','fresh','machine','agent','profile','claude_auth','permissions'}}
 TEAM_ACTIONS = {'select':select_action,'selection_status':status_action}
 
 ON_STATE: list = []

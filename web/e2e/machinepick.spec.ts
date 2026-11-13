@@ -11,7 +11,8 @@ test("changing machine clears single and several-agent models from the previous 
   });
   await page.goto("/sessions");
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+  const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
   await openAdvanced(dialog);
   const machine = dialog.getByRole("combobox", { name: "Machine", exact: true });
@@ -23,7 +24,7 @@ test("changing machine clears single and several-agent models from the previous 
   await expect(model).toHaveValue("");
   await machine.selectOption("local");
   await dialog.getByRole("textbox", { name: "Task (optional)", exact: true }).fill("Compare implementations");
-  await dialog.getByRole("radio", { name: /Several agents/ }).check();
+  await dialog.getByRole("combobox", { name: "Run", exact: true }).selectOption("several");
   const runModel = dialog.getByRole("combobox", { name: "Run 1: Model", exact: true });
   await expect(runModel.locator('option[value="main-model"]')).toHaveCount(1);
   await runModel.selectOption("main-model");
@@ -42,17 +43,19 @@ for (const width of [1440, 390]) {
     try {
       await page.goto("/sessions");
       await page.getByRole("button", { name: "New session", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+      const dialog = page.getByRole("region", { name: "New session", exact: true });
+      await openAdvanced(dialog);
       await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
+      await openAdvanced(dialog);
       const machine = dialog.getByRole("combobox", { name: "Machine", exact: true });
       await expect(machine).toHaveValue("local");
       await machine.selectOption("lab-box");
       await expect(dialog.getByRole("button", { name: "Clone on lab-box", exact: true })).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeDisabled();
       await dialog.getByRole("button", { name: "Clone on lab-box", exact: true }).click();
-      await expect(dialog.getByText(/Runs on lab-box as/)).toBeVisible();
+      await expect(dialog.getByRole("region", { name: "Working location", exact: true })).toContainText("lab-box");
       await expect(dialog.getByRole("button", { name: "Launch", exact: true })).toBeEnabled();
-      await expectAxeClean(page, "[role=dialog]");
+      await expectAxeClean(page, "main");
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
       await dialog.screenshot({ path: wikiShotPath(testInfo, `new-session-machine${width === 390 ? "-phone" : ""}.png`) });
       const response = page.waitForResponse(r => r.url().endsWith("/api/sessions") && r.request().method() === "POST");
@@ -66,6 +69,7 @@ for (const width of [1440, 390]) {
       expect(session.worktree).toBeTruthy();
       await waitForSessionState(page, session.id, "idle", "claude_hook");
       await page.getByRole("button", { name: "New session", exact: true }).click();
+      await openAdvanced(dialog);
       await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
       await dialog.getByRole("combobox", { name: "Machine", exact: true }).selectOption("lab-box");
       await expect(dialog.getByText("Using an existing checkout on lab-box.", { exact: true })).toBeVisible();
@@ -88,14 +92,15 @@ for (const width of [1440, 390]) {
     });
     await page.goto("/sessions");
     await page.getByRole("button", { name: "New session", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+    const dialog = page.getByRole("region", { name: "New session", exact: true });
+  await openAdvanced(dialog);
     await dialog.getByRole("combobox", { name: "Project", exact: true }).selectOption(String(id));
     await dialog.getByRole("combobox", { name: "Machine", exact: true }).selectOption("lab-box");
     await expect(dialog.getByRole("combobox", { name: "Agent", exact: true }).locator('option[value="codex"]')).toHaveJSProperty("disabled", true);
     await expect(dialog.getByRole("combobox", { name: "Agent", exact: true }).locator('option[value="codex"]')).toContainText("not installed on lab-box");
     await dialog.getByRole("combobox", { name: "Machine", exact: true }).selectOption("local");
     await openAdvanced(dialog);
-    await dialog.getByRole("radio", { name: /With helpers/ }).check();
+    await dialog.getByRole("combobox", { name: "Run", exact: true }).selectOption("helpers");
     const machines = dialog.getByRole("group", { name: "Machines", exact: true });
     await expect(machines.getByRole("checkbox", { name: /This Rynhult \(main\)/ })).toBeChecked();
     const remote = machines.getByRole("checkbox", { name: /lab-box/ });
@@ -107,7 +112,7 @@ for (const width of [1440, 390]) {
     await expect(machines).toContainText("Online");
     await expect(machines).toContainText("Linux");
     await expect(machines).toContainText("Claude Code");
-    await expectAxeClean(page, "[role=dialog]");
+    await expectAxeClean(page, "main");
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await machines.screenshot({ path: wikiShotPath(testInfo, `orchestrator-machines${width === 390 ? "-phone" : ""}.png`) });
     const preview = await updated;

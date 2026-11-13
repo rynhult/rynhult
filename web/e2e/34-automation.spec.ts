@@ -1,3 +1,4 @@
+import { selectSessionView } from './helpers';
 import { openAdvanced, wikiShotPath } from "./helpers";
 import { expect, test } from './fixtures';
 import { AUTH_FILE, csrfHeaders, gitProject, waitForSessionState } from './helpers';
@@ -84,7 +85,7 @@ test('edit auto-resume and goal while running, then stop', async ({ page }, test
   await expect(page.getByText('Goal status: running')).toBeVisible();
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Session automation' })).toHaveCount(0);
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').press('x');
   await expect.poll(async () => (await (await page.request.get(`/api/sessions/${sid}`)).json()).automation.goal.status, {
     message: 'Waiting for the server to receive the terminal key before closing its socket',
@@ -106,7 +107,8 @@ test('launch controls default off and persist a bounded goal', async ({ page }, 
   expect((await page.request.post(`/api/vault/keys/${key.id}/give`, { headers, data: { project_id: projectId } })).ok()).toBe(true);
   await page.reload(); // Fetch the trust state changed through the test API before opening the dialog.
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(projectId));
   await openAdvanced(dialog);
   await expect(dialog.getByLabel('Resume when the limit resets')).not.toBeChecked();
@@ -133,7 +135,7 @@ test('launch controls default off and persist a bounded goal', async ({ page }, 
   expect(response.ok()).toBe(true);
   owned.push((await response.json()).id);
   await expect(page).toHaveURL(/\/sessions\/[0-9a-f]+$/);
-  await page.getByRole('tab', { name: 'Setup', exact: true }).click();
+  await selectSessionView(page, 'Setup');
   await expect(page.getByText('Resumes when the plan limit resets')).toBeVisible();
   await expect(page.getByText(/\d \/ 3 continuations/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

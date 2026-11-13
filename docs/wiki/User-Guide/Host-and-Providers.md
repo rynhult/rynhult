@@ -1,6 +1,13 @@
 # Host and providers
 
-For Claude subscription sign-ins, read [Claude Code: subscriptions and automation](/Providers/Claude) before configuring schedules, goals or teams.
+## Claude sign-in and automation
+
+When New session shows **Claude sign-in**, **Your Claude login (subscription)** is the default.
+To use API billing, add `ANTHROPIC_API_KEY` in **Settings → Keys**, grant it to the project,
+and explicitly choose **API key** for that session or schedule. Subscription tokens
+remain subscription credentials; they do not enable unattended automation. See [Keys](/User-Guide/Keys).
+
+Subscription sessions accept your own typing. Schedules, goals and teams require API or cloud authentication; adding a key alone does not select it. Review the effective sign-in choice before launch.
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
 
@@ -174,7 +181,7 @@ OpenCode isn't tied to one vendor: it reaches 75+ model providers. Rynhult doesn
 
 OpenCode's free models work without any of these. Pick a model in New session as `provider/model`, for example `opencode/big-pickle` or `anthropic/claude-sonnet-4-5`.
 
-Every agent reports each tool it runs to Rynhult before running it. That drives the "doing now" line and the [Guardrails](/User-Guide/Guardrails), whatever the agent's permission mode. **Codex** automatically trusts the exact hooks Rynhult installs on reviewed CLI versions (0.163.0 and 0.164.0). Other hooks still need your review. If Codex shows **Hooks need review**, Rynhult marks the session **Needs you** and says “Codex is asking to trust hooks; open the session to review”. Open the session and review the hooks (see [Guardrails](/User-Guide/Guardrails#codex-hook-review)). Unknown CLI versions or config formats keep the review step.
+Every agent reports each tool it runs to Rynhult before running it. That drives the "doing now" line and the [Guardrails](/User-Guide/Guardrails), whatever the agent's permission mode. **Codex** automatically trusts the exact hooks Rynhult installs on reviewed CLI versions (0.163.0, 0.164.0 and 0.167.1). Other hooks still need your review. If Codex shows **Hooks need review**, Rynhult marks the session **Needs you** and says “Codex is asking to trust hooks; open the session to review”. Open the session and review the hooks (see [Guardrails](/User-Guide/Guardrails#codex-hook-review)). Unknown CLI versions or config formats keep the review step.
 
 ## Model endpoints (local LLMs and compatible APIs)
 Owners can add **model endpoints** on the Providers page: a model server that agents use instead of their vendor's models.
@@ -200,6 +207,8 @@ Antigravity CLI, Cursor CLI and OpenCode.
   failed action.
 - **Latest upstream version:** for Codex and Copilot, the note also shows the newest release a check found.
 
+Missing or outdated software links to [agent software repair steps](/User-Guide/Updating#repair-agent-software), including installer re-runs if the helper is missing.
+
 Above the tiles, one line says how updates work on that machine. It also warns if the machine's helper is missing,
 the machine hasn't reported its software, or it refused a request.
 
@@ -214,7 +223,7 @@ An old `#provider-software` link opens **Sign-ins and usage**.
 
 - **Install**, **Update** and **Remove** for this catalog use fixed package entries in Rynhult's root helper (`acc-packages`). Separately, approved **Tools** requests accept validated registry names for apt, snap and flatpak; neither path accepts commands, scripts, URLs or arbitrary paths.
 - **Auto-update**: a daily check (05:15) updates installed software within its selected channel. Codex and Copilot use exact Rynhult pins; OpenCode uses its supported release line. Rolling upstream channels (Claude Code, Antigravity, Cursor and Ollama) require explicit opt-in and start off. Existing implicit rolling defaults reset to off when this policy first arrives. New sessions use the new version; running sessions keep the one they started with.
-- **Codex and Copilot are pinned** to 0.163.0 and 1.0.103 respectively. Install and Update select that exact Rynhult target on Linux, WSL and Mac. A newer upstream release is reported in the note and needs qualification in a new Rynhult catalog before the pin advances. Daily updates do not downgrade a newer manually installed version; manual Update can restore the pin.
+- **Codex and Copilot are pinned** to 0.167.1 and 1.0.103 respectively. Install and Update select that exact Rynhult target on Linux, WSL and Mac. A newer upstream release is reported in the note and needs qualification in a new Rynhult catalog before the pin advances. Daily updates do not downgrade a newer manually installed version; the Linux/WSL package helper preserves newer and non-release installed versions with an explanation. Deploy prints KEPT and continues; dashboard requests report the refusal. Actual install failures still stop deploy.
 - Claude Code stays held in apt between Rynhult's updates, so unattended upgrades never change it under a running session.
 - Ollama can be installed here but not removed (its installer has no uninstall).
 - **OpenCode is pinned** to the release line Rynhult was checked with (2.1). Install, update and auto-update all take that line's newest release, and the download is checked against npm's published checksum. A newer line (2.2, 3.0) arrives with a Rynhult update, once Rynhult has been checked against it. OpenCode's own updater is switched off.
@@ -260,3 +269,8 @@ The dashboard stores this credential as an `acc`-owned, mode `0600` file at
 is shown. Changes are audited without the value. **Remove token** stops dashboard
 use; revoke the token on GitHub too if needed. Agent GitHub CLI sign-ins remain
 separate and are not imported into this field.
+
+
+## Bounded delegated image checks
+
+With delegation available and exact saved consent binding numeric account UID and broker runtime identity, the bound lead can request an image check for its own native model/account on the local machine. The existing read-only probe uses synthetic material, provider quota and the current budget limits. Checks are bounded across consents; replaying a request reads its existing result. Unknown does not become Verified. Account tool installs and recipes still require the existing person workflow.

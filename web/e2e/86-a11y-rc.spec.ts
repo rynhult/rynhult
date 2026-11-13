@@ -1,7 +1,7 @@
 import { gotoLoadedPage, reloadLoadedPage } from './loaded-page';
 import { expect, type Page } from './fixtures';
 import { test as base } from './shell-state';
-import { AUTH_FILE, gitProject } from './helpers';
+import { selectSettingsSection, AUTH_FILE, gitProject } from './helpers';
 
 // The real machine-check endpoint has an installation-wide 30s rate limit.
 // Wait from its recorded completion in a resource phase; never retry a refused
@@ -18,7 +18,7 @@ const test = base.extend<{ machineCooldown: void }>({
 });
 
 // RC accessibility audit (beyond axe): what a screen reader hears, and that every tab list is named.
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 /** Live regions (not hidden, not aria-live=off) whose text includes `text`: each one is a separate announcement. */
 const liveRegionsWith = (page: Page, text: string) => page.evaluate((wanted) =>
@@ -33,8 +33,7 @@ test('Settings announces a late error once, a late warning elsewhere once, and n
     await route.fulfill({ status: 403, json: { detail: 'Notification settings need review' } });
   });
   await page.goto('/settings#notifications');
-  const chooser = page.getByRole('combobox', { name: 'Settings section', exact: true });
-  await chooser.selectOption('passkeys');
+  await selectSettingsSection(page, 'passkeys');
   answer();
   const attention = page.getByRole('region', { name: 'Settings needing attention' });
   await expect(attention).toContainText('Notification settings need review');
@@ -59,7 +58,7 @@ test('Settings announces a late error once, a late warning elsewhere once, and n
   // Choosing sections reshuffles the summary; that is navigation, not news.
   const said = await announcer.textContent();
   for (const section of ['password', 'sign-ins', 'passkeys']) {
-    await chooser.selectOption(section);
+    await selectSettingsSection(page, section);
     await expect(page.locator(`#${section}`)).toBeVisible();
   }
   await expect(announcer).toHaveText(said ?? '');
@@ -76,7 +75,8 @@ test('every tab list on the project page has a name, and the selected tab and it
     return { named: !!(list.getAttribute('aria-label') || list.getAttribute('aria-labelledby')),
       wired: panel?.getAttribute('role') === 'tabpanel' && panel.getAttribute('aria-labelledby') === tab.id };
   }));
-  expect(lists.length).toBe(2);
+  // Working-column tabs join the two project content tab lists in the current frame.
+  expect(lists.length).toBe(3);
   expect(lists).toEqual(lists.map(() => ({ named: true, wired: true })));
 });
 

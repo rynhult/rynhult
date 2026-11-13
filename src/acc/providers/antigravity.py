@@ -240,9 +240,9 @@ PROVIDER = Antigravity(
     supports=frozenset({"resume", "effort", "models", "instructions", "skills", "agents", "mcp"}),
     options=(
         Option("mode", "Mode", choices=(("accept-edits", "Accept edits"), ("auto", "Auto"), ("plan", "Plan only")),
-               default="accept-edits"),
+               default="accept-edits", permission_order=("plan", "accept-edits", "auto"), permission_levels=(0, 2, 3)),
         Option("skip_permissions", "Skip all permission prompts ⚠", kind="bool", default=False,
-               help="--dangerously-skip-permissions", dangerous=(True,)),
+               help="--dangerously-skip-permissions", permission_order=(False, True), permission_levels=(1, 4), dangerous=(True,)),
     ),
     hook_events=HOOK_EVENTS,
 )

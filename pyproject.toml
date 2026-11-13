@@ -29,6 +29,9 @@ Repository = "https://github.com/rynhult/rynhult"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
+claude-agent = [
+    "claude-agent-sdk==0.1.50",
+]
 
 [project.scripts]
 rynhult = "acc.cli:main"
@@ -70,10 +73,6 @@ packages = ["src/acc"]
 "bin/acc-guard" = "acc/_scripts/acc-guard"
 "bin/acc_env.py" = "acc/_scripts/acc_env.py"
 "keys/rynhult-release-key.asc" = "acc/_release-key.asc"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 120

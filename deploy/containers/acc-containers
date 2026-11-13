@@ -414,8 +414,11 @@ def read_grant(session_id: str) -> dict:
 
 
 def check_grant(grant, session_id: str) -> dict:
-    if not isinstance(grant, dict) or set(grant) not in (GRANT_KEYS, GRANT_KEYS | {'automated'}) or grant.get("version") != VERSION:
+    if not isinstance(grant, dict) or set(grant) - {'automated', 'parent_session_id'} != GRANT_KEYS or grant.get("version") != VERSION:
         raise Refused("bad_grant", "unexpected grant fields")
+    if grant.get('parent_session_id') is not None and (
+            not isinstance(grant['parent_session_id'], str) or not SESSION_ID.fullmatch(grant['parent_session_id'])):
+        raise Refused('bad_grant', 'invalid parent session')
     if type(grant.get('automated', False)) is not bool:
         raise Refused('bad_grant', 'bad automated flag')
     if grant["session_id"] != session_id:
@@ -1230,6 +1233,8 @@ def podman_argv(grant: dict, policy: dict, entry: pwd.struct_passwd) -> list[str
             "--env=PYTHONDONTWRITEBYTECODE=1",
             "--env=TERM=tmux-256color", f"--env=ACC_RUN_DIR={grant['run_dir']}", f"--env=ACC_SESSION_ID={session_id}",
             f"--env=ACC_GUARD_FILES={grant['guard_files']}",
+            f"--env=ACC_PARENT_SESSION_ID={grant.get('parent_session_id') or ''}",
+            f"--env=RYNHULT_PARENT_SESSION_ID={grant.get('parent_session_id') or ''}",
             f"--env=RYNHULT_RUN_DIR={grant['run_dir']}", f"--env=RYNHULT_SESSION_ID={session_id}",
             f"--env=RYNHULT_GUARD_FILES={grant['guard_files']}",
             # session.env (vault keys, MCP secrets; 0600 in the run folder) is read inside, never put on a command line

@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { AUTH_FILE, demoSessions, expectAxeClean, wikiShotPath } from "./helpers";
+import { AUTH_FILE, demoSessions, gitProject, expectAxeClean, wikiShotPath } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -40,23 +40,17 @@ for (const width of [1440, 390]) {
 
       test(`project archive stays secondary and cancellation returns focus in ${theme}`, async ({ page }, testInfo) => {
         await page.emulateMedia({ colorScheme: theme });
-        await page.route("**/api/projects", r => r.fulfill({ json: [{
-          id: 91, name: "Demo API", slug: "demo-api", account: "alex-agent", host: "local",
-          workspace_path: "/srv/acc-demo/demo-api", repo: "example-org/demo-api", remote_url: "https://github.com/example-org/demo-api",
-          import_mode: "managed", trusted: true, archived: false, notes: null, compose_autostart: false,
-          compose_approved: false, git_backup: false,
-        }] }));
-        await page.route("**/api/projects/91/runtime", r => r.fulfill({ json: { containers: [], note: "no compose file" } }));
+        const project = await gitProject(page, `archive-${width}-${theme}`, { name: `Demo API ${width} ${theme}` });
         await page.goto("/projects");
-        await expect(page.getByRole("button", { name: "New session in Demo API", exact: true })).toBeVisible();
-        await expect(page.getByRole("menuitem", { name: "Archive Demo API", exact: true })).toHaveCount(0);
-        const actions = page.getByRole("button", { name: "Project actions for Demo API", exact: true });
+        await expect(page.getByRole("button", { name: /^New session/ })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "Archive", exact: true })).toHaveCount(0);
+        const actions = page.getByRole("button", { name: `Project actions for ${project.name}`, exact: true });
         await actions.click();
         await expectAxeClean(page);
         if (theme === "dark") await page.screenshot({ animations: "disabled", fullPage: true,
           path: wikiShotPath(testInfo, width === 390 ? "projects-actions-phone.png" : "projects.png") });
-        await page.getByRole("menuitem", { name: "Archive Demo API", exact: true }).click();
-        const confirmation = page.getByRole("dialog", { name: "Archive Demo API?" });
+        await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+        const confirmation = page.getByRole("dialog", { name: `Archive ${project.name}?` });
         await expect(confirmation).toContainText("workspace, containers and repository are left exactly as they are");
         await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
         await expect(actions).toBeFocused();

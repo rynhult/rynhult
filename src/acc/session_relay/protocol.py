@@ -26,8 +26,8 @@ PROTOCOL_MINOR = 0
 EVENT_SCHEMA = 1
 METHOD_PREFIX = "ry/"
 EVENT_METHOD = "ry/event"
-FEATURES = frozenset({"queue", "steer", "decisions", "configuration", "attachments", "switch", "terminal"})
-R1_FEATURES = frozenset({"queue", "decisions", "terminal"})
+FEATURES = frozenset({"queue", "steer", "decisions", "configuration", "attachments", "switch", "terminal", "writer"})
+R1_FEATURES = frozenset({"queue", "decisions", "terminal", "writer"})
 
 # Proposed bounds from the design; numeric values still need pilot measurement.
 MAX_ID = (1 << 53) - 1  # exactly representable in a browser
@@ -108,7 +108,7 @@ _RPC_MESSAGES = {
     RpcCode.INVALID_PARAMS: "Invalid params",
 }
 ERROR_LIMITS = frozenset({"frame"})
-ERROR_REASONS = frozenset({"unattributed"})
+ERROR_REASONS = frozenset({"not_supported_in_release", "unattributed", "unsupported_terminal_approval_key", "terminal_review_required"})
 # Values are closed too: a free-form string here would be a way out for provider text, paths and foreign IDs.
 ERROR_DETAILS: dict[str, Callable[[Any], bool]] = {
     "capability": lambda value: type(value) is str and value in CAPABILITIES,
@@ -147,6 +147,12 @@ class RelayError(Exception):
         details = dict(details or {})
         if not details.keys() <= ERROR_DETAILS.keys() or not all(ERROR_DETAILS[k](v) for k, v in details.items()):
             raise ValueError("relay error details outside the safe allowlist")
+        if code is ErrorCode.UNSUPPORTED:
+            message = {
+                'not_supported_in_release': 'This combination is not supported in this release. Recover into a new session; nothing is replayed.',
+                'unsupported_terminal_approval_key': 'This key was not sent. Only Enter or Escape can answer a basic command approval. Use the review buttons for other choices.',
+                'terminal_review_required': 'Terminal keys are unavailable for this review. Use the review buttons. No key was sent.',
+            }.get(details.get('reason'), message)
         if code is ErrorCode.OUTCOME_UNKNOWN and (receipt is None or receipt.state is not ReceiptState.UNCERTAIN):
             raise ValueError("OUTCOME_UNKNOWN requires the uncertain receipt")
         super().__init__(message)
@@ -246,7 +252,7 @@ def sha256_digest(raw: bytes) -> str:
 
 def operation_digest(method: str, params: Mapping[str, Any]) -> str:
     """The digest `operation.register` binds. Excludes operationId, which does not exist until registration returns."""
-    return sha256_digest(canonical_json({"method": method, "params": {k: v for k, v in params.items() if k != "operationId"}}))
+    return sha256_digest(canonical_json({"method": method, "params": {k: to_wire(v) for k, v in params.items() if k != "operationId"}}))
 
 
 _OPAQUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -351,7 +357,7 @@ _FIELDS: dict[str, Callable[[Any], bool]] = {
                      "clientId", "registrationKey", "inputGrant", "geometryGrant", "uploadKey", "uploadId", "stagedId",
                      "planId", "model", "effort"), valid_opaque),
     **dict.fromkeys(("payloadDigest", "actionDigest", "digest", "chunkDigest", "planDigest"), valid_digest),
-    **dict.fromkeys(("expectedRevision", "expectedConfigurationRevision", "eventSeq", "connectionSeq", "frameSeq",
+    **dict.fromkeys(("expectedRevision", "expectedConfigurationRevision", "expectedControlRevision", "eventSeq", "connectionSeq", "frameSeq",
                      "inputEpoch", "major", "minor", "offset"), valid_count),
     "cursor": _matches(_CURSOR),
     "limit": _int_between(1, HISTORY_MAX_ITEMS),
@@ -424,16 +430,17 @@ OPERATIONS: dict[str, OperationSpec] = {spec.name: spec for spec in (
     _spec("operation.register", Correlation.REGISTRATION, "sessionId registrationKey method expectedRunId payloadDigest"),
     _spec("operation.get", _READ, "sessionId operationId"),
     _spec("operation.cancel", Correlation.CAS, "sessionId operationId expectedRevision"),
-    _spec("turn.submit", _OP, f"{_DURABLE} text expectedConfigurationRevision", "ifBusy stagedIds",
+    _spec("turn.submit", _OP, f"{_DURABLE} text expectedConfigurationRevision", "ifBusy stagedIds expectedControlRevision",
           capabilities="text", control=True),
     _spec("turn.steer", _OP, f"{_DURABLE} turnId text", r1=False, feature="steer", capabilities="steer", control=True),
-    _spec("turn.interrupt", _OP, f"{_DURABLE} turnId", capabilities="interrupt", control=True),
+    _spec("turn.interrupt", _OP, f"{_DURABLE} turnId", "expectedControlRevision", capabilities="interrupt", control=True),
     _spec("decision.reply", _OP, f"{_DURABLE} decisionId choiceId expectedRevision actionDigest", feature="decisions"),
     _spec("configuration.read", _READ, "sessionId"),  # turn.submit needs its revision
     _spec("configuration.request", _OP, f"{_DURABLE} expectedRevision", "model effort", r1=False,
           feature="configuration", control=True, check=lambda params: "model" in params or "effort" in params),
     _spec("control.claim", _OP, _CONTROL, feature="terminal", capabilities="terminal.input", control=True),
     _spec("control.take", _OP, f"{_CONTROL} reason", feature="terminal", capabilities="terminal.input", control=True),
+    _spec("writer.take", _OP, f"{_CONTROL} reason view", feature="writer", capabilities="terminal.input", control=True),
     _spec("control.release", _OP, _CONTROL, feature="terminal", control=True),  # a holder can always let go
     _spec("terminal.attach", _CONNECTION, f"{_ATTACHED} connectionSeq", feature="terminal"),
     _spec("terminal.detach", _CONNECTION, f"{_ATTACHED} connectionSeq", feature="terminal"),
@@ -442,9 +449,10 @@ OPERATIONS: dict[str, OperationSpec] = {spec.name: spec for spec in (
     _spec("terminal.resize", _CONNECTION, f"{_ATTACHED} connectionSeq geometryGrant cols rows", feature="terminal",
           capabilities="terminal.geometry"),
     _spec("terminal.drain", _READ, f"{_ATTACHED} inputGrant", feature="terminal", capabilities="terminal.input"),
-    _spec("switch.prepare", _OP, f"{_DURABLE} target expectedRevision", r1=False, feature="switch", control=True),
-    _spec("switch.commit", _OP, f"{_DURABLE} planId planDigest expectedRevision", r1=False, feature="switch", control=True),
-    _spec("switch.cancel", _OP, f"{_DURABLE} planId", r1=False, feature="switch", control=True),
+    _spec("switch.prepare", _OP, f"{_DURABLE} target expectedRevision", feature="switch", control=True),
+    _spec("switch.commit", _OP, f"{_DURABLE} planId planDigest expectedRevision", feature="switch", control=True),
+    _spec("switch.recover", _OP, f"{_DURABLE} target expectedRevision reason", feature="switch", control=True),
+    _spec("switch.cancel", _OP, f"{_DURABLE} planId", feature="switch", control=True),
     _spec("session.stop", _OP, _DURABLE, control=True),
     _spec("session.resume", _OP, f"{_DURABLE} expectedRevision", control=True),
     _spec("attachment.begin", Correlation.UPLOAD, "sessionId expectedRunId uploadKey name mimeType size digest",
@@ -638,8 +646,8 @@ class EvidenceKind(enum.StrEnum):
 # HUB_COMMIT is minted after the outcome, not at intent: Stop needs the run sealed, resume the new run assigned and
 # switch.commit the verified new owner. Exit unknown stays uncertain.
 PROVIDER_METHODS = frozenset({"turn.submit", "turn.steer", "turn.interrupt", "decision.reply", "configuration.request"})
-HUB_COMMIT_METHODS = frozenset({"control.claim", "control.take", "control.release", "session.stop", "session.resume",
-                                "switch.prepare", "switch.commit", "switch.cancel", "attachment.remove"})
+HUB_COMMIT_METHODS = frozenset({"writer.take", "control.claim", "control.take", "control.release", "session.stop", "session.resume",
+                                "switch.prepare", "switch.commit", "switch.cancel", "switch.recover", "attachment.remove"})
 
 
 @dataclass(frozen=True)
@@ -1021,6 +1029,7 @@ class Snapshot:
     pending_decisions: tuple[Decision, ...] = ()
     receipts: tuple[Receipt, ...] = ()
     controller: Actor | None = None
+    writer: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -7,9 +7,10 @@ point at those services: a subscription can't make ACC post to an arbitrary addr
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
-import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -52,6 +53,8 @@ class Push:
     def __init__(self, key_path: Path, subject: str, transport: httpx.AsyncBaseTransport | None = None):
         self.subject = subject  # a contact the push services may use: an https URL or mailto:
         self.key = self._load_or_create(key_path)
+        self.topic_key = hashlib.sha256(b"rynhult-push-topic\0" +
+                                        self.key.private_numbers().private_value.to_bytes(32, "big")).digest()
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
 
     @staticmethod
@@ -92,7 +95,7 @@ class Push:
             "Authorization": self._vapid(endpoint), "Content-Encoding": "aes128gcm",
             "Content-Type": "application/octet-stream", "TTL": str(ttl), "Urgency": urgency,
             # Topic: a newer message with the same topic replaces an undelivered older one (base64url chars, max 32)
-            **({"Topic": re.sub(r"[^A-Za-z0-9_-]", "-", payload["tag"])[:32]} if payload.get("tag") else {}),
+            **({"Topic": b64url(hmac.new(self.topic_key, payload["tag"].encode(), hashlib.sha256).digest())[:32]} if payload.get("tag") else {}),
         })
         return response.status_code
 

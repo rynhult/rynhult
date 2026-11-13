@@ -94,6 +94,7 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
   constructor(layer: TerminalHostLayer, reference: TerminalReference, policy: WriterPolicy) {
     this.layer = layer; this.reference = reference; this.policy = policy;
     this.host = document.createElement('div');
+    this.host.id = `terminal-host-${crypto.randomUUID()}`;
     Object.assign(this.host.style, { position: 'absolute', width: '640px', height: '360px', visibility: 'hidden', pointerEvents: 'auto', overflow: 'hidden' });
     this.host.inert = true;
     this.host.setAttribute('role', 'region');
@@ -152,7 +153,13 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
   }
   setScreenReader(enabled: boolean) {
     this.reader = enabled;
-    if (this.runtime) this.runtime.xterm.options.screenReaderMode = this.visible && this.shown && enabled;
+    this.applyScreenReader(this.visible && this.shown && enabled);
+  }
+  private applyScreenReader(enabled: boolean) {
+    if (!this.runtime) return;
+    this.runtime.xterm.options.screenReaderMode = enabled;
+    // Visibility can recreate xterm's accessibility tree after the page effect ran.
+    this.host.querySelector('.live-region')?.setAttribute('aria-live', 'off');
   }
   get isVisible() { return this.visible; }
   get isDisposed() { return this.disposed; }
@@ -166,6 +173,7 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
   get partialInput() { return this.runtime?.partialInput ?? false; }
   get busyInput() { return this.runtime?.busyInput ?? false; }
   refreshControl() { this.runtime?.refreshControl(); }
+  setInputTransform(value?: (data: string) => string) { this.runtime?.setInputTransform(value); }
   send(data: string) { this.runtime?.send(data); }
   /** A local acknowledged attachment token, not a new server authority grant. */
   get writerToken() { return this.runtime?.writerToken ?? null; }
@@ -198,7 +206,7 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
       this.host.style.visibility = 'hidden'; this.host.inert = true;
       if (this.runtime) {
         if (this.shown && !this.layer.presentation) this.reader = this.runtime.xterm.options.screenReaderMode ?? this.reader;
-        this.runtime.xterm.options.screenReaderMode = false;
+        this.applyScreenReader(false);
         this.runtime.setVisibility(false);
       }
       this.shown = false;
@@ -214,6 +222,8 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
       let top = Math.max(0, rect.top), bottom = Math.min(innerHeight, rect.bottom);
       let left = Math.max(0, rect.left), right = Math.min(innerWidth, rect.right);
       for (let parent = this.slot?.parentElement; parent; parent = parent.parentElement) {
+        // A fixed expanded panel escapes the retained column's scroll clip.
+        if (parent.matches('[data-registered-terminal][aria-modal="true"]')) break;
         const style = getComputedStyle(parent);
         if (/(auto|scroll|hidden|clip)/.test(style.overflow + style.overflowX + style.overflowY)) {
           const box = parent.getBoundingClientRect(); top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom); left = Math.max(left, box.left); right = Math.min(right, box.right);
@@ -223,7 +233,7 @@ export class HostedTerminal implements TerminalResource<HTMLElement> {
     }
     this.host.inert = false;
     if (this.runtime) {
-      if (!wasShown) this.runtime.xterm.options.screenReaderMode = this.reader;
+      if (!wasShown) this.applyScreenReader(this.reader);
       this.runtime.setVisibility(true);
     }
   }

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Artificial SDK stdio replay: no account, model endpoint or credential I/O."""
+import fcntl
+import json
+import os
+import signal
+import sys
+
+if '--version' in sys.argv or '-v' in sys.argv:
+    print('2.1.0 (Claude Agent fake)')
+    sys.exit(0)
+
+
+def emit(value):
+    print(json.dumps(value), flush=True)
+
+
+def finish():
+    emit(dict(type='result', subtype='success', duration_ms=1, duration_api_ms=1,
+              is_error=False, num_turns=1, session_id='fixture-conversation', result='Fixture reply',
+              usage={'input_tokens': 10, 'output_tokens': 4}))
+
+
+# One shared native transcript and exclusive owner lock across BOTH fixture modes.
+mode = 'chat' if '--input-format' in sys.argv else 'terminal'
+native = sys.argv[sys.argv.index('--resume') + 1]
+assert native == 'fixture-conversation'
+lock = open('.fixture-owner.lock', 'a')
+fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # any live-owner overlap fails the replay
+
+
+def record(kind, **values):
+    with open('.fixture-processes.jsonl', 'a') as stream:
+        stream.write(json.dumps(dict(kind=kind, mode=mode, pid=os.getpid(), native=native, **values)) + '\n')
+
+
+def turn(text):
+    assert '<conversation-checkpoint>' not in text
+    with open('.fixture-transcript.jsonl', 'a') as stream:
+        stream.write(json.dumps(dict(role='user', text=text, native=native)) + '\n')
+
+
+def terminate(*_):
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, terminate)
+record('start', settings=sys.argv[sys.argv.index('--settings') + 1])
+try:
+    if mode == 'terminal':
+        emit(dict(type='terminal_ready', native=native))
+        for line in sys.stdin:
+            text = line.strip()
+            if text == 'fixture-hook-approval':
+                # Artificial documented hook payload; no SDK sidecar is involved.
+                emit(dict(hook_event_name='PermissionRequest', tool_name='Bash', tool_input={'command': 'echo fixture'}))
+            else:
+                turn(text)
+                emit(dict(hook_event_name='Stop', session_id=native))
+    else:
+        for line in sys.stdin:
+            message = json.loads(line)
+            if message['type'] == 'control_request':
+                emit(dict(type='control_response', response=dict(subtype='success',
+                          request_id=message['request_id'], response={})))
+                if message['request']['subtype'] == 'interrupt':
+                    finish()
+            elif message['type'] == 'user':
+                emit(dict(type='system', subtype='init', session_id='fixture-conversation'))
+                text = message['message']['content']
+                turn(text)
+                if 'approve-fixture' in text:
+                    emit(dict(type='control_request', request_id='fixture-permission',
+                              request=dict(subtype='can_use_tool', tool_name='Bash', input={'command': 'echo fixture'})))
+                elif 'wait-fixture' not in text:
+                    emit(dict(type='assistant', message=dict(model='fixture', content=[{'type': 'text', 'text': text}],
+                                                            usage={'input_tokens': 10, 'output_tokens': 4})))
+                    finish()
+            elif message['type'] == 'control_response':
+                finish()
+finally:
+    record('exit')
+    lock.close()

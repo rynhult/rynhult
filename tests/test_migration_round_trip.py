@@ -1,4 +1,4 @@
-"""Migrations 0067-0078 downgrade and upgrade again to exactly the schema a fresh upgrade makes, on SQLite and on the
+"""Migrations through relay ownership 0093 downgrade and upgrade again to exactly the schema a fresh upgrade makes, on SQLite and on the
 test-created PostgreSQL (postgres_matrix; skipped without a container runtime)."""
 from alembic import command
 from alembic.script import ScriptDirectory
@@ -44,7 +44,8 @@ def schema(url) -> dict:
             }
         with engine.connect() as db:
             version = db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()
-        return {'version': version, 'tables': out}
+            triggers = list(db.exec_driver_sql("SELECT name, sql FROM sqlite_master WHERE type='trigger' ORDER BY name")) if engine.dialect.name == 'sqlite' else None
+        return {'version': version, 'tables': out, 'triggers': triggers}
     finally:
         engine.dispose()
 
@@ -53,15 +54,37 @@ def test_downgrade_below_the_new_migrations_and_upgrade_again_matches_a_fresh_up
     config = alembic_config(backend_url)
     command.upgrade(config, 'head')
     fresh = schema(backend_url)
-    assert fresh['version'] == ScriptDirectory.from_config(config).get_current_head()
+    assert fresh['version'] == ScriptDirectory.from_config(config).get_current_head() == '0093'
+    if fresh['triggers'] is not None:
+        assert {'session_parent_immutable', 'session_root_owner_transfer', 'session_owner_nonnull'} <= {name for name, sql in fresh['triggers']}
     command.downgrade(config, BELOW)
     below = schema(backend_url)
     assert below['version'] == BELOW
-    assert {'work_item', 'selection', 'message_delivery', 'gate_job', 'orchestration_plan'} <= (
+    assert {'work_item', 'selection', 'message_delivery', 'gate_job', 'orchestration_plan', 'relay_session',
+            'relay_run', 'relay_operation', 'relay_event', 'relay_decision', 'relay_preference', 'relay_ownership',
+            'install_recipe', 'account_install_journal'} <= (
         set(fresh['tables']) - set(below['tables']))
     command.upgrade(config, 'head')
     again = schema(backend_url)
     assert again['version'] == fresh['version']
+    assert again['triggers'] == fresh['triggers']
     assert sorted(again['tables']) == sorted(fresh['tables'])
     for table in fresh['tables']:
         assert again['tables'][table] == fresh['tables'][table], table
+
+
+def test_retained_source_tables_drop_before_legacy_dependencies(backend_url):
+    """Shallow rollback preserves identities; deep rollback removes their FK dependencies."""
+    from acc.server.source_schema_v1 import TABLES
+
+    config = alembic_config(backend_url)
+    command.upgrade(config, 'head')
+    fresh = schema(backend_url)
+    command.downgrade(config, '0063')
+    assert set(TABLES) <= set(schema(backend_url)['tables'])
+    command.downgrade(config, '0054')
+    older = schema(backend_url)
+    assert not (set(TABLES) & set(older['tables']))
+    assert 'group_machine_account' not in older['tables']
+    command.upgrade(config, 'head')
+    assert schema(backend_url) == fresh

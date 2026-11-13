@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { gotoLoadedPage, loadPage } from './loaded-page';
-import { expect, test, chooseLayout, type BrowserContext } from './fixtures';
+import { expect, test, type BrowserContext } from './fixtures';
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { AUTH_FILE, fileRow, info, openAdvanced, wikiShotPath } from './helpers';
 
@@ -65,7 +65,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('status', { name: 'File save status' })).toContainText('Saved');
     await other.getByRole('textbox', { name: 'File content' }).fill('second tab draft');
     await other.getByRole('button', { name: 'Save', exact: true }).dblclick();
-    await expect(other.getByRole('heading', { name: 'File changed on disk' })).toBeVisible();
+    await expect(other.getByRole('heading', { name: 'Resolve a save conflict' })).toBeVisible();
     await expect(other.getByRole('textbox', { name: 'File content' })).toHaveText('second tab draft');
     expect(readFileSync(`${root}/space . Ω 😀 שלום.txt`, 'utf8')).toBe('first tab');
     await other.close();
@@ -91,12 +91,16 @@ for (const width of [1440, 390]) {
     });
     await editor.fill('save still in flight');
     await page.getByRole('button', { name: 'Save', exact: true }).dblclick();
-    await selectFile('other.txt');
-    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
-    try { await expect(page.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled(); }
-    finally { finishSave(); }
+    try {
+      await selectFile('other.txt');
+      await expect(editor).toHaveText('second file');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(readFileSync(`${root}/space . Ω 😀 שלום.txt`, 'utf8')).toBe('retry after offline');
+    } finally { finishSave(); }
     await expect.poll(() => readFileSync(`${root}/space . Ω 😀 שלום.txt`, 'utf8')).toBe('save still in flight');
     await page.unroute(`**/api/files/project/${project.id}`);
+    await selectFile('space . Ω 😀 שלום.txt');
+    await expect(editor).toHaveText('save still in flight');
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
     await editor.fill('retry after offline');
     await page.getByRole('button', { name: 'Save', exact: true }).dblclick();
@@ -108,12 +112,18 @@ for (const width of [1440, 390]) {
     await page.goForward();
     await expect(editor).toHaveText('second file');
     await editor.fill('unsaved draft before Back');
+    // Working views retain drafts through Back/Forward; explicit Close still confirms discard.
     await page.goBack();
+    await expect(editor).toHaveText('retry after offline');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.goForward();
+    await expect(editor).toHaveText('unsaved draft before Back');
+    await page.getByRole('button', { name: 'Close view', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Discard unsaved edits?' })).toBeVisible();
     if (width === 1440) await page.screenshot({ path: wikiShotPath(testInfo, "files-unsaved-navigation.png"), fullPage: true });
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(editor).toHaveText('unsaved draft before Back');
-    await page.goBack();
+    await page.getByRole('button', { name: 'Close view', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Discard draft', exact: true }).click();
     await expect(editor).toHaveText('retry after offline');
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
@@ -139,13 +149,14 @@ for (const flow of ['session', 'multirun', 'schedule']) {
     await page.request.post(`/api/projects/${pid}/trust`, { headers });
     await page.goto(flow === 'schedule' ? '/schedules' : '/sessions');
     await page.getByRole('button', { name: flow === 'schedule' ? 'New schedule' : 'New session', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole(flow === 'schedule' ? 'dialog' : 'region', { name: flow === 'schedule' ? 'New schedule' : 'New session', exact: true });
+    await openAdvanced(dialog);
     await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
     await dialog.getByLabel('Name', { exact: true }).fill(name);
     await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(pid));
     if (flow === 'multirun') {
       await openAdvanced(dialog);
-      await dialog.getByRole('radio', { name: /Several agents/ }).check();
+      await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('several');
       await dialog.getByLabel('Task', { exact: true }).fill('Review this example project');
     }
     const endpoint = flow === 'schedule' ? '/api/schedules' : flow === 'multirun' ? '/api/multiruns' : '/api/sessions';
@@ -200,10 +211,10 @@ test('invite survives reload, two people conflict safely, and an ended sign-in c
       && new URL(response.url()).pathname === '/api/auth/invite/complete');
     await second.getByRole('button', { name: 'Join', exact: true }).dblclick();
     expect((await joined).ok()).toBe(true);
-    // Keep both people on the classic Files conflict contract. Retain a
+    // Both people use the retained Files conflict contract. Retain a
     // control context because the journey deliberately replaces guest cookies.
     layoutControl = await browser.newContext({ storageState: await guest.storageState() });
-    await chooseLayout(guest, false);
+
     await loadPage(second, () => second.getByRole('button', { name: 'I saved the codes', exact: true }).click(), ['Overview'], []);
     await expect(second.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
     const root = `${info().workspace}/${slug}`;
@@ -234,7 +245,7 @@ test('invite survives reload, two people conflict safely, and an ended sign-in c
     expect(readFileSync(`${root}/shared.txt`, 'utf8')).toBe('Alex saved');
     await secondEditor.fill('Riley draft');
     await second.getByRole('button', { name: 'Save', exact: true }).dblclick();
-    await expect(second.getByRole('heading', { name: 'File changed on disk' })).toBeVisible();
+    await expect(second.getByRole('heading', { name: 'Resolve a save conflict' })).toBeVisible();
     await expect(secondEditor).toHaveText('Riley draft');
     expect(readFileSync(`${root}/shared.txt`, 'utf8')).toBe('Alex saved');
     const ended = await guest.newPage();
@@ -265,8 +276,7 @@ test('invite survives reload, two people conflict safely, and an ended sign-in c
     const rows = await (await page.request.get('/api/projects')).json();
     expect(rows.some((p: { slug: string }) => p.slug === expiredSlug)).toBe(false);
   } finally {
-    try { if (layoutControl) await chooseLayout(layoutControl, true); }
-    finally { await layoutControl?.close(); await guest.close(); }
+    await layoutControl?.close(); await guest.close();
   }
 });
 

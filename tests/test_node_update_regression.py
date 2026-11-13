@@ -143,3 +143,10 @@ def test_helper_failure_detail_survives_node_update_state_and_primary_filter(tmp
     clean = update_result(message['result'], message['refused'])
     assert clean['detail'] == 'node bundle version or build mismatch'
     assert json.loads((root / 'state.json').read_text())['detail'] == clean['detail']
+
+
+@pytest.fixture(autouse=True)
+def accepted_update_host(monkeypatch):
+    # Transaction fixtures model source/data changes independently of the execution host.
+    monkeypatch.setattr("acc.update_helper.Transaction.preflight", lambda self, source: None)
+    monkeypatch.setattr("acc.update_helper.Transaction.distro_flags", lambda self: [])

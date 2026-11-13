@@ -85,7 +85,7 @@ In **Host → Backups**, select **Back up to a folder or USB disk**. Mount the d
 then enter an existing absolute folder outside the installation tree and system or hidden home paths.
 Select **Show console command**, copy it and run it once in the server's root console:
 `sudo rynhult-admin backup add-folder -- /mnt/recovery`.
-Install pinned Restic through **Host → Packages → Restic** first.
+Install pinned Restic through **Host → Sign-ins and usage → Other software → Backup tools → Restic** first.
 
 The console validates the real host path, refuses symlinks, parent traversal, temporary paths
 (`/tmp`, `/var/tmp`, `/dev/shm`, `/run`) and tmpfs/ramfs storage. It creates a fresh encrypted

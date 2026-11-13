@@ -9,7 +9,7 @@ import { expandTeamPanels, AUTH_FILE, gitProject, info, openAdvanced, waitForSes
 // person would follow it: every click uses the words the Guide gives. The server runs the preview with the plan and
 // working list (playwright.v2.config.ts) and fake providers; the lead's own actions go through its tool spool, as an
 // agent's would. One test, in the Guide's order, so a broken step names the Guide section it breaks.
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 test.setTimeout(240_000);
 let ownedLead: string | undefined;
 test.afterEach(async ({ page }) => {
@@ -37,11 +37,10 @@ async function teamTab(page: Page, lead: string, section = 'Working list') {
   if (section !== 'Working list') await expandTeamPanels(page);
 }
 
-test('a new person follows "Orchestrate a project" from the preview switch to Stop team', async ({ page }) => {
-  // Before you start, step 3: "the Settings section chooser lists Selection allow-lists, and managed projects have a
-  // Gate queue card."
+test('a new person follows "Orchestrate a project" from available controls to Stop team', async ({ page }) => {
+  // Before you start: Installation settings offers Selection allow-lists and managed projects have Gate queue.
   await gotoLoadedPage(page, '/settings', ['Settings']);
-  await expect(page.getByLabel('Settings section').getByRole('option', { name: 'Selection allow-lists' })).toBeAttached();
+  await expect(page.getByRole('complementary', { name: 'Context sidebar', exact: true }).getByRole('region', { name: 'Installation settings', exact: true }).getByRole('link', { name: 'Selection allow-lists', exact: true })).toBeVisible();
   const { id: projectId } = await gitProject(page, 'guide-walk');
   const accountNeed = `Create the test address book account [project ${projectId}]`;
   const portNeed = `Approve the staging port [project ${projectId}]`;
@@ -51,11 +50,11 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   // 1. Start the lead.
   await page.goto('/sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await openAdvanced(dialog);
   await dialog.getByRole('combobox', { name: 'Project', exact: true }).selectOption(String(projectId));
   await dialog.getByLabel(/^Task/).fill('Let office staff import customer lists into the address book.');
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   for (const label of ['At once', 'In total', 'Depth', 'Hours']) await expect(dialog.getByLabel(label, { exact: true })).toBeVisible();
   const launched = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/sessions' && r.request().method() === 'POST');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();
@@ -127,14 +126,14 @@ test('a new person follows "Orchestrate a project" from the preview switch to St
   await gotoLoadedPage(page, `/sessions/${lead}`, ["SessionPage"], [`/api/sessions/${lead}`]);
   await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   const take = page.getByRole('button', { name: 'Take control', exact: true });
-  await expect(page.getByText('Read-write', { exact: true }).or(take)).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true }).or(take)).toBeVisible();
   if (await take.isVisible()) {
     await take.click();
     const dialog = page.getByRole('dialog', { name: 'Take terminal control' });
     await dialog.getByLabel('Reason').selectOption('manual_handover');
     await dialog.getByRole('button', { name: 'Take control', exact: true }).click();
   }
-  await expect(page.getByText('Read-write', { exact: true })).toBeVisible();
+  await expect(page.getByText('You control this terminal', { exact: true })).toBeVisible();
   await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('Please keep the first version small.');
   await page.keyboard.press('Enter');

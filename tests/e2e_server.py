@@ -21,32 +21,18 @@ from demo_github import SHA, FakeGitHub
 from demo_host import live as demo_live
 from demo_machine import attach
 from helpers import preview_listener
+from owned_git_http import assert_no_git_backends
 from owned_tmux import Owner, start_time
 
 from acc.broker.config import BrokerConfig
 from acc.broker.server import MAX_SOCKET_PATH, serve
 from acc.env import environment
 from acc.server import host
-
-# Test-only compatibility for classic journeys until their post-rc.4 migration.
-from acc.server.api import settings_routes
 from acc.server.app import create_app
 from acc.server.config import Settings
 from acc.server.github import GitHub
 
-production_shell_enabled = settings_routes.shell_enabled
-
-
-def fixture_shell_enabled(value, request):
-    if request.headers.get('x-acc-e2e-layout') == 'release':
-        return production_shell_enabled(value, request)
-    return bool(value.get('enabled', True))
-
-
-settings_routes.shell_enabled = fixture_shell_enabled
-
 REPO = Path(__file__).resolve().parents[1]
-
 
 def demo_root() -> bytes:
     """A root like Caddy's local one, made for this run (Settings → Certificate, Add machine's fingerprint)."""
@@ -62,8 +48,6 @@ def demo_root() -> bytes:
             .serial_number(1).not_valid_before(now).not_valid_after(now + datetime.timedelta(days=3650))
             .add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True).sign(key, hashes.SHA256()))
     return cert.public_bytes(serialization.Encoding.PEM)
-
-
 
 def qualify_containers(state: Path) -> None:
     """Containers are a Preview that needs a qualified host. This server's host records a passing report with the real
@@ -293,6 +277,8 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     install_identity(app, isolation_token)
     from e2e_team_fixtures import install as install_team_fixtures
     install_team_fixtures(app, isolation_token)
+    from e2e_session_relay import install as install_session_relay
+    install_session_relay(app, isolation_token)
     app.router.routes.insert(0, Route('/preview-test-port', lambda request: JSONResponse({'port': demo_port})))
 
     def reset_pairing_throttle(request):
@@ -364,12 +350,13 @@ async def main(base: Path, port: int, socket_name: str) -> None:
     app.state.supervisor.broker.accounts = lambda: known + sorted(p.name for p in fixture_accounts.glob("*-agent"))
     (base / "info.json").write_text(json.dumps({"state": str(state), "preview_port": demo_port, "isolation_token": isolation_token,
         "setup_token_path": str(settings.setup_token_path), "run_dir": str(run_dir),
-        "workspace": str(workspaces / "demo"), "origin": origin}))
+        "workspace": str(workspaces / "demo"), "origin": origin,
+        "relay_native_enabled": os.environ.get("ACC_E2E_RELAY_NATIVE") == "1"}))
     tls = {}
     if secure:
         from e2e_tls import certificate_files
         tls = certificate_files(state)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", **tls))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", timeout_graceful_shutdown=2, **tls))
 
     async def demo_machine() -> None:  # another machine, connected: Providers' machine picker, Host's glance
         while not server.started:
@@ -378,7 +365,7 @@ async def main(base: Path, port: int, socket_name: str) -> None:
                [settings.default_account], broker.socket_path, {"claude": "2.1.300", "codex": "0.170.0"})
         # a Mac (studio-mac): ACC installs only Codex and Copilot there; the rest show by-hand steps
         mac = attach(app, "studio-mac", {"os": "darwin", "arch": "arm64", "hostname": "studio-mac"},
-                     [settings.default_account], broker.socket_path, {"codex": "0.163.0"}, kind="mac")
+                     [settings.default_account], broker.socket_path, {"codex": "0.167.1"}, kind="mac")
         mac.by_hand = {"cursor": "2026.10.17"}
 
     async def keep_snapshot_fresh() -> None:
@@ -406,7 +393,6 @@ async def main(base: Path, port: int, socket_name: str) -> None:
         except asyncio.CancelledError:
             pass
 
-
 if __name__ == "__main__":
     base = Path(sys.argv[1])
     longest = base / "run-00000000" / "broker.sock"  # main()'s broker socket, the longest path it binds
@@ -416,10 +402,13 @@ if __name__ == "__main__":
                  "(the default is /tmp/acc-e2e).")
     base.mkdir(parents=True, exist_ok=True)
     socket_name = f"acc-e2e-{uuid.uuid4().hex[:8]}"
-    owner = Owner()
+    owner = Owner(journal=base / 'owned-tmux')
     owner.register(socket_name)
-    (base / 'processes.json').write_text(json.dumps({'pid': os.getpid(), 'start_time': start_time(os.getpid()), 'socket': socket_name}))
+    (base / 'processes.json').write_text(json.dumps({'pid': os.getpid(), 'start_time': start_time(os.getpid()), 'socket': socket_name, 'cleanup_token': owner.token}))
     try:
         asyncio.run(main(base, int(sys.argv[2]), socket_name))
     finally:
-        owner.close()
+        try:
+            assert_no_git_backends(base, record=True)
+        finally:
+            owner.close()

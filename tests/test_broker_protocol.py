@@ -157,3 +157,34 @@ async def test_read_busy_wire_reply_is_typed_and_not_retried(tmp_path):
             assert len(delivered) == 1
         finally:
             await client.close()
+
+
+@pytest.mark.parametrize('method', ['session_runtime'])
+async def test_session_runtime_handshake_never_replays(tmp_path, method):
+    delivered = []
+    async def handle(reader, writer):
+        delivered.append(json.loads(await reader.readline()))
+        writer.close()
+    path = tmp_path / 'relay.sock'
+    server = await asyncio.start_unix_server(handle, str(path))
+    async with server:
+        client = BrokerClient(path)
+        try:
+            with pytest.raises((ValueError, BrokerUnavailable)):
+                await client.session_runtime({'credential': 'fixture-only'})
+            assert len(delivered) == 1
+        finally:
+            await client.close()
+
+
+@pytest.mark.parametrize('change', [
+    {'version': True}, {'version': 2}, {'method': 'turn_start'},
+    {'params': {'grant': 'fixture', 'actor': 'spoof'}}, {'params': {'grant': []}},
+])
+def test_runtime_envelope_refuses_unversioned_or_unbounded_controls(change):
+    from acc.broker_protocol import runtime_request_from
+    request = {'id': 1, 'version': 1, 'method': 'dispatch', 'params': {'grant': 'fixture'}}
+    assert runtime_request_from(json.dumps(request).encode()) == request
+    request.update(change)
+    with pytest.raises(ValueError):
+        runtime_request_from(json.dumps(request).encode())

@@ -1,8 +1,9 @@
 # Sessions
 
-Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project; this switches that project’s Claude usage to API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude](/Providers/Claude).
+Claude subscription sessions accept only your own typing; automated input needs API or cloud credentials. Use **Settings → Keys** to add `ANTHROPIC_API_KEY` and give it to the project and explicitly choose **API key** for that session or schedule; this uses API billing. The guard notice opens the form with the variable and project grant preselected. See [Claude sign-in and automation](/User-Guide/Host-and-Providers#claude-sign-in-and-automation).
 
 > Screenshots use fictional demo accounts and fixed example metrics, not live systems or qualification evidence.
+> Some illustrations predate the current frame and need refresh; use the written navigation and controls below.
 
 A session is one native agent conversation (Claude Code, Codex, Copilot, Antigravity, Cursor or OpenCode) running in tmux on its selected machine, in a [project](/User-Guide/Glossary#project)'s folder or a [workspace](/User-Guide/Workspaces).
 
@@ -14,6 +15,33 @@ When a process ends, Rynhult reads its pending hook events before closing that r
 stays with the right run. A large backlog is read in bounded batches and can delay the final state. For a remote
 session, closing the run waits until its machine's last hooks can be checked. Existing history-size limits still
 apply; a truncated final hook cannot hold a dead run indefinitely.
+
+## Report status from any script
+
+A script in a session without provider hooks can print OSC 7501 to its terminal:
+
+```sh
+printf '\033]7501;state=working: app=demo\033\\'
+```
+
+Use `working` for **Working**, `done` for **Idle**, `blocked` for **Needs you**, or
+`error` for **Idle** with a session error message. `blocked` reports status only:
+it never creates an Inbox approval, resolves a pending input request, or grants permission. Screens
+are always checked first: a script cannot override a screen- or hook-reported
+input wait, visible work, or an idle/error footer reported in that same check. OSC values are ignored when provider hooks exist for the current run.
+They remain stored while ignored; a screen prompt can temporarily mask a report,
+and the report can apply again after the prompt disappears if no hook has arrived.
+The stored value is cleared when the broker observes process exit, when an untracked pane is
+adopted, or when its tmux session is removed. A new report replaces the old value.
+The optional `app` and unknown keys are ignored; no escape payload is retained.
+BEL (`\007`) also terminates the sequence. Use printable ASCII content and keep
+the entire sequence within 256 bytes, including escape delimiters. Parsing is
+limited to 32 OSC 7501 candidates per second; unrelated title/link sequences do
+not spend that budget. Once spent, output is read and discarded until the next
+second. Updates are coalesced to one per second. The observer is installed on
+newly launched sessions; restart an older session to enable it. If launch cannot
+release the observer gate within 10 seconds, the terminal shows a startup error
+instead of waiting indefinitely.
 
 ## Claude sign-in
 
@@ -83,11 +111,9 @@ In **Sessions → Stopped**, **Archive all stopped** asks for confirmation in th
 
 ![Expanded Grid on a phone](/.attachments/terminal-expanded-grid-phone.png)
 
-### Experimental persistent observer terminals
+### Persistent working terminals
 
-Ordinary installations keep the terminal controls described above. A qualification build can instead show **Read-only · observing this session**. In that build, switching routes, tabs, Grid or Expand keeps one terminal attachment in this browser tab. A second placement offers **Show shared terminal here** rather than opening a second connection.
-
-These views never take control or send keys. **Disconnect** releases the attachment without stopping the session; **Recheck** checks access again and opens a new read-only connection. The read-only terminal keeps a fixed grid that scrolls inside its slot, so resizing your view does not reflow the agent. Hidden attachments appear in the background-terminal summary and can be released there. They still receive output. Every lost observer connection clears its cached output; use **Recheck** to resolve current access again. An older machine broker may require updating before this experimental view can attach. Sign-out clears them. A process restart, a browser reload or a disconnected attachment requires a new connection; the earlier connection does not survive those events. **Open as text** and **Copy recent output** use only the output this browser retained for that run; older lines may be missing. This experiment does not retain file edits or form drafts across navigation.
+Session terminals retain their attachment when moved among working columns. Restored views start read-only; explicitly opening Terminal can request free control. Grid uses separate terminal panes. See [working views](/User-Guide/New-Layout#arrange-your-working-views) for attachment limits, detaching and rechecking. These views do not save terminal output or file drafts across browser reloads.
 
 ## Worktrees
 Several agents in one project's folder see and change the same files. Tick **Own worktree** in New session to give a session its own working copy instead:
@@ -206,8 +232,8 @@ On a phone, the label and its reason sit under the session's name, so the termin
 
   ![A session on a phone: one-line header, Terminal and Changes tabs, More, and the key bar with Enter first](/.attachments/phone-terminal.png)
 
-  The [Inbox status line](/User-Guide/Inbox#compact-status-without-blocking-the-page) sits below the content and above the bottom navigation on phones. Alerts never push the terminal down. Always-on machine offline and failed/stale backup counts stay on screen until resolved or snoozed; select **Inbox** to review them. Desktop sessions keep the line below the top bar.
-- **Terminal.** The real terminal. When you have control, your keystrokes go to the agent without an extra Read-write label. Only one window can type at a time; another window shows **Read-only** with **Take control**.
+  The [Inbox rail badge](/User-Guide/Inbox#compact-status-without-blocking-the-page) keeps notices reachable without a banner. Open Inbox to review machine and backup alerts.
+- **Terminal.** The real terminal. When you have control, your keystrokes go to the agent without an extra Read-write label. Only one window can type at a time; another window stays read-only. **Control terminal** opens a confirmed handover when another controller holds it.
 - **Files.** Browse and edit the files in the session's folder or worktree (see [Files](/User-Guide/Files)).
 - **[Preview](/User-Guide/Glossary#preview).** The project's running web app beside the terminal, with a port picker, **Reload** and **Open in new tab**. On phones they stack vertically (see [Preview](/User-Guide/Preview)).
 - **Changes.** The current branch's changes, edits and new files, as a diff per file. The tab's count and the row's "+40 −2 · 3 files" use the same comparison and refresh while it works. Switching branches changes the comparison too; the old session-launch commit is not kept as the base. Sessions sharing a folder see each other's changes; give each its own [worktree](/User-Guide/Sessions#worktrees) to keep them apart.
@@ -286,6 +312,22 @@ Use the **Pull request** tab to take a session's branch from "pushed" to "merged
 1. Open the session and select **Pull request**.
 
 The **Pull request readiness** summary appears before the description, including on phones. It shows the server's merge blockers and links to **Checks**, **Review comments**, and the **Merge decision**. The summary never enables a merge itself; the server's decision and exact-commit confirmation still apply.
+
+Choose **Make it mergeable** to work through the branch checklist:
+
+1. **Up to date with the base branch:** update the session’s clean worktree with the latest observed base commit. When **Block force pushes** is on, only **Merge base in** is offered. With that switch off, the project checkout’s Git setting `pull.rebase=false` selects Merge base in; otherwise the action rebases. The click includes the mode you saw; a changed setting refuses and asks you to refresh. Conflicts stop the operation and list the affected files. **Ask the agent to resolve** opens a bounded preview; finish or abort that Git operation before retrying.
+2. **Checks:** rerun failed GitHub Actions jobs on the pushed PR head. Other providers keep their own rerun controls. Push local changes first; this action does not run an unconfigured shell command or an unmanaged full test suite.
+3. **Send failures to the agent:** collect a redacted, bounded preview of current failures. Codex, OpenCode and verified API-key Claude sessions can receive it automatically when you run this step. Subscription Claude receives no automated input: use **Copy message**, then paste it into the terminal yourself. Existing subscription automation restrictions still apply.
+4. **Your merge decision:** return to the existing merge card. Only a signed-in person can merge, with a new confirmation for the exact reviewed commit; agents, orchestrators and installation API tokens cannot use this merge endpoint.
+
+Before any base update, the worktree must contain the current PR head from GitHub (or be ahead of it). If it does not, Rynhult refuses with **Pull the remote changes first**; pull and review those changes before retrying. This protects commits made through GitHub Update branch, commit suggestions or another clone.
+
+After a successful rebase, **Push rebased branch with --force-with-lease** is a separate person action. It checks the remote head observed before that rebase and refuses a changed local head, protected/default branch, expired consent or a Security force-push block. Consent expires after ten minutes or a server restart. A merge-base update uses ordinary **Push branch** in Changes. If a rebase stops on conflicts, use this session’s own terminal in Rynhult, as the session account, **not your own shell**. The dialog gives finish instructions and a fallback leased-push command. Resolve the listed files, stage only those paths with `git add -- <path>`, run `git rebase --continue` until complete, then inspect the final history/diff. With **Block force pushes** off, choose **Refresh checklist**, then **Push completed rebase** and confirm the displayed commit. Rynhult remembers a person-started rebase that stopped on conflicts for one hour, on the server. Completion requires that person/session/branch record, GitHub’s current PR head still equal to its captured lease, the recorded base as an ancestor of the reviewed head, a clean worktree, no unfinished operation, and no leftover markers from `git diff --check` with whitespace rules disabled. Markdown two-space line breaks and CRLF files are accepted. The confirmation shows the SHA, commit counts before/after relative to the rebase base, and the rebased subjects (up to 20, with an omitted count). It creates a new person-bound ticket and pushes through the hardened transport; rewritten commit IDs do not prevent completion. If GitHub’s branch changed, or the record expired or belongs to another person, review the branch and start again. Server restart loses these in-memory records. Without a record, the current PR head and base must both be ancestors of the reviewed head; this fallback does not infer rebase authority from worktree files. As a fallback only, run the displayed `git -c core.hooksPath=/dev/null push …` command in this session’s own terminal in Rynhult, never your own shell; its lease contains the remote head captured before the rebase. If the lease refuses, the branch changed on GitHub since the rebase started; review it and start again. Never substitute `--force`. To abandon an unfinished rebase, use `git rebase --abort`, enable **Block force pushes**, refresh, and select **Merge base in**.
+
+Git output and file names show invisible characters as `[U+202E]`-style escapes; these identify suspicious characters and are not literal file-name text to paste into Git commands. If automatic feedback delivery refuses, the preview remains available with its reason and **Copy message**.
+
+Base updates require a trusted, writable session worktree; dirty worktrees and container checkouts refuse. Each action records its actor in Activity’s audit source.
+
 
 ![Pull-request readiness before a long description, with failing and running checks and unresolved review comments](/.attachments/sessions-pull-readiness.png)
 
@@ -395,11 +437,11 @@ The **Terminal** tab embeds the session's tmux session in the page. It is the re
 - **Focus while loading.** On desktop, if you focus a tab or another control while the terminal loads, it keeps focus when the terminal appears.
 - **One writer.** Only one window types at a time. Opening the session somewhere else shows **Read-only · another window has control** with **Take control**. Choose a reason (Manual handover, Controller unavailable or Team intervention) and confirm to move typing to that window. Partial input stays in the terminal: inspect it before typing. Handover never clears or replays input, and waits for unacknowledged bytes or active composition to finish. Automated messages cannot mix into partial human input.
 - **Unsent text.** If you reload or return with typed text you hadn't sent, you keep writing and the terminal shows **Partial input may remain. Inspect it before typing.** Messages from your team and automation wait until that text is sent or cleared. Anyone else needs **Take control**.
-- **Phone.** Opening a terminal does not focus its text input or open the phone keyboard. Tap the grid to type. A key bar under the terminal adds the keys a touch keyboard lacks. The ones that finish or stop an answer come first and always fit the screen: **⏎** (Enter), **Esc**, **^C** (interrupt), **↑**, **↓** and **Tab**. **More keys** adds **Ctrl** (tap it, then a letter; it stays highlighted until used), **←**, **→**, PgUp/PgDn and **Paste**. To answer a permission prompt: tap **↑**/**↓** to pick an option, then **⏎**.
-- **Keyboard.** Inside the terminal, **Tab** and **Shift+Tab** go to the agent for completion and other CLI actions. Press **F6** to leave for **Screen reader output**, then use **Tab** normally to reach **Open as text** and **Copy recent output**. **Shift+F6** leaves backwards, including from a screen reader row. On keyboards with media keys, you may need **Fn+F6**. A visible hint sits in the top bar. The **Skip terminal** link appears when reached by keyboard, before the grid, and goes straight to the output controls.
-- **Reconnecting.** After waking the browser or losing its connection, use **Reconnect** if the terminal says **Disconnected**. Check the current prompt before continuing: reconnecting does not replay previously typed or pasted text, and input entered while disconnected is not queued. Accented characters and IME compositions are committed once, without reinserting earlier text.
-- **Screen readers.** **Screen reader output** is on by default and exposes the terminal's visible lines. Toggle it below the grid; the choice is saved for this browser and applies when you next open a session. Collapsed Grid tiles do not expose these rows; expand the tile or open the session for accessible output. Rynhult announces state changes such as **Needs you** or a terminal turning read-only once, without reading the agent's output stream aloud.
-- **Text and copying.** Choose **Open as text** for selectable, read-only text with ordinary keyboard navigation. It holds a snapshot while you read; **Refresh output** fetches a new one. **Copy recent output** copies the snapshot in that dialog, or fetches recent output when used below the grid. If clipboard access is denied, select and copy from the text view instead. These controls are available on phones too.
+- **Phone.** Session view tabs keep their own row above the terminal controls in narrow panes, so Files, Changes and More stay reachable. Opening a terminal does not focus its text input or open the phone keyboard. Tap the grid to type. A key bar under the terminal adds the keys a touch keyboard lacks. The ones that finish or stop an answer come first and always fit the screen: **⏎** (Enter), **Esc**, **^C** (interrupt), **↑**, **↓** and **Tab**. **Ctrl** is a sticky, visibly pressed toggle: tap it and type a letter to send Ctrl+letter once. Tap Ctrl again to cancel. Losing terminal control, terminal focus or browser visibility cancels it, as does waiting 10 seconds without a letter. **More terminal keys** adds **←**, **→**, **Page Up**, **Page Down**, **Ctrl U (clear line)**, **Ctrl D** and **Paste text…**. To answer a permission prompt: tap **↑**/**↓** to pick an option, then **⏎**.
+- **Keyboard.** Inside the terminal, **Tab** and **Shift+Tab** go to the agent for completion and other CLI actions. **F6** and **Shift+F6** return to the working-view tabs, including from a screen reader row. Use ordinary Tab navigation outside the terminal to reach **Open as text** and **Terminal options**. On keyboards with media keys, you may need **Fn+F6**.
+- **Reconnecting.** After waking the browser or losing its connection, use **Recheck terminal** when the terminal is detached or disconnected. Check the current prompt before continuing: reconnecting does not replay previously typed or pasted text, and input entered while disconnected is not queued. Accented characters and IME compositions are committed once, without reinserting earlier text.
+- **Screen readers.** **Screen reader output** is on by default and exposes the terminal's visible lines. Toggle it in **Terminal options**; the choice is saved for this browser and applies when you next open a session. Collapsed Grid tiles do not expose these rows; expand the tile or open the session for accessible output. Rynhult announces state changes such as **Needs you** or a terminal turning read-only once, without reading the agent's output stream aloud.
+- **Text and copying.** Choose **Open as text** for selectable, read-only text with ordinary keyboard navigation. It holds a snapshot while you read; **Refresh output** reads a new one from this run’s browser buffer. **Copy output** copies the snapshot in that dialog. If clipboard access is denied, select and copy from the text view instead. These controls are available on phones too.
 - **Size.** The terminal follows the size of the window; tmux redraws the agent's screen to fit.
 - **Scrolling and links.** Scroll the output available in the grid with the mouse or trackpad. Use **Open as text** for retained terminal history beyond the grid. Links open in a new tab.
 - **Leaving.** Closing the tab, signing out or losing the network only detaches the view. The session keeps running in tmux on the server (**Closing this view never stops the session**).
@@ -415,16 +457,11 @@ check it before submitting and report the browser, input method and steps.
 
 ### Expand a terminal
 
-Choose **Expand** on the Terminal tab or a Grid tile to fill the browser window.
-The same terminal stays connected, with its scrollback and typing control; its
-rows and columns refit to the available space. The slim bar keeps the session
-name, status and **Collapse**. Press **F6** to focus that bar, then **C** to collapse.
-**Esc** still goes to the program. Optional **Full screen** uses the browser’s native
-full screen; exit that with the browser’s own key before collapsing if needed.
+Choose **Expand** on a single session's Terminal tab to fill the browser window with its terminal panel. The same editor, scrollback and connection stay mounted and refit to the available space. **Collapse** returns to the session and restores focus to Expand. For keyboard collapse, press **F6** to focus the terminal bar, then **C**. **Esc** goes to the terminal program, so it can interrupt Claude Code or leave vim insert mode. This is a temporary view: reloading opens the normal panel, with no saved expansion preference. Phone key buttons stay available as the keyboard changes the available height.
 
-Each device remembers the expanded session separately for the session page and
-Grid. Reloading restores it; collapsing clears that preference. Phone key buttons
-remain available, including when the on-screen keyboard changes the available height.
+For a session working tab, choose **Fill working panel** to give it the working area; **Restore columns** returns the arrangement. The same terminal stays connected. See [working columns](/User-Guide/New-Layout#arrange-your-working-views).
+
+Grid tiles have a separate **Expand** control that fills the browser window. The slim bar keeps the session name, status and **Collapse**. Press **F6** to focus that bar, then **C** to collapse; **Esc** still goes to the program. Optional **Full screen** uses the browser's native full screen. Grid remembers its expanded tile on this device, and phone key buttons remain available.
 
 ![Expanded session terminal](/.attachments/terminal-expanded-session-desktop.png)
 
@@ -439,23 +476,9 @@ Drag to select text. When the program captures mouse input, use your platform's 
 | Select through application mouse mode | Hold **⌥ Option** while dragging | Hold **Shift** while dragging |
 | Copy the selection | **⌘C** | **Ctrl+Shift+C** |
 
-The first unmodified drag in mouse mode shows a brief hint with **Select text**
-and **Dismiss**. It disappears after ten seconds and appears at most once while
-that terminal view stays open. The terminal keeps working; the hint does not take
-keyboard focus. Selection and Copy tooltips show your platform's keys.
+For ordinary selectable text, choose **Open as text** in the registered terminal toolbar. On a phone, long-press a word in that dialog and extend the selection with the browser handles. The dialog shows this run's retained browser buffer; **Refresh output** updates it without sending terminal input.
 
-Alternatively, choose **Select text** in the terminal controls: it freezes this browser’s parsed output as ordinary selectable text, without
-sending mouse input to the program. On a phone, choose **Select text**, long-press a
-word and extend the selection with the browser’s handles. Choose **Select text**
-again to return to the live terminal; the program keeps running throughout.
-
-A **Copy** button appears beside the selection. An expanded terminal also shows
-**Copy selected text** in its slim bar. **Ctrl+Shift+C** or **⌘C** copies the selection;
-**Ctrl+C** still interrupts the program in the live terminal. Copies contain plain
-text, omit trailing spaces on each line and join terminal soft-wrapped rows.
-If clipboard access is denied, **Open as text** opens with just your selected text
-already selected, ready for the browser’s Copy command. The Select view only
-contains output held in this browser; use **Open as text** for older retained output.
+**Copy selected text** in Terminal options, **Ctrl+Shift+C** or **⌘C** copies an xterm selection. **Ctrl+C** still interrupts the program. Clipboard refusal opens selectable text for manual copying. Copies omit trailing spaces and join soft-wrapped rows. Grid's separate terminal also offers **Select text**, a mouse-mode hint and expanded-bar copy controls.
 
 ### Messages sent to the agent
 
@@ -495,18 +518,16 @@ until their delivery is confirmed. See
 
 ### Reading recent output as text
 
-1. Leave the grid with **F6**, or use **Skip terminal**, then choose **Open as text**.
+1. Leave the grid with **F6**, which returns to the working-view tabs, then choose **Open as text**.
 
-   ![Recent terminal output in a selectable text view with Refresh output and Copy recent output](/.attachments/terminal-output-text.png)
+   ![Terminal output as selectable text](/.attachments/terminal-output-text.png)
 
-2. Read or select the text. New output does not move it. Choose **Refresh output** when you want an updated snapshot, or **Copy recent output** to copy exactly this snapshot.
+2. Read or select the text. New output does not move it. Choose **Refresh output** for a new snapshot, or **Copy output** to copy exactly this snapshot.
 3. Close with **Esc** or **Close**; focus returns to **Open as text**.
 
-The snapshot includes the current screen and up to 10,000 rows of retained terminal history, limited to the most recent 200,000 characters. Colours and terminal control sequences are removed, and wrapped lines are joined. It can include output from before you opened the page, but is not a complete conversation recording: erased screens and output outside the retained history are unavailable. The dialog says when the character limit cuts off older text.
+The snapshot contains the screen and history held by this browser for this run, with colours and terminal control sequences removed and wrapped lines joined. Older lines may be missing. It does not fetch session-wide scrollback, which could belong to a different run. Reading or copying does not take typing control or send anything to the agent.
 
-**Keys and the audit log.** Values of [keys](/User-Guide/Keys) given to the session are replaced with «key: NAME» in the snapshot, as in transcripts and exports. The live terminal and the browser-held fallback below show the raw output, so other secrets the agent prints can still appear. Each snapshot is recorded in the [audit log](/User-Guide/Audit) as `terminal.read` (never the text itself). You can take up to 20 snapshots a minute; beyond that the view says **Too many snapshots in the last minute** and shows only the output held in this browser.
-
-If the session's machine or terminal cannot be reached, the view says **Scrollback unavailable** and offers only the output still held in this browser. Older lines may be missing; try **Refresh output** when the connection returns. Reading or copying does not take typing control or send anything to the agent.
+This is the same raw text visible in the terminal, so secrets printed by the agent can appear. If clipboard access is denied, select the text and use your browser's Copy command. **Terminal options** contains **Screen reader output**; its choice is saved in this browser and does not reconnect the terminal.
 
 ## Statuses
 | Status | Meaning |
@@ -537,7 +558,7 @@ An optional [Orchestrator](/User-Guide/Orchestrator) lead groups helpers beneath
 
 ## Goals and automatic continuation
 
-Open the session's **Setup** tab (on a phone, under **More**), then choose **Goal and auto-resume** or **Edit** in that section. Its state and **Stop goal** stay in Setup, never above the terminal. A saved `?tab=spec#automation` link still opens this section. The same two settings are in New session under **Advanced**, with the same name. These settings start off and belong to the session's person; owners can edit them too.
+Open the session's **Setup** tab (on a phone, under **More**), then choose **Goal and auto-resume** or **Edit** in that section. Its state and **Stop goal** stay in Setup, never above the terminal. A saved `?tab=spec#automation` link still opens this section. The same two settings are in New session under **More options**, with the same name. These settings start off and belong to the session's person; owners can edit them too.
 
 ![The Goal and auto-resume dialog](/.attachments/sessions-automation-settings.png)
 
@@ -796,3 +817,19 @@ The browser retains up to 10,000 terminal rows and tmux retains up to 50,000 his
 rows. Reconnecting or resizing can redraw or reflow the screen; retained output is
 not a permanent transcript, and tmux can show duplicated or displaced rows after an
 inline TUI redraw. Inline mode does not remove these tmux caveats.
+
+### Ready for review
+
+A finished agent turn with changes on its branch appears as **Ready for review**.
+Rynhult waits for a fresh Changes reading after the turn ends. After the process
+exits, it attempts a stale final reading once per run; a failed reading does not
+keep polling a missing checkout. Commits and
+uncommitted files both count; a pending question takes priority. This is a review
+signal, not permission to push or merge. Open Changes to inspect the work.
+
+A linked GitHub pull request also shows its cached lifecycle: draft, open, checks
+running/failed/passed, approved, changes requested, merged or closed. Review
+decisions take priority over check summaries. Links match both branch and head
+repository, with repository names compared without letter case; fork PRs cannot
+stand in for the session’s branch. Fork PRs remain available on the project
+page, including Review and CI alerts. These labels do not trigger actions.

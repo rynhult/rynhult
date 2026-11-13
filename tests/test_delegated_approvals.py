@@ -13,6 +13,8 @@ from acc.server.models import AuditLog, Session, Team, ToolRequest, User, utcnow
 async def world(api, project):
     sid = await seed(api, project)
     with write_db(api.app.state.db) as db:
+        from acc.server.models import Setting
+        db.merge(Setting(key='approvals.enabled', value=True))
         p = db.get(Session, sid).project
         p.owner, p.account, p.trusted = 'alex', 'alex-agent', True
         lead = db.get(Session, sid)
@@ -330,7 +332,7 @@ async def test_worker_identity_cannot_select_itself_as_deciding_lead(api, projec
         db.flush()
         row = ToolRequest(id='request', session_id='worker', project_id=lead.project_id, owner='alex',
             account='alex-agent', host='local', manager='npm', name='prettier', version='3.6.2', operation='install')
-        assert approvals.evaluate_tool(db, row, sid)['source'] == 'C'
+        assert approvals.evaluate_tool(db, row, sid)['reason'] == 'child_request_requires_root_person'
         assert approvals.evaluate_tool(db, row, 'worker')['source'] == 'P'
         from acc.server.models import LaunchSpec
         db.get(Session, 'worker').launch_spec = LaunchSpec(provider='claude', inputs={
@@ -355,9 +357,14 @@ async def test_two_workers_share_one_pending_operation_without_sharing_teams(api
     sid = await world(api, project)
     with write_db(api.app.state.db) as db:
         lead = db.get(Session, sid)
+        import json
+
+        from acc.server.child_caps import FILE, proof
+        from acc.server.models import LaunchSpec
         for worker_id in ('worker-a', 'worker-b'):
             db.add(Session(id=worker_id, project_id=lead.project_id, provider=lead.provider, name=worker_id,
-                tmux_name=worker_id, run_as=lead.run_as, owner=lead.owner, launch_spec_id=lead.launch_spec_id,
+                tmux_name=worker_id, run_as=lead.run_as, owner=lead.owner, launch_spec=LaunchSpec(provider=lead.provider, inputs=lead.launch_spec.inputs,
+                    files={**lead.launch_spec.files, FILE: json.dumps(proof(db, lead))}, digest=worker_id),
                 team_id=sid, parent_session_id=sid, team_depth=1))
         db.commit()
     service = api.app.state.supervisor.tools

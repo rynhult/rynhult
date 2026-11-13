@@ -1,7 +1,12 @@
+import { lazyImport } from '../lib/lazyImport';
 import { terminalKey, ViewRegistry, type TerminalReference } from '../lib/viewRegistry';
-import { TerminalHostLayer, type HostedTerminal } from './terminalHostLayer';
+import type { TerminalHostLayer, HostedTerminal } from './terminalHostLayer';
 
 export class TerminalOwner {
+  private HostLayer?: typeof TerminalHostLayer;
+  async prepare() {
+    this.HostLayer ??= (await lazyImport(() => import('./terminalHostLayer'))).TerminalHostLayer;
+  }
   private layer?: TerminalHostLayer;
   private registry?: ViewRegistry<HTMLElement>;
   private resources = new Map<string, HostedTerminal>();
@@ -20,7 +25,7 @@ export class TerminalOwner {
   acquire(key: string, reference: TerminalReference, slot: HTMLElement) {
     this.syncPins();
     if (!this.layer) {
-      this.layer = new TerminalHostLayer({ fenced: true, changed: this.emit, composition: (ref, composing) => this.composition(ref, composing) });
+      this.layer = new this.HostLayer!({ fenced: true, changed: this.emit, composition: (ref, composing) => this.composition(ref, composing) });
       this.registry = new ViewRegistry({ create: (ref, policy) => {
         const resource = this.layer!.create(ref, policy); this.resources.set(terminalKey(ref), resource); return resource;
       } });

@@ -2,7 +2,7 @@ import { expect } from "./fixtures";
 import { test } from './shell-state';
 import { AUTH_FILE, demoSessions } from "./helpers";
 
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 
 // UX review NAV-9: while Rynhult isn't answering, the Inbox keeps the last items with a stale note, and buttons that would
 // change something are disabled with a reason, instead of failing after a click.
@@ -24,9 +24,11 @@ test("offline: Inbox actions are disabled and the cards say the data is old", as
   down = true;
   await expect(approve).toBeDisabled({ timeout: 30_000 });
   await expect(approve).toHaveAttribute("title", /Offline/);
+  await page.getByRole('button', { name: /Failures CI failed on main|Blocked work CI failed on main/ }).click();
   await expect(page.getByRole("button", { name: "Dismiss notice" })).toBeDisabled();
-  await expect(page.getByRole("status").filter({ hasText: "Showing the last data received" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("main").getByRole("status").filter({ hasText: "Showing the last data received" })).toBeVisible({ timeout: 30_000 });
   down = false;
+  await page.getByRole('button', { name: /ui-polish asks to publish/ }).click();
   await expect(approve).toBeEnabled({ timeout: 30_000 });
 });
 
@@ -37,17 +39,16 @@ test("sidebar: Settings and Guide stay in view with many live sessions", async (
     observed_state: i % 3 === 0 ? "waiting_input" : i % 3 === 1 ? "active" : "idle" }));
   await page.route("**/api/sessions", (route) => route.request().method() === "GET" ? route.fulfill({ json: many }) : route.continue());
   await page.goto("/");
-  const nav = page.getByRole("navigation", { name: "Main" });
-  await expect(nav.getByRole("link", { name: /^busy-0 / })).toBeVisible();
-  for (const name of ["Settings", "Guide", "Audit"]) {
-    const link = nav.getByRole("link", { name, exact: true });
-    await expect(link).toBeInViewport({ ratio: 1 });
-    const box = (await link.boundingBox())!;
-    const footer = (await page.getByRole("button", { name: "Sign out" }).first().boundingBox())!;
-    expect(box.y + box.height).toBeLessThanOrEqual(footer.y);
-  }
-  const pinned = nav.getByRole("group", { name: "Live sessions" });
-  expect(await pinned.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const nav = page.getByRole('navigation', { name: 'Rail', exact: true });
+  await nav.getByRole('button', { name: 'Sessions', exact: true }).click();
+  const context = page.getByRole('complementary', { name: 'Context sidebar' });
+  await expect(context.getByRole('link', { name: /^busy-0 / })).toBeVisible();
+  await context.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toBeInViewport({ ratio: 1 });
+  await nav.getByRole('button', { name: 'Tools', exact: true }).click();
+  for (const name of ['Guide', 'Audit']) await expect(context.getByRole('link', { name, exact: true })).toBeVisible();
+  // Classic pinned Live sessions and its footer are replaced by Sessions context and the fixed rail.
+
 });
 
 // UX review R11: no CSP error for an inlined font (fonts are files, never data: URLs).

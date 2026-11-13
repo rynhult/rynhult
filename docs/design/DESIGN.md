@@ -218,22 +218,12 @@ Existing Inter/mono type, 11/12/15px shell label/meta/title scale, body type and
 mockup's future multi-pane layout or renderer/terminal palette.
 
 
-`new_shell` defaults off and is sensitive: enabling the Preview requires recent
-sign-in verification. A person's `ui_shell.<username>` preference opts in only
-when that feature is enabled. App owns a per-person, per-load latch, including trips
-to the full-screen `/board`. Neither query refreshes nor preference saves replace a
-mounted frame. Sign-out clears the latch. Preference/feature changes apply on the
-person's next reload or sign-in. The old frame and old Project Overview remain the
-default; Continue working is rendered only under the latched new frame.
-
-**Coordinator amendment, 1 November 2026:** no Switch now action, programmatic
-reload or layout-changing navigation. The preference says “Takes effect the next
-time you reload Rynhult.” If the feature becomes disabled while Shell is mounted,
-a non-modal notice says “An owner turned the new layout off. Rynhult will use the
-standard layout the next time you reload.” It has no reload button. Save work
-before a self-initiated reload: scrollback and in-memory drafts are not preserved
-by this slice. Legacy form guards and draft persistence are unchanged. A shared
-unsaved-work registry and visible persistence failures are a separate P0 contract.
+The new layout is the sole application frame after rc.4. There is no layout
+preference, frame latch or `new_shell` feature flag. Authentication supplies the
+stable opaque person ID used to namespace browser-local arrangements; its value
+is unchanged from the retired preference endpoint. A cold `/board` document
+loads without a frame; subsequent Board visits retain the mounted working views.
+Migration 0088 removes stored layout preferences and the retired admin choice.
 
 - **Navigation:** `shell/navigation.ts` derives rail and Tools from `navFor`'s role,
   group-administration, desktop and feature filtering. Its level-visibility hook
@@ -261,7 +251,7 @@ unsaved-work registry and visible persistence failures are a separate P0 contrac
   and offline slash distinguish states without relying on colour alone. Unrestricted
   uses solid warning fill and status ink; older-session counts use an amber marker.
   Stale data is labelled last known. Shared policy selection and member boundaries
-  stay unchanged; the standard layout and frozen-session badges keep their dialogs.
+  stay unchanged; frozen-session badges keep their dialogs.
 - **Sidebar sizing (polish 1):** a focusable vertical separator resizes 208–400 px,
   using pointer capture, Left/Right steps of 8 px, Home/End limits and double-click
   reset to 256 px. Width and collapse persist in origin/person local keys. F6
@@ -280,7 +270,7 @@ unsaved-work registry and visible persistence failures are a separate P0 contrac
   absent member-visible load data means no load module. Usage retains account,
   provider, window, age and source; no cross-provider utilization total.
 - **Header customization (AC-008):** GET/PUT `/api/preferences/ui-header` stores
-  `ui_header.<authenticated username>`, using ui-shell's principal/CSRF contract.
+  `ui_header.<authenticated username>`, using the authenticated caller and CSRF contract.
   Installation tokens have their own principal namespace. The preference is
   `{order, hidden}`: order is a permutation of the five known optional module IDs
   (`machine_load`, `plan_usage`, `go_to`, `conversation_search`, `file_search`),
@@ -410,12 +400,11 @@ links and shared tokens, including phone wrapping and focus outlines.
 P2 adds server-backed personal working layouts and retained terminal/editor
 resources, as described below.
 
-### Opt-in page chrome (U1)
+### Page chrome (U1)
 
-`components/shell/PagePrimitives.tsx` provides page-body presentation, separate
-from the shared header/sidebar and the future column runtime. Each primitive
-checks the existing `ShellChoice`; standard layout delegates to `ui.tsx` with
-unchanged props and markup. Nothing changes feature defaults or preferences.
+`components/shell/PagePrimitives.tsx` supplies page-body presentation for the
+application frame. Shared domain widgets retain their existing controls and
+semantics; there is no classic delegation or layout context.
 
 | Primitive | Contract |
 | --- | --- |
@@ -549,13 +538,13 @@ member visibility. Recent results reuses Knowledge and its document viewer.
 
 ### New-shell polish round 3
 
-The optional shell replaces its Inbox status banner with an open-count rail badge (zero hidden, visual 99+ cap, full accessible count and unavailable/stale wording). The standard layout retains its existing banner. Inbox remains the destination for every notice category.
+The optional shell replaces its Inbox status banner with an open-count rail badge (zero hidden, visual 99+ cap, full accessible count and unavailable/stale wording). Inbox remains the destination for every notice category.
 
 New-shell session pages use one primary line plus a tabs row. Title/provider/state and primary lifecycle controls remain visible; metadata and secondary actions use Session details. Delivery is an inline chip linking to Activity. Retained terminal controls render into the tab row through a portal owned by the same SessionPage; no terminal-owner acquisition, writer fencing or lifecycle behavior changes. Secondary terminal controls use the shared keyboard-accessible popover. Narrow panes wrap controls without widening the working column.
 
 Hosts context links show names and connection dots only, pointing directly to the existing per-host view. Rich observations remain in the Hosts overview and existing host pages. Every rail item opens its primary page directly; Tools opens Catalog. Useful sub-navigation remains, with no intermediate open-page links. Grid and Overview hide their context columns. Retained working resources survive rail navigation. These are presentation changes only, with no permission or legacy-layout changes.
 
-Shell follow-up: Grid adopts ShellPage/Workbar while keeping its flexible terminal area; standard layout delegates to its original frame. Rail selection derives from whole route segments in authorized navigation, including nested session/project and Tools routes. Terminal key rows use coarse-pointer visibility rather than viewport width, so narrow desktop panes do not acquire touch chrome.
+Shell follow-up: Grid adopts ShellPage/Workbar while keeping its flexible terminal area; Rail selection derives from whole route segments in authorized navigation, including nested session/project and Tools routes. Terminal key rows use coarse-pointer visibility rather than viewport width, so narrow desktop panes do not acquire touch chrome.
 
 The context column reserves horizontal space beside its heading for collapse, rather than an empty band above it. Title and short stats form a compact header. Scoped lists use 36–40px desktop rows and at least 44px coarse-pointer targets; long content may wrap. Footer hints stay muted, and project titles retain their full accessible name and hover title.
 

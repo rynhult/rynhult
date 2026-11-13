@@ -263,3 +263,14 @@ test('a workspace file keeps its folder only in the resolved location', () => {
   assert.deepEqual(fileTarget(view('file:workspace:abc:a.md', '/workspaces/cedar/files?session=abc&file=a.md', 'file')), { location: 'workspace', id: 'abc', folder: 'cedar', path: 'a.md' });
   assert.equal(fileTarget(view('session:abc:terminal', '/sessions/abc', 'terminal')), null);
 });
+
+test('offline file placeholders become removable only after the server confirms loss', () => {
+  const layout = { schema_version: 2, focused: 0, filled: null, columns: [{ tabs: ['f-lost'], active: 'f-lost', width: 1 }], views: [{ id: 'f-lost', kind: 'file', file_ref: 'lost' }] };
+  const restored = fromServer(record(1, null, {}), layout).layout;
+  const key = Object.keys(restored.views)[0];
+  assert.equal(restored.views[key].unrestorable, false);
+  assert.equal(resolvePlaceholders(restored, {}).layout, restored);
+  const next = resolvePlaceholders(restored, { 'f-lost': { available: false } }).layout;
+  assert.equal(next.views[key].unrestorable, true);
+  assert.equal(resolvePlaceholders(next, { 'f-lost': { available: false } }).layout, next);
+});

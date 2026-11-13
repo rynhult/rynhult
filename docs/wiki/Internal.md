@@ -8,7 +8,9 @@ For people running, changing or reviewing ACC.
 | [Components](/Internal/Components) | Each part's job, interfaces and files |
 | [Data model](/Internal/Data-Model) | Tables and what they hold |
 | [Configuration](/Internal/Configuration) | Settings and environment variables |
+| [Inbox approvals](/Internal/Inbox-Approvals) | Bounded CLI facts, advisory labels, Push and existing hook authority |
 | [Security](/Internal/Security) | Auth, secrets, permissions, threat model |
+| [Child permission enforcement](/Internal/Child-Permission-Enforcement) | Parent proofs, admission checks, approval routing and remaining qualification |
 | [Development](/Internal/Development) | Setup, tests, lint, the demo instance, conventions |
 | [Operations](/Internal/Operations) | Install, deploy, back up, restore, runbook |
 | [Containers qualification runbook](/Internal/Containers-Qualification-Runbook) | Owner-only account/build/pin/setup/collect/rollback order and qualification pitfalls |

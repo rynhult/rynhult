@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, routeDemoSessions, expectAxeClean, wikiShotPath } from './helpers';
 
 // Artificial fixtures only; the suite owns the server and its temporary database.
-test.use({ storageState: AUTH_FILE, shellLayout: 'standard' });
+test.use({ storageState: AUTH_FILE, });
 for (const theme of ['dark', 'light'] as const) for (const width of [1440, 390]) {
   test(`brand review ${theme} ${width}`, async ({ page }) => {
     test.setTimeout(90000);
@@ -59,7 +59,7 @@ for (const theme of ['dark', 'light'] as const) for (const severity of ['critica
       session_id: null, session_name: null, project: null, created_at: now, updated_at: now, acked_at: null, resolved_at: null, publish_id: null,
     }] }));
     await page.goto('/');
-    const badge = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).locator('span.tnum');
+    const badge = page.getByRole('navigation', { name: 'Rail', exact: true }).getByRole('button', { name: /^Inbox/ }).locator('.shell-inbox-count');
     await expect(badge).toHaveText('1');
     const contrast = await badge.evaluate(el => {
       const style = getComputedStyle(el);

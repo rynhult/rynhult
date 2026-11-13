@@ -463,7 +463,7 @@ async def give(supervisor, caller_id, payload):
         db.add(attempt)
         db.flush()
         message = delivery.enqueue_in_transaction(db, supervisor, helper, 'session:' + caller.id,
-                                        delivery.origin_line(caller) + brief_text(attempt.brief), attempt_id=attempt.id)
+                                        delivery.origin_line(caller) + brief_text(attempt.brief), attempt_id=attempt.id, relay_service=True)
         attempt.brief = {**attempt.brief, 'delivery_id': message.id}
         selected.state, selected.session_id = 'started', helper.id
         row.state = 'running'

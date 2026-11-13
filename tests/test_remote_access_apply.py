@@ -98,7 +98,7 @@ async def test_matching_code_is_typed_from_the_new_device_and_single_use(api, en
     headers, _ = await setup(api, env, monkeypatch)
     await enable(api, headers)
     pending = await start(api, headers)
-    claim = (await api.post('/api/device-pairing/claim', json={'token': pending['link'].split('#')[1]})).json()
+    claim = (await api.post('/api/device-pairing/claim', json={'phone_confirmed': True, 'token': pending['link'].split('#')[1]})).json()
     code = claim['matching_code']
     assert len(code) == 6 and code.isdigit()
     detail = (await api.get('/api/devices/pairings/' + pending['id'])).json()
@@ -175,7 +175,7 @@ async def test_registry_reapply_rejects_revoked_device_in_disposable_caddy(api, 
             review = (await api.get('/api/remote-access/review')).json()
             result = await api.post('/api/remote-access/apply', headers=headers, json={'revision': review['revision']})
             assert result.status_code == 200, result.text
-            for path in ('/pair-device', '/api/device-pairing/claim', '/api/devices/pairings', '/api/nodes/connect', '/preview/probe'):
+            for path in ('/pair-device', '/api/device-pairing/claim', '/api/device-pairing/preview', '/api/devices/pairings', '/api/nodes/connect', '/preview/probe'):
                 assert lab.request('active', path=path) == 403
             assert lab.count == 0
             assert lab.request('active', path='/api/devices') == 200

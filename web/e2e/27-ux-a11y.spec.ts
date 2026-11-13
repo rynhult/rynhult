@@ -21,7 +21,7 @@ for (const scheme of ["dark", "light"] as const) {
     const id = sessionId = await sessionWithChanges(page, `a11y-demo-${randomUUID().slice(0, 8)}`);
     for (const url of AXE_PAGES) await expectAxeCleanPage(page, url);
     for (const tab of SESSION_TABS) {
-      await expectAxeCleanPage(page, `/sessions/${id}${tab}`, () => expect(page.getByRole("tablist")).toBeVisible());
+      await expectAxeCleanPage(page, `/sessions/${id}${tab}`, () => expect(page.getByRole("tablist", { name: "Session views", exact: true })).toBeVisible());
     }
     // Whole diff lines are semantic pointer targets; keyboard navigation stays on the named region.
     await page.goto(`/sessions/${id}?tab=changes`);
@@ -43,7 +43,7 @@ for (const scheme of ["dark", "light"] as const) {
     });
     await expectAxeCleanPage(page, "/", async () => {
       await page.getByRole("button", { name: "New session" }).click();
-      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByRole("region", { name: "New session", exact: true })).toBeVisible();
     });
     for (const path of ["**/api/sessions", "**/api/projects", "**/api/attention"]) {
       await page.route(path, (route) => route.request().method() === "GET" ? route.fulfill({ json: [] }) : route.continue());
@@ -73,10 +73,10 @@ test("tabs: arrow keys on Catalog and the session page", async ({ page }) => {
 
   const id = sessionId = await sessionWithChanges(page, `a11y-tabs-${randomUUID().slice(0, 8)}`);
   await waitForSessionState(page, id, "idle", "claude_hook");
-  const terminal = page.getByRole("tab", { name: "Terminal" });
+  const terminal = page.getByRole("tab", { name: "Terminal", exact: true });
   let release!: () => void;
   const terminalChunk = new Promise<void>(resolve => { release = resolve; });
-  await page.route(/\/assets\/Terminal-[^/]+\.js(?:\?.*)?$/, async route => {
+  await page.route(/\/assets\/terminalHostLayer-[^/]+\.js(?:\?.*)?$/, async route => {
     await terminalChunk;
     await route.continue();
   });
@@ -84,32 +84,39 @@ test("tabs: arrow keys on Catalog and the session page", async ({ page }) => {
     await page.goto(`/sessions/${id}`);
     await terminal.focus();
     release();
-    await expect(page.getByText("Read-write", { exact: true })).toBeVisible();
-    await expect(terminal).toBeFocused();
+    await expect(page.getByText("You control this terminal", { exact: true })).toBeVisible();
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    await terminal.focus(); await expect(terminal).toBeFocused();
   } finally {
     release();
   }
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(/\?tab=files$/);
-  await expect(page.getByRole("tab", { name: "Files" })).toBeFocused();
-  await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "session-tabs-tab-Files");
+  await expect(page.getByRole("tab", { name: "Files", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Files", exact: true })).toBeFocused();
+  await expect(page.getByRole("tabpanel", { name: "Files", exact: true })).toHaveAttribute("aria-labelledby", (await page.getByRole("tab", { name: "Files", exact: true }).getAttribute("id"))!);
   await page.keyboard.press("End");
-  await expect(page).toHaveURL(/\?tab=spec$/);
-  await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "session-tabs-tab-Setup");
+  await expect(page).toHaveURL(/\?tab=changes$/);
+  await expect(page.getByRole("tab", { name: /^Changes/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /^Changes/ })).toBeFocused();
+  await expect(page.getByRole("tabpanel", { name: /^Changes/ })).toHaveAttribute("aria-labelledby", (await page.getByRole("tab", { name: /^Changes/ }).getAttribute("id"))!);
   await page.keyboard.press("Home");
   await expect(terminal).toHaveAttribute("aria-selected", "true");
 });
 
-test("a tab the session can't show falls back to Terminal (SE-13)", async ({ page }) => {
+test("an unavailable tab stays neutral until the person opens Terminal (SE-13)", async ({ page }) => {
   const id = sessionId = await sessionWithChanges(page, `a11y-fallback-${randomUUID().slice(0, 8)}`);
   await page.goto(`/sessions/${id}?tab=team`);
-  await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tabpanel")).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'This saved view can’t be opened' })).toBeVisible();
+  await expect(page.locator('.xterm')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Open Terminal', exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Terminal", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Terminal", exact: true })).toBeVisible();
 });
 
 test("names match what is shown: the Jump to button and Files rows (NAV-7)", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Jump to…" }).first()).toHaveAttribute("aria-keyshortcuts", "Control+K");
+  await expect(page.getByRole("button", { name: "Go to…" }).first()).toHaveAttribute("aria-keyshortcuts", "Control+K Meta+K");
   const id = sessionId = await sessionWithChanges(page, `a11y-files-${randomUUID().slice(0, 8)}`);
   await page.goto(`/sessions/${id}?tab=files`);
   await expect(page.getByRole("button", { name: "Open app.py, modified", exact: true })).toBeVisible();

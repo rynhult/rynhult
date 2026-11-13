@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { openAdvanced, wikiShotPath } from "./helpers";
+import { openAdvanced, selectSessionView, wikiShotPath } from "./helpers";
 import { expect, test } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -44,11 +44,11 @@ test('Development workspace: local creation, capabilities and isolated session',
   const a11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(a11y.violations).toEqual([]);
   await page.getByRole('button', { name: 'New session', exact: true }).last().click();
-  await openAdvanced(page.getByRole('dialog'));
+  await openAdvanced(page.getByRole('region', { name: 'New session', exact: true }));
   await expect(page.getByRole('checkbox', { name: /Own worktree/ })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: /Own worktree/ })).toBeDisabled();
   await expect(page.getByLabel('Start from', { exact: true })).toHaveCount(0);
-  await page.getByRole('dialog').getByRole('button', { name: 'Rename', exact: true }).click();
+  await page.getByRole('region', { name: 'New session', exact: true }).getByRole('button', { name: 'Rename', exact: true }).click();
   await page.getByLabel('Name', { exact: true }).fill('Build demo');
   const launching = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === '/api/sessions');
@@ -61,9 +61,9 @@ test('Development workspace: local creation, capabilities and isolated session',
   const session = await (await page.request.get(`/api/sessions/${sessionId}`)).json();
   expect(session.worktree_branch).toMatch(/^acc\/build-demo-/);
   expect(session.cwd).not.toBe(workspace.workspace_path);
-  await page.getByRole('tab', { name: 'Changes' }).click();
+  await selectSessionView(page, 'Changes');
   writeFileSync(`${session.cwd}/demo.md`, '# Private preview\n');
-  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  await selectSessionView(page, 'Files');
   await page.getByRole("button", { name: fileRow("demo.md") }).click();
   await expect(page.getByRole('heading', { name: 'Private preview', exact: true })).toBeVisible();
   await page.goto('/workspaces');

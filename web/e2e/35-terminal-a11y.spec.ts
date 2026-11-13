@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { AUTH_FILE, control, csrfHeaders, sessionWithChanges } from "./helpers";
+import { AUTH_FILE, control, csrfHeaders, sessionWithChanges, selectSessionView } from "./helpers";
 
 test.use({ storageState: AUTH_FILE });
 
@@ -21,8 +21,10 @@ test("terminal: screen-reader rows, F6 leaves it, state changes are announced", 
   await expect(input).toBeFocused();
   await expect(page.locator(".xterm-accessibility-tree")).toHaveCount(1);
   await expect(page.locator(".xterm .live-region")).toHaveAttribute("aria-live", "off");  // the stream is never read aloud
-  await expect(page.getByText("leaves the terminal")).toBeVisible();
-  await expect(input).toHaveAttribute("aria-describedby", `leave-${id}`);
+  await page.getByRole("button", { name: "Terminal options", exact: true }).click();
+  await expect(page.getByText("F6 returns to the view tabs. Closing this view leaves the session running.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await input.focus();
 
   await page.keyboard.press("F6");
   await expect(input).not.toBeFocused();
@@ -32,6 +34,11 @@ test("terminal: screen-reader rows, F6 leaves it, state changes are announced", 
   await expect(input).toBeFocused();
   await page.keyboard.press("Shift+F6");
   await expect(input).not.toBeFocused();
+
+  // Hiding and revealing the retained host recreates xterm's accessibility tree.
+  await selectSessionView(page, 'Activity');
+  await selectSessionView(page, 'Terminal');
+  await expect(page.locator(".xterm .live-region")).toHaveAttribute("aria-live", "off");
 
   // One live region on the page; the risk label is no longer one.
   const announcer = page.getByRole("status", { name: "Announcements" });

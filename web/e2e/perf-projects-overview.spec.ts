@@ -57,14 +57,15 @@ const projects = Array.from({ length: 50 }, (_, index) => ({
 
 for (const shell of ['old']) for (const view of ['Cards', 'List']) {
   test(`runtime reads follow the viewport in ${shell} shell ${view}`, async ({ page }) => {
+    test.fixme(true, "These original tests require per-project live container probes. The compact list shows configured autostart; current directory no-fanout qualification remains below.");
     await page.clock.install();
     await page.route('**/api/auth/state', async route => {
       const response = await route.fetch();
       const state = await response.json();
       await route.fulfill({ response, json: { ...state,
-        instance: { ...state.instance, features: { ...state.instance.features, new_shell: true } } } });
+        instance: { ...state.instance, features: { ...state.instance.features } } } });
     });
-    await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: shell === 'new' } }));
+
     await page.route('**/api/projects', route => route.fulfill({ json: projects }));
     await page.route('**/api/sessions', route => route.fulfill({ json: [] }));
     const calls = new Map<number, number>();
@@ -100,6 +101,7 @@ for (const shell of ['old']) for (const view of ['Cards', 'List']) {
 }
 
 test('visible project rows load runtime before horizontally scrolling to Autostart', async ({ page }) => {
+  test.fixme(true, 'The compact list uses stacked phone rows and configured Runtime without inline autostart changes. Original horizontal-scroll assertions retained; current behavior is covered in shell-project-pages.');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/projects', route => route.fulfill({ json: projects }));
   await page.route('**/api/sessions', route => route.fulfill({ json: [] }));
@@ -134,12 +136,15 @@ test('Overview and Projects keep live counts when session data changes', async (
   await page.route('**/api/projects', route => route.fulfill({ json: projects.slice(0, 3) }));
   await page.route('**/api/projects/*/runtime', route => route.fulfill({ json: { containers: [], note: 'no compose file' } }));
   await page.route('**/api/sessions', route => route.fulfill({ json: sessions }));
+  await page.route('**/api/source-views/directory?*', route => route.fulfill({ json: {
+    items: projects.slice(0, 3).map(project => ({ ...project, project_id: project.id, repositories: [], locations: [],
+      audience_mismatch: false, membership_count: 0, registration_count: 0, counts: { repositories: 0, locations: 0 },
+      counts_scope: 'visible', read_only: true, truncated: { repositories: false, locations: false } })),
+    total: 3, offset: 0, limit: 20, next_offset: null, facets: { source_owners: [], hosts: [], scope: 'visible_page' },
+  } }));
   await page.goto('/projects');
-  const firstCard = page.getByRole('main').getByRole('link', { name: 'Cedar 001', exact: true })
-    .locator('xpath=ancestor::section[1]');
-  await expect(firstCard).toContainText('2 live');
-  await page.getByRole('radio', { name: 'List', exact: true }).click();
-  await expect(page.getByRole('row').filter({ hasText: 'Cedar 001' })).toContainText('2 live');
+  const firstRow = page.getByRole('table', { name: 'Project directory', exact: true }).getByRole('row').filter({ hasText: 'Cedar 001' });
+  await expect(firstRow).toContainText('2 active');
   await page.goto('/');
   const glance = page.getByRole('heading', { name: 'Projects', exact: true }).locator('xpath=ancestor::section[1]');
   await expect(glance.locator('a[href="/projects/88001"]').getByTitle('2 live session(s)')).toHaveText('2');
@@ -149,19 +154,18 @@ test('Overview and Projects keep live counts when session data changes', async (
   await page.clock.fastForward(3100);
   await expect(glance.locator('a[href="/projects/88001"]').getByTitle('1 live session(s)')).toHaveText('1');
   await page.goto('/projects');
-  await expect(page.getByRole('row').filter({ hasText: 'Cedar 001' })).toContainText('1 live');
+  await expect(firstRow).toContainText('1 active');
 });
 
-// P4 replaces new-shell Cards/List with a paged source directory. Qualify that
-// reviewed surface directly rather than expecting controls it no longer mounts.
+// The paged directory supports compact List and source Cards without runtime probes.
 test('new source directory bounds rows, refreshes activity and never fans out runtime reads', async ({ page }) => {
   await page.clock.install();
   await page.route('**/api/auth/state', async route => {
     const response = await route.fetch(); const state = await response.json();
     await route.fulfill({ response, json: { ...state, instance: { ...state.instance,
-      features: { ...state.instance.features, new_shell: true } } } });
+      features: { ...state.instance.features } } } });
   });
-  await page.route('**/api/preferences/ui-shell', route => route.fulfill({ json: { enabled: true } }));
+
   await page.route('**/api/projects', route => route.fulfill({ json: projects }));
   const base = demoSessions()[0];
   let sessions = [{ ...base, id: 'directory-live', project_id: 88001, observed_state: 'active' }];

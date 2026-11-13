@@ -1,3 +1,4 @@
+import { ParentChain } from './ParentChain';
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { post } from "../lib/api";
@@ -15,6 +16,7 @@ export function PublishSummary({ request, facts: showFacts = true }: { request: 
   return (
     <div className="space-y-1">
       {facts && <p className="text-xs text-muted">{facts}</p>}
+      <ParentChain chain={request.parent_chain} owner={request.root_owner} />
       {warnings.map((w) => <Note key={w.text} tone={w.tone} icon={AlertTriangle} className="w-fit">{w.text}</Note>)}
     </div>
   );
@@ -48,6 +50,7 @@ export function PublishActions({ request }: { request: Actionable }) {
             <li>After: port <span className="tnum font-mono text-fg">{request.port ?? "?"}</span>, on {where(request.access)}</li>
           </ul>
           {warnings.length > 0 && <ul className="list-disc space-y-1 pl-5 text-wait">{warnings.map((w) => <li key={w.text}>{w.text}</li>)}</ul>}
+          <ParentChain chain={request.parent_chain} owner={request.root_owner} />
           <p>Reject it unless you meant to move this name.</p>
         </div>,
       });
@@ -59,6 +62,7 @@ export function PublishActions({ request }: { request: Actionable }) {
       body: <div className="space-y-2">
         <p>Approving creates its DNS record and web server site now: {request.host} will serve port <span className="tnum font-mono text-fg">{request.port ?? "?"}</span> on {where(request.access)}.</p>
         <ul className="list-disc space-y-1 pl-5 text-wait">{warnings.map((w) => <li key={w.text}>{w.text}</li>)}</ul>
+        <ParentChain chain={request.parent_chain} owner={request.root_owner} />
         <p>Reject it if this isn't the app you expect on that port.</p>
       </div>,
     }))) return;
@@ -76,7 +80,7 @@ export function PublishActions({ request }: { request: Actionable }) {
   }
   if (request.status === "applied" && request.action === "publish") {
     return <Button size="sm" variant="danger" disabled={act.isPending || offline} title={offline ? OFFLINE_TITLE : undefined}
-      onClick={async () => (await confirm({ title: `Unpublish ${request.host}?`, body: "Its Caddy site and its DNS record are removed. The app keeps running on its port.", confirm: "Unpublish", danger: true })) && act.mutate({ verb: "unpublish" })}>Unpublish</Button>;
+      onClick={async () => (await confirm({ title: `Unpublish ${request.host}?`, body: <><p>Its Caddy site and its DNS record are removed. The app keeps running on its port.</p><ParentChain chain={request.parent_chain} owner={request.root_owner} /></>, confirm: "Unpublish", danger: true })) && act.mutate({ verb: "unpublish" })}>Unpublish</Button>;
   }
   return null;
 }

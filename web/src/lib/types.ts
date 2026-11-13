@@ -97,6 +97,10 @@ export interface Run {
 }
 
 export interface SessionSummary {
+  ready_for_review?: boolean;
+  pull_lifecycle?: { number: number; url: string; state: string } | null;
+  dropped_mcps?: string[];
+  session_relay?: boolean;
   owner?: string | null;
   claude_auth?: "subscription" | "api_key";
   auth?: { mode: string | null; automation_refusal?: import("../components/ClaudeAutomationNotice").AutomationRefusal | null };
@@ -109,6 +113,7 @@ export interface SessionSummary {
   git?: { branch?: string; ahead?: number; lfs?: boolean; commits?: { sha: string; subject: string }[]; error?: string };
   team_stop_pending?: boolean;
   team_id?: string | null; parent_session_id?: string | null; team_depth?: number;
+  parent_chain?: string[]; root_owner?: string | null; native_helpers_capped?: boolean;
   id: string;
   project_id: number | null;
   project: string;
@@ -187,6 +192,8 @@ export interface Observation {
 }
 
 export interface AuthState {
+  push_presence_enabled?: boolean;
+  person_id?: string | null;
   setup_required: boolean;
   authenticated: boolean;
   username: string | null;
@@ -209,6 +216,12 @@ export interface AuthState {
 }
 
 export interface AttentionItem {
+  relay_decision?: import('./sessionRelayTypes').RelaySnapshot['pendingDecisions'][number];
+  relay_decision_available?: boolean;
+  relay_allow_enabled?: boolean;
+  parent_chain?: string[];
+  root_owner?: string | null;
+  approval_card?: { command: string | null; cwd: string | null; diff: string | null; label: string; tool_name?: string; file_path?: string | null };
   permission_id?: string | null;
   permission_input?: string | null;
   permission_can_approve?: boolean;
@@ -243,6 +256,7 @@ export interface AttentionItem {
     /** As on Publishing (UX review IN-1): null port_owner means nobody reserved the port. */
     action?: "publish" | "unpublish"; requested_by?: string; reason?: string | null; project?: string | null;
     port_owner?: PublishRequest["port_owner"];
+    parent_chain?: string[]; root_owner?: string | null;
   } | null;
   tool?: ToolRequest | null;
 }
@@ -252,6 +266,7 @@ export interface ToolPin {
   owner: string; destination: string;
 }
 export interface ToolRequest extends ToolPin {
+  parent_chain?: string[]; root_owner?: string | null;
   operation: "install" | "remove"; reason: string; status: string; detail: string | null;
   resolved_version: string | null; created_at: string;
   decided_by?: string | null;
@@ -283,6 +298,8 @@ export interface LoginFlow {
 }
 
 export interface PublishRequest {
+  parent_chain?: string[];
+  root_owner?: string | null;
   target_ip?: string | null;
   id: string;
   action: "publish" | "unpublish";
@@ -424,7 +441,7 @@ export interface GithubSnapshot {
   repo?: { full_name: string; html_url: string; private: boolean; default_branch: string; pushed_at: string; description?: string };
   branches?: { name: string; protected: boolean; sha: string }[];
   commits?: { sha: string; message: string; author: string; date: string; url: string }[];
-  pulls?: { number: number; title: string; author: string; draft: boolean; head: string; updated_at: string; url: string }[];
+  pulls?: { head_repo?: string | null; lifecycle?: string; state?: string; number: number; title: string; author: string; draft: boolean; head: string; updated_at: string; url: string }[];
   issues?: { number: number; title: string; author: string; labels: string[]; updated_at: string; url: string }[];
   runs?: { id: number; name: string; branch: string; event: string; status: string; conclusion: string | null; created_at: string; url: string }[];
 }

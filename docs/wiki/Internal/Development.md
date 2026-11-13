@@ -48,7 +48,173 @@ A fenced same-person reconnect grant records `same_person_reconnect` with
 `partial=true` and no previous holder in the session control audit. The audit
 contains no terminal input text.
 
+Codex relay view supervisors and Claude SDK/TUI enclosures pin the owning broker
+with a Linux pidfd. Broker process death stops the owned native tree and records
+its empty-tree exit;
+a replacement broker cannot inherit that view or its input authority.
+
+Relay queued-turn cancellation authorizes and commits its receipt before any
+broker cleanup. It serializes with submit/drain/take and discards only that
+canceled operation's unsent private payload, without waiting for the active turn
+to complete. The canceled receipt and operation-specific audit remain durable.
+
+The dormant relay service-delivery path preserves API/team service provenance in
+its receipt while binding each operation to the current person-owned Codex Chat
+writer. Its opaque grant rechecks full payload digest, run/binding, assignment,
+source run, team grant, owner/holder budgets and writer revision before provider
+admission. It does not transfer the writer or fall back to terminal typing. Old
+queues without that durable service binding remain refused. Accepted waiting
+operations return without waiting for native turn completion; expired queued
+stages are reclaimed without deleting accepted or uncertain receipts. Production
+service and public writer qualification flags remain off.
+
+A conclusive broker/provider rejection releases the matching current turn's
+active claim after the receipt proof is validated. No native completion event
+will arrive for a refused turn. Accepted or uncertain work keeps its claim;
+late rejection evidence cannot release a replacement run or another turn.
+
+For API-key Claude, a separate false qualification gate binds service input to
+the current owned SDK process. An SDK query write stays unconfirmed; only its
+correlated result settles the existing service journal claim and releases that
+staged payload. Missing result/EOF never settles it. API-key Claude teams use the
+same current SDK owner, with verified source-run, assignment and frozen team-grant
+checks.
+Subscription Claude is never driven automatically.
+
+Trusted lead, parent, run-mode and project-brief notices carry an immutable server
+intent and SCHEDULE service actor. Coalescing creates a fresh delivery identity and
+cancels only an unsubmitted predecessor; submitted or uncertain receipts are never
+rewritten or replayed. Parent batches retain their original delivery window. A
+notice may wait for an existing reviewed runtime, but cannot start one. Deferred
+binding refreshes the notice under the session lock so concurrent supersession
+cannot create a live operation for an expired notice. All
+service qualification flags remain off.
+
+HA admission owns a child task for each WebSocket handler. Demotion cancels
+that child and fences its effects while the server's outer ASGI task remains
+available to send the reconnect close frame. The admitted activity stays held
+until the child handler has unwound; socket task registration is removed on exit.
+
 ## Running the checks
+
+
+### Portable tests and native relay qualification
+
+The default `python -m pytest` run excludes `relay_native` via `pytest.ini`.
+These marked tests invoke installed agent CLIs, use a self-contained runtime
+under this checkout's `.acc`, or depend on private handoff evidence and its
+recorded source hashes. Installing a CLI in the ordinary VM `.venv` does not
+satisfy those requirements. The tests and all their assertions remain intact;
+excluding them from unit/CI runs is not native qualification.
+
+From the repository root, this command runs the marked qualification tests in a
+frozen project environment at the required location:
+
+```sh
+PYTHONPATH=src:tests UV_PROJECT_ENVIRONMENT=.acc/relay-native uv run --frozen --extra claude-agent python -m pytest -m relay_native --relay-long-native-proofs -n 1 tests/test_session_relay*.py
+```
+
+Use the reviewed source revision with its private evidence present, the exact
+pinned Codex/Claude binaries, and the documented bubblewrap/tmux/socat/native
+sandbox dependencies. Do not mount a live account or substitute another CLI or
+evidence hash. This command includes the deliberately long lifetime proofs;
+native qualification can take hours. Narrow it to explicitly reviewed related
+selectors when checking a fix. Any temporary native repetition driver must also
+carry `relay_native` and be invoked with `-m relay_native`.
+
+Browser tests that start the offline native lab, the installed Codex/Claude
+fixture, or read its retained evidence carry `@relay-native`. The standard
+Playwright config excludes that tag from every project unless
+`ACC_E2E_RELAY_NATIVE=1` is explicitly set. Pure browser fixtures stay in the
+default collection. After preparing the locked environment above, installing
+project web dependencies and building assets on the reviewed revision, run from
+the repository root:
+
+```sh
+(cd web && ACC_E2E_RELAY_NATIVE=1 ACC_E2E_PYTHON="$PWD/../.acc/relay-native/bin/python" npx playwright test e2e/session-relay.spec.ts --project=desktop-stateful --workers=1 --grep @relay-native)
+```
+
+This uses the normal config and includes imported RC recovery qualification.
+The persisted-main second-process rehearsal additionally requires its saved
+`ACC_E2E_SEED_DATA`; an unmet prerequisite remains a skip, not a proof. Both the
+opt-in and native tag selector are intentional: `--grep` alone cannot override
+the default exclusion. Keep the same pinned binaries/private evidence and no
+live account prerequisites as Python qualification.
+
+Mixed modules mark only their native/evidence-dependent tests. Fake-CLI adapter,
+policy, namespace and resource-cleanup unit tests remain in the default run.
+`tests/relay_native_inventory.json` records the audited split. The explicit
+`safety_gates.py` runner overrides the default marker expression for its selected
+modules so it still collects their unit and native tests; missing/skipped proofs
+continue to leave its report incomplete. CI and `tests/load_suite.py` retain the
+portable default rather than silently launching real agent qualification.
+
+
+Relay observer reconnects reuse a stable client ID per mounted panel. A new
+negotiation replaces that client's previous token within the same authenticated
+login and session, including after history/run resets. Distinct tabs retain their
+own tokens. The 16-entry scope cap uses that stable login/session scope; the
+512-entry process cap remains in effect. These tokens grant observer access only.
+See `scripts/session_relay_qualification/README.md` for the isolated native
+metadata probe and its qualification limits.
+
+Claude Terminal waits until the first real Chat message has an accepted receipt.
+The selector explains the wait and leaves the Chat owner running untouched.
+This presentation hint grants no input authority; the native preflight refusal
+for a conversation that cannot yet be resumed remains in force.
+
+Relay native owner exit publications preserve known status/signal in SessionRun
+and publish a retained normal, abnormal, or unknown exit outcome. Only status0
+is a normal exit. For R1, abnormal or unknown termination offers **Recover into a new session**.
+This opens the ordinary launch form with an empty initial prompt; the person chooses
+and launches a fresh conversation. Old receipts, output and decisions stay readable
+in the original session, and nothing is replayed. Same-session automatic
+re-enrollment after a crash is later work, outside R1. Reviewed idle Chat/Terminal
+switches remain distinct from crash recovery.
+Runtime transport loss fences input immediately and records an unknown outcome;
+it does not establish process death or set a native exit timestamp. Authorized
+observers can still read the retained hub event history after sealing. The events
+GET endpoint accepts optional `runId` to select a retained run from the same
+session; it keeps the existing item/byte bounds and rechecks current login,
+resource access and redaction. Selected-run cursors cannot be reused for another
+run or the unfiltered feed. This selection neither claims input nor changes the
+current run or starts a provider. A native
+interrupt RPC error alone cannot prove the turn inactive: its result remains
+unknown and the same operation is never replayed.
+
+Verified idle Claude Terminal replacement retains the exact retired owner's
+bounded pane snapshot before that view is reclaimed. The authenticated checkpoint
+reauthorizes and redacts it before storage; old-run reads reauthorize and redact
+again. It is a received screen, with an unknown vendor exit outcome, rather than
+a full transcript or successful-exit claim. Missing or oversized screens stay
+unavailable. Selecting an old run grants no input and preserves the current draft.
+
+The qualified public Codex interrupt route uses the existing full registered
+payload/durable receipt and private broker grant. It is restricted to the current
+person's bound Chat attachment, exact active accepted turn, run and control
+revision. Alternate views, observer tabs, replacement turns and stale authority
+refuse before native cancellation. Registration and dispatch stay unavailable
+under the production qualification gate. Accepted means requested; a separate
+native turn.interrupted event confirms the turn outcome. An uncertain interrupt
+receipt does not become accepted merely because the turn later stops. Native
+Terminal interrupt mediation and Claude public interrupt qualification remain
+unavailable. Final grant resolution checks both original and durable deadlines.
+
+Exclusive Claude relay launches pin the SDK configuration directory to the
+authenticated account's default HOME/.claude, matching the clean native TUI.
+Masking an inherited config variable to an empty string is insufficient: Claude
+interprets that as the workspace. Clean supervised terminal commands use exec
+through the final shell so the tmux pane PID is the enclosure supervisor PID;
+the native started/whole-tree receipts must match it. These roots and process
+identities are broker-derived, never project credential overrides.
+
+Claude owner replacement detaches the previous owner only after its authenticated
+whole-tree exit and resource reclamation. A terminal launch worker is shielded
+from caller cancellation and has an internal authority gate immediately before
+tmux creation. A completed refusal before that gate can be reclaimed without a
+new process receipt. Once the gate is crossed, an uncertain launch stays fenced;
+cleanup of a known partial target requires that target's own authenticated
+empty-tree receipt. Neither case automatically retries or revives the source.
 
 The supported full-suite platform is Linux, with `/proc`, git and tmux on PATH. Install Python 3.12+, uv, Node.js 22+ and npm using your platform's documented route. Chromium also needs its OS libraries; on a machine missing them, ask its administrator to provision Playwright's documented Linux dependencies. macOS and Windows node installers have separate checks; the full server suite is not qualified on those platforms. No vendor CLI, subscription, root access or running ACC service is needed for the default suite.
 
@@ -77,7 +243,7 @@ or sending program resize/input frames. Writer resizing updates the observer too
 The WebKit project requires an already provisioned Playwright WebKit browser; Chromium success alone does not
 qualify Safari.
 
-The classic frame loads its command palette when Jump to… is first opened, through the shared lazy-import retry path. Cold page payload budgets exclude the unopened palette.
+The application frame loads its command palette when Go to… is first opened, through the shared lazy-import retry path. Inbox sidebar category links also load through that path only in Inbox mode; session first paint keeps their category grouping and navigation code outside its static imports. Presence and heartbeat startup do not change. Cold page payload budgets exclude the unopened palette. Session Setup, Automation, Activity and artifact-viewer panels also load through the lazy-import retry path when opened; artifact counts keep their lightweight shared polling hook. TerminalOwner loads its host only when a terminal is opened, so a cold Files link avoids xterm. The session budget includes AppFrame, Shell, RegisteredTerminal and the terminalHostLayer chunk, so it still measures the mounted frame and terminal. Josh approved the real-frame CSS baseline on November 5, 2026; the checker applies the existing 5% headroom and JS baselines stay unchanged. Browser journeys all use the production frame. Shared Terminal primitive input, composition, wheel and selection journeys use expanded Grid; the session owner, polling, paste, text-output and focus journeys use the current registered session terminal. Both use the normal Playwright config. Selection-hint coverage runs in `terminal-chromium`; predictive native-input coverage uses the installed WebKit through `terminal-webkit`.
 
 The normal browser projects use the plain-HTTP disposable fixture. Secure-cookie
 recovery tests run separately with its self-signed HTTPS fixture (Chromium and
@@ -473,6 +639,13 @@ node web/scripts/wiki-shots.mjs /tmp/acc-demo      # writes docs/wiki/.attachmen
 ```
 Retake screenshots whenever the UI they show changes, then run `acc-wiki-check`.
 
+Compatibility identity tables from migration 0084 survive shallow downgrades so
+re-upgrade preserves their identities. When downgrading below 0063, remove those
+retained tables in foreign-key dependency order before their legacy machine-account,
+placement, node and project targets disappear. The existing source-only-state and
+approved-account downgrade refusals still apply. Regression coverage is in
+`tests/test_postgres.py`, `tests/test_migration_round_trip.py` and `tests/test_sources.py`.
+
 ## Adding a database migration
 
 Before choosing a migration number, run this from the repository root:
@@ -581,7 +754,16 @@ records, is published after scrubbing. Host-specific `docs/runbooks/` and
 artifacts stay private. Keep portable operations contracts in this wiki, with
 fictional hosts and documentation addresses rather than live deployment details.
 
-Test process cleanup records each owned tmux socket before use. A separate cleanup process collects its descendants even if the test parent is interrupted; Playwright also stops the test server from global teardown. Cleanup never targets other runs. Linux `/proc` supplies process identities; cleanup pins pidfds before signalling so PID reuse cannot redirect a signal. Each watchdog also checks its per-owner process marker before touching a server, so a reused socket belongs only to its new owner. Global teardown never treats a stale manifest’s socket name as authority; the server’s independent watchdog owns tmux cleanup.
+Test process cleanup records each owned tmux socket before use. A separate cleanup process collects its descendants even if the test parent is interrupted; Playwright also stops the test server from global teardown. Cleanup never targets other runs. Linux `/proc` supplies process identities; cleanup pins pidfds before signalling so PID reuse cannot redirect a signal. Each watchdog also checks its per-owner process marker before touching a server, so a reused socket belongs only to its new owner. Global teardown never treats a stale manifest’s socket name as authority; the server’s independent watchdog owns tmux cleanup. The watchdog calls `kill-server` after stopping
+owned descendants and removes only the recorded socket inode. It remembers
+authenticated socket inodes while tests run, so an abruptly killed server's stale
+entry can also be removed without touching a replacement. Pytest writes owner
+journals inside its private `--basetemp`; worker and controller session guards fail
+if a journaled server survives teardown, including after an xdist worker crash.
+Playwright global teardown waits for its watchdog's completion record and resolves
+its cleanup helper relative to the module, independent of the invocation directory.
+The broker's `exit-empty off` and `remain-on-exit on` settings remain in tests to
+exercise real session behavior; explicit server teardown handles those settings.
 
 Container-test relays start fake agents in separate process groups, outside tmux.
 Their launcher teardown drains accepted launch requests before collecting relays,
@@ -692,8 +874,8 @@ automatic promotion based on an all-PASS harness run. The owner still confirms C
 
 ## Keyboard primitives
 
-Compose `Tabs`, `Segmented`, `Dialog` and `Popover` from `components/ui.tsx` rather
-than adding another document-level key handler. Their shared behavior lives in
+Import `Tabs` from `components/Tabs.tsx`, and `Segmented`, `Dialog` and `Popover`
+from `components/ui.tsx`, rather than adding another document-level key handler. Their shared behavior lives in
 `components/keyboard.ts`; `lib/keyboard.ts` contains the pure navigation policy.
 No additional runtime library is required.
 
@@ -787,14 +969,14 @@ For an intentional change, review the report and update the affected baselines a
 the build never increases its own budget automatically.
 
 The initial optimization reduced gzip JS from 181,252 to 128,429 bytes for sign-in, 184,448 to 140,332
-for Board, and 343,082 to 294,180 for a session including xterm. Keep the authenticated shell out of
+for Board. The current session gzip JS baseline is 294,570 bytes including xterm; its CSS baseline is 17,090 bytes gzip. Keep the authenticated shell out of
 sign-in/Board and Files, Changes, Preview, Pull request and Team out of unopened session tabs.
 CodeMirror and its language grammars load when a file opens; Markdown preview loads for Markdown files.
 Tab controls live in `web/src/components/Tabs.tsx`, imported directly by their route/panel consumers.
 Keep them out of the shared `ui.tsx` barrel so the existing `lazyImport` route boundaries
 exclude them from cold sign-in and Board loads.
-The launch form stays mounted with the shell: opening it does not swap a smaller loading dialog for
-a larger form, and Close still retains the draft.
+The shell lazy-loads the launch form on first use and then keeps it mounted in the working area.
+Back to workspace and Escape retain its draft and reveal the retained working views.
 
 Routes load on demand with a **Loading page…** status. Wrap every lazy import in
 `lib/lazyImport.ts`'s `lazyImport(() => import("…"))`, inside the React `lazy`
@@ -808,7 +990,7 @@ ordinary error boundary.
 After the retry fails, the shared wrapper publishes reload state and leaves that
 lazy part suspended rather than throwing away its nearest error boundary's tree.
 `ChunkReloadBanner` is outside every Suspense/error boundary, so it also works when
-Layout or the sign-in page cannot load. It uses the shared polite announcer, a
+AppFrame, Shell or the sign-in page cannot load. It uses the shared polite announcer, a
 normal-flow banner and the shared confirmation dialog; there is no automatic
 reload, draft storage or cache-busting copy of React. Already mounted editor/form
 state remains available where its own Suspense boundary allows it; a full reload
@@ -1153,6 +1335,35 @@ This Python tripwire is not an OS sandbox: native child processes and arbitrary 
 temporary paths and fake tools too. Keep installer/root-helper fixtures in dry-run mode or against their disposable
 roots; qualify real users/services only in disposable systems. Never run live agent tools from a test session.
 
+## Disposable signing keys
+
+Tests that need an OpenPGP signing key use `signing_keys` or the `gpg_home` fixture
+in `tests/owned_gpg.py`. Homes use short private paths for agent sockets and are
+journaled below the run's exclusive basetemp before GnuPG starts. Teardown runs
+`gpgconf --homedir <home> --kill all` for every home, including failed setup.
+Worker and controller session guards report surviving agents as test failures
+and clean up registered homes; the controller also covers crashed xdist workers.
+Read-only key inspection should use `--no-autostart`. Never kill agents by a
+machine-wide name or touch another run's keyring. If the entire pytest controller
+is forcibly killed, its session guard cannot run; this is not an OS sandbox.
+
+## Disposable Git HTTP backends
+
+The browser harness uses the same Git HTTP backend as backup pushes. Each CGI
+request owns a process group; success, body-size refusal, timeout, disconnect and
+cancellation kill and reap that group, including pack helpers. The request timeout
+includes reading the upload. After the upload ends, the backup route continues
+watching for disconnects. Router shutdown cancels active requests; the browser
+server allows two seconds for graceful request shutdown before cancellation.
+
+Python session teardown and Playwright global teardown check for Git CGI/helpers
+with this UID and a `GIT_PROJECT_ROOT` inside the run's exclusive temporary root.
+Survivors fail the run and are killed using pinned process identities. Global
+teardown runs this guard even if tmux teardown fails. Keep browser runs on unique
+`ACC_E2E_BASE` paths; never clean up Git backends by machine-wide process name.
+A forcibly killed server relies on the outer global teardown guard; killing the
+entire runner bypasses that final guard.
+
 ## Release artifact checks
 
 Qualify releases from disposable clean worktrees, with project-local dependencies and caches. Build twice with
@@ -1232,3 +1443,300 @@ A broker restart rotates the key; replace team helpers through a new attempt.
 
 Terminal text snapshots opened by a person mark that session as watched for 60 seconds.
 Internal delivery captures do not mark presence or suppress unattended permission handling.
+
+Project Overview section hashes, `?section=` links and `?brief_review=` proposal
+links share one retained view. Switching sections keeps unsaved key selections;
+opening and closing a proposal review keeps the brief draft and its once-per-proposal
+warning acknowledgment. Files and Preview retain
+separate working views. Retained routes also receive the matching navigation state
+and location key: choosing a Team tab preserves collapsed panels, while an explicit
+panel deep link expands and focuses its target. Navigation state is passed only
+when the retained destination matches the address bar. Registered terminal text snapshots load their dialog on
+demand, stay bound to the browser's current run buffer, and refresh only on the
+person's request. Screen reader output preferences persist in this browser.
+Chat uses the working frame's columns rather than a separate split controller.
+Its message area has bounded scrolling for pagination anchors, and its panel error
+boundary keeps rendering failures inside Chat while the terminal remains mounted.
+Shared dialogs render through a body portal so page spacing, scrolling and working
+column containment cannot clip their backdrop. Dialogs owned by a hidden retained
+view suspend their focus layer until that view is visible again.
+Narrow session headings reserve one touch-height delivery row so queued-message
+status cannot move the terminal while the person is typing. The indicator still
+disappears after delivery; its layout space remains stable.
+In-page fragments (including walkthrough diff-line links) update the destination
+of the existing working page rather than opening a second view. Revealing a
+retained terminal reapplies the silent live-region setting when xterm recreates
+its accessibility tree; state announcements remain owned by the app.
+
+## Presence-aware push
+
+`push.py:Push.send` is the shared transport for attention and explicit test
+notifications. It encrypts JSON with `http_ece` using RFC 8291 `aes128gcm`, a fresh
+P-256 sender key and the subscription's `p256dh`/`auth`; only ciphertext is posted
+to an allow-listed vendor relay. VAPID authenticates the sender, not the payload.
+The Topic header uses HMAC-SHA256 of the deduplication tag with a per-install
+key derived as SHA256(`rynhult-push-topic\0` + the 32-byte VAPID private scalar).
+The truncated base64url HMAC stays stable across restart but differs across
+installations; relays cannot precompute common deduplication keys.
+`tests/test_push.py` decrypts real captured transport bytes with a simulated
+device key and verifies VAPID.
+
+`push_presence.py` holds per-person/login/tab leases in the server process.
+Cookie authentication and normal CSRF/origin checks protect `/api/push/presence`;
+the installation token cannot set presence or the personal override. Visible,
+focused Inbox or matching session tabs heartbeat every 15 seconds; input stays
+local. Leases expire after 45 seconds or the remaining two-minute input window,
+whichever is shorter. Heartbeats add no DB writes beyond existing throttled
+authentication last-seen maintenance. Browser visibility changes end leases immediately; focus and idle state are
+rechecked on the next heartbeat. A lost close event is handled by expiry.
+Monotonic sequence numbers within each tab reject out-of-order heartbeats. Server restart discards leases.
+A threading lock protects both updates and reads. At most 16 entries are admitted
+per person/login, evicting the oldest admitted entry. A per-person sliding window
+allows 30 holding updates per 15 seconds across all logins, then returns HTTP
+429 with Retry-After: 15. Hidden/leave, idle and out-of-scope updates bypass this
+budget because they only reduce holding; sequence fencing and the entry cap
+still apply. All admission, throttling and pruning is in memory under the lock.
+
+Individual messages share the approval-card `notification_body` construction:
+`needs_input` uses `approval_cards.push_body` with the provider-matched stored
+card and `item.detail`/source fallback, appending the child session's Parent chain
+when the card is available. Approval pushes link to `/inbox?item=<id>`.
+Summary messages retain generic text and never include a command or Parent chain.
+Group recipient authorization is rechecked before dispatch, including retries.
+Ownerless sign-in, backup and persistent security notices retain the established
+`notify(..., everyone=False)` owner broadcast rather than requiring per-person
+subscription expansion before dispatch. They always bypass presence and summaries.
+A broadcast uses one durable claim (`person: null`); named-owner notices retain
+personal claims. The normal transport still selects current owners plus the
+installation principal, visits all their devices, and excludes members. Its first
+device acceptance retires the claim. A task-local delivery outcome observer
+preserves that early acceptance without changing the owner notification call or
+letting a concurrent explicit test-send acknowledge an unrelated claim.
+
+
+The existing authenticated `/api/auth/state` poll exposes `push_presence_enabled`
+only for a signed-in, non-step-up person with a registered push device and the
+notifications feature enabled. The browser starts presence only for Inbox and
+session views; the device may be on another browser. Device removal/registration
+is picked up by the normal auth poll. Heartbeats use the CSRF-aware background
+sender, so a late 401 cannot navigate a signing-out document or disturb shell
+recovery state. No additional eligibility poll is needed.
+
+`Setting` rows `push.active.<username>` store personal overrides (default off).
+`push.delivery` stores the cursor, pending entries and inflight claims; no
+migration is needed. Old pending pairs upgrade conservatively as previously held.
+The poller rechecks recipient ownership, group authorization, resolution,
+acknowledgment and snooze before dispatch. Items suppressed while the person
+was active are marked as seen for summary release. A person's sendable ordinary
+items become one “N items still need you” push to `/inbox` if any were previously
+held or if more than three become sendable in one poll. All covered entries leave
+pending together; the AttentionItems remain in the Inbox. Up to five non-exempt
+critical items per person per poll send individually, with the rest in one
+separate critical summary (`critical: true`, `critical-summary` tag, `/inbox`).
+Critical overflow retries stay summaries even below six items. `sign_in`,
+`backup` and `attention.persistent_reason` alerts bypass presence and always go
+individually, even when critical; neither summary includes them. Summary titles
+use “1 item still needs you” (or “1 critical item still needs you”) for one item.
+Explicit tests and existing audit events are unchanged.
+
+Claims commit before transport I/O and contain an ID, recipient, claim time,
+attempt count and covered item entries (each with its own attempt count).
+Inflight leases older than 120 seconds return to pending, with all ordinary
+eligibility checks applied again. Each item gets at most three attempts; an
+exhausted claim logs one warning and drops its exhausted entries. Entry-level
+counts preserve retry budgets when fresh items join a retried summary.
+HTTP 429, 5xx and network/encryption failures retain claims; permanent failures
+and a person with no devices remove them. The first accepting device removes a
+claim immediately, before the next device's network request, while the send still
+visits the person's other devices. Retries replace the same device tag/relay
+Topic and can duplicate an accepted-but-unrecorded send after a crash; relay
+acceptance is not guaranteed OS delivery. Summary retries stay summaries even
+if the remaining eligible count falls below four.
+
+The persisted cursor also delivers items raised between the last poll and
+shutdown on restart. An item snoozed after being queued waits until the snooze
+ends. With “Push even while I'm active” on, the service worker still suppresses
+a banner in a visible Rynhult window. Initial startup skips preexisting items
+when no cursor exists.
+
+Focused checks: `tests/test_push.py`, `tests/test_docs_truthful.py`,
+`tests/test_wiki.py`, `tests/test_root_python_isolation.py`, the production web
+build and its payload gate, `npm run test:e2e-isolation --prefix web`, and
+`push-presence.spec.ts` through the normal Playwright desktop project. The browser
+spec synthesizes visibility changes in headless Chromium; it does not qualify OS
+background notification display.
+
+
+## Session mergeability checks
+
+Use `tests/test_make_mergeable.py`, `tests/test_session_git.py` and `tests/test_pulls.py` for the bounded backend
+regression set. The Git tests use local repositories and a recorded transport; they do not qualify a real GitHub
+account. `web/e2e/make-mergeable.spec.ts` covers the production dialog at 1440 and 390 pixels with owned session
+fixtures and mocked PR responses. Run it through the existing desktop project with a unique fixture base/port.
+These checks do not replace release qualification. See `docs/PR-FINISHING.md` for authority,
+lease expiry, audit events and subscription-Claude delivery limits.
+
+On a supervised Codex owner exit, native input is fenced before bounded final
+screen capture. The broker keeps its private authority stream briefly to publish
+the actual wait result; EOF without a process result remains unknown. An owned
+final view is redacted before durable event storage and again on each read, with
+120KiB of encoded screen data allowed inside the existing event storage budget.
+Capture failure, oversize/redaction expansion or unknown stream loss records no
+final screen. The existing Terminal read endpoint can read an ended or explicitly
+selected past run without a live runtime, using a current observer attachment.
+It rechecks login, resource/enrollment/run scope and redaction after awaited reads.
+The browser labels normal/abnormal/unknown ends, keeps final screens read-only,
+and never substitutes an old screen for an unavailable current run.
+
+Codex's production stdio owner rechecks the same operation authority after
+acquiring the shared native write lock, immediately before text, interrupt or
+decision-response bytes. That barrier also checks immutable run/payload identity,
+current deadline/capability and the exact interrupt target. Revoked/expired
+pre-write operations produce a definite broker refusal with zero native bytes;
+partial writes or lost answers remain unknown. The durable operation ID is never
+replayed. This extends, rather than replaces, checks after probes and queue waits.
+
+Before a supervised Codex exit is sealed, the broker gives its already-received
+native event queue a bounded drain after normal stdio EOF. A pending message is
+not acknowledged merely because it was dequeued. If drain fails or times out,
+the known process result still persists and finalEventsDrained is false; the UI
+warns that final output may be incomplete. This describes received normalized
+events, not full native history capability. The retained-run selector lists at
+most50 authorized recent retained runs. Selecting one reads only its event page
+and final screen, hides current input and preserves the current unsent draft.
+Pagination is capped at200 displayed messages and fenced to the active read
+generation, including history-epoch changes without a control revision change.
+Retained Terminal readers are replaced on the same read-binding change; delayed
+pages/screens cannot overwrite a fresh selection or redaction refresh.
+
+An uncertain personal Codex interrupt receipt can be observed through the existing
+operation.get/operation GET paths without another cancellation. A short-lived,
+read-only token binds the current actor/resource/enrollment/run and the original
+registered method/digest/fence/actor. Broker lookup compares metadata recorded
+atomically with the original journal claim. Only its original conclusive evidence
+may settle the original receipt; a turn's later interruption is not enough.
+The additive private-journal observation table contains no prompt and leaves v1
+fingerprints unchanged. Older entries without that metadata stay unproven.
+Observer cancellation retires its token without cancelling the shared execution
+connection. There is no native query, staging, dispatch, launch or retry on read.
+Disconnected/cold journals remain a separate recovery qualification boundary.
+
+For a qualified exclusive Codex writer, Terminal's explicit Interrupt Terminal
+turn action registers turn.interrupt against the visible active operation and
+control revision. Main captures the current writer view; each later grant check
+must match that view and the owning attachment/person. The broker admits under
+that same Chat/Terminal view. Terminal never forwards a raw control-C byte or
+uses attach/read to acquire cancellation authority. Accepted means requested;
+only the native completion event establishes interruption. Unknown requests stay
+visible and are observed, never automatically resent. Default qualification and
+terminalMediated remain closed.
+
+The mandatory offline Codex placement fixture can record bounded timing spans
+for broker stage/dispatch, Terminal claim/frame RPCs, Host frame writes, guarded
+native request acknowledgements and their final authority callbacks. These are
+independent within-process durations. They overlap and must not be summed or
+used to subtract model response from transport admission. The public/native
+fixture separately records registration/dispatch, observed first response and
+the imposed Enter quiet interval. Fixture timings do not enable any capability.
+
+Terminal input autofocus follows the confirmed current generation. A focused
+field temporarily disabled by a late pending-receipt snapshot, native processing
+or another readiness pause retains focus intent and is focused again once it is
+ready. Focus/pointer movement to another control cancels that intent; a retired
+input generation never restores it. Browser proofs use document keyboard events
+rather than locator typing, which could silently focus an inactive field.
+
+Controlled browser qualification can record a real 25-character Terminal typing
+burst, Enter's prefix backlog, request-to-response admission,
+and the first causal processing watermark. Browser Network timing start/end are
+read only after response completion; request-event timing may be unavailable.
+Document keyboard events preserve the autofocus requirement. Independent native
+spans and actual interrupt completion are separate from observed browser timings.
+
+Claude relay native input is composed with an owned input attachment, a run/
+attachment-bound main grant, strict native draft decoder and protected native
+transcript admission reader. A native Stop is insufficient: main's exact accepted
+receipt must precede the processed watermark. The reader pins directories/file
+identity, rejects links/replacement/rewrite, and accepts only the new exact prompt
+and completed provider chain after a pre-input cursor. This composition requires
+the frozen metadata sandbox/settings/MCP policy; it never dispatches native input
+to another SDK client. All public/attestation gates remain off. The group9 joint
+proof uses artificial principals and explicit isolated gate overrides, and must
+not be confused with browser/new-session or retained-draft qualification.
+
+Qualified Codex Terminal typing coalesces supported queued keys on animation
+frames, with one frame in flight and Enter always in its own frame. Frame
+watermarks count admitted frames, not characters. An uncertain or partial frame
+freezes the generation and discards all unsent frames; retirement also cancels
+scheduled batches while retaining the visible draft. Processing still requires
+the exact native submission ticket and a causal watermark, then a fresh idle read.
+The isolated owned Codex TUI config disables paste-burst detection, so Enter needs
+no artificial quiet delay. Paste, native controls, Unicode and multiline input
+remain unsupported and the Host validates the entire batch before forwarding bytes.
+
+Input profiling is fixture-only and bounded: stage durations, SQL statement-kind
+counts, transaction-gate/commit durations, broker/Host spans and durable journal
+claim/settle durations. No SQL text, parameters, grants or prompt bytes enter the
+profile. Browser typing latency runs from each actual keydown to its containing
+frame's completed HTTP admission; Enter runs from its keydown through all queued
+prefix frames to admission. Local draft echo and native processing are separate.
+Same-transaction duplicate placement/policy/budget checks may share the completed
+check; neither authorization nor current login/resource access is cached across
+an awaited step. The exact reserved frame is reauthorized under the Host write
+lock after transport open; main authenticates both the original stream login and
+current HTTP caller again after broker completion. Durable turn admission and
+journal FULL synchronization remain on the submission path.
+
+The typing scheduler gives a burst a complete animation frame before flushing a
+tiny first-key frame, bounded to three callbacks; a queued Enter seals the prefix
+and flushes at the next callback. Empty budget rules bypass provider-usage scans.
+Input acknowledgements already perform the final current-caller check after broker
+IO, so the HTTP route does not repeat that worker hop for terminal.input. Display
+redactors are constructed for display responses, not mutation-frame preparation.
+The prefix-response-to-Enter-start network gap is diagnostic and may be slightly
+negative in Chrome timing; it is not an ordering or processing proof.
+
+
+Relay SDK-dependent checks require the declared Claude Agent SDK 0.1.50 in the
+chosen project environment. The shared application venv may omit that optional
+extra. Use the existing SDK project environment identified in the relay handoff
+through the worktree's .venv link and run `PYTHONPATH=src .venv/bin/python -m pytest`.
+Verify the SDK version first; do not mix site-packages from another interpreter
+or treat import-skipped Claude checks as passing qualification.
+
+The isolated retained-screen logout proof first confirms an authorized real ended
+native screen, holds a read after capture, logs out that disposable observer via
+the public route, and requires the held response/subsequent read to refuse 401
+and the browser to clear its view. The original person's login remains valid;
+fixture release cannot revoke or grant authority and reads cannot start a native
+owner. This uses the same existing main Playwright config and offline namespace.
+
+Fresh queued relay token issuance rechecks both durable confirmation and deadline
+before contacting the broker. A submit-lock wait may have outlived either; return
+STALE_AUTHORITY without staging or native bytes. Already-observed receipts remain
+observations. The broker, post-probe and final native-write-lock checks still run;
+this early refusal does not substitute for later authority barriers.
+
+The retained-native browser proof can remove main's runtime manager after actual
+normal exit and still require authorized stored screen/events/snapshot reads.
+Those reads must leave runtime absent, native owner count zero and model request
+count unchanged. This is an absent-runtime correctness boundary; it does not
+represent a full process restart or replacement run. Cookie logout must continue
+to invalidate held reads after capture in that state.
+
+The actual revoked-caller interrupt proof uses a disposable browser login and the
+existing native stdio write-lock fixture. Logout occurs after the public interrupt
+reaches that wait. It requires a real refused final callback, no native cancel
+bytes/admission, durable rejection, and normal completion of the already-admitted
+original turn after the artificial model is released. A missing HTTP response on
+logout is not cancellation confirmation. Private controls remain capability-bound
+and cannot grant an actor, launch an owner, or fabricate a native result.
+
+Claude SDK Chat interruption has a separate false qualification gate. A current
+person and the exact originating attachment may request interruption of that
+run's active uncertain query. Final authority and exact query/owner checks occur
+after the pinned SDK pipe lock; one PIPE_BUF-bounded frame writes atomically with
+no transport buffering or retry. An exact native control acknowledgement means
+"requested", not confirmed cancellation. Lost replies remain uncertain until an
+authorized read finds the original exact journal evidence; observation never
+resends cancellation. Terminal Ctrl-C and service interruption stay unsupported.

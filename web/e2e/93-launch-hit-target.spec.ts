@@ -14,7 +14,7 @@ test('Launch stays a non-click-through target while agent discovery is pending',
   try {
     await page.reload();
     await page.getByRole('button', { name: 'New session' }).first().click();
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole('region', { name: 'New session', exact: true });
     const launch = dialog.getByRole('button', { name: /^(Trust and )?Launch$/ });
     await expect(launch).toBeDisabled();
     await launch.scrollIntoViewIfNeeded();

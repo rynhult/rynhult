@@ -1,12 +1,13 @@
 import { test } from './shell-state';
 import { expect } from '@playwright/test';
-import { AUTH_FILE, expectAxeClean } from './helpers';
+import { AUTH_FILE, expectAxeClean, selectSettingsSection, settingsSectionIds } from './helpers';
 
-test.use({ shellLayout: 'standard', storageState: AUTH_FILE });
+test.use({ storageState: AUTH_FILE });
 for (const width of [1440, 390]) test.describe(`${width}px Settings`, () => {
   test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, hasTouch: width === 390, isMobile: width === 390 });
   for (const theme of ['dark', 'light'] as const) {
     test(`Settings chooser keeps keyboard focus through consecutive choices ${width} ${theme}`, async ({ page }) => {
+      test.fixme(true, 'Classic native Settings chooser and its arrow-key cycling are retired. Original assertions retained for Josh; scoped link navigation is tested below.');
       await page.addInitScript(t => localStorage.setItem('acc-theme', t), theme);
       await page.goto('/settings');
       const chooser = page.getByRole('combobox', { name: 'Settings section', exact: true });
@@ -30,40 +31,29 @@ for (const width of [1440, 390]) test.describe(`${width}px Settings`, () => {
     test(`focused Settings preserves drafts, links and keyboard access ${width} ${theme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: theme });
       await page.goto('/settings');
-      const chooser = page.getByRole('combobox', { name: 'Settings section', exact: true });
-      await expect(chooser).toHaveValue('passkeys');
-      if (width === 390) expect((await chooser.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+      await expect(page.locator('#passkeys')).toBeVisible();
       await expect(page.locator('#password')).toBeHidden();
       const draft = page.getByRole('textbox', { name: 'Passkey name', exact: true });
       await draft.fill('Travel laptop draft');
-      await chooser.selectOption('password');
-      await expect(chooser).toBeFocused();
+      await selectSettingsSection(page, 'password');
+      await expect(page.locator('#password')).toBeFocused();
       await expect(page.locator('#passkeys')).toBeHidden();
       await page.goBack();
       await expect(page.locator('#passkeys')).toBeFocused();
       await expect(draft).toHaveValue('Travel laptop draft');
-      await page.getByRole('link', { name: 'All sections', exact: true }).click();
-      await expect(page.locator('#password')).toBeVisible();
-      expect(await page.getByRole('main').evaluate(main => main.scrollWidth - main.clientWidth)).toBeLessThanOrEqual(0);
-      await expectAxeClean(page);
-      await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('link', { name: 'Passkeys', exact: true }).click();
-      await expect(draft).toHaveValue('Travel laptop draft');
-      // The link's navigation focuses its section; wait for that, or it can take focus back from the chooser below.
-      await expect(page.locator('#passkeys')).toBeFocused();
-      await chooser.focus();
-      await page.keyboard.press('End');
-      await expect(chooser).toHaveValue('container-limits');
-      await expect(chooser).toBeFocused();
+      // The classic All sections link / native End choice is retired; current scoped links retain the form.
+      await selectSettingsSection(page, 'container-limits');
+      await expect(page.locator('#container-limits')).toBeFocused();
       await page.keyboard.press('Tab');
       await expectAxeClean(page);
       await page.goto('/settings#telemetry');
       await expect(page.locator('#telemetry')).toBeVisible();
-      await expect(chooser).toHaveValue('usage-and-bug-reports');
+      await expect(page.locator('#usage-and-bug-reports')).toBeVisible();
       await page.reload();
       await expect(page.locator('#telemetry')).toBeVisible();
       await page.goto('/settings#dns-certificates');
       await expect(page.locator('#dns-certificates')).toBeVisible();
-      await expect(chooser).toHaveValue('dns');
+      await expect(page.locator('#dns')).toBeVisible();
       await expectAxeClean(page);
     });
   }
@@ -77,11 +67,12 @@ test('warnings and late errors remain visible when their section is not selected
     await route.fulfill({ status: 403, json: { detail: 'Notification settings need review' } });
   });
   await page.goto('/settings#notifications');
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
+  await selectSettingsSection(page, 'passkeys');
   answer();
   const attention = page.getByRole('region', { name: 'Settings needing attention' });
   await expect(attention).toContainText('Notification settings need review');
   await expect(page.locator('#notifications').getByRole('alert')).toBeVisible();
+  await attention.locator('summary').click();
   await attention.getByRole('link', { name: 'Notifications', exact: true }).click();
   await expect(page.locator('#notifications').getByRole('alert')).toBeVisible();
 });
@@ -92,9 +83,9 @@ test('member section choices exclude owner capabilities, including hostile fragm
     instance: { host: 'acc-host', private_ca: false },
   } }));
   await page.goto('/settings#people');
-  await expect(page.getByRole('combobox', { name: 'Settings section', exact: true })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Context sidebar', exact: true }).getByRole('region', { name: 'Account settings', exact: true })).toBeVisible();
   await expect(page.locator('#people')).toHaveCount(0);
-  await expect(page.getByRole('option', { name: 'People', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Installation settings', exact: true })).toHaveCount(0);
   await expect(page.locator('#passkeys')).toBeVisible();
   await expectAxeClean(page);
 });
@@ -115,25 +106,26 @@ test('device revocation pending and renewal warnings stay visible without exposi
   await expect(page.locator('#access-devices')).toBeHidden();
   await expect(attention.locator('script')).toHaveCount(0);
   expect(await page.getByRole('main').evaluate(main => main.scrollWidth - main.clientWidth)).toBeLessThanOrEqual(0);
+  await attention.locator('summary').click();
   await attention.getByRole('link', { name: 'Access devices', exact: true }).click();
   await expect(page.getByRole('button', { name: `Remove ${hostileLabel}`, exact: true })).toBeVisible();
 });
 
 test('every section can be focused, with form validation and drafts preserved', async ({ page }) => {
   await page.goto('/settings');
-  const chooser = page.getByRole('combobox', { name: 'Settings section', exact: true });
-  await expect(chooser.getByRole('option', { name: 'People', exact: true })).toHaveCount(1);
-  const ids = await chooser.locator('optgroup option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value));
+  const ids = await settingsSectionIds(page);
+  expect(ids).toContain('people');
+  expect(ids.length).toBeGreaterThan(10);
   for (const id of ids) {
-    await chooser.selectOption(id);
+    await selectSettingsSection(page, id);
     await expect(page.locator(`[data-settings-section][id="${id}"]`)).toBeVisible();
     await expect(page.locator('[data-settings-section]:visible')).toHaveCount(1);
   }
-  await chooser.selectOption('password');
+  await selectSettingsSection(page, 'password');
   const password = page.getByLabel('New password', { exact: true });
   await password.fill('draft');
-  await chooser.selectOption('passkeys');
-  await chooser.selectOption('password');
+  await selectSettingsSection(page, 'passkeys');
+  await selectSettingsSection(page, 'password');
   await expect(password).toHaveValue('draft');
   await expect(page.locator('#password').getByRole('button', { name: 'Change password', exact: true })).toBeDisabled();
   await expect(page.locator('#password')).toBeVisible();
@@ -146,7 +138,7 @@ test('native validation reveals and focuses an invalid control in a hidden form'
   await page.goto('/settings#access-devices');
   const input = page.getByRole('textbox', { name: 'Device name', exact: true });
   await expect(input).toBeVisible();
-  await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('passkeys');
+  await selectSettingsSection(page, 'passkeys');
   await page.locator('#access-devices form').evaluate((form: HTMLFormElement) => form.requestSubmit());
   await expect(page.locator('#access-devices')).toBeVisible();
   await expect(input).toBeFocused();
@@ -159,6 +151,7 @@ test('unverified certificate warnings retain their explanation and navigation', 
   const attention = page.getByRole('region', { name: 'Settings needing attention' });
   await expect(attention).toContainText('Not verified');
   await expect(attention).toContainText('Not publicly trusted, and no root is configured');
+  await attention.locator('summary').click();
   await attention.getByRole('link', { name: 'Certificate', exact: true }).click();
   await expect(page.locator('#certificate')).toContainText('Not publicly trusted, and no root is configured');
 });
@@ -182,7 +175,7 @@ for (const status of [422, 503]) test(`switching sections retains a pending Secu
     await protection.setChecked(!before);
     await security.getByRole('button', { name: 'Review changes', exact: true }).click();
     await expect.poll(() => saving).toBe(true);
-    await page.getByRole('combobox', { name: 'Settings section', exact: true }).selectOption('password');
+    await selectSettingsSection(page, 'password');
     const draft = page.getByLabel('New password', { exact: true });
     await draft.fill('My retained draft');
     finish();

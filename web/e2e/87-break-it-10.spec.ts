@@ -49,7 +49,7 @@ async function preparePairing(page: Page) {
 test('closing a pairing on a phone ends its link at once', async ({ page, browser }) => {
   await preparePairing(page);
   await page.getByLabel('Device name', { exact: true }).fill('Careless phone');
-  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair a phone', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Pair device' });
   const qr = dialog.getByRole('img', { name: 'One-use device pairing QR code' });
   await expect(qr).toBeVisible();
@@ -71,10 +71,17 @@ test('closing a pairing on a phone ends its link at once', async ({ page, browse
   try {
     const phone = await receiver.newPage();
     await expect.poll(async () => {
+      const preview = phone.waitForResponse(response => response.url().endsWith('/api/device-pairing/preview'));
       await phone.goto(new URL('/pair-device#' + link.split('#')[1], page.url()).href);
-      await phone.getByRole('button', { name: 'Request pairing' }).click();
-      return (await phone.getByRole('alert').textContent()) ?? '';
-    }, { timeout: 15_000 }).toContain('expired or was already used');
+      return (await preview).status();
+    }, { timeout: 15_000 }).toBe(410);
+    await expect(phone.getByRole('alert')).toContainText('expired or was already used');
+    await expect(phone.getByText('This pairing is no longer available.')).toBeVisible();
+    await expect(phone.getByRole('button', { name: 'Request pairing' })).toHaveCount(0);
+    // Preview refusal must agree with the consuming endpoint; no UI-only cancellation.
+    const replay = await phone.request.post(new URL('/api/device-pairing/claim', phone.url()).href,
+      { data: { token: link.split('#')[1], phone_confirmed: true } });
+    expect(replay.status()).toBe(410);
   } finally {
     await receiver.close();
   }
@@ -83,20 +90,27 @@ test('closing a pairing on a phone ends its link at once', async ({ page, browse
 test('leaving the page with Back while pairing ends the link too', async ({ page, browser }) => {
   await preparePairing(page);
   await page.getByLabel('Device name', { exact: true }).fill('Impatient phone');
-  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair a phone', exact: true }).click();
   const link = await page.getByRole('dialog', { name: 'Pair device' }).getByLabel('One-use pairing link').inputValue();
   // Tap Overview in the phone's tab bar, behind the open dialog's back: leaving the page unmounts the dialog, as an
   // in-app Back does.
-  await page.evaluate(() => (document.querySelector('nav a[href="/"]') as HTMLAnchorElement).click());
+  await page.evaluate(() => { history.pushState(null, '', '/'); dispatchEvent(new PopStateEvent('popstate')); });
   await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
   const receiver = await browser.newContext();
   try {
     const phone = await receiver.newPage();
     await expect.poll(async () => {
+      const preview = phone.waitForResponse(response => response.url().endsWith('/api/device-pairing/preview'));
       await phone.goto(new URL('/pair-device#' + link.split('#')[1], page.url()).href);
-      await phone.getByRole('button', { name: 'Request pairing' }).click();
-      return (await phone.getByRole('alert').textContent()) ?? '';
-    }, { timeout: 15_000 }).toContain('expired or was already used');
+      return (await preview).status();
+    }, { timeout: 15_000 }).toBe(410);
+    await expect(phone.getByRole('alert')).toContainText('expired or was already used');
+    await expect(phone.getByText('This pairing is no longer available.')).toBeVisible();
+    await expect(phone.getByRole('button', { name: 'Request pairing' })).toHaveCount(0);
+    // Preview refusal must agree with the consuming endpoint; no UI-only cancellation.
+    const replay = await phone.request.post(new URL('/api/device-pairing/claim', phone.url()).href,
+      { data: { token: link.split('#')[1], phone_confirmed: true } });
+    expect(replay.status()).toBe(410);
   } finally {
     await receiver.close();
   }

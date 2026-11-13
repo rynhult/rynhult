@@ -3,7 +3,7 @@ import { test, expect, type Page } from './fixtures';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { environmentValue } from '../../src/acc/env.mjs';
-import { expandTeamPanels, AUTH_FILE, csrfHeaders, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped } from './helpers';
+import { expandTeamPanels, AUTH_FILE, openAdvanced, csrfHeaders, expectAxeClean, gitProject, info, waitForSessionState, waitForTeamStopped } from './helpers';
 
 test.use({ storageState: AUTH_FILE });
 const uploadLabel = 'Or upload PNG, JPG, WebP or PDF (10 MiB maximum)';
@@ -111,14 +111,15 @@ test('upload failures preserve the brief and explain how to recover', async ({ p
 for (const mode of ['prepare', 'build'] as const) test(`person grants a ${mode} team, reads boundaries and stops it`, async ({ page }, ti) => {
   const { id, headers } = await gitProject(page, `ux-${mode}`);
   await page.goto(`/projects/${id}`);
-  await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
+  await page.locator('#shell-new-session').click();
+  const dialog = page.getByRole('region', { name: 'New session', exact: true });
+  await openAdvanced(dialog);
   await expect(dialog.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(String(id));
-  await dialog.getByRole('button', { name: /^Advanced/ }).click();
-  await dialog.getByRole('radio', { name: /With helpers/ }).check();
+  await openAdvanced(dialog);
+  await dialog.getByRole('combobox', { name: 'Run', exact: true }).selectOption('helpers');
   await dialog.getByRole('combobox', { name: 'Team run mode', exact: true }).selectOption(mode);
   if (mode === 'prepare') await dialog.getByRole('combobox', { name: 'Helper 1: Permissions', exact: true }).selectOption('plan');
-  await expectAxeClean(page, '[role=dialog]'); await noOverflow(page);
+  await expectAxeClean(page, 'main'); await noOverflow(page);
   await dialog.screenshot({ path: ti.outputPath(`${mode}-grant.png`) });
   const responseReady = page.waitForResponse(r => new URL(r.url()).pathname === '/api/sessions' && r.request().method() === 'POST');
   await dialog.getByRole('button', { name: 'Launch', exact: true }).click();

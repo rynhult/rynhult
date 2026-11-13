@@ -1,15 +1,16 @@
 """Attention inbox: list, acknowledge and snooze operational alerts."""
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 
-from .. import attention, auth, risk_labels
+from .. import approval_cards, attention, auth, risk_labels
 from ..db import write_intent
 from ..models import AttentionItem, AuditLog, Event, Node, Placement, Project, PublishRequest, Session, ToolRequest
 from ..tools import out
@@ -39,26 +40,38 @@ class PermissionReply(BaseModel):
 
 
 def permission_info(db, session_id):
+    if not session_id:
+        return {}
     session = db.get(Session, session_id)
-    if session and session.container:
+    if not session or session.container:
+        return {}
+    from ..session_relay.native_prompt import current
+    if current(db, session_id):
         return {}
     event = db.scalar(select(Event).where(Event.session_id == session_id,
-        Event.source == "claude_hook", Event.kind.in_(["PermissionRequest", "PermissionExpired"])
+        Event.source == f"{session.provider}_hook", Event.kind.in_(["PermissionRequest", "PermissionExpired"])
         ).order_by(Event.id.desc()).limit(1))
     return permission_event_info(event)
 
 
 def permission_event_info(event):
     """Render the latest permission event, shared by single-item and batched reads."""
-    if not event or event.kind != "PermissionRequest" or auth.now() - event.ts > timedelta(seconds=50):
+    if not event or event.source not in ("claude_hook", "codex_hook") or event.kind != "PermissionRequest" or auth.now() - event.ts > timedelta(seconds=50):
         return {}
     payload = event.payload or {}
+    stored_card = approval_cards.validated_card(payload.get("acc_card"))
+    facts = {"approval_card": stored_card} if stored_card is not None else {}
+    rendered = payload.get("acc_complete_input")
+    if isinstance(rendered, str) and len(rendered.encode("utf-8")) <= 8192:
+        facts["permission_input"] = rendered
+    if event.source != "claude_hook":
+        return facts
     token = payload.get("acc_permission_id")
     if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
-        return {}
+        return facts
     rendered = payload.get("acc_complete_input")
     complete = isinstance(rendered, str) and len(rendered.encode("utf-8")) <= 8192
-    return {"permission_id": token, "permission_input": rendered if complete else None,
+    return {**facts, "permission_id": token, "permission_input": rendered if complete else None,
             "permission_can_approve": complete,
             "permission_expires_at": (event.ts + timedelta(seconds=50)).isoformat(),
             "permission_reason": None if complete else
@@ -74,11 +87,14 @@ def router(ctx: Context) -> APIRouter:
     api = APIRouter()
 
     def attention_out(item: AttentionItem, names: dict[str, tuple[str, str]], publishes: dict | None = None,
-                      tools: dict | None = None, show_risk: bool = True, image_check: dict | None = None, hosts: dict | None = None, permission: dict | None = None) -> dict:
+                      tools: dict | None = None, show_risk: bool = True, image_check: dict | None = None, hosts: dict | None = None, permission: dict | None = None, lineage: dict | None = None) -> dict:
         publishes = publishes or {}
+        if item.source == 'claude_terminal':
+            permission = None
         name, project = names.get(item.session_id or "", (None, None))
-        return {**(permission or {}), "image_check": image_check, "id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
-                "verified": item.verified, "title": item.title, "detail": item.detail,
+        return {**(lineage or {}), **(permission or {}), "image_check": image_check, "id": item.id, "kind": item.kind, "severity": item.severity, "source": item.source,
+                "verified": item.verified, "title": item.title,
+                "detail": 'Claude is asking in the terminal; answer it there' if item.source == 'claude_terminal' else item.detail,
                 "session_id": item.session_id, "session_name": name, "project": project,
                 "host": (hosts or {}).get(item.session_id) if item.session_id else (
                     item.dedupe_key.partition(':')[2] or None
@@ -88,7 +104,7 @@ def router(ctx: Context) -> APIRouter:
                 "persistent": attention.persistent_reason(item),
                 "bulk_dismissible": attention.bulk_dismissible(item),
                 # "Review · details on screen" says nothing: no label when the prompt carried nothing to judge (UX review R8)
-                "risk": item.risk if item.kind == "needs_input" and show_risk and item.risk not in (None, risk_labels.DEFAULT) else None,
+                "risk": item.risk if item.source != 'claude_terminal' and item.kind == "needs_input" and show_risk and item.risk not in (None, risk_labels.DEFAULT) else None,
                 "publish_id": item.dedupe_key.split(":", 1)[1] if item.kind == "publish_request" else None,
                 "publish": publishes.get(item.dedupe_key.split(":", 1)[1]) if item.kind == "publish_request" else None,
                 "tool": (tools or {}).get(item.dedupe_key.split(":", 1)[1]) if item.kind == "tool_request" else None}
@@ -116,13 +132,15 @@ def router(ctx: Context) -> APIRouter:
             wanted = {i.session_id for i in items if i.session_id}
             session_rows = list(s.execute(
                 ctx.scope(select(Session.id, Session.name, Session.team_id, Project.slug, Session.project_id, Session.container,
-                                 func.coalesce(Placement.host, Session.team_host, Project.host, 'local')).join(Project, Session.project)
+                                 func.coalesce(Placement.host, Session.team_host, Project.host, 'local'), Session.parent_chain, Session.root_owner, Session.provider).join(Project, Session.project)
                           .outerjoin(Placement, Session.placement_id == Placement.id),
                           Session, who).where(Session.id.in_(wanted)))) if wanted else []
+            lineages = {sid: {'parent_chain': [*parent_chain, sid] if parent_chain else [], 'root_owner': root_owner}
+                        for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows}
             names = {sid: (name + (f" · team {team}" if team else ""), slug)
-                     for sid, name, team, slug, project_id, container, host in session_rows}
-            hosts = {sid: host for sid, name, team, slug, project_id, container, host in session_rows}
-            risk_projects = {sid: project_id for sid, name, team, slug, project_id, container, host in session_rows}
+                     for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows}
+            hosts = {sid: host for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows}
+            risk_projects = {sid: project_id for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows}
             ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "publish_request"]
             # The same facts Publishing shows under the request (UX review IN-1): an approver on a phone sees them too.
             requests = list(s.scalars(select(PublishRequest).where(PublishRequest.id.in_(ids)))) if ids else []
@@ -130,7 +148,8 @@ def router(ctx: Context) -> APIRouter:
                 Project.id.in_({r.project_id for r in requests if r.project_id is not None}))).all()) if requests else {}
             publishes = {r.id: {"host": r.host, "port": r.port, "access": r.access, "action": r.action,
                                 "requested_by": r.requested_by, "reason": r.reason, "project": slugs.get(r.project_id),
-                                "replaces": (r.context or {}).get("replaces"), "port_owner": (r.context or {}).get("port_owner")}
+                                "replaces": (r.context or {}).get("replaces"), "port_owner": (r.context or {}).get("port_owner"),
+                                "parent_chain": (r.context or {}).get("parent_chain", []), "root_owner": (r.context or {}).get("root_owner")}
                          for r in requests}
             tool_ids = [i.dedupe_key.split(":", 1)[1] for i in items if i.kind == "tool_request"]
             tools = {r.id: out(r) for r in s.scalars(select(ToolRequest).where(ToolRequest.id.in_(tool_ids)))}
@@ -140,17 +159,26 @@ def router(ctx: Context) -> APIRouter:
                             for project_id in {risk_projects.get(i.session_id) for i in items}}
             # Batch the latest permission events using the already authorized session metadata.
             pending_sessions = {i.session_id for i in items if i.kind == "needs_input" and not i.resolved_at}
-            permission_sessions = {sid for sid, name, team, slug, project_id, container, host in session_rows
+            permission_sessions = {sid for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows
                                    if not container and sid in pending_sessions}
-            latest = (select(func.max(Event.id)).where(Event.session_id.in_(permission_sessions),
-                      Event.source == "claude_hook", Event.kind.in_(["PermissionRequest", "PermissionExpired"]))
+            sources = {sid: f"{provider}_hook" for sid, name, team, slug, project_id, container, host, parent_chain, root_owner, provider in session_rows
+                       if sid in permission_sessions}
+            # Accept only the session provider’s own permission events.
+            # Use already-authorized session metadata, not a correlated session read.
+            native_source = case(sources, value=Event.session_id)
+            latest = (select(func.max(Event.id))
+                      .where(Event.session_id.in_(permission_sessions),
+                             Event.source == native_source,
+                             Event.kind.in_(["PermissionRequest", "PermissionExpired"]))
                       .group_by(Event.session_id))
             permissions = {event.session_id: permission_event_info(event)
                            for event in s.scalars(select(Event).where(Event.id.in_(latest)))} if permission_sessions else {}
+            from ..session_relay.approval_inbox import projections
+            relay_reviews = projections(ctx, s, items, names)
             from ..image_capabilities import check_action
             return [attention_out(i, names, publishes, tools, risk_enabled[risk_projects.get(i.session_id)],
                                   check_action(s, i) if who.is_owner else None, hosts,
-                                  permissions.get(i.session_id) if i.kind == "needs_input" and not i.resolved_at else None) for i in items]
+                                  (relay_reviews.get(i.id) if i.dedupe_key.startswith('relay_decision:') else permissions.get(i.session_id)) if i.kind == "needs_input" and not i.resolved_at else None, lineages.get(i.session_id)) for i in items]
 
     @api.post("/api/attention/{item_id}/permission")
     async def answer_permission(item_id: int, body: PermissionReply, who=Depends(ctx.principal)):
@@ -163,16 +191,32 @@ def router(ctx: Context) -> APIRouter:
             if item is None or not item.session_id:
                 raise HTTPException(404, "That permission request was not found.")
             session = ctx.session_for(s, who, item.session_id)
+            if item.source == 'claude_terminal':
+                raise HTTPException(409, 'Claude is asking in the terminal; answer it there')
+            from ..session_relay.hub import refuse_raw_input
+            from ..supervisor import LaunchRefused
+            try:
+                refuse_raw_input(s, session.id)
+            except LaunchRefused as error:
+                raise HTTPException(409, str(error)) from None
             if session.management != "acc" or session.container or held(s, session):
                 raise HTTPException(403, "This session cannot receive input.")
             if (item.kind != "needs_input" or item.resolved_at or session.provider != "claude"
                     or session.observed_state != "waiting_input" or permission_token(s, session.id) != body.token):
                 raise HTTPException(409, "This request expired or was answered. Answer in the terminal.")
+            if body.decision == 'allow':
+                from ..session_caps import check_execution
+                try:
+                    check_execution(s, session)
+                except ValueError as error:
+                    raise HTTPException(409, str(error)) from None
             if body.decision == "allow" and not permission_info(s, session.id).get("permission_can_approve"):
                 raise HTTPException(409, "Complete input is unavailable. Answer in the terminal.")
+            displayed = permission_info(s, session.id).get("permission_input")
+            input_hash = hashlib.sha256(displayed.encode("utf-8")).hexdigest() if displayed is not None else None
             account, host, sid = session.run_as, session.host, session.id
             s.add(AuditLog(actor=who.username, action="permission.answer", target=sid,
-                           detail={"item": item_id, "token": body.token, "decision": body.decision, "outcome": "attempt"}))
+                           detail={"item": item_id, "token": body.token, "decision": body.decision, "outcome": "attempt", "input_sha256": input_hash}))
             s.commit()
         try:
             result = await ctx.broker.call("permission_reply", account=account, host=host,

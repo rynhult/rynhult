@@ -7,6 +7,8 @@ export interface NewSessionPreset {
   mode?: "project" | "workspace"; workspace?: string; profile?: string;
   project_id?: number; name?: string; worktree?: boolean; initial_prompt?: string;
   issue_source?: IssueRef;
+  /** Presentation-only draft identity for an issue, pull request or explicit recovery. */
+  draft_target?: string;
 }
 export const NewSessionContext = createContext<(preset?: NewSessionPreset) => void>(() => {});
 export const useNewSession = () => useContext(NewSessionContext);

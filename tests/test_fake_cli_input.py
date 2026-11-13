@@ -1,5 +1,6 @@
 """Real fake-provider subprocesses: keep stdin open as a terminal attachment does."""
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -17,14 +18,23 @@ def fake_process(tmp_path):
     run = tmp_path / 'run'
     run.mkdir()
     with subprocess.Popen([sys.executable, str(FAKE), '--session-id', 'input-fixture'],
-                          cwd=tmp_path, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                          start_new_session=True, cwd=tmp_path, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                           env={**os.environ, 'HOME': str(home), 'ACC_RUN_DIR': str(run), 'FAKE_HOOK': '/usr/bin/true'}) as process:
         try:
             yield process, run
         finally:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=5)
+            # Include hook/helper children in this fixture's private session.
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=5)
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 async def test_coalesced_lines_are_all_received_without_another_write_or_eof(fake_process):

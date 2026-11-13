@@ -386,3 +386,12 @@ def test_rc_version_is_valid_for_the_pin_inventory():
     inventory = runpy.run_path(str(SCRIPT))
     assert inventory['version']('0.15.0-rc.1', 'release') == '0.15.0-rc.1'
     assert inventory['version']('v0.15.0-rc.1', 'release') == '0.15.0-rc.1'
+
+
+@pytest.mark.parametrize('extra', ['\nEXTRA_SHA = "' + 'e' * 64 + '"\n',
+                                  '\nURL = "https://example.com/tool.zip"\n'])
+def test_local_qualification_inventory_rejects_new_digests_or_downloads(checkout, extra):
+    path = checkout / 'scripts/session_relay_qualification/execution_crash_driver.py'
+    path.write_text(path.read_text() + extra)
+    result = run(checkout)
+    assert result.returncode == 1 and 'uninventoried qualification' in result.stderr

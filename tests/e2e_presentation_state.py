@@ -8,9 +8,8 @@ from starlette.routing import Route
 from acc.server.admin_features import FEATURES
 from acc.server.models import Setting
 
-PREFIXES = ('ui_shell.', 'setup_level.', 'ui_header.', 'theme.person.')
-GROUPS = ('admin_features', 'ui_shell', 'setup_level', 'ui_header', 'theme', 'layouts')
-
+PREFIXES = ('setup_level.', 'ui_header.', 'theme.person.')
+GROUPS = ('admin_features', 'setup_level', 'ui_header', 'theme', 'layouts')
 
 class PresentationState:
     def __init__(self, db, settings):
@@ -33,8 +32,6 @@ class PresentationState:
                 if not row.key.startswith(PREFIXES):
                     continue
                 value = row.value
-                if row.key.startswith('ui_shell.') and value.get('enabled') is True:
-                    continue
                 if row.key.startswith('theme.person.'):
                     value = value.get('choice')
                     if value is None:
@@ -81,7 +78,6 @@ class PresentationState:
             # The production middleware reads an immutable in-process snapshot.
             # Reset the owned fixture's snapshot as well as its database.
             self.settings.features.load(db)
-
 
 def install(app):
     state = PresentationState(app.state.db, app.state.ctx.settings)

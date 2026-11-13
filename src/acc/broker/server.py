@@ -55,9 +55,16 @@ def peer_uid(writer: asyncio.StreamWriter) -> int:
 
 
 class Broker:
-    def __init__(self, config: BrokerConfig):
+    def __init__(self, config: BrokerConfig, *, relay_transport=None):
         self.config = config
+        self.relay_transport = relay_transport
         self._folder_lock = threading.RLock()
+        from .account_install import AccountLock, Protocol
+        self._account_tools_lock = AccountLock(config.run_dir)
+        from .image_probe import runtime_id
+        # Only agent brokers run delegated installs; a services broker has no private run dir to hold the identity.
+        identity = runtime_id(config) if config.role == 'agents' else ''
+        self._account_installs = Protocol(config, self._account_tools_lock, identity)
         from .search_worker import Searches
         self._searches = Searches()
         self._folder_snapshot = None
@@ -68,11 +75,15 @@ class Broker:
         from .search_worker import Searches
         self._searches = Searches()
         self.methods = {
+            "relay_probe": lambda p: self.relay_transport.probe(**({'provider':p['provider']} if 'provider' in p else {})) if hasattr(self.relay_transport, 'probe') else {'available': False},
             "chat_read": lambda p: read_chat(Path.home(), **p),
             "group_machine_verify": lambda p: {"verified": group_proof.verify(self.config.run_dir, p["node_id"], p["proof_account"], p["request_id"], p["code"])},
             "folder_check": self.folder_check,
             "files": lambda p: ops.files(self.config, **p),
             "session_git": lambda p: session_git.operate(self.config, **p),
+            "session_rebase_summary": lambda p: session_git.rebase_summary(self.config, **p),
+            "session_completed_rebase": lambda p: session_git.completed_rebase(self.config, **p),
+            "session_update_base": lambda p: session_git.update_base(self.config, **p),
             "files_search": lambda p: ops.file_search(self.config, **p),
             "claude_auth": lambda p: claude_auth.account(self.config),
             "session_auth": lambda p: claude_auth.refresh(self.config, p['tmux_name']),
@@ -80,7 +91,7 @@ class Broker:
             "brief_document_extract": lambda p: document_extract.run(self.config, **p),
             "brief_reference": lambda p: brief_references.receive(self.config, **p, binding_key=self._workspace_key),
             "image_identity": lambda p: image_probe.identity(self.config, p["provider"]),
-            "image_probe": lambda p: image_probe.run(self.config, p["provider"], p["model"]),
+            "image_probe": self.image_probe_request,
             "model_catalog": lambda p: models.model_catalog(self.config),
             "usage": lambda p: logins.usage(self.config, p["provider"]),
             "installed_providers": lambda p: ops.installed_providers(self.config),
@@ -116,6 +127,7 @@ class Broker:
                                                                  bool(p.get("detail"))),
             "automation_screen": lambda p: ops.automation_screen(self.config, p["tmux_name"], p["provider"]),
             "terminal_output": lambda p: ops.terminal_output(self.config, p["tmux_name"], watching=p.get("watching") is True),
+            "clear_osc_status": lambda p: ops.clear_osc_status(self.config, p["tmux_name"]),
             "screen_prompt": lambda p: ops.screen_prompt(self.config, p["tmux_name"], p["provider"]),
             "transcript_messages": lambda p: ops.transcript_messages(p["provider"], p["native_id"], p.get("stamp")),
             "transcript_exists": lambda p: ops.transcript_exists(p["provider"], p["native_id"]),
@@ -158,6 +170,7 @@ class Broker:
             "group_receive": lambda p: group_git.receive(self.config, p["path"], p["data"], p["commit"], p["session_id"]),
             "git_backup": lambda p: ops.git_backup(self.config, p["path"], p["url"], p["token"], p.get("ca_pem")),
             "tool_change": self.tool_change,
+            "account_install": self._account_installs.call,
             **gate_ops.methods(self.config),  # orchestrator v2 slice 5 (gate queue, restack)
         }
 
@@ -183,14 +196,29 @@ class Broker:
                 # the first is where this account's new projects go (New project on another machine)
                 "roots": [str(root) for root in self.config.allowed_roots],
                 "folder_revision": self.config.folder_revision, "allowed_folders": self.config.allowed_folders,
-                "folder_policy_required": self.config.folder_policy_required}
+                "folder_policy_required": self.config.folder_policy_required, "session_capabilities": 1,
+                "session_runtime": {"version": getattr(self.relay_transport, 'version', 1), "available": self.relay_transport is not None}}
+
+    def image_probe_request(self, params):
+        if set(params) not in ({'provider', 'model'}, {'provider', 'model', 'expected_uid', 'expected_runtime_id'}):
+            raise RequestError('bad image probe fields')
+        return image_probe.run(self.config, **params)
 
     def tool_change(self, params: dict) -> dict:
         if os.geteuid() == 0 or self.config.role != "agents":
             raise RequestError("user tools must run as an unprivileged agent account, never root")
-        if set(params) != {"manager", "name", "version", "operation"}:
+        fields = {"manager", "name", "version", "operation"}
+        if set(params) not in (fields, fields | {'capabilities'}):
             raise RequestError("bad tool fields")
-        return tooling.execute(**params, home=Path.home(), system=False)
+        with self._account_tools_lock.held():
+            if 'capabilities' in params:
+                from acc.session_capabilities import require
+                proof = params['capabilities']
+                try:
+                    require(proof['effective'], 'installs', params['manager'], parent=proof.get('parent'))
+                except (ValueError, KeyError, TypeError) as error:
+                    raise RequestError(str(error)) from None
+            return tooling.execute(**{key: params[key] for key in fields}, home=Path.home(), system=False)
 
     def folder_check(self, params):
         from acc.folder_policy import FolderError, broker_path, open_directory
@@ -268,6 +296,11 @@ class Broker:
                     # the connection becomes a terminal stream for its remaining lifetime
                     await attach.attach(self.config, request["params"], reader, writer)
                     return
+                if response is None and (uid != 0 or uid in self.config.allowed_uids) and request['method'] == 'session_runtime' and self.config.role == 'agents':
+                    if self.relay_transport is not None:
+                        await self.relay_transport.serve(request['id'], request['params'], reader, writer)
+                        return
+                    response = {'id': request['id'], 'ok': False, 'error': 'Session runtime is unavailable.'}
                 if response is None and uid == 0 and (request['method'] == 'folder_policy_apply' or uid not in self.config.allowed_uids):
                     # Root is not granted the general account RPC surface here.
                     try:
@@ -299,7 +332,7 @@ class Broker:
             expected = params.pop('folder_revision', None)
             # Terminal observation and stop must remain available during a policy fence.
             exempt = {'ping', 'list', 'session_auth', 'claude_auth', 'kill', 'interrupt', 'send_text', 'clear_env', 'read_spool', 'terminal_observer_geometry',
-                      'terminal_output', 'automation_screen', 'screen_prompt', 'team_reply', 'folder_check'}
+                      'terminal_output', 'automation_screen', 'screen_prompt', 'clear_osc_status', 'team_reply', 'folder_check'}
             if request['method'] not in exempt and (self.config.folder_policy_required or expected is not None):
                 if self.config.folder_revision < 1 or expected != self.config.folder_revision:
                     raise RequestError('Folder policy is pending or its revision changed. Refresh and retry after application.')
@@ -347,7 +380,10 @@ def check_socket_path(path: Path) -> None:
 
 
 async def serve(config: BrokerConfig) -> None:
+    from .relay_runtime import RuntimeTransportFactory
     broker = Broker(config)
+    if config.role == 'agents':
+        broker.relay_transport = RuntimeTransportFactory(config, current_config=lambda: broker.config)
     # Launch requests carry the session's compiled files (skills can be ~100s of KB): raise the line limit.
     if os.environ.get("LISTEN_PID") == str(os.getpid()) and os.environ.get("LISTEN_FDS") == "1":
         # acc-broker@.socket: systemd made the socket (root-owned folder, group acc), so this account's own

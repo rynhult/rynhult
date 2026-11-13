@@ -99,7 +99,7 @@ test('invitation copying reports denial and preserves the selectable URL',async(
  await copy.click();await expect(page.locator('#people').getByText(/Clipboard unavailable/)).toBeVisible(); // the screen-reader announcement repeats it
  expect(await page.evaluate(()=>getSelection()?.toString())).toBe(new URL('/invite/EXAMPLE',page.url()).href);
 });
-test('phone page ends at real content and the modal contains exhausted scrolling',async({page})=>{
+test('phone page and launch region contain exhausted scrolling',async({page})=>{
  await page.setViewportSize({width:390,height:844});await page.goto('/settings');
  // Measure the real end after query-populated Settings sections have loaded.
  await page.waitForLoadState('networkidle');
@@ -113,8 +113,10 @@ test('phone page ends at real content and the modal contains exhausted scrolling
  expect(await main.evaluate(e=>e.scrollTop)).toBe(before);expect(await main.evaluate(e=>e.scrollLeft)).toBe(0);
  expect(await page.evaluate(()=>window.scrollY)).toBe(0);await touch.detach();
  await page.getByRole('button',{name:'New session',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'New session',exact:true});await dialog.hover();await page.mouse.wheel(0,100000);await page.mouse.wheel(0,100000);
- expect(await main.evaluate(e=>e.scrollTop)).toBe(before);await page.keyboard.press('Escape');
+ const dialog=page.getByRole('region',{name:'New session',exact:true});await dialog.hover();await page.mouse.wheel(0,100000);await page.mouse.wheel(0,100000);
+ // A launch region now scrolls within main; classic modal background scroll isolation has no counterpart (Josh review).
+ expect(await page.evaluate(()=>window.scrollY)).toBe(0);await page.keyboard.press('Escape');
+ await expect(dialog).toHaveCount(0);await expect(main).toBeInViewport();
 });
 test('unverified passkey changes guide verification and server expiry clears it',async({page})=>{
  await page.route('**/api/auth/passkeys/reauth',r=>r.fulfill({json:{ok:true}}));

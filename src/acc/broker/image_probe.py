@@ -26,9 +26,10 @@ from acc.env import environment
 from .. import providers
 from . import explain, ops
 
-DEADLINE = 40
+DEADLINE = 30
 MAX_OUTPUT = 64 * 1024
 PROTOCOL = 'image-check-v1'
+DELEGATION_PROTOCOL = 'image-check-delegation-v1'
 # Avoid visually confusable letter/digit groups; tolerate only one code substitution.
 CODE_ALPHABET = 'ACFHJKMNPRTWXY49'
 FONT = {char: ''.join(rows.split()) for char, rows in {
@@ -222,7 +223,7 @@ def identity(config, provider):
         runtime = runtime_id(config)
     except (OSError, ValueError, UnicodeError):
         runtime = None
-    return {'adapter_version':ADAPTER_VERSIONS[provider],'cli_version':version,'provider':adapter.id,'runtime_id':runtime}
+    return {'adapter_version':ADAPTER_VERSIONS[provider],'cli_version':version,'provider':adapter.id,'runtime_id':runtime, 'uid':os.geteuid(), 'delegation_protocol':DELEGATION_PROTOCOL}
 
 
 def verdict(expected, answer, code):
@@ -230,10 +231,14 @@ def verdict(expected, answer, code):
     return None if outcome == 'error' else outcome in image_check.PASS_OUTCOMES
 
 
-def run(config, provider, model):
+def run(config, provider, model, *, expected_uid=None, expected_runtime_id=None):
     if not isinstance(model,str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}',model):
         raise ops.OpError('invalid image check model')
     before=identity(config,provider)
+    if expected_uid is not None or expected_runtime_id is not None:
+        if (type(expected_uid) is not int or expected_uid < 1 or expected_uid != os.geteuid()
+                or config.role != 'agents' or before['runtime_id'] != expected_runtime_id):
+            raise ops.OpError('delegated image probe account/runtime changed')
     result={**before,'image_input':None,'checked_at':time.time(),'evidence':{'outcome':'error'}}
     if not before['cli_version'] or not before['runtime_id']:
         return result

@@ -1,9 +1,10 @@
+import { projectWorkspace } from "./helpers";
 import { test } from './shell-state';
 import { expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { AUTH_FILE, verifyAgain } from './helpers';
 
-test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'ui_shell', 'layouts'] });
+test.use({ storageState: AUTH_FILE, presentationChanges: ['admin_features', 'layouts'] });
 // Finish intercepted polling reads before Playwright disposes the request context.
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'wait' }); });
 // Normal gate order leaves open notices. Navigation must not depend on an empty Inbox.
@@ -18,28 +19,16 @@ async function withOpenNotices(page: import('@playwright/test').Page) {
 async function headers(page: import('@playwright/test').Page) {
   return { 'x-acc-csrf': (await page.context().cookies()).find(c => /acc_csrf$/.test(c.name))!.value };
 }
-async function feature(page: import('@playwright/test').Page, enabled: boolean) {
-  const put = async () => {
-    const state = await (await page.request.get('/api/admin-features')).json();
-    return page.request.put('/api/admin-features/new_shell', { headers: await headers(page), data: { enabled, revision: state.revision } });
-  };
-  let result = await put();
-  // new_shell is a Preview, so turning it on needs a recent sign-in verification (test_rc1_defaults).
-  if (!result.ok() && enabled) { await verifyAgain(page); result = await put(); }
-  expect(result.ok()).toBeTruthy();
-}
-async function preference(page: import('@playwright/test').Page, enabled: boolean) {
-  expect((await page.request.put('/api/preferences/ui-shell', { headers: await headers(page), data: { enabled } })).ok()).toBeTruthy();
-}
 
-// Older callers can still save the retired feature choice; it has no effect.
+// Retired feature writes are refused and cannot change the frame.
 async function saveRetiredFeatureChoice(page: import('@playwright/test').Page) {
-  await feature(page, false);
-  expect((await (await page.request.get('/api/auth/state')).json()).instance.features.new_shell).toBe(true);
+  expect((await page.request.put('/api/admin-features/new_shell', { headers: await headers(page), data: { enabled: false, revision: 0 } })).status()).toBe(404);
+
+  expect((await (await page.request.get('/api/auth/state')).json()).instance.features.new_shell).toBeUndefined();
 }
 
 test('Settings offers no layout choice', async ({ page }) => {
-  await preference(page, true);
+
   await page.goto('/settings#layout');
   await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
   await expect(page.getByLabel('Use the classic layout')).toHaveCount(0);
@@ -48,7 +37,7 @@ test('Settings offers no layout choice', async ({ page }) => {
 
 test('rail navigation opens each primary page and every mode is keyboard reachable', async ({ page }) => {
   await withOpenNotices(page);
-  await feature(page, true); await preference(page, true);
+
   await page.goto('/projects');
   const rail = page.getByRole('navigation', { name: 'Rail', exact: true });
   await expect(rail).toBeVisible();
@@ -71,10 +60,10 @@ test('rail navigation opens each primary page and every mode is keyboard reachab
 
 test('Continue opens the same terminal without resuming or taking another writer; rail preserves its instance', async ({ page, context }) => {
   await withOpenNotices(page);
-  await feature(page, true); await preference(page, true);
+
   const { info } = await import('./helpers');
   const h = await headers(page);
-  const p = await page.request.post('/api/projects', { headers: h, data: { slug: `shell-${Date.now()}`, name: 'Cedar archive', workspace_path: info().workspace } });
+  const p = await page.request.post('/api/projects', { headers: h, data: { slug: `shell-${Date.now()}`, name: 'Cedar archive', workspace_path: projectWorkspace() } });
   expect(p.ok()).toBeTruthy(); const project = await p.json();
   expect((await page.request.post(`/api/projects/${project.id}/trust`, { headers: h })).ok()).toBeTruthy();
   const s = await page.request.post('/api/sessions', { headers: h, data: { project_id: project.id, provider: 'claude', name: 'Restore preview' } });
@@ -123,9 +112,9 @@ test('Continue opens the same terminal without resuming or taking another writer
 });
 
 test('offline Continue stays a link; older settings do not disable Resume and refusals stay verbatim', async ({ page }) => {
-  await feature(page, true); await preference(page, true);
+
   const { info } = await import('./helpers'); const h = await headers(page);
-  const p = await page.request.post('/api/projects', { headers: h, data: { slug: `facts-${Date.now()}`, name: 'Field notes', workspace_path: info().workspace } });
+  const p = await page.request.post('/api/projects', { headers: h, data: { slug: `facts-${Date.now()}`, name: 'Field notes', workspace_path: projectWorkspace() } });
   const project = await p.json(); await page.request.post(`/api/projects/${project.id}/trust`, { headers: h });
   const s = await page.request.post('/api/sessions', { headers: h, data: { project_id: project.id, provider: 'claude', name: 'Review notes' } }); const session = await s.json();
   await page.request.post(`/api/sessions/${session.id}/stop`, { headers: h });
@@ -159,8 +148,8 @@ test('offline Continue stays a link; older settings do not disable Resume and re
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
 });
 
-test('S1: offline machine disables only Resume; old and new shell retain other action conditions', async ({ page, browser }) => {
-  test.slow(); await feature(page, true);
+test('S1: offline machine disables only Resume; the frame retains other action conditions', async ({ page, browser }) => {
+  test.slow();
   const { gitProject } = await import('./helpers'); const h = await headers(page);
   const project = await gitProject(page, 'cedar-offline-actions');
   const response = await page.request.post('/api/sessions', { headers: h, data: { project_id: project.id, provider: 'claude', name: 'Offline controls' } });
@@ -174,8 +163,8 @@ test('S1: offline machine disables only Resume; old and new shell retain other a
   const phone = await phoneContext.newPage();
   await phone.route(`**/api/sessions/${session.id}`, route => route.fulfill({ json: offlineSession() }));
   try {
-    for (const shell of [false, true]) {
-      await preference(page, shell); state = 'active';
+    for (const shell of [true]) {
+       state = 'active';
       await page.goto(`/sessions/${session.id}`);
       const controls = page.locator('.session-heading');
       for (const name of ['Stop', 'Interrupt']) {
@@ -225,7 +214,7 @@ async function shot(page: import('@playwright/test').Page, name: string, guide =
 
 test('dirty Files survive rail modes, retired feature writes and navigation; close retains the discard guard', async ({ page }) => {
   await withOpenNotices(page);
-  await feature(page, true); await preference(page, true);
+
   const { gitProject, fileRow } = await import('./helpers');
   const { id, slug } = await gitProject(page, 'shell-draft');
   await page.goto(`/projects/${id}?tab=files`);
@@ -248,7 +237,7 @@ test('dirty Files survive rail modes, retired feature writes and navigation; clo
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(await original!.evaluate(node => node.isConnected)).toBe(true);
   }
-  await preference(page, false);
+
   await saveRetiredFeatureChoice(page);
   await expect(page.getByText(/An owner turned the new layout off/)).toHaveCount(0);
   await expect(editor).toContainText('keep my unsaved draft');
@@ -271,13 +260,13 @@ test('dirty Files survive rail modes, retired feature writes and navigation; clo
 });
 
 test('60 extra projects: sidebar pages, search and phone scrolling stay usable in a shared fixture', async ({ page, browser }) => {
-  test.slow(); await feature(page, true); await preference(page, true);
+  test.slow();
   const { info, PASSWORD, totp, expectAxeClean } = await import('./helpers'); const h = await headers(page);
   const prefix = `aaa-volume-${Date.now()}`;
   const ownedProjects: number[] = [];
   try {
     for (let i = 0; i < 60; i++) {
-      const result = await page.request.post('/api/projects', { headers: h, data: { slug: `${prefix}-${String(i).padStart(2, '0')}`, name: `Cedar volume ${i}`, workspace_path: info().workspace } });
+      const result = await page.request.post('/api/projects', { headers: h, data: { slug: `${prefix}-${String(i).padStart(2, '0')}`, name: `Cedar volume ${i}`, workspace_path: projectWorkspace() } });
       expect(result.ok(), await result.text()).toBeTruthy();
       ownedProjects.push((await result.json()).id);
     }
@@ -359,7 +348,7 @@ test('60 extra projects: sidebar pages, search and phone scrolling stay usable i
 
 test('owner desktop and phone, light and dark: project context, tools, keyboard, palette and accessibility', async ({ page }) => {
   test.slow();
-  await feature(page, true); await preference(page, true);
+
   const { gitProject, expectAxeClean } = await import('./helpers');
   const { id, slug } = await gitProject(page, 'cedar');
   for (const theme of ['light', 'dark'] as const) for (const width of [1440, 390]) {
@@ -404,14 +393,14 @@ test('owner desktop and phone, light and dark: project context, tools, keyboard,
   await expect(page.getByLabel('Use the classic layout')).toHaveCount(0);
   await shot(page, '06-preference-saved');
   await page.setViewportSize({ width: 1440, height: 900 });
-  await preference(page, false); await page.goto(`/projects/${id}`);
-  await expect(page.getByRole('region', { name: 'Sessions' })).toHaveCount(0);
-  await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toBeVisible();
+   await page.goto(`/projects/${id}`);
+  await expect(page.getByRole('region', { name: 'Sessions' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Rail', exact: true })).toBeVisible();
 });
 
 test('same browser different person: no prior pins, recents or owner-only header requests', async ({ page, context }) => {
   test.slow();
-  await feature(page, true); await preference(page, true);
+
   const { gitProject, info, PASSWORD, totp, expectAxeClean } = await import('./helpers');
   const { slug } = await gitProject(page, 'private-cedar');
   await page.goto('/projects');
@@ -421,7 +410,7 @@ test('same browser different person: no prior pins, recents or owner-only header
   await page.getByRole('link', { name: 'Back to all projects', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search projects', exact: true }).fill('');
   await expect(page.getByRole('region', { name: 'Pinned projects' })).toContainText(slug);
-  const ownerId = (await (await page.request.get('/api/preferences/ui-shell')).json()).person_id;
+  const ownerId = (await (await page.request.get('/api/auth/state')).json()).person_id;
   const account = `shell-person-${Date.now()}-agent`;
   mkdirSync(`${info().state}/fixture-accounts/${account}`, { recursive: true });
   const invite = await page.request.post('/api/users/invites', { headers: await headers(page), data: { role: 'member', account } });
@@ -430,8 +419,8 @@ test('same browser different person: no prior pins, recents or owner-only header
   const begin = await page.request.post('/api/auth/invite/begin', { headers: { Origin: info().origin }, data: { token } });
   const joined = await page.request.post('/api/auth/invite/complete', { headers: { Origin: info().origin }, data: { token, username: `blair-${Date.now()}`, password: PASSWORD, code: totp((await begin.json()).totp_secret) } });
   expect(joined.ok(), await joined.text()).toBeTruthy();
-  await preference(page, true);
-  const memberId = (await (await page.request.get('/api/preferences/ui-shell')).json()).person_id;
+
+  const memberId = (await (await page.request.get('/api/auth/state')).json()).person_id;
   expect(memberId).not.toBe(ownerId);
   const requests: string[] = [];
   page.on('request', r => requests.push(new URL(r.url()).pathname));
@@ -456,7 +445,7 @@ test('same browser different person: no prior pins, recents or owner-only header
   // The member's own older-settings fact comes from the authorized session
   // detail route, never the owner's cross-person security inventory.
   const h = await headers(page);
-  const made = await page.request.post('/api/projects', { headers: h, data: { slug: `member-${Date.now()}`, name: 'Blair notes', workspace_path: info().workspace } });
+  const made = await page.request.post('/api/projects', { headers: h, data: { slug: `member-${Date.now()}`, name: 'Blair notes', workspace_path: projectWorkspace() } });
   expect(made.ok(), await made.text()).toBeTruthy(); const ownProject = await made.json();
   expect((await page.request.post(`/api/projects/${ownProject.id}/trust`, { headers: h })).ok()).toBeTruthy();
   const launched = await page.request.post('/api/sessions', { headers: h, data: { project_id: ownProject.id, provider: 'claude', name: 'Blair review' } });
@@ -492,16 +481,16 @@ test('same browser different person: no prior pins, recents or owner-only header
 
 test('Continue states and header source facts remain distinct; capture shell payload requests', async ({ page, context }) => {
   test.slow();
-  await feature(page, true);
+
   const { info } = await import('./helpers'); const h = await headers(page);
-  const response = await page.request.post('/api/projects', { headers: h, data: { slug: `states-${Date.now()}`, name: 'Cedar archive', workspace_path: info().workspace } });
+  const response = await page.request.post('/api/projects', { headers: h, data: { slug: `states-${Date.now()}`, name: 'Cedar archive', workspace_path: projectWorkspace() } });
   const project = await response.json(); await page.request.post(`/api/projects/${project.id}/trust`, { headers: h });
   const created = await page.request.post('/api/sessions', { headers: h, data: { project_id: project.id, provider: 'claude', name: 'Cedar review' } });
   const session = await created.json(); await page.request.post(`/api/sessions/${session.id}/stop`, { headers: h });
   // Fixed-duration cold-navigation observation, no request assertions tied to polling timing.
   const measurements: Record<string, unknown> = {};
-  for (const enabled of [false, true]) {
-    await preference(page, enabled);
+  for (const enabled of [true]) {
+
     const fresh = await context.newPage(); const requests: string[] = [];
     fresh.on('request', r => requests.push(new URL(r.url()).pathname));
     await fresh.goto(`/projects/${project.id}`); await fresh.getByRole('heading', { name: 'Cedar archive', exact: true, level: 1 }).waitFor();
@@ -567,12 +556,12 @@ test('Continue states and header source facts remain distinct; capture shell pay
 });
 
 test('retained New session draft is untouched by rollout changes; layout latch survives Status board', async ({ page }) => {
-  await feature(page, true); await preference(page, true);
+
   await page.goto('/projects');
   await page.getByRole('button', { name: 'New session', exact: true }).click();
   const dialog = page.getByRole('region', { name: 'New session', exact: true });
   await dialog.getByRole('textbox', { name: 'Task (optional)', exact: true }).fill('Keep this unsent planning task.');
-  await preference(page, false); await saveRetiredFeatureChoice(page);
+   await saveRetiredFeatureChoice(page);
   await expect(page.getByText(/An owner turned the new layout off/)).toHaveCount(0);
   await expect(dialog.getByRole('textbox', { name: 'Task (optional)', exact: true })).toHaveValue('Keep this unsent planning task.');
   await page.keyboard.press('Escape');

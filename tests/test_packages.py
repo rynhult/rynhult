@@ -226,7 +226,7 @@ def test_restic_checksum_refusal_preserves_installed_binary(helper, tmp_path, mo
     assert not (tmp_path / 'qualified-restic/versions/0.19.1/restic').exists()
 
 
-@pytest.mark.parametrize("name, target", [("codex", "0.163.0"), ("copilot", "1.0.103")])
+@pytest.mark.parametrize("name, target", [("codex", "0.167.1"), ("copilot", "1.0.103")])
 def test_npm_installs_acc_target_even_when_upstream_has_advanced(opencode, monkeypatch, name, target):
     import subprocess
 
@@ -247,7 +247,7 @@ def test_npm_installs_acc_target_even_when_upstream_has_advanced(opencode, monke
     monkeypatch.setattr(helper.shutil, "which", lambda _: "/fake/npm")
     spec = helper.CATALOG[name]
     helper.install(spec)
-    assert commands[0][-1] == f"{spec['package']}@{target}"
+    assert next(c for c in commands if c[1] == "install")[-1] == f"{spec['package']}@{target}"
     state = {"packages": {}}
     helper.refresh(state, [name], latest=True)
     entry = state["packages"][name]
@@ -450,3 +450,145 @@ def test_claude_native_install_refuses_and_keeps_what_was_there(unpatched, nativ
         helper.install_claude_native(native.spec)
     assert dest.read_bytes() == b"previous claude"
     assert not (Path(native.spec["root"]) / "versions" / native.spec["version"] / "claude").exists()
+
+
+@pytest.mark.parametrize('name', ['codex', 'copilot'])
+@pytest.mark.parametrize('installed', [None, '0.1.0', 'pin', '99.0.0', '0.167.1-dev', 'unknown'])
+def test_explicit_install_never_downgrades_pinned_cli(unpatched, monkeypatch, name, installed):
+    import subprocess
+
+    spec = unpatched.CATALOG[name]
+    installed = spec['pin'] if installed == 'pin' else installed
+    commands = []
+    monkeypatch.setattr(unpatched, 'installed_version', lambda spec: installed)
+    monkeypatch.setattr(unpatched.shutil, 'which', lambda _: '/fake/npm')
+    monkeypatch.setattr(unpatched, 'run', lambda argv, **kw: (
+        commands.append(argv) or subprocess.CompletedProcess(argv, 0, '', '')))
+    refused = installed is not None and (installed in ('99.0.0', '0.167.1-dev', 'unknown'))
+    if refused:
+        with pytest.raises(unpatched.Refused, match='Refusing to downgrade') as error:
+            unpatched.install(spec)
+        assert installed in str(error.value) and spec['pin'] in str(error.value)
+        assert 'left unchanged' in str(error.value) and commands == []
+    else:
+        unpatched.install(spec)
+        assert commands[0][-1] == f"{spec['package']}@{spec['pin']}"
+
+
+def test_deploy_install_reports_downgrade_refusal(unpatched, monkeypatch, capsys):
+    monkeypatch.setattr(unpatched.shutil, 'which', lambda _: '/fake/npm')
+    monkeypatch.setattr(unpatched, 'installed_version', lambda spec: '99.0.0')
+    monkeypatch.setattr(unpatched, 'run', lambda *a, **k: pytest.fail('must not invoke npm'))
+    assert unpatched.main(['--install', 'codex']) == 0
+    output = capsys.readouterr().out
+    assert 'codex KEPT' in output and '99.0.0' in output and '0.167.1' in output
+    state = unpatched.load_state()['packages']['codex']
+    assert not state['last']['ok'] and 'Refusing to downgrade' in state['last']['detail']
+
+
+def test_missing_npm_is_reported_before_version_probe(unpatched, monkeypatch):
+    monkeypatch.setattr(unpatched.shutil, 'which', lambda _: None)
+    monkeypatch.setattr(unpatched, 'run', lambda *a, **k: pytest.fail('npm must not run'))
+    with pytest.raises(unpatched.Refused, match="npm isn't installed"):
+        unpatched.install(unpatched.CATALOG['codex'])
+
+
+@pytest.mark.parametrize('stdout,code', [
+    ('not JSON', 0), ('', 0), ('null', 0), ('[]', 0), ('{"dependencies": []}', 0),
+    ('{"dependencies": {"@openai/codex": {}}}', 0),
+    ('{"dependencies": {"@openai/codex": {"version": null}}}', 0),
+    ('{"dependencies": {"@openai/codex": "0.171.0"}}', 0),
+    ('{"error": {"summary": "failed"}}', 0), ('{}', 1),
+])
+def test_unknown_npm_inventory_refuses_install(unpatched, monkeypatch, stdout, code):
+    import subprocess
+
+    monkeypatch.setattr(unpatched.shutil, 'which', lambda _: '/fake/npm')
+    commands = []
+
+    def run(argv, **kw):
+        commands.append(argv)
+        assert argv[:2] == ['npm', 'ls']
+        return subprocess.CompletedProcess(argv, code, stdout, '')
+
+    monkeypatch.setattr(unpatched, 'run', run)
+    assert unpatched.main(['--install', 'codex']) == 1
+    assert len(commands) == 1  # no mutation, including for otherwise valid JSON with a failed exit
+    last = unpatched.load_state()['packages']['codex']['last']
+    assert not last['ok'] and 'could not determine installed version' in last['detail']
+
+
+@pytest.mark.parametrize('stdout', ['{}', '{"dependencies": {}}'])
+def test_valid_empty_npm_inventory_allows_fresh_install(unpatched, monkeypatch, stdout):
+    import subprocess
+
+    monkeypatch.setattr(unpatched.shutil, 'which', lambda _: '/fake/npm')
+    commands = []
+
+    def run(argv, **kw):
+        commands.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout if argv[1] == 'ls' else '', '')
+
+    monkeypatch.setattr(unpatched, 'run', run)
+    unpatched.install(unpatched.CATALOG['codex'])
+    assert any(c[1] == 'install' for c in commands)
+
+
+@pytest.mark.parametrize('newer', [True, False], ids=['kept', 'real-install-failure'])
+def test_install_sh_kept_cli_continues_to_brokers_folders_and_restart(tmp_path, newer):
+    """Actual installer segment under its strict shell options, with host effects stubbed."""
+    import shlex
+    import subprocess
+    import sys
+
+    repo = HELPER.parents[2]
+    npm = tmp_path / 'npm'
+    npm.write_text(f'#!{sys.executable}\n'
+                   'import json, sys\n'
+                   'from pathlib import Path\n'
+                   f'calls = Path({str(tmp_path / "npm-calls")!r})\n'
+                   'with calls.open("a") as f: f.write(sys.argv[1] + "\\n")\n'
+                   'if sys.argv[1] == "ls":\n'
+                   f' print(json.dumps({{"dependencies": {{"@openai/codex": {{"version": {"99.0.0" if newer else "0.1.0"!r}}}}}}}))\n'
+                   'elif sys.argv[1] == "install":\n'
+                   ' print("fixture npm install failure", file=sys.stderr)\n'
+                   ' sys.exit(42)\n')
+    npm.chmod(0o755)
+    safe = tmp_path / 'safe-host-command'
+    safe.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DEPLOY_CALLS"\n')
+    safe.chmod(0o755)
+    installer = (repo / 'deploy/install.sh').read_text()
+    strict = next(line for line in installer.splitlines() if line == 'set -euo pipefail')
+    start = installer.index('clis=$(setting ACC_AGENT_CLIS')
+    end = installer.index('\n', installer.index('systemctl restart accd.service', start))
+    segment = installer[start:end]
+    segment = segment.replace('/usr/local/sbin/acc-packages',
+                              shlex.quote(sys.executable) + ' ' + shlex.quote(str(HELPER)))
+    for executable in ['/usr/local/sbin/acc-agent-add', '/usr/local/sbin/acc-agent-share', '/usr/bin/python3']:
+        segment = segment.replace(executable, shlex.quote(str(safe)))
+    script = strict + '\n' + '''
+setting() { echo codex; }
+install() { :; }
+dpkg() { return 0; }
+apt-mark() { :; }
+systemctl() { "$SAFE_HOST_COMMAND" "$@"; }
+REPO=/fixture/repo
+AGENT_USER=example-agent
+OWNER=example
+''' + segment
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('ACC_', 'RYNHULT_'))}
+    env.update(PATH=str(tmp_path) + os.pathsep + env.get('PATH', ''), ACC_PACKAGES_ROOT=str(tmp_path / 'packages'),
+               SAFE_HOST_COMMAND=str(safe), DEPLOY_CALLS=str(tmp_path / 'deploy-calls'))
+    result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, timeout=20)
+    calls = (tmp_path / 'deploy-calls').read_text() if (tmp_path / 'deploy-calls').exists() else ''
+    if newer:
+        assert result.returncode == 0, result.stderr
+        assert 'codex KEPT' in result.stdout and '99.0.0' in result.stdout
+        assert '/fixture/repo/deploy/folders/install.py' in calls
+        assert 'example-agent' in calls and 'restart accd.service' in calls
+        assert (tmp_path / 'npm-calls').read_text() == 'ls\n'
+    else:
+        assert result.returncode == 1
+        assert 'codex FAILED' in result.stdout and 'npm install failed' in result.stdout
+        assert not calls  # real failure still stops before brokers/folders/service restart
+        assert (tmp_path / 'npm-calls').read_text() == 'ls\ninstall\n'

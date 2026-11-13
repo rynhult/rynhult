@@ -163,3 +163,33 @@ def test_codex_plugins_listing(env):
     found = ops.codex_plugins()
     assert found["plugins"] == ["pages@openai-curated-remote", "sites@openai-curated-remote"]
     assert [Path(p).parts[-2] for p in found["skill_paths"]] == ["pages", "sites"]
+
+
+@pytest.mark.parametrize('resume', [False, True])
+def test_acc_generated_codex_overrides_never_set_hook_state(resume):
+    from acc.providers.base import CompileContext
+    from acc.providers.codex import PROVIDER
+    from acc.server.teams import team_files
+
+    inputs = LaunchInputs(provider='codex', profile='qa', skills=('acc-workflow',), mcps=('playwright',),
+                          model='gpt-6.1-sol', effort='high', append_prompt='Keep hooks.state.example.enabled=false as text')
+    plugins = {'plugins': ['example@curated'], 'skill_paths': ['/home/example/.codex/plugins/example/SKILL.md']}
+    files = compile_files(inputs, HOOK, STATUS, catalog=CATALOG, agent_home='/home/example',
+                          codex_plugins=plugins, guardrails={'rules': {}}).files
+    files = PROVIDER.add_context(files, 'Context mentioning hooks.state is instruction text, not an override')
+    files = team_files(files, 'codex', HOOK, inputs=inputs)
+    # Exercise endpoint generation and resume policy updates alongside catalog/MCP/team settings.
+    files['endpoint.json'] = json.dumps({'id': 'example', 'name': 'Example', 'url': 'https://api.example.com',
+                                         'context_tokens': 10000})
+    plugins['skill_paths'].append('/home/example/.codex/plugins/new/SKILL.md')
+    extra = PROVIDER.resume_extra(inputs, files, CompileContext(HOOK, STATUS, CATALOG, '/home/example', plugins))
+    assert extra  # include an actual refreshed skill override
+    args = build_args(inputs, run_dir='/r', tmux_name='t', native_id='example-native', resume=resume,
+                      files=files, extra_overrides=extra)
+    overrides = [args[i + 1] for i, arg in enumerate(args) if arg == '-c']
+    keys = [override.split('=', 1)[0] for override in overrides]
+    assert not any(key == 'hooks' or key.startswith('hooks.') for key in keys)
+    assert [key for key in keys if key.startswith('features.')] == ['features.hooks']
+    assert overrides[-1] == 'features.hooks=true'
+    assert any(key.startswith('model_providers.') for key in keys)
+    assert any(key.startswith('mcp_servers.acc-team.') for key in keys)
