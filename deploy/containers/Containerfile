@@ -1,5 +1,5 @@
 # All system/browser bytes inherit this pinned Linux amd64 base. No apt runs.
-FROM mcr.microsoft.com/playwright/python:v1.56.0-noble-amd64@sha256:508b37a524219d210a67a7190beb079efda72553e0dcb9ef21d4dae8f8a7686b AS assembled
+FROM mcr.microsoft.com/playwright/python:v1.65.2-noble-amd64@sha256:cbd0a36dc6f6b8e8bb23703cf6cbe19ebe29e5a1ba43271a11a6c8e53c8b65d0 AS assembled
 USER root
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 WORKDIR /opt/acc/cli
