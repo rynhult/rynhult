@@ -127,7 +127,8 @@ async def test_person_launch_enrolls_one_native_owner_without_qualifying_text_or
         run = db.get(RelayRun, row.current_run_id)
         assert run.identity['binding']['native_conversation'] == 'fixture-native-id'
         assert db.get(SessionRun, run.run_id).verified_at
-        assert row.capabilities == {}
+        assert row.capabilities == {}  # Codex stays unqualified in the Claude-only owner preview
+        assert 'cliDigest' not in run.identity
     assert len(case.owners) == 1
     assert [call[0] for call in case.owners[0].calls] == ['initialize', 'thread/start']
     assert 'abc123def456' in case.manager.runs
@@ -219,6 +220,7 @@ async def test_real_cookie_http_registration_and_send_use_current_transaction_au
     from test_session_relay_writer_routes import retire
     state.writers.retire = retire  # artificial physical retirement, never placement qualification
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     settings = replace(case.ctx.settings, cookie_secure=False, allowed_origins=('http://fixture',))
     ctx = Context(settings, case.db, case.ctx.supervisor, case.ctx.broker, None, 'fixture-api-token')
     ctx.relay_runtime = case.manager
@@ -275,7 +277,15 @@ async def test_person_new_session_opt_in_reaches_production_factory_and_stop(api
         # This API fixture has no native CLI. Placement has its isolated proof.
     monkeypatch.setattr(module.OwnedTUI, 'start', fixture_view_start)
     monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true')
-    monkeypatch.setattr(module, 'CLI_DIGEST', p.sha256_digest(Path(env['broker'].providers['codex']).read_bytes()))
+    # Fake CLI/probe and main's expected declaration must agree in this unit lab.
+    # Native pin qualification is separate; production constants are not changed.
+    from acc.server.session_relay import release_qualification
+    from acc.session_relay import codex_preview
+    fake_digest=p.sha256_digest(Path(env['broker'].providers['codex']).read_bytes())
+    monkeypatch.setattr(module,'CLI_DIGEST',fake_digest)
+    monkeypatch.setattr(codex_preview,'CLI_DIGEST',fake_digest)
+    monkeypatch.setattr(release_qualification,'CODEX_DECLARATION',
+        replace(release_qualification.CODEX_DECLARATION,cli_digest=fake_digest))
     original = pwd.getpwuid(os.getuid())
     account = env['settings'].default_account
     monkeypatch.setattr(module.pwd, 'getpwuid', lambda _: pwd.struct_passwd((
@@ -298,7 +308,8 @@ async def test_person_new_session_opt_in_reaches_production_factory_and_stop(api
         run = db.get(RelayRun, row.current_run_id)
         assert run.identity['binding']['native_conversation'] == 'fixture-native-id'
         assert db.get(SessionRun, run.run_id).verified_at is not None
-        assert row.capabilities == {}  # enrollment grants no unqualified input
+        assert row.capabilities == {'text':'qualified','terminal.input':'qualified'}
+        assert run.identity['cliDigest']==fake_digest
     assert len(runtime_case.owners) == 1
     stopped = await client.post(f'/api/sessions/{identifier}/stop', headers=headers)
     assert stopped.status_code == 200, stopped.text

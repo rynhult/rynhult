@@ -24,15 +24,14 @@ from acc.session_relay.adapters.base import (
     ProbeResult,
     ReviewedSpec,
 )
-from acc.session_relay.adapters.codex import ADAPTER_VERSION, NATIVE_SCHEMA, CodexAdapter, unqualified_declaration
+from acc.session_relay.adapters.codex import ADAPTER_VERSION, NATIVE_SCHEMA, CodexAdapter
+from acc.session_relay.codex_preview import CLI_DIGEST, CLI_VERSION
+from acc.session_relay.codex_preview import DECLARATION as CODEX_DECLARATION
 from acc.session_relay.runtime_peer import RuntimePeer
 
 from . import ops
 from .relay_tui import OwnedTUI
 from .session_relay import AdmissionBroker, AdmissionJournal, CodexRuntimeOwner, PayloadStaging, private_dir
-
-CLI_VERSION = '0.167.1'
-CLI_DIGEST = 'sha256:dd5bfdf19d794dcc6fb482d2d5a2d9fb31d11f6caa44b303bb72890d461e8a02'
 
 
 def operation_from(value):
@@ -85,7 +84,8 @@ class RuntimeTransportFactory:
             if len(matches) != 1:
                 return {'available': False}
             path = matches[0]
-        return {'available': p.sha256_digest(path.read_bytes()) == CLI_DIGEST}
+        available = p.sha256_digest(path.read_bytes()) == CLI_DIGEST
+        return {'available':available,'provider':'codex',**({'cliDigest':CLI_DIGEST} if available else {})}
 
     async def serve(self, request_id, params, reader, writer):
         if (params.keys() != {'version', 'enrollment'} or type(params['version']) is not int
@@ -601,7 +601,7 @@ class BrokerRuntime:
         response = await self.peer.call('authority.launched', {'nativeId': native,
             'processIdentity': self.owner.attestation.process_identity, 'brokerIncarnation': self.broker.incarnation})
         self.spec = replace(self.spec, binding=self.binding)
-        record = replace(unqualified_declaration(), cli_version=CLI_VERSION, cli_digest=CLI_DIGEST)
+        record = replace(CODEX_DECLARATION, cli_version=CLI_VERSION, cli_digest=CLI_DIGEST)
         async def probe(_binding):
             self.guard_check()
             return ProbeResult(CLI_VERSION, CLI_DIGEST, NATIVE_SCHEMA, 'stdio', True, frozenset())

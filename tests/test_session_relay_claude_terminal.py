@@ -115,7 +115,7 @@ async def test_terminal_owned_process_exits_before_same_id_sdk_resume_and_back(t
         sdk = switch.owner
         await switch.select('terminal', replace(switch.spec, run_id='next-terminal'))
         assert sdk.process.returncode is not None
-        assert switch.spec.binding.native_conversation == 'fixture-conversation'
+        assert switch.spec.binding.native_conversation == 'f1c7ec0e-0000-4000-8000-000000000001'
         assert not switch.recovery_required
     finally:
         for item in reversed(launched):

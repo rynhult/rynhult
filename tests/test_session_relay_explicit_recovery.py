@@ -103,7 +103,7 @@ async def test_main_requires_fresh_cleanup_and_exact_new_owner_at_every_checkpoi
     recovery.claim(c.launch,Attached(),{**fields,'operationId':operation},token)
     plan=c.launch.recovery_plans[token]
     evidence={'binding_id':c.launch.binding_id,'run_id':plan['targetRunId'],
-        'native_conversation':'fixture-conversation','process_identity':'component-process'}
+        'native_conversation':'f1c7ec0e-0000-4000-8000-000000000001','process_identity':'component-process'}
     if failure=='wrong_identity':
         recovery.observe(c.launch,'authority.recovery_clean',{'plan':token,'factory':'component-factory'})
         evidence['native_conversation']='foreign-conversation'

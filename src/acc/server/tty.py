@@ -96,6 +96,17 @@ def _frame(kind: bytes, payload: bytes) -> bytes:
     return HEADER.pack(kind, len(payload)) + payload
 
 
+async def close_ended(ws, code: int, valid: Callable[[], Awaitable[bool]] | None, revoked: int) -> None:
+    """The terminal went away underneath the socket (session stopped, broker gone). Always send a close frame, and
+    when the same change also ended this viewer's access, say so: revocation must never look like a drop."""
+    try:
+        if valid is not None and not await valid():
+            code = revoked
+    except Exception:  # e.g. a busy database: the terminal still ends, just without the finer reason
+        pass
+    await ws.close(code=code)
+
+
 async def bridge(ws: WebSocket, connect, session_id: str, tmux_name: str, writers: Writers,
                  want_write: bool, take: bool, rows: int, cols: int,
                  signed_in: Callable[[], Awaitable[bool]] | None = None, recheck: float = 30.0,
@@ -172,10 +183,20 @@ async def bridge(ws: WebSocket, connect, session_id: str, tmux_name: str, writer
             **({"partial": bool(writers.partial.get(session_id)), "reason": refusal} if bound_run is None else {}),
             **({'run': bound_run, 'instance': bound_instance, 'protocol': 'run-observer-v1', **({'rows': observer_geometry[0], 'cols': observer_geometry[1]} if observer_geometry else {})} if bound_run is not None else {})}))
 
+        revoked = 4404 if bound_run is not None else 4401
+
+        async def ended(code: int) -> None:
+            await close_ended(ws, code, signed_in, revoked)
+
         async def to_browser() -> None:
             checked_until = 0.0
             while True:
-                kind, payload = await _read_frame(reader)
+                try:
+                    kind, payload = await _read_frame(reader)
+                    size = dict(json.loads(payload)) if kind == b"g" else None
+                except (asyncio.IncompleteReadError, ConnectionError, ValueError, TypeError):
+                    await ended(4503)  # a reset or a malformed broker frame ends like broker EOF
+                    return
                 if bound_run is not None and asyncio.get_running_loop().time() >= checked_until:
                     if not await signed_in():
                         await ws.close(code=4404)
@@ -184,9 +205,10 @@ async def bridge(ws: WebSocket, connect, session_id: str, tmux_name: str, writer
                 if kind == b"d":
                     await ws.send_bytes(payload)
                 elif kind == b"g":
-                    await ws.send_text(json.dumps({"t": "geometry", **json.loads(payload)}))
+                    await ws.send_text(json.dumps({"t": "geometry", **size}))
                 elif kind == b"x":
                     await ws.send_text(json.dumps({"t": "closed", "reason": "terminal detached"}))
+                    await ended(1000)
                     return
 
         async def from_browser() -> None:
@@ -216,7 +238,7 @@ async def bridge(ws: WebSocket, connect, session_id: str, tmux_name: str, writer
                 await asyncio.sleep(recheck)
                 if not await signed_in():
                     await ws.send_text(json.dumps({"t": "closed", "reason": "terminal access ended"}))
-                    await ws.close(code=4404 if bound_run is not None else 4401)
+                    await ws.close(code=revoked)
                     return
             await asyncio.Event().wait()
 

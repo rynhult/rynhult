@@ -174,3 +174,28 @@ async def test_known_unsupported_frame_refuses_before_main_sequence_or_host(clau
     assert not c.host.writes and not c.launch.peer.closed
     await c.manager.input_terminal(c.attached,SID,{**params,'data':base64.b64encode(b'Valid continuation').decode()})
     assert c.host.writes==[(1,b'Valid continuation')]
+
+
+@pytest.mark.parametrize('who', ['demoted', 'second-owner'])
+async def test_preview_terminal_claim_rechecks_session_owner_and_withdraws_grant(claude_stream, who):
+    from test_session_relay_ownership import act_as_second_owner, assert_owner_only_refusal, demote_owner
+    c = claude_stream
+    demote_owner(c) if who == 'demoted' else act_as_second_owner(c)
+    with pytest.raises(p.RelayError) as error:
+        await claim(c)
+    assert_owner_only_refusal(c, error)
+    assert c.launch.terminal_grants.record is None and not c.host.claims
+
+
+@pytest.mark.parametrize('who', ['demoted', 'second-owner'])
+async def test_preview_terminal_input_after_claim_rechecks_session_owner_and_withdraws_grant(claude_stream, who):
+    from test_session_relay_ownership import act_as_second_owner, assert_owner_only_refusal, demote_owner
+    c = claude_stream
+    grant = await claim(c)
+    demote_owner(c) if who == 'demoted' else act_as_second_owner(c)
+    params = {'inputGrant': grant.input_grant, 'inputEpoch': grant.input_epoch, 'frameSeq': 1,
+              'data': base64.b64encode(b'artificial bytes').decode()}
+    with pytest.raises(p.RelayError) as error:
+        await c.manager.input_terminal(c.attached, SID, params)
+    assert_owner_only_refusal(c, error)
+    assert not c.host.writes

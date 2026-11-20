@@ -12,6 +12,7 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable
 
+from ...claude_session_id import canonical_session_id
 from ..protocol import ErrorCode, RelayError
 from .base import CloseMode, ExitState, ReviewedSpec, RuntimeAttestation, SessionAdapter
 
@@ -148,7 +149,7 @@ def terminal_resume_command(spec: ReviewedSpec) -> tuple[str, ...]:
     Never invoke this from a read/tab render. The broker also supplies the launch's
     plugins/MCP/instructions and original hook environment, as with native resume.
     """
-    if (spec.binding.provider != 'claude' or not spec.binding.native_conversation or
+    if (spec.binding.provider != 'claude' or not canonical_session_id(spec.binding.native_conversation) or
             spec.spec.get('prior_owner_exit_verified') is not True or
             spec.spec.get('guard_intact') is not True or not spec.spec.get('settings_path')):
         raise RelayError(ErrorCode.INTEGRITY_FAILURE)

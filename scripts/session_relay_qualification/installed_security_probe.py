@@ -22,6 +22,7 @@ def capture_installed_security(provider='codex', tampered=False, owned_view=Fals
     scenarios.update({name:'claude' for name in ('tui_allow_execution_read_loss_before','tui_allow_execution_read_loss_after','tui_allow_execution_edit_loss_before','tui_allow_execution_edit_loss_after','tui_allow_execution_read_failed_loss_after','tui_allow_execution_edit_failed_loss_after','tui_allow_execution_interrupt_recover_new','tui_allow_execution_policy_before','tui_allow_execution_policy_after','tui_allow_execution_interrupt_before','tui_allow_execution_strict_before','tui_allow_execution_strict_after','tui_allow_execution_ownership_before','tui_allow_execution_ownership_after','tui_allow_execution_account_before','tui_allow_execution_account_after','tui_allow_execution_workspace_before','tui_allow_execution_workspace_after','tui_allow_execution_loss_before_recover_new','tui_allow_execution_loss_after_recover_new',)})
     scenarios.update({'tui_allow_parallel':'claude','tui_allow_ambiguous':'claude'})
     scenarios['codex_private_read']='codex'
+    scenarios['codex_preview']='codex'
     if scenario not in scenarios or scenario != 'security' and (provider != scenarios[scenario] or tampered or owned_view):
         raise ValueError('Unsupported enrolled qualification scenario')
     if scenario == 'selector':
@@ -80,8 +81,17 @@ def capture_installed_security(provider='codex', tampered=False, owned_view=Fals
         proof_path.write_text(json.dumps(proof))
 ''' + source[end:]
     replace_once("        phase('API server closed')\n", "        phase('API server closed')\n        await security.close()\n")
-    if owned_view or scenario.startswith('stock_race_') or scenario in ('selector','stock_decoder','stock_decoder_concurrent','stock_withdrawal','stock_public','stock_public_cancel','stock_public_failed','stock_public_lost_before','stock_public_lost_after','stock_post_chat','stock_post_expiry','stock_post_cancel','stock_post_revoke','stock_lifecycle_chat','stock_lifecycle_expiry','stock_lifecycle_revoke','stock_cancel_lost_before','stock_cancel_lost_after','stock_concurrent_native_first','stock_concurrent_chat_first','stock_concurrent_revoked_native'):
+    if owned_view or scenario=='codex_preview' or scenario.startswith('stock_race_') or scenario in ('selector','stock_decoder','stock_decoder_concurrent','stock_withdrawal','stock_public','stock_public_cancel','stock_public_failed','stock_public_lost_before','stock_public_lost_after','stock_post_chat','stock_post_expiry','stock_post_cancel','stock_post_revoke','stock_lifecycle_chat','stock_lifecycle_expiry','stock_lifecycle_revoke','stock_cancel_lost_before','stock_cancel_lost_after','stock_concurrent_native_first','stock_concurrent_chat_first','stock_concurrent_revoked_native'):
         replace_once('RuntimeTransportFactory(config, owned_view_factory=None)', 'RuntimeTransportFactory(config)')
+    if scenario=='codex_preview':
+        replace_once('        await launch.launch(SID)\n', '''        ready = await c.ctx.broker.call('relay_probe',account=account,host='lab-node')
+        from acc.session_relay.codex_preview import CLI_DIGEST as expected_digest
+        assert ready['available'] and ready['provider']=='codex' and ready['cliDigest']==expected_digest
+        security.probed=ready
+        launch.cli_digest=ready['cliDigest']
+        await launch.launch(SID)
+''')
+        replace_once("            proof['productionOwnerStopped'] = True\n", "            proof['productionOwnerStopped'] = True\n            assert state.owner.runtime.exit_proven is True\n            proof['nativeEmptyTreeCleanup'] = True\n")
     if scenario.startswith('stock_race_'):
         replace_once("providers={'codex': str(executable)}", "providers={'codex': str(executable),'claude':'/usr/bin/claude'}")
     if provider == 'claude':
@@ -208,6 +218,8 @@ def capture_installed_security(provider='codex', tampered=False, owned_view=Fals
                 (output / helper).write_bytes(Path(__file__).with_name(helper).read_bytes())
         if scenario in ('stock_decoder_concurrent','stock_withdrawal'):
             (output / 'enrolled_stock_decoder.py').write_bytes(Path(__file__).with_name('enrolled_stock_decoder.py').read_bytes())
+        if scenario=='codex_preview':
+            (output / 'public_native_http.py').write_bytes(Path(__file__).with_name('public_native_http.py').read_bytes())
         if scenario != 'security':
             (output / f'enrolled_{scenario}.py').write_bytes(Path(__file__).with_name(f'enrolled_{scenario}.py').read_bytes())
         (output / 'relay_helpers.py').write_bytes((root / 'tests/relay_helpers.py').read_bytes())

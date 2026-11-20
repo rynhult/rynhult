@@ -72,7 +72,11 @@ async def commit(c, plan, key='commit', *, status=200):
         'expectedRevision': plan['revision']}, key, status=status)
 
 
-async def test_public_claude_stays_unavailable_with_fabricated_capabilities(public_claude):
+async def test_public_claude_stays_unavailable_with_fabricated_capabilities_when_its_gate_is_off(public_claude, monkeypatch):
+    # The owner preview (decision 0074) turns this gate on; its refusal stays intact.
+    from acc.server.session_relay import claude_public
+    assert claude_public.PUBLIC_CLAUDE_QUALIFIED is True
+    monkeypatch.setattr('acc.server.session_relay.claude_public.PUBLIC_CLAUDE_QUALIFIED', False)
     c = public_claude
     await attach(c.client, 'unqualified-claude', ['switch'])
     with c.db() as db:
@@ -81,6 +85,25 @@ async def test_public_claude_stays_unavailable_with_fabricated_capabilities(publ
     reply = await call(c.client, 'operation.register', {'expectedRunId': str(c.launch.run_id), 'registrationKey': 'blocked',
         'method': 'switch.prepare', 'payloadDigest': p.operation_digest('switch.prepare', params)})
     assert reply['error']['data']['code'] == 'UNSUPPORTED'
+    assert len(c.owned_factory.owners) == 1
+
+
+async def test_preview_claude_switch_is_refused_without_granted_capabilities(public_claude):
+    # Production preview flags, but no release grant on this run: nothing to switch.
+    c = public_claude
+    @write_intent
+    def ungranted():
+        with c.db() as db:
+            db.get(RelaySession, SID).capabilities = {}
+            db.commit()
+    ungranted()
+    view = await attach(c.client, 'ungranted-claude', ['switch'])
+    with c.db() as db:
+        revision = db.get(RelaySession, SID).revision
+    params = {'sessionId': SID, 'expectedRunId': str(c.launch.run_id), 'target': 'terminal', 'expectedRevision': revision}
+    reply = await call(c.client, 'operation.register', {'expectedRunId': str(c.launch.run_id), 'registrationKey': 'ungranted',
+        'method': 'switch.prepare', 'payloadDigest': p.operation_digest('switch.prepare', params)})
+    assert reply['error']['data']['code'] == 'UNSUPPORTED', (view, reply)
     assert len(c.owned_factory.owners) == 1
 
 

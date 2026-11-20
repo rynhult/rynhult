@@ -9,13 +9,21 @@ from acc.server.session_relay.exclusive_runtime import ExclusiveLaunch
 from acc.session_relay import protocol as p
 
 
-async def test_claude_launch_stays_refused_until_separate_qualification(api,project,monkeypatch):
-    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY','true')
+async def test_claude_preview_launch_stays_off_until_owner_switches_feature_and_needs_a_person(api,project,monkeypatch):
+    # Owner preview (decision 0074): the launch gate is qualified, but the
+    # admin feature stays default off and an API token is never a person.
+    from acc.server.session_relay import claude_public, exclusive_public
+    assert exclusive_public.CLAUDE_LAUNCH_QUALIFIED is True and claude_public.PUBLIC_CLAUDE_QUALIFIED is True
     body={'project_id':project['id'],'provider':'claude','claude_auth':'api_key','name':'Fresh','session_relay':True,'worktree':False}
+    reply=await api.post('/api/sessions',json=body)
+    assert reply.status_code==409 and 'Session relay' in reply.text, reply.text
+    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY','true')
     for endpoint in ('/api/sessions/preview','/api/sessions'):
         reply=await api.post(endpoint,json=body)
-        assert reply.status_code==409 and 'not qualified' in reply.text
+        assert reply.status_code==403 and 'person sign-in' in reply.text, reply.text
     assert (await api.get('/api/sessions')).json()==[]
+    with api.app.state.db() as db:
+        assert not db.query(RelaySession).count()
 
 
 async def test_person_public_claude_launch_reserves_new_exclusive_sessions_without_initial_replay(api,project,env,monkeypatch):
@@ -141,8 +149,8 @@ def test_codex_probe_keeps_its_digest_after_claude_probe(tmp_path, monkeypatch):
     factory = relay_runtime.RuntimeTransportFactory(
         SimpleNamespace(providers={'codex': str(codex), 'claude': str(claude)}), owned_view_factory=None)
     assert factory.probe('claude') == {'available': True, 'provider': 'claude', 'cliDigest': claude_digest}
-    assert factory.probe() == factory.probe('codex') == {'available': True}
+    assert factory.probe() == factory.probe('codex') == {'available': True, 'provider':'codex','cliDigest':codex_digest}
     codex.write_bytes(b'changed executable')
-    assert factory.probe() == factory.probe('codex') == {'available': False}
+    assert factory.probe() == factory.probe('codex') == {'available': False, 'provider':'codex'}
     assert factory.probe('claude')['cliDigest'] == claude_digest
     assert not factory.active

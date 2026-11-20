@@ -9,7 +9,7 @@ from ..models import RelayOperation, RelayOwnership, Session, utcnow
 from . import authority, store
 
 PUBLIC_L1_QUALIFIED=False
-CLAUDE_LAUNCH_QUALIFIED=False
+CLAUDE_LAUNCH_QUALIFIED=True  # owner preview, docs/decisions/0074-relay-preview.md
 
 
 def public_ready(ctx,row):

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from fastapi import WebSocketDisconnect
 
 from ..broker_protocol import response_from
-from .tty import TAKE_REASONS, _frame, _read_frame
+from .tty import TAKE_REASONS, _frame, _read_frame, close_ended
 
 
 async def fenced_bridge(ws, connect, session_id, tmux_name, writers, *, run_id, rows, cols,
@@ -78,16 +78,25 @@ async def fenced_bridge(ws, connect, session_id, tmux_name, writers, *, run_id, 
         async def output():
             nonlocal geometry
             while True:
-                kind, payload = await _read_frame(reader)
+                try:
+                    kind, payload = await _read_frame(reader)
+                    size = {key: json.loads(payload)[key] for key in ('rows', 'cols')} if kind == b'g' else None
+                    control = json.loads(payload) if kind == b'm' else None
+                    if kind == b'm' and not isinstance(control, dict):
+                        raise ValueError('malformed control frame')
+                except (asyncio.IncompleteReadError, ConnectionError, ValueError, KeyError, TypeError):
+                    await close_ended(ws, 4503, valid, 4409)  # a reset or a malformed broker frame ends like broker EOF
+                    return
                 if kind == b'd':
                     await ws.send_bytes(payload)
                 elif kind == b'g':
-                    geometry = {key: json.loads(payload)[key] for key in ('rows', 'cols')}
+                    geometry = size
                     await ws.send_text(json.dumps({'t': 'geometry', **geometry}))
                 elif kind == b'm' and pending_mode is not None and not pending_mode.done():
-                    pending_mode.set_result(json.loads(payload))
+                    pending_mode.set_result(control)
                 elif kind == b'x':
                     await ws.send_text(json.dumps({'t': 'closed', 'reason': 'Terminal detached. Recheck the session.'}))
+                    await close_ended(ws, 1000, valid, 4409)
                     return
 
         async def control(message):

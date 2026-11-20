@@ -17,9 +17,21 @@ from . import store
 from .hub import Hub
 
 # No automatic promotion from fixture passes, database capabilities or CLI pins.
-# Every native/placement/R1 release proof must be approved before this can change.
-PUBLIC_WRITER_QUALIFIED = False
+# Owner decision 2026-11-13 (docs/decisions/0074-relay-preview.md): the proven
+# Claude path is qualified for the owner-only preview. Codex round two uses
+# its separately pinned owner grant; approvals/delivery/recovery remain off.
+PUBLIC_WRITER_QUALIFIED = True
+CODEX_PUBLIC_WRITER_QUALIFIED = True
 TAKE_METHODS = frozenset({'control.take', 'writer.take'})
+
+
+def qualified(provider):
+    """Release gate per provider; a shared switch never qualifies Codex alone."""
+    if provider == 'claude':
+        return PUBLIC_WRITER_QUALIFIED is True
+    if provider == 'codex':
+        return PUBLIC_WRITER_QUALIFIED is True and CODEX_PUBLIC_WRITER_QUALIFIED is True
+    return False
 
 
 class ProcessingLost(p.RelayError):
@@ -28,8 +40,14 @@ class ProcessingLost(p.RelayError):
 
 
 def public_ready(ctx, row):
+    from sqlalchemy.orm import object_session
+
     from ..admin_features import enabled
-    return (PUBLIC_WRITER_QUALIFIED is True and enabled(ctx.settings, 'session_relay')
+    from ..models import Session
+    # The provider comes from the row's own transaction; a detached row fails closed.
+    db = object_session(row)
+    session = db.get(Session, row.session_id) if db is not None else None
+    return (session is not None and qualified(session.provider) and enabled(ctx.settings, 'session_relay')
             and not row.sealed and row.current_run_id is not None
             and all(row.capabilities.get(key) == 'qualified' for key in ('text', 'terminal.input')))
 

@@ -398,6 +398,7 @@ class Launch:
         self.placement = None
         self.coordinates = None
         self.policy_revision = None
+        self.cli_digest = None  # the broker's relay_probe pin for this launch, if it probed one
         self.session_id = self.run_id = None
 
     def reserve(self, db, session):
@@ -413,6 +414,10 @@ class Launch:
         who, actor = self.resolve.in_transaction(db) if hasattr(self.resolve, 'in_transaction') else self.resolve()
         if actor.kind is not p.ActorKind.PERSON or who.user_id is None or session.owner != actor.principal:
             raise p.RelayError(p.ErrorCode.POLICY_REFUSED)
+        from .release_qualification import OWNER_ONLY, owner
+        if getattr(who, 'role', None) != 'owner' or owner(db, actor) is None:
+            from ..supervisor_common import LaunchRefused
+            raise LaunchRefused(OWNER_ONLY)
         from .release_scope import local
         local(session, actor)
         self.placement = self.manager.current_placement(db, session, provider=self.provider)
@@ -495,7 +500,8 @@ class Launch:
             db.add(RelayRun(run_id=self.run_id, session_id=session.id, binding_id=self.binding_id,
                 identity={'coordinates': self.coordinates, 'binding': dict(vars(self.binding)),
                           'processIdentity': params['processIdentity'], 'hubIncarnation': self.manager.incarnation,
-                          'brokerIncarnation': params['brokerIncarnation'], 'placement': self.placement},
+                          'brokerIncarnation': params['brokerIncarnation'], 'placement': self.placement,
+                          **({'cliDigest': self.cli_digest} if self.cli_digest else {})},
                 frozen_policy=self.frozen_policy, policy_revision=self.policy_revision))
             db.flush()  # Ownership FK requires the attested RelayRun first.
             writer_actor = None
@@ -506,6 +512,9 @@ class Launch:
                 row.controller = p.to_wire(writer_actor)
                 row.control_revision = 1
                 self.writer_resolve, self.writer_actor = self.resolve, writer_actor
+            from .release_qualification import grant
+            _, launch_actor = self.resolve.in_transaction(db) if hasattr(self.resolve, 'in_transaction') else self.resolve()
+            grant(self.ctx, db, row, db.get(RelayRun, self.run_id), launch_actor)
             store.append(db, row, 'run.changed', {'runId': str(self.run_id)})
             db.add(AuditLog(actor=session.owner, action='relay.enroll', target=session.id,
                            detail={'runId': self.run_id, 'bindingId': self.binding_id}))

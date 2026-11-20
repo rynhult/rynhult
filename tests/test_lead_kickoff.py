@@ -46,7 +46,7 @@ async def test_lead_launch_and_preview_share_kickoff(api, project, env, mode, wi
     assert prompt in preview.json()['command']
     inputs = LaunchInputs(**session['launch_spec']['inputs'])
     # Resume uses the same persisted launch inputs but never sends the kickoff again.
-    assert prompt not in build_args(inputs, run_dir='/r', tmux_name='test', native_id='a' * 32, resume=True)
+    assert prompt not in build_args(inputs, run_dir='/r', tmux_name='test', native_id='3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b', resume=True)
 
 
 async def test_person_prompt_wins_and_non_team_launch_is_unchanged(api, project, env):

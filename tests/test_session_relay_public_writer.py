@@ -60,23 +60,38 @@ async def register(client, case, params, key):
         'payloadDigest': p.operation_digest('writer.take', {'sessionId': SID, **params})})
 
 
-async def test_public_writer_stays_unavailable_despite_fabricated_capabilities(public_case):
+async def test_codex_writer_gate_off_refuses_even_fabricated_capabilities(public_case, monkeypatch):
+    # A qualified Codex round still depends on its separate provider switch.
+    from acc.server.session_relay import writers
+    assert writers.PUBLIC_WRITER_QUALIFIED is True and writers.CODEX_PUBLIC_WRITER_QUALIFIED is True
+    monkeypatch.setattr(writers,'CODEX_PUBLIC_WRITER_QUALIFIED',False)
     case = public_case
     case.qualify_fixture()
+    with case.db() as db:
+        assert writers.public_ready(case.ctx, db.get(RelaySession, SID)) is False
     async with httpx.AsyncClient(transport=httpx.ASGITransport(case.app), base_url='http://fixture') as client:
-        view = await attach(client, 'default-gate')
+        view = await attach(client, 'default-gate', ['writer', 'terminal'])
         assert view['snapshot']['terminalMediated'] is False
         assert view['snapshot']['writer']['available'] is False
         params = {'expectedRunId': str(case.launch.run_id), 'attachmentId': view['attachmentId'],
                   'expectedRevision': 1, 'view': 'terminal', 'reason': 'Artificial take'}
         assert (await register(client, case, params, 'blocked'))['error']['data']['code'] == 'UNSUPPORTED'
+        claim = {'expectedRunId': str(case.launch.run_id), 'attachmentId': view['attachmentId'], 'expectedRevision': 1}
+        registered = await call(client, 'operation.register', {'expectedRunId': str(case.launch.run_id),
+            'registrationKey': 'blocked-claim', 'method': 'control.claim',
+            'payloadDigest': p.operation_digest('control.claim', {'sessionId': SID, **claim})})
+        assert registered['error']['data']['code'] == 'UNSUPPORTED'
+        assert registered['error']['data']['details']['feature'] == 'terminal'
     assert case.broker_state.writers.gate.epoch == 1
+    with case.db() as db:
+        assert db.get(RelayOwnership, SID).view == 'chat'
 
 
 async def test_public_take_returns_receipt_not_fake_input_grant_and_binds_attachment(public_case, monkeypatch):
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     transport = httpx.ASGITransport(case.app)
     async with httpx.AsyncClient(transport=transport, base_url='http://fixture') as first, httpx.AsyncClient(transport=transport, base_url='http://fixture') as observer:
         view = await attach(first, 'person-take')
@@ -102,6 +117,7 @@ async def test_detached_attachment_during_take_never_commits_new_writer(public_c
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     reached, release = asyncio.Event(), asyncio.Event()
     async def blocked_retire(lease):
         reached.set()
@@ -128,6 +144,7 @@ async def test_same_person_other_tab_cannot_send_on_public_chat_lease(public_cas
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     transport = httpx.ASGITransport(case.app)
     async with httpx.AsyncClient(transport=transport, base_url='http://fixture') as holder, httpx.AsyncClient(transport=transport, base_url='http://fixture') as other:
         view = await attach(holder, 'holder-chat')
@@ -149,6 +166,7 @@ async def test_initial_public_chat_is_observer_until_explicit_attachment_take(pu
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     transport = httpx.ASGITransport(case.app)
     async with httpx.AsyncClient(transport=transport, base_url='http://fixture') as first, httpx.AsyncClient(transport=transport, base_url='http://fixture') as other:
         view = await attach(first, 'initial-chat')
@@ -176,6 +194,7 @@ async def test_pending_turn_take_refusal_keeps_receipt_and_audit_writable(public
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     pending = Hub(case.ctx).register(case.resolve, SID, str(case.launch.run_id), 'pending-delivery',
         'turn.submit', p.sha256_digest(b'pending-delivery'))
     for number in range(8):
@@ -211,6 +230,7 @@ async def test_competing_registered_takes_require_explicit_cancel_and_never_repl
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(case.app), base_url='http://fixture') as client:
         view = await attach(client, 'competing-takes')
         params = {'expectedRunId': str(case.launch.run_id), 'attachmentId': view['attachmentId'],
@@ -274,6 +294,7 @@ async def test_public_cancel_reclaims_queued_payload_while_active_turn_keeps_run
     case = public_case
     case.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     case.broker_state.adapter.record = replace(case.broker_state.adapter.record,
         qualification_id='fixture-only', qualification_date='2026-11-12',
         operations={'text': p.CapabilityEntry(p.Support.QUALIFIED, evidence=('test fake only',))})

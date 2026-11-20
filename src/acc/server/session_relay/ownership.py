@@ -53,6 +53,10 @@ class OwnershipHub(Hub):
         if budgets.paused(db, grant.actor.principal, session.provider, project_id=session.project_id,
                           machine=session.host or 'local', account=session.run_as):
             raise p.RelayError(p.ErrorCode.POLICY_REFUSED)
+        if not allow_disabled:
+            # Owner preview (decision 0074): re-checked on every mutation, not only at grant.
+            from .release_qualification import require_owner
+            require_owner(db, session, grant.actor)
         if session.provider == 'claude':
             mode = run.frozen_policy.get('authMode')
             if mode == 'subscription':
@@ -278,9 +282,12 @@ class OwnershipHub(Hub):
                     identity={**run.identity, 'processIdentity': evidence['process_identity'], 'writerView': owner.target},
                     frozen_policy=run.frozen_policy, policy_revision=run.policy_revision))
                 # A reviewed replacement revokes every old-run grant. Retained
-                # reads survive, and capabilities remain deliberately empty.
+                # reads survive; only the owner preview grant may re-qualify the
+                # new current run, rechecking every condition (else {}).
                 store.seal(db, row)
                 row.current_run_id, row.sealed, row.capabilities = replacement.id, False, {}
+                from .release_qualification import grant as qualify
+                qualify(self.ctx, db, row, db.get(RelayRun, replacement.id), grant.actor)
                 op = db.get(RelayOperation, owner.commit_operation_id)
                 store.settle(db, row, op, accepted=True, evidence=p.Evidence(p.EvidenceKind.HUB_COMMIT, op.id, str(op.run_id)))
                 owner.view, owner.phase = owner.target, 'owned'

@@ -98,11 +98,11 @@ runuser -u acc -- install -d -m 0700 /srv/acc/data/secrets
 # The key vault's data key (docs/VAULT.md): made once, atomically, as acc (root never works on paths acc controls);
 # never replaced, and never made while acc.db holds encrypted keys (restore it with the database instead)
 VAULT_OPTIONS=()
-DATABASE_EXTRAS=()
+DATABASE_EXTRAS=(--extra claude-agent)  # pinned Claude Agent SDK: Claude Agent Chat and the session relay need it on server and broker
 if [ -n "${DATABASE_URL:-}" ]; then
   # A stale local acc.db cannot establish whether the configured database holds encrypted keys.
   VAULT_OPTIONS=(--external-database)
-  case "$DATABASE_URL" in postgresql*) DATABASE_EXTRAS=(--extra postgres) ;; esac
+  case "$DATABASE_URL" in postgresql*) DATABASE_EXTRAS+=(--extra postgres) ;; esac
 fi
 runuser -u acc -- /usr/bin/python3 -I "$REPO/deploy/lib/vault-key" /srv/acc/data/secrets/vault.key /srv/acc/data/acc.db "${VAULT_OPTIONS[@]}"
 install -d -o acc -g acc -m 0755 /srv/acc/catalog /srv/acc/catalog-local  # catalog-local: items added from the dashboard

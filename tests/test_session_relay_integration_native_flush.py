@@ -30,7 +30,7 @@ async def test_native_stop_waits_for_exact_records_and_keeps_final_fences(native
 
     monkeypatch.setattr(c.native_host.admission, 'evidence', observe)
     stopped = asyncio.create_task(c.broker_state.observe(
-        {'session_id': 'fixture-conversation', 'hook_event_name': 'Stop'}))
+        {'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'hook_event_name': 'Stop'}))
     try:
         await asyncio.wait_for(missing.wait(), 2)
         assert not stopped.done()

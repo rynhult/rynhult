@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from acc.claude_session_id import canonical_session_id
 from acc.env import environment
 
 from .. import providers
@@ -59,6 +60,8 @@ def arguments(provider: str, model: str, run_dir: Path, native_id: str | None) -
     session_args = ["--session-id", native_id] if native_id else []
     if provider in ("claude", "copilot") and not session_args:
         raise ValueError("this explanation CLI needs a pre-assigned session id")
+    if provider == "claude" and not canonical_session_id(native_id):
+        raise ValueError("Claude session id must be a canonical UUID")
     if provider == "claude":
         return ["--print", "--output-format", "json", *session_args,
                 "--permission-mode", "plan", "--tools", "", "--max-turns", "1",

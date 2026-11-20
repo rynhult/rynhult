@@ -40,11 +40,11 @@ def test_claude_profile_compiles_to_a_session_plugin_and_strict_mcp():
     assert json.loads(files["mcp.json"])["mcpServers"].keys() == {"playwright"}
     assert files["append-prompt.md"].startswith("Rynhult mandatory core")
     assert "# Rynhult profile: Frontend" in files["append-prompt.md"]
-    args = build_args(claude("frontend"), run_dir="/r", tmux_name="t", native_id="u", resume=False, files=files)
+    args = build_args(claude("frontend"), run_dir="/r", tmux_name="t", native_id="3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b", resume=False, files=files)
     assert args[args.index("--plugin-dir") + 1] == "/r/plugin"
     assert args[args.index("--mcp-config") + 1] == "/r/mcp.json" and "--strict-mcp-config" in args
     assert args[args.index("--append-system-prompt-file") + 1] == "/r/append-prompt.md"
-    resume = build_args(claude("frontend"), run_dir="/r", tmux_name="t", native_id="u", resume=True, files=files)
+    resume = build_args(claude("frontend"), run_dir="/r", tmux_name="t", native_id="3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b", resume=True, files=files)
     assert [a for a in resume if a != "--resume"] != args and "--plugin-dir" in resume  # resume re-passes everything
 
 

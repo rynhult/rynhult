@@ -127,7 +127,7 @@ async def test_terminal_enclosure_exits_before_sdk_resumes_same_native_id(tmp_pa
     pytest.importorskip('claude_agent_sdk')
     reviewed = replace(spec(tmp_path), run_id='terminal1')
     terminal = Enclosure(tmp_path / 'private', reviewed, CLI.resolve())
-    child = await asyncio.create_subprocess_exec(str(terminal.cli), '--resume', 'fixture-conversation', '--settings', str(tmp_path / 'settings.json'),
+    child = await asyncio.create_subprocess_exec(str(terminal.cli), '--resume', 'f1c7ec0e-0000-4000-8000-000000000001', '--settings', str(tmp_path / 'settings.json'),
         cwd=tmp_path, env={'PATH': '/usr/bin:/bin'}, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
     assert json.loads(await child.stdout.readline())['type'] == 'terminal_ready'
     monkeypatch.setattr('acc.broker.claude_owner.ops.tmux', lambda config, *args, **kwargs:
@@ -149,7 +149,7 @@ async def test_terminal_enclosure_exits_before_sdk_resumes_same_native_id(tmp_pa
             return chat.proof('exit.json', observed.process_identity)
         adapter = ClaudeAgentAdapter(policy=lambda *_: True, publish=publish, exit_proof=proof)
         await adapter.start(replace(resumed, spec={**resumed.spec, 'supervised_cli_path': str(chat.cli), 'launch_env': {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path)}}))
-        assert adapter.client.options.resume == 'fixture-conversation'
+        assert adapter.client.options.resume == 'f1c7ec0e-0000-4000-8000-000000000001'
         assert (await adapter.stop_owner()).exit.value == 'exited'
     finally:
         if adapter:

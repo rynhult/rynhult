@@ -34,6 +34,7 @@ def configure(c, monkeypatch):
         operations={'text': p.CapabilityEntry(p.Support.QUALIFIED, evidence=('synthetic owner only',))})
     monkeypatch.setattr(service, 'DELIVERY_QUALIFIED', True)
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     monkeypatch.setattr(delivery, 'enabled', lambda: True)
     @write_intent
     def qualify():

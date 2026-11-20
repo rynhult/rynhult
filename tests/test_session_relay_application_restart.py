@@ -28,7 +28,7 @@ async def test_unpublished_application_recovers_without_a_producer(public_claude
         def proof():
             if not ready.is_set():
                 raise p.RelayError(p.ErrorCode.BUSY)
-            return 'fixture-conversation:user:provider:' + identifier + ':fixture-tool'
+            return 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-tool'
         return proof
     hooks.prepare_application = prepare
     pending, decision = await pending_hook(c)

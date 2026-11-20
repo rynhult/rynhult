@@ -641,3 +641,114 @@ async def test_fenced_reconnect_audits_grant_without_partial_text_or_previous_ho
         assert broker.inputs == []
     finally:
         await stop(task)
+
+
+@pytest.mark.parametrize('ending,still_valid,code', [
+    ('detach', True, 1000), ('eof', True, 4503), ('detach', False, 4409), ('eof', False, 4409)])
+async def test_terminal_ending_underneath_always_sends_a_close_code(ending, still_valid, code):
+    """A stopped session or a lost broker stream ends the socket with a close frame, never a dropped connection;
+    when the same change also ended access, the browser gets the revocation code."""
+    class Closing(Browser):
+        def __init__(self):
+            super().__init__()
+            self.codes = []
+
+        async def close(self, code=1000, **kwargs):
+            self.codes.append(code)
+            await super().close()
+
+    writers, ws, broker = Writers(), Closing(), Broker()
+    valid = True
+
+    async def validate():
+        return valid
+
+    task = asyncio.create_task(fenced_bridge(ws, broker.connect, 'session', 'acc-test', writers,
+        run_id='7', rows=40, cols=120, valid=validate, recheck=3600))
+    try:
+        await receive(ws, 'mode')
+        valid = still_valid
+        if ending == 'detach':
+            broker.reader.feed_data(_frame(b'x', b''))
+        else:
+            broker.reader.feed_eof()
+        await asyncio.wait_for(task, 2)
+        assert ws.codes == [code]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+class ResettingReader(asyncio.StreamReader):
+    async def readexactly(self, n):
+        raise ConnectionResetError()
+
+
+@pytest.mark.parametrize('broken', ['reset', 'geometry-not-json', 'geometry-missing-keys', 'geometry-not-object'])
+@pytest.mark.parametrize('still_valid,code', [(True, 4503), (False, 4409)])
+async def test_broken_broker_stream_ends_with_a_close_code(broken, still_valid, code):
+    """A reset or a malformed broker frame ends like broker EOF: a close frame, never a silent drop."""
+    class Closing(Browser):
+        def __init__(self):
+            super().__init__()
+            self.codes = []
+
+        async def close(self, code=1000, **kwargs):
+            self.codes.append(code)
+            await super().close()
+
+    writers, ws, broker = Writers(), Closing(), Broker()
+    valid = True
+
+    async def validate():
+        return valid
+
+    task = asyncio.create_task(fenced_bridge(ws, broker.connect, 'session', 'acc-test', writers,
+        run_id='7', rows=40, cols=120, valid=validate, recheck=3600))
+    try:
+        await receive(ws, 'mode')
+        valid = still_valid
+        if broken == 'reset':
+            broker.reader.__class__ = ResettingReader
+            broker.reader.feed_data(b'')
+            broker.reader.feed_data(_frame(b'd', b'wake'))  # wake the waiting read; the next read resets
+        else:
+            payload = {'geometry-not-json': b'{', 'geometry-missing-keys': b'{"rows": 5}', 'geometry-not-object': b'[1]'}[broken]
+            broker.reader.feed_data(_frame(b'g', payload))
+        await asyncio.wait_for(task, 2)
+        assert ws.codes == [code]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize('payload', [b'{', b'[1]', b'"write"'])
+@pytest.mark.parametrize('still_valid,code', [(True, 4503), (False, 4409)])
+async def test_malformed_control_frame_ends_with_a_close_code(payload, still_valid, code):
+    """A broker control ('m') frame that is not a JSON object ends like broker EOF, never a silent drop."""
+    class Closing(Browser):
+        def __init__(self):
+            super().__init__()
+            self.codes = []
+
+        async def close(self, code=1000, **kwargs):
+            self.codes.append(code)
+            await super().close()
+
+    writers, ws, broker = Writers(), Closing(), Broker()
+    valid = True
+
+    async def validate():
+        return valid
+
+    task = asyncio.create_task(fenced_bridge(ws, broker.connect, 'session', 'acc-test', writers,
+        run_id='7', rows=40, cols=120, valid=validate, recheck=3600))
+    try:
+        await receive(ws, 'mode')
+        valid = still_valid
+        broker.reader.feed_data(_frame(b'm', payload))
+        await asyncio.wait_for(task, 2)
+        assert ws.codes == [code]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

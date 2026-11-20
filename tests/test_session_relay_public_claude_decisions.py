@@ -20,6 +20,7 @@ async def public_claude(ownership_case,monkeypatch):  # noqa: F811
     await select_owner(c,'terminal','public-review-terminal')
     c.ctx.relay_runtime=c.manager
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED',True)
+    monkeypatch.setattr('acc.server.session_relay.native_decisions.CLAUDE_ENROLLED_DECISIONS_QUALIFIED',True)
     @write_intent
     def qualify():
         with c.db() as db:
@@ -32,10 +33,10 @@ async def public_claude(ownership_case,monkeypatch):  # noqa: F811
     c.first=await module.Public.create(c,c.manager,SID,features=['decisions'])
     c.second=await module.Public.create(c,c.manager,SID,features=['decisions'])
     await asyncio.to_thread(exchange,c.owned_factory.directory/'owner-channel.json',{
-        'session_id':'fixture-conversation','prompt_id':'fixture-prompt','hook_event_name':'PreToolUse',
+        'session_id':'f1c7ec0e-0000-4000-8000-000000000001','prompt_id':'fixture-prompt','hook_event_name':'PreToolUse',
         'tool_use_id':'fixture-public-tool','tool_name':'Bash','tool_input':{'command':'echo artificial review'}})
     c.question_task=asyncio.create_task(asyncio.to_thread(exchange,c.owned_factory.directory/'owner-channel.json',{
-        'session_id':'fixture-conversation','prompt_id':'fixture-prompt','hook_event_name':'PermissionRequest',
+        'session_id':'f1c7ec0e-0000-4000-8000-000000000001','prompt_id':'fixture-prompt','hook_event_name':'PermissionRequest',
         'tool_name':'Bash','tool_input':{'command':'echo artificial review'}}))
     await until(lambda:bool(c.owned_factory.hooks.pending))
     c.question=next(iter(c.owned_factory.hooks.pending))

@@ -8,7 +8,44 @@ async function sessionFixture(page: Page) {
     launch_spec: { inputs: {}, files: {}, digest: "demo" }, runs: [], editor: null };
   await page.route("**/api/sessions", route => route.fulfill({ json: [session] }));
   await page.route(`**/api/sessions/${session.id}`, route => route.fulfill({ json: session }));
+  await mockedSessionLayouts(page, session.project_id, session.id);
   return session;
+}
+
+type LayoutView = { id: string; resource?: { kind: string; id: string | number } };
+type LayoutRecord = { revision: number; layout: { views: LayoutView[] } | null; resources: Record<string, { available: boolean }> };
+
+/** The session exists only in this page's mocks. Once another spec on the shared server has created a real project with
+ * the same id, the server keeps that project's working layout and (correctly) reports the mocked session's views
+ * unavailable, so a reload restored "View unavailable" instead of the session and never asked for its artifacts or
+ * changes (the gate VM's order, Nov 2026). Keep this page's layout for that project in memory, starting from the server's
+ * own record, so availability matches the mocks and nothing about the mocked session is written to the shared server.
+ * With no such project the server's 404 passes through unchanged. */
+async function mockedSessionLayouts(page: Page, projectId: number, sessionId: string) {
+  const records = new Map<string, LayoutRecord>();
+  const shown = (record: LayoutRecord): LayoutRecord => ({ ...record, resources: Object.fromEntries((record.layout?.views ?? [])
+    .map(view => [view.id, { available: view.resource?.kind === "session" && view.resource.id === sessionId
+      ? true : record.resources[view.id]?.available ?? true }])) });
+  await page.route(new RegExp(`/api/projects/${projectId}/layouts/[a-z]+/[a-z]+$`), async route => {
+    const request = route.request();
+    const key = new URL(request.url()).pathname;
+    let record = records.get(key);
+    if (!record) {
+      if (request.method() !== "GET") return route.fallback();
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      record = await response.json() as LayoutRecord;
+    }
+    if (request.method() === "PUT") {
+      const body = request.postDataJSON() as { expected_revision: number; layout: LayoutRecord["layout"] };
+      if (body.expected_revision !== record.revision) {
+        return route.fulfill({ status: 409, json: { detail: "The layout changed. Choose which arrangement to keep.", current: shown(record) } });
+      }
+      record = { ...record, revision: record.revision + 1, layout: body.layout };
+    }
+    records.set(key, record);
+    await route.fulfill({ json: shown(record) });
+  });
 }
 
 for (const width of [1440, 390]) {

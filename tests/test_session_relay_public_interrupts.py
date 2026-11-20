@@ -22,6 +22,7 @@ async def interrupt_case(public_case, monkeypatch):  # noqa: F811
 def qualify_interrupt(c, monkeypatch):
     c.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     @write_intent
     def qualify():
         with c.db() as db:

@@ -93,6 +93,7 @@ async def test_real_native_public_take_service_race(runtime_case, monkeypatch, r
         await inspect('qualify')
         monkeypatch.setattr(service, 'DELIVERY_QUALIFIED', True)
         monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+        monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
         monkeypatch.setattr(delivery, 'enabled', lambda: True)
         @write_intent
         def login():

@@ -30,7 +30,7 @@ async def test_native_claim_settles_original_receipt_without_sdk_dispatch(claude
         assert db.get(RelayOperation, op.operation_id).receipt['state'] == 'submitting'
         assert db.get(RelaySession, SID).active_operation_id == op.operation_id
     evidence = p.Evidence(p.EvidenceKind.PROVIDER_ADMISSION, op.operation_id, op.run_id,
-                         'fixture-conversation:user:provider-message')
+                         'f1c7ec0e-0000-4000-8000-000000000001:user:provider-message')
     receipt = await native.settle(evidence)
     assert receipt.state is p.ReceiptState.ACCEPTED and receipt.actor == stream.actor
     assert c.broker_state.journal.lookup(op.operation_id)[0] == 'accepted'
@@ -63,7 +63,7 @@ async def test_late_native_evidence_settles_after_revocation_but_cannot_ack_inpu
     stream, native, op = await prepare(c)
     c.state['revoked'] = True
     receipt = await native.settle(p.Evidence(p.EvidenceKind.PROVIDER_ADMISSION, op.operation_id, op.run_id,
-                                           'fixture-conversation:user:provider-message'))
+                                           'f1c7ec0e-0000-4000-8000-000000000001:user:provider-message'))
     assert receipt.state is p.ReceiptState.ACCEPTED and receipt.actor == stream.actor
     with pytest.raises(ConnectionError):
         await native.processed(stream, 1, op.operation_id)

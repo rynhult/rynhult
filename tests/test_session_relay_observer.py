@@ -54,7 +54,7 @@ async def test_production_claude_terminal_composes_read_opener_without_input_gra
 
     from acc.broker import claude_owner
     reviewed = spec(tmp_path, tmux_name='acc-fixture', run_dir=str(tmp_path),
-                    terminal_resume_args=['--resume', 'fixture-conversation'])
+                    terminal_resume_args=['--resume', 'f1c7ec0e-0000-4000-8000-000000000001'])
     factory = object.__new__(claude_owner.ClaudeOwnerFactory)
     factory.prepare, factory.authorize = AsyncMock(), AsyncMock(return_value=True)
     factory.config, factory.files, factory.env = SimpleNamespace(), {}, {}
@@ -76,8 +76,8 @@ async def test_production_claude_terminal_composes_read_opener_without_input_gra
         from acc.session_relay.claude_input_host import ClaudeInputHost
         assert isinstance(host, ClaudeInputHost)
         assert host.attested is False
-        assert result.attestation.native_conversation == 'fixture-conversation'
-        assert launches[0][0]['args'] == ['--resume', 'fixture-conversation']
+        assert result.attestation.native_conversation == 'f1c7ec0e-0000-4000-8000-000000000001'
+        assert launches[0][0]['args'] == ['--resume', 'f1c7ec0e-0000-4000-8000-000000000001']
         assert launches[0][1]['inherit_environment'] is False
         assert launches[0][1]['owner_executable'] == str(factory.enclosure.cli)
         assert launches[0][1]['guard_files'] == ()

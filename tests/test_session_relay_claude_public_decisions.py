@@ -28,11 +28,11 @@ def qualify(c, monkeypatch, *, decisions=True):
 
 
 async def pending_hook(c):
-    pretool = {'session_id': 'fixture-conversation', 'prompt_id': 'fixture-prompt',
+    pretool = {'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'prompt_id': 'fixture-prompt',
         'hook_event_name': 'PreToolUse', 'tool_name': 'Bash',
         'tool_input': {'command': 'echo artificial'}, 'tool_use_id': 'fixture-public-tool'}
     await asyncio.to_thread(exchange, c.owned_factory.directory / 'owner-channel.json', pretool)
-    payload = {'prompt_id': 'fixture-prompt', 'session_id': 'fixture-conversation', 'hook_event_name': 'PermissionRequest',
+    payload = {'prompt_id': 'fixture-prompt', 'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'hook_event_name': 'PermissionRequest',
         'tool_name': 'Bash', 'tool_input': {'command': 'echo artificial'}, 'tool_use_id': 'fixture-public-tool'}
     task = asyncio.create_task(asyncio.to_thread(exchange, c.owned_factory.directory / 'owner-channel.json', payload))
     await until(lambda: bool(c.owned_factory.hooks.pending))
@@ -118,7 +118,7 @@ async def test_exact_broker_application_evidence_settles_only_the_original_denia
     qualify(c, monkeypatch)
     await attach(c.client, 'application-evidence', ['decisions'])
     def prepare(payload, identifier):
-        return lambda: 'fixture-conversation:user:provider:' + identifier + ':fixture-public-tool'
+        return lambda: 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-public-tool'
     c.owned_factory.hooks.prepare_application = prepare
     task, decision = await pending_hook(c)
     original = c.owned_factory.hooks.answer
@@ -128,7 +128,7 @@ async def test_exact_broker_application_evidence_settles_only_the_original_denia
         if fault == 'reference':
             result['application']['nativeRef'] = 'other-conversation:user:provider:' + decision['decisionId'] + ':tool'
         elif fault == 'marker':
-            result['application']['nativeRef'] = 'fixture-conversation:user:provider:wrong-marker:tool'
+            result['application']['nativeRef'] = 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:wrong-marker:tool'
         elif fault == 'digest':
             result['application']['actionDigest'] = p.sha256_digest(b'another action')
         elif fault == 'effect':
@@ -200,7 +200,7 @@ async def test_exact_allow_application_settles_answered_without_permission_updat
     qualify(c, monkeypatch)
     await attach(c.client, 'exact-allow', ['decisions'])
     c.owned_factory.hooks.prepare_application = lambda payload, identifier: {'allow_once': lambda:
-        'fixture-conversation:user:provider:' + identifier + ':fixture-public-tool'}
+        'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-public-tool'}
     task, decision = await pending_hook(c)
     reply, identifier = await mutate(c, 'decision.reply', {'decisionId': decision['decisionId'], 'choiceId': 'accept',
         'expectedRevision': decision['revision'], 'actionDigest': decision['actionDigest']}, 'one-allow')
@@ -226,7 +226,7 @@ async def test_late_original_application_is_observed_without_a_second_answer(pub
         def observe():
             if not ready.is_set():
                 raise p.RelayError(p.ErrorCode.BUSY)
-            return 'fixture-conversation:user:provider:' + identifier + ':fixture-tool'
+            return 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-tool'
         return observe
     hooks = c.owned_factory.hooks
     hooks.prepare_application = prepare

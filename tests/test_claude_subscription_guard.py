@@ -295,7 +295,7 @@ def test_isolated_explanation_checks_its_own_auth(tmp_path, monkeypatch, mode):
     from acc.broker import explain
     run = tmp_path / 'explanation'
     run.mkdir()
-    (run / 'explanation.json').write_text(json.dumps({'provider': 'claude', 'model': 'sonnet', 'native_id': 'fixture'}))
+    (run / 'explanation.json').write_text(json.dumps({'provider': 'claude', 'model': 'sonnet', 'native_id': '3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b'}))
     monkeypatch.setattr(explain, 'isolated_home', lambda *a, **kw: None)
     def probe(*a, **kw):
         assert kw['inherit'] is False

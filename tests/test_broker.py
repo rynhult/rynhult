@@ -429,7 +429,7 @@ def test_supervised_clean_relay_pins_actual_supervisor_as_pane_pid(env, tmp_path
     monkeypatch.setenv('RELAY_PARENT_SENTINEL','must-not-inherit')
     credentials = {'ANTHROPIC_API_KEY':'artificial-supervisor-fixture-only'} if with_credentials else {}
     params = base_params(env, env=credentials)
-    params['args'] = ['--resume','fixture-conversation','--settings','/tmp/generated settings.json']
+    params['args'] = ['--resume','f1c7ec0e-0000-4000-8000-000000000001','--settings','/tmp/generated settings.json']
     if long_command:
         params['args'] += ['--fixture-long-arg','x'*4096]
     try:

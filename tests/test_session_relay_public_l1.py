@@ -15,6 +15,9 @@ from acc.session_relay import protocol as p
 async def public_l1(ownership_case,monkeypatch):  # noqa: F811
     c=ownership_case;c.ctx.relay_runtime=c.manager
     monkeypatch.setattr('acc.server.session_relay.exclusive_public.PUBLIC_L1_QUALIFIED',True)
+    # Exercise the separate public L1 route and its own gate; the owner preview's
+    # Claude switch route (claude_public, decision 0074) would otherwise answer first.
+    monkeypatch.setattr('acc.server.session_relay.claude_public.PUBLIC_CLAUDE_QUALIFIED',False)
     @write_intent
     def qualify():
         with c.db() as db:

@@ -28,7 +28,7 @@ async def test_unknown_original_application_recovers_only_exact_disk_origin(publ
         def proof():
             if not ready.is_set():
                 raise p.RelayError(p.ErrorCode.BUSY)
-            return 'fixture-conversation:user:provider:' + identifier + ':fixture-tool'
+            return 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-tool'
         return proof
     hooks.prepare_application = prepare
     native_answers = []

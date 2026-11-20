@@ -27,7 +27,7 @@ def operation(method='turn.submit', **params):
 
 def spec(tmp_path, **options):
     (tmp_path / 'settings.json').write_text('{"disableAllHooks": false, "hooks": {}}')
-    return ReviewedSpec(Binding('binding', 'installation', 'node', 'fixture', str(tmp_path), 'claude', 'fixture-conversation', 'a' * 64),
+    return ReviewedSpec(Binding('binding', 'installation', 'node', 'fixture', str(tmp_path), 'claude', 'f1c7ec0e-0000-4000-8000-000000000001', 'a' * 64),
                         'run', dict(session_id='session', cli_path=str(CLI.resolve()), settings_path=str(tmp_path / 'settings.json'), guard_intact=True, prior_owner_exit_verified=True, **options))
 
 
@@ -49,7 +49,7 @@ async def test_real_sdk_replay_same_session_usage_idle_and_no_resend(tmp_path):
         assert (await adapter.submit(operation())).outcome is Outcome.UNKNOWN
         await until(lambda: not adapter.active)
         assert not any('conversation-checkpoint' in str(e) for e in events)
-        assert adapter.client.options.resume == 'fixture-conversation'
+        assert adapter.client.options.resume == 'f1c7ec0e-0000-4000-8000-000000000001'
         assert not adapter.client.options.fork_session
         assert adapter.client.options.setting_sources == []
         assert adapter.client.options.permission_mode == 'default'
@@ -189,11 +189,11 @@ async def test_real_sdk_busy_switch_and_unknown_process_exit(tmp_path):
         await until(lambda: not adapter.active)
         evidence = await adapter.stop_owner()
         assert evidence.exit.value == 'exited'
-        assert evidence.native_conversation == 'fixture-conversation'
+        assert evidence.native_conversation == 'f1c7ec0e-0000-4000-8000-000000000001'
         resumed = await adapter.resume_owner(replace(spec(tmp_path), run_id='next-run'))
-        assert resumed.native_conversation == 'fixture-conversation'
+        assert resumed.native_conversation == 'f1c7ec0e-0000-4000-8000-000000000001'
         assert resumed.run_id == 'next-run'
-        assert adapter.client.options.resume == 'fixture-conversation'
+        assert adapter.client.options.resume == 'f1c7ec0e-0000-4000-8000-000000000001'
     finally:
         await adapter.close(CloseMode.STOP)
 
@@ -234,7 +234,7 @@ async def test_history_delegates_to_same_native_transcript_without_start(tmp_pat
     adapter.spec = spec(tmp_path)  # the hub binds its read context, without starting execution
     assert await adapter.read_snapshot() == page
     assert [item async for item in adapter.follow('cursor')] == [page]
-    assert observed == ['fixture-conversation', ('fixture-conversation', 'cursor')]
+    assert observed == ['f1c7ec0e-0000-4000-8000-000000000001', ('f1c7ec0e-0000-4000-8000-000000000001', 'cursor')]
     assert adapter.owner is None
 
 

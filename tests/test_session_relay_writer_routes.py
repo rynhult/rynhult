@@ -127,10 +127,16 @@ async def test_production_broker_opaque_take_changes_writer_without_restarting_a
 
 
 async def test_unqualified_take_is_pre_effect_refusal_not_a_poisoned_session(runtime_case):  # noqa: F811
+    from acc.server.session_relay import writers
+    # Preview support is on, but this fixture has no matching broker probe/grant.
+    assert writers.PUBLIC_WRITER_QUALIFIED is True and writers.CODEX_PUBLIC_WRITER_QUALIFIED is True
     case = runtime_case
     await case.launch.launch(SID)
+    before=list(case.owners[0].calls)
+    with case.db() as db:assert db.get(RelaySession,SID).capabilities=={}
     with pytest.raises(p.RelayError):
         await take(case, 'terminal', 'unqualified', 1)
+    assert case.owners[0].calls==before
     with case.db() as db:
         assert not db.get(RelaySession, SID).sealed
         assert db.get(RelayOwnership, SID).view == 'chat'

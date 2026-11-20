@@ -30,18 +30,18 @@ async def test_result_settles_once_but_background_drain_still_fences_idle(tmp_pa
             await release.wait()
     adapter = ClaudeAgentAdapter(policy=lambda *_: True, publish=publish)
     adapter.spec, adapter.client = spec(tmp_path), Client()
-    adapter.attestation = SimpleNamespace(process_identity='fixture-process', native_conversation='fixture-conversation')
+    adapter.attestation = SimpleNamespace(process_identity='fixture-process', native_conversation='f1c7ec0e-0000-4000-8000-000000000001')
     adapter.active = True
     adapter.reader = asyncio.create_task(adapter._read(operation()))
     try:
-        await queue.put({'subtype': 'task_started', 'task_id': 'bg', 'session_id': 'fixture-conversation'})
-        await queue.put(ResultMessage('success', 'fixture-conversation'))
+        await queue.put({'subtype': 'task_started', 'task_id': 'bg', 'session_id': 'f1c7ec0e-0000-4000-8000-000000000001'})
+        await queue.put(ResultMessage('success', 'f1c7ec0e-0000-4000-8000-000000000001'))
         await asyncio.wait_for(result_seen.wait(), 3)
         assert not adapter.active and adapter.background == {'bg'}
         assert not (await adapter.prepare_switch()).idle
         assert not await adapter.idle_stop()
         if end == 'notification':
-            await queue.put({'subtype': 'task_notification', 'task_id': 'bg', 'session_id': 'fixture-conversation'})
+            await queue.put({'subtype': 'task_notification', 'task_id': 'bg', 'session_id': 'f1c7ec0e-0000-4000-8000-000000000001'})
             await asyncio.wait_for(notification_seen.wait(), 3)
             assert not adapter.background and adapter.draining_background()
             assert not (await adapter.prepare_switch()).idle

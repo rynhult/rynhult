@@ -22,12 +22,16 @@ def body(project, **extra):
         'claude_auth': 'api_key', 'session_relay': True, 'worktree': False, **extra}
 
 
-async def test_claude_enrollment_stays_off_even_with_feature_on(api, project, env, monkeypatch):
-    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true')
+async def test_claude_enrollment_needs_owner_feature_switch_and_the_pinned_cli(api, project, env, monkeypatch):
+    # Owner preview (decision 0074): launch is qualified, the admin feature is
+    # still default off, and an unpinned CLI never enrolls even when it is on.
     client, headers = await person(api, env)
     for route in ('/api/sessions/preview', '/api/sessions'):
         reply = await client.post(route, json=body(project), headers=headers)
-        assert reply.status_code == 409, reply.text
+        assert reply.status_code == 409 and 'Session relay' in reply.text, reply.text
+    monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true')
+    reply = await client.post('/api/sessions', json=body(project), headers=headers)
+    assert reply.status_code == 409 and 'installation is not qualified' in reply.text, reply.text
     with api.app.state.db() as db:
         assert not db.query(RelaySession).count()
 
@@ -46,12 +50,17 @@ async def test_claude_opt_in_refuses_unqualified_input_config_and_unapproved_sub
 
 
 @pytest.mark.parametrize('auth_mode', ['api_key', 'subscription'])
-async def test_person_claude_opt_in_enrolls_l1_without_input_or_capability_promotion(api, project, env, ownership_case, monkeypatch, auth_mode):  # noqa: F811
+async def test_owner_claude_opt_in_enrolls_l1_with_preview_capabilities_for_the_pinned_cli(api, project, env, ownership_case, monkeypatch, auth_mode):  # noqa: F811
+    from dataclasses import replace
+
     import acc.broker.claude_owner as module
+    from acc.server.session_relay import release_qualification
     monkeypatch.setenv('ACC_FEATURE_SESSION_RELAY', 'true')
-    monkeypatch.setattr('acc.server.session_relay.claude_public.PUBLIC_CLAUDE_QUALIFIED', True)
-    monkeypatch.setattr('acc.server.session_relay.exclusive_public.CLAUDE_LAUNCH_QUALIFIED', True)
-    monkeypatch.setattr(module, 'CLI_DIGEST', p.sha256_digest(Path(env['broker'].providers['claude']).read_bytes()))
+    fixture_digest = p.sha256_digest(Path(env['broker'].providers['claude']).read_bytes())
+    monkeypatch.setattr(module, 'CLI_DIGEST', fixture_digest)
+    # The fake CLI stands in for the pinned release CLI in the preview declaration.
+    monkeypatch.setattr(release_qualification, 'DECLARATION',
+                        replace(release_qualification.DECLARATION, cli_digest=fixture_digest))
     started = []
     factory = module.ClaudeOwnerFactory
     class RecordingFactory(factory):
@@ -60,7 +69,7 @@ async def test_person_claude_opt_in_enrolls_l1_without_input_or_capability_promo
             started.append(self)
     monkeypatch.setattr(module, 'ClaudeOwnerFactory', RecordingFactory)
     # Fake CLI's own wire ID, never a production substitute or first-message seed.
-    monkeypatch.setattr(providers.get('claude'), 'new_native_id', lambda: 'fixture-conversation')
+    monkeypatch.setattr(providers.get('claude'), 'new_native_id', lambda: 'f1c7ec0e-0000-4000-8000-000000000001')
     client, headers = await person(api, env)
     client.headers.update(headers)
     if auth_mode == 'api_key':
@@ -93,8 +102,10 @@ async def test_person_claude_opt_in_enrolls_l1_without_input_or_capability_promo
         row = db.get(RelaySession, identifier)
         session = db.get(Session, identifier)
         run = db.get(RelayRun, row.current_run_id)
-        assert session.native_id == 'fixture-conversation'
-        assert not row.sealed and row.capabilities == {}
+        assert session.native_id == 'f1c7ec0e-0000-4000-8000-000000000001'
+        assert not row.sealed and row.capabilities == {'text': 'qualified', 'terminal.input': 'qualified',
+            'switch.to_chat': 'qualified', 'switch.to_terminal': 'qualified'}
+        assert run.identity['cliDigest'] == fixture_digest
         assert run.frozen_policy['ownershipMode'] == 'exclusive_idle'
         assert run.frozen_policy['authMode'] == auth_mode
         assert db.get(SessionRun, run.run_id).verified_at

@@ -36,11 +36,17 @@ def add_decision(case):
         db.commit()
 
 
-def other_person(case):
+def other_person(case, *, session_owner=True):
     @write_intent
     def promote():
         with case.db() as db:
             db.get(User, 2).role = 'owner'
+            if session_owner:
+                # Use the authorized transfer seam so immutable root-person
+                # lineage remains valid. Alex's old receipt keeps its actor;
+                # this is a metadata-only fixture with no native owner.
+                from acc.server.child_caps import transfer_owner
+                transfer_owner(db,[db.get(Session,'relay')],'sam','alex')
             db.commit()
     promote()
     return lambda: (Principal('sam', 'owner', 'fixture', 2), p.Actor(p.ActorKind.PERSON, 'sam', p.Channel.CHAT))
@@ -252,3 +258,20 @@ async def test_cursor_replays_after_router_restart_and_auth_kind_uses_request_pr
     assert key_path.stat().st_mode & 0o777 == 0o600
     mode['cookie'] = False  # same username and user_id, authenticated as a service
     assert (await page(cursor)).status_code == 409  # different ActorKind/scope, not a person
+
+
+def test_non_session_owner_cannot_trigger_expiry_sweep(case):
+    old=enqueue(case,case.resolve,'old-before-foreign-request')
+    resolver=other_person(case,session_owner=False)
+    @write_intent
+    def age():
+        with case.db() as db:
+            db.get(RelayOperation,old).deadline=utcnow()-timedelta(seconds=1)
+            db.commit()
+    age()
+    with pytest.raises(p.RelayError) as error:
+        case.hub.queue(resolver,'relay','missing',expected_run='1',digest=DIGEST)
+    assert error.value.code is p.ErrorCode.POLICY_REFUSED
+    with case.db() as db:
+        receipt=db.get(RelayOperation,old).receipt
+        assert receipt['state']=='queued' and receipt.get('reason') is None

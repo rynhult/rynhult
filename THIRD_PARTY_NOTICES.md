@@ -30,7 +30,7 @@ Web builds apply a local composition-boundary fix to @xterm/xterm 6.0.0 (MIT); s
 | idna | 3.20 | BSD-3-Clause |
 | mako | 1.4.3 | MIT |
 | markupsafe | 3.0.4 | BSD-3-Clause |
-| opentelemetry-api | 1.45.1 | Apache-2.0 |
+| opentelemetry-api | 1.45.2 | Apache-2.0 |
 | psutil | 7.2.2 | BSD-3-Clause |
 | pyasn1 | 0.6.5 | BSD-2-Clause |
 | pyasn1-modules | 0.4.2 | BSD License |
@@ -9828,7 +9828,7 @@ These separately installed npm servers and their dependencies are locked in `dep
 | signal-exit | 3.0.7 | ISC |
 | strip-final-newline | 2.0.0 | MIT |
 | @dotenvx/primitives | 0.8.0 | BSD-3-Clause |
-| @hono/node-server | 2.1.5 | MIT |
+| @hono/node-server | 2.1.8 | MIT |
 | @jridgewell/gen-mapping | 0.3.13 | MIT |
 | @jridgewell/remapping | 2.3.5 | MIT |
 | @jridgewell/resolve-uri | 3.1.2 | MIT |
@@ -9940,7 +9940,7 @@ These separately installed npm servers and their dependencies are locked in `dep
 | graceful-fs | 4.2.11 | ISC |
 | has-symbols | 1.1.0 | MIT |
 | hasown | 2.0.4 | MIT |
-| hono | 4.13.13 | MIT |
+| hono | 4.13.18 | MIT |
 | http-errors | 2.0.1 | MIT |
 | human-signals | 8.0.1 | Apache-2.0 |
 | iconv-lite | 0.7.3 | MIT |

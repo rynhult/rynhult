@@ -6,6 +6,7 @@ import re
 import shlex
 from pathlib import Path
 
+from ..claude_session_id import canonical_session_id
 from . import transcripts
 from .base import (
     CompileContext,
@@ -123,6 +124,9 @@ class Claude(Provider):
     def args(self, inputs, *, run_dir, tmux_name, native_id, resume, files, extra):
         if not native_id:
             raise CompileError("Claude sessions need a pre-assigned session id")
+        # GHSA-h4mw-j7qp-8mwm: only a canonical UUID (or the never-executed preview placeholder) reaches argv.
+        if not canonical_session_id(native_id) and native_id != self.preview_native_id():
+            raise CompileError("Claude session id must be a canonical UUID")
         args = ["--settings", f"{run_dir}/settings.json"]
         args += ["--resume", native_id] if resume else ["--session-id", native_id]
         args += ["--permission-mode", inputs.permission_mode]

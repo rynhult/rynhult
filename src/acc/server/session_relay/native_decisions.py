@@ -14,13 +14,19 @@ from ..models import RelayDecision, RelayOperation, RelayRun
 from . import authority, store, writers
 from .hub import Hub
 
+# Owner preview (docs/decisions/0074-relay-preview.md) qualifies Claude writer
+# input only. Enrolled Claude decision answers keep their own false gate.
+CLAUDE_ENROLLED_DECISIONS_QUALIFIED = False
+CODEX_ENROLLED_DECISIONS_QUALIFIED = False
+
 
 def public_ready(ctx, row):
     runtime = getattr(ctx, 'relay_runtime', None)
     run = runtime.runs.get(row.session_id) if runtime else None
-    return (writers.PUBLIC_WRITER_QUALIFIED is True and not row.sealed
-            and row.capabilities.get('decision.tool_approval') == 'qualified'
-            and run is not None and run.provider in ('codex', 'claude'))
+    return (run is not None and run.provider in ('codex', 'claude') and writers.qualified(run.provider)
+            and ((run.provider=='claude' and CLAUDE_ENROLLED_DECISIONS_QUALIFIED is True)
+                 or (run.provider=='codex' and CODEX_ENROLLED_DECISIONS_QUALIFIED is True))
+            and not row.sealed and row.capabilities.get('decision.tool_approval') == 'qualified')
 
 
 @write_intent

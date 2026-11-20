@@ -224,6 +224,7 @@ async def test_terminal_reauthorizes_role_and_current_ownership(
     from sqlalchemy import select
     from test_users import browser, csrf, join
 
+    from acc.server.child_caps import transfer_owner
     from acc.server.models import Session, User
 
     owned = False
@@ -259,7 +260,8 @@ async def test_terminal_reauthorizes_role_and_current_ownership(
                 user = s.scalar(select(User).where(User.username == "alex"))
                 uid = user.id
                 if change == "ownership_recheck":
-                    s.get(Session, session["id"]).owner = "alex"
+                    # The real transfer (root person too): the lineage guard stops a session whose owner alone changes.
+                    transfer_owner(s, [s.get(Session, session["id"])], "alex", "@api")
                 if change != "demotion":
                     user.role = "member"
                 s.commit()
@@ -271,13 +273,49 @@ async def test_terminal_reauthorizes_role_and_current_ownership(
                 owned = True
                 await asyncio.wait_for(checked_owned.wait(), 5)
                 with write_db(api.app.state.db) as s:
-                    s.get(Session, session["id"]).owner = "another-user"
+                    transfer_owner(s, [s.get(Session, session["id"])], "another-user", "@api")
                     s.commit()
             with pytest.raises(websockets.ConnectionClosed) as closed:
                 while True:
                     await asyncio.wait_for(ws.recv(), 2)
             assert closed.value.rcvd.code in (4401, 4403)
             assert (await other.get("/api/auth/state")).json()["authenticated"]
+
+
+async def test_terminal_detached_by_revoking_change_still_sends_revocation_code(api, env, project, live, member_accounts):
+    """Reassigning only the owner makes the lineage guard stop the session, so its terminal detaches at the same
+    moment the viewer loses access. The browser must get the revocation code, never a dropped connection."""
+    from sqlalchemy import select
+    from test_users import browser, csrf, join
+
+    from acc.server.child_caps import transfer_owner
+    from acc.server.models import Session, User
+
+    await do_setup(api, env)
+    owner = cookie_client(api)
+    link = (await verified_post(owner, "/api/users/invites", {"role": "owner", "account": "dana-agent"})).json()["link"]
+    async with browser(api) as other:
+        await join(other, link, "alex")
+        session = (await owner.post("/api/sessions", headers=csrf(owner),
+                                   json={"project_id": project["id"], "provider": "claude", "name": "detach"})).json()
+        await wait_for(lambda: _idle(owner, session["id"]))
+        with write_db(api.app.state.db) as s:
+            transfer_owner(s, [s.get(Session, session["id"])], "alex", "@api")
+            s.scalar(select(User).where(User.username == "alex")).role = "member"
+            s.commit()
+        api.app.state.ctx.terminal_recheck = 3600  # only the detach can notice the change
+        headers = {"Cookie": f"acc_session={other.cookies.get('acc_session')}", **ORIGIN}
+        async with websockets.connect(f"{live}/api/sessions/{session['id']}/tty?mode=read", additional_headers=headers) as ws:
+            assert json.loads(await asyncio.wait_for(ws.recv(), 5))["t"] == "mode"
+            with write_db(api.app.state.db) as s:
+                s.get(Session, session["id"]).owner = "another-user"
+                s.commit()
+            messages = []
+            with pytest.raises(websockets.ConnectionClosed) as closed:
+                while True:
+                    messages.append(await asyncio.wait_for(ws.recv(), 10))
+            assert {"t": "closed", "reason": "terminal detached"} in [json.loads(m) for m in messages if isinstance(m, str)]
+            assert closed.value.rcvd is not None and closed.value.rcvd.code == 4401
 
 
 async def _idle(client, session_id):

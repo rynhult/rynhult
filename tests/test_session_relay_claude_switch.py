@@ -124,14 +124,14 @@ async def test_roundtrip_preserves_one_transcript_and_exits_before_resume(tmp_pa
                 target = replace(switch.spec, run_id=f'run-{index + 1}',
                                  spec={**switch.spec.spec, 'prior_owner_exit_verified': False})
                 result = await switch.select(view, target)
-                assert result.native_conversation == 'fixture-conversation'
+                assert result.native_conversation == 'f1c7ec0e-0000-4000-8000-000000000001'
                 assert result.changed and result.view == view
                 assert previous.process.returncode is not None
         transcript = records(tmp_path / '.fixture-transcript.jsonl')
         expected = [f'{initial}-turn-0',
                     f'{"chat" if initial == "terminal" else "terminal"}-turn-1', f'{initial}-turn-2']
         assert [item['text'] for item in transcript] == expected
-        assert {item['native'] for item in transcript} == {'fixture-conversation'}
+        assert {item['native'] for item in transcript} == {'f1c7ec0e-0000-4000-8000-000000000001'}
         assert all('conversation-checkpoint' not in str(e) for e in events)
         log = records(tmp_path / '.fixture-processes.jsonl')
         assert [item['kind'] for item in log] == ['start', 'exit', 'start', 'exit', 'start']
@@ -179,7 +179,7 @@ async def test_unknown_exit_and_changed_conversation_never_launch_target(tmp_pat
             await switch.select('chat', invalid)
         assert len(launched) == 1
         async def unknown_stop():
-            return SwitchEvidence(True, ExitState.UNKNOWN, 'fixture-conversation', switch.spec.binding.launch_policy_digest)
+            return SwitchEvidence(True, ExitState.UNKNOWN, 'f1c7ec0e-0000-4000-8000-000000000001', switch.spec.binding.launch_policy_digest)
         switch.owner.stop_owner = unknown_stop
         with pytest.raises(RelayError):
             await switch.select('chat', target)

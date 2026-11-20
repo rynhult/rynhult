@@ -375,7 +375,7 @@ async def test_resume_rechecks_cached_vault_authority_after_broker_wait(env, bac
                        owner='alice', shared=True, remote=True,
                        ciphertext=supervisor.vault.cipher.seal('00112233aabbccdd', 'WORK_TOKEN', CANARY, create=True))
         project = Project(slug='demo', name='Demo', account='agent', workspace_path='/demo', host=host)
-        session = Session(id='authority', name='Authority', project=project, owner='bob', native_id='native',
+        session = Session(id='authority', name='Authority', project=project, owner='bob', native_id='9d1c7a52-3b1e-4f6a-8c2d-5e7f9a0b1c2d',
                           provider='claude', tmux_name='authority', run_as='agent',
                           launch_spec=LaunchSpec(provider='claude', inputs=inputs.as_dict(),
                                                  files=compiled.files, digest=compiled.digest))

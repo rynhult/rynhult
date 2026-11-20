@@ -27,7 +27,7 @@ async def test_original_application_after_observer_expires(public_claude, monkey
             from acc.session_relay import protocol as p
             if not ready.is_set():
                 raise p.RelayError(p.ErrorCode.BUSY)
-            return 'fixture-conversation:user:provider:' + identifier + ':fixture-tool'
+            return 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + identifier + ':fixture-tool'
         return proof
     hooks = c.owned_factory.hooks
     hooks.prepare_application = prepare

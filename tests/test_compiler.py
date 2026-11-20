@@ -66,9 +66,9 @@ def test_invalid_inputs_rejected(inputs):
 ])
 def test_first_prompt_in_each_clis_form(provider, expected):
     inputs = LaunchInputs(provider=provider, initial_prompt="fix it")
-    args = build_args(inputs, run_dir="/r", tmux_name="t", native_id="n", resume=False)
+    args = build_args(inputs, run_dir="/r", tmux_name="t", native_id="3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b", resume=False)
     assert args[-len(expected):] == expected
-    assert "fix it" not in build_args(inputs, run_dir="/r", tmux_name="t", native_id="n", resume=True)  # never on resume
+    assert "fix it" not in build_args(inputs, run_dir="/r", tmux_name="t", native_id="3f2b8c1e-7a4d-4e5f-9b6a-0c1d2e3f4a5b", resume=True)  # never on resume
 
 
 def test_confirmed_bypass_launch_skips_claudes_own_dialog():

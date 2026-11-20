@@ -36,7 +36,7 @@ async def ownership_case(runtime_case, monkeypatch, request, tmp_path):  # noqa:
     subscription = getattr(request, "param", None) == "subscription"
     if hasattr(request, "param") and not subscription:
         cli = tmp_path / "fake-claude-native-id"
-        cli.write_text(CLI.read_text().replace("fixture-conversation", request.param))
+        cli.write_text(CLI.read_text().replace("f1c7ec0e-0000-4000-8000-000000000001", request.param))
         cli.chmod(0o700)
     if subscription:
         from acc.server import claude_subscription
@@ -57,7 +57,7 @@ async def ownership_case(runtime_case, monkeypatch, request, tmp_path):  # noqa:
             db.delete(db.get(SessionRun, case.launch.run_id))
             db.flush()
             session = db.get(Session, SID)
-            session.provider, session.native_id, session.claude_auth = 'claude', ('fixture-conversation' if subscription else getattr(request, 'param', 'fixture-conversation')), 'subscription' if subscription else 'api_key'
+            session.provider, session.native_id, session.claude_auth = 'claude', ('f1c7ec0e-0000-4000-8000-000000000001' if subscription else getattr(request, 'param', 'f1c7ec0e-0000-4000-8000-000000000001')), 'subscription' if subscription else 'api_key'
             session.launch_spec.provider = 'claude'
             session.launch_spec.inputs = {'provider': 'claude'}
             session.launch_spec.files = {'settings.json': '{"disableAllHooks":false,"hooks":{}}', 'guardrails.json': '{}'}
@@ -198,7 +198,7 @@ async def test_main_broker_sdk_tui_sdk_preserves_native_id_and_exits_before_resu
     with case.db() as db:
         row = db.get(RelaySession, SID)
         assert row.capabilities == {} and not row.sealed
-        assert db.get(Session, SID).native_id == 'fixture-conversation'
+        assert db.get(Session, SID).native_id == 'f1c7ec0e-0000-4000-8000-000000000001'
         assert db.get(RelayOwnership, SID).phase == 'owned'
         assert db.get(SessionRun, original_run).ended_at
     count = len(case.owned_factory.owners)
@@ -206,11 +206,43 @@ async def test_main_broker_sdk_tui_sdk_preserves_native_id_and_exits_before_resu
     assert len(case.owned_factory.owners) == count
 
 
+async def test_pinned_preview_switch_regrants_new_run_and_fence_loss_never_regrants(ownership_case):
+    """Owner preview (decision 0074): a reviewed switch re-qualifies only the new
+    current run from its recorded broker pin; fence loss always resets to {}."""
+    from acc.server.models import RelayRun
+    from acc.server.session_relay.release_qualification import DECLARATION
+    case = ownership_case
+    preview = {'text': 'qualified', 'terminal.input': 'qualified', 'switch.to_chat': 'qualified',
+               'switch.to_terminal': 'qualified'}
+    with case.db() as db:
+        assert db.get(RelaySession, SID).capabilities == {}  # no recorded probe: nothing granted
+    @write_intent
+    def probed():
+        with case.db() as db:
+            run = db.get(RelayRun, case.launch.run_id)
+            run.identity = {**run.identity, 'cliDigest': DECLARATION.cli_digest}
+            db.commit()
+    probed()
+    original_run = case.launch.run_id
+    terminal = await select_owner(case, 'terminal', 'pinned-to-terminal')
+    assert terminal['view'] == 'terminal' and case.launch.run_id != original_run
+    with case.db() as db:
+        row = db.get(RelaySession, SID)
+        assert row.current_run_id == case.launch.run_id and not row.sealed
+        assert row.capabilities == preview
+        assert db.get(RelayRun, row.current_run_id).identity['cliDigest'] == DECLARATION.cli_digest
+    await asyncio.to_thread(case.launch.fence_lost)
+    with case.db() as db:
+        row = db.get(RelaySession, SID)
+        assert row.sealed and row.capabilities == {}
+        assert db.get(RelayOwnership, SID).phase == 'recovery_required'
+
+
 async def test_native_hook_decision_reaches_hub_and_only_reserved_answer_releases_it(ownership_case):
     case = ownership_case
     await select_owner(case, 'terminal', 'terminal')
     factory = case.owned_factory
-    payload = {'session_id': 'fixture-conversation', 'prompt_id':'fixture-prompt', 'hook_event_name': 'PermissionRequest',
+    payload = {'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'prompt_id':'fixture-prompt', 'hook_event_name': 'PermissionRequest',
                'tool_name': 'Bash', 'tool_input': {'command': 'echo artificial'}}
     await asyncio.to_thread(exchange, factory.directory / 'owner-channel.json',
         {**payload,'hook_event_name':'PreToolUse','tool_use_id':'fixture-tool'})
@@ -419,7 +451,7 @@ async def test_sdk_native_hook_observations_do_not_fall_back_to_a_second_client(
     case = ownership_case
     factory = case.owned_factory
     for event in ('SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'):
-        payload = {'session_id': 'fixture-conversation', 'hook_event_name': event, 'tool_use_id': 'tool-fixture'}
+        payload = {'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'hook_event_name': event, 'tool_use_id': 'tool-fixture'}
         assert await asyncio.to_thread(exchange, factory.directory / 'owner-channel.json', payload) == {'observed': True}
     assert not factory.current.native_tools and len(factory.owners) == 1
 
@@ -428,7 +460,7 @@ async def test_native_permission_mode_and_unknown_tool_families_are_denied_witho
     case = ownership_case
     factory = case.owned_factory
     for tool in ('ExitPlanMode', 'EnterPlanMode', 'mcp__account_tools__install', 'unqualified-future-tool'):
-        payload = {'session_id': 'fixture-conversation', 'hook_event_name': 'PermissionRequest',
+        payload = {'session_id': 'f1c7ec0e-0000-4000-8000-000000000001', 'hook_event_name': 'PermissionRequest',
                    'tool_name': tool, 'tool_input': {}}
         assert await asyncio.to_thread(exchange, factory.directory / 'owner-channel.json', payload) == {'behavior': 'deny'}
         result = await factory.current._permission(tool, {}, None)
@@ -658,3 +690,83 @@ async def test_completed_owner_cleanup_retains_conclusive_exit_after_proof_handl
     factory.close_complete = False
     factory.exit_qualified = False
     assert await factory.exited() is False
+
+
+PREVIEW_CAPABILITIES = {'text': 'qualified', 'terminal.input': 'qualified', 'switch.to_chat': 'qualified',
+                        'switch.to_terminal': 'qualified'}
+
+
+def preview_granted(case):
+    @write_intent
+    def granted():
+        with case.db() as db:
+            db.get(RelaySession, SID).capabilities = dict(PREVIEW_CAPABILITIES)
+            db.commit()
+    granted()
+
+
+def demote_owner(case):
+    from acc.server.models import User
+    @write_intent
+    def demote():
+        with case.db() as db:
+            db.get(User, 1).role = 'member'
+            db.commit()
+    demote()
+    # A real request rebuilds the principal from the database on every call.
+    from dataclasses import replace as changed
+    case.state['who'] = changed(case.state['who'], role='member')
+
+
+def act_as_second_owner(case):
+    from acc.server.api.context import Principal
+    from acc.server.models import User
+    @write_intent
+    def add():
+        with case.db() as db:
+            db.add(User(id=3, username='jo', role='owner', password_hash='unused', totp_secret='unused'))
+            db.commit()
+    add()
+    case.state['who'] = Principal('jo', 'owner', 'fixture', 3)
+    case.state['actor'] = p.Actor(p.ActorKind.PERSON, 'jo', p.Channel.CHAT)
+
+
+def assert_owner_only_refusal(case, error):
+    assert error.value.code is p.ErrorCode.POLICY_REFUSED
+    assert error.value.details == {'reason': 'owner_only_preview'}
+    assert str(error.value) == 'The session relay preview is limited to install owners.'
+    with case.db() as db:
+        assert db.get(RelaySession, SID).capabilities == {}
+
+
+async def owner_submit(case, key):
+    params = {'sessionId': SID, 'expectedRunId': str(case.launch.run_id), 'text': 'owner-only-fixture',
+              'expectedConfigurationRevision': 0, 'ifBusy': 'reject'}
+    registered = Hub(case.ctx).register(case.resolve, SID, str(case.launch.run_id), key,
+                                      'turn.submit', p.operation_digest('turn.submit', params))
+    return await case.manager.submit(case.resolve, SID, {**params, 'operationId': registered.operation_id})
+
+
+@pytest.mark.parametrize('who', ['demoted', 'second-owner'])
+async def test_preview_turn_submit_rechecks_session_owner_and_withdraws_grant(ownership_case, who):
+    case = ownership_case
+    preview_granted(case)
+    demote_owner(case) if who == 'demoted' else act_as_second_owner(case)
+    with pytest.raises(p.RelayError) as error:
+        await owner_submit(case, 'owner-only-submit')
+    assert_owner_only_refusal(case, error)
+    assert not case.owned_factory.current.pending if hasattr(case.owned_factory.current, 'pending') else True
+
+
+@pytest.mark.parametrize('who', ['demoted', 'second-owner'])
+async def test_preview_switch_prepare_rechecks_session_owner_and_withdraws_grant(ownership_case, who):
+    case = ownership_case
+    preview_granted(case)
+    source = case.owned_factory.current
+    demote_owner(case) if who == 'demoted' else act_as_second_owner(case)
+    with pytest.raises(p.RelayError) as error:
+        await select_owner(case, 'terminal', 'owner-only-switch')
+    assert_owner_only_refusal(case, error)
+    assert case.owned_factory.current is source and source.process.returncode is None
+    with case.db() as db:
+        assert db.get(RelayOwnership, SID).view == 'chat'

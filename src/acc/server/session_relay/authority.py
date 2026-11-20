@@ -53,6 +53,12 @@ def current(ctx, db, resolve, session_id, *, action='read', expected_run=None, a
     if expected_run is not None and str(expected_run) != str(row.current_run_id):
         raise p.RelayError(p.ErrorCode.STALE_RUN)
     if action != 'read':
+        # Service actors reached here only through delivery.bound(), which
+        # rechecks its separate gate and exact current scope. The preview owner
+        # restriction governs persons; it cannot replace delivery authorization.
+        if session.provider=='codex' and actor.kind is p.ActorKind.PERSON:
+            from .release_qualification import require_owner
+            require_owner(db,session,actor)
         ownership = db.get(RelayOwnership, session_id)
         from .terminal_grants import NativeResolver
         native = isinstance(resolve, NativeResolver)

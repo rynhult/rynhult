@@ -108,7 +108,8 @@ _RPC_MESSAGES = {
     RpcCode.INVALID_PARAMS: "Invalid params",
 }
 ERROR_LIMITS = frozenset({"frame"})
-ERROR_REASONS = frozenset({"not_supported_in_release", "unattributed", "unsupported_terminal_approval_key", "terminal_review_required"})
+ERROR_REASONS = frozenset({"not_supported_in_release", "unattributed", "unsupported_terminal_approval_key", "terminal_review_required",
+                           "owner_only_preview"})
 # Values are closed too: a free-form string here would be a way out for provider text, paths and foreign IDs.
 ERROR_DETAILS: dict[str, Callable[[Any], bool]] = {
     "capability": lambda value: type(value) is str and value in CAPABILITIES,
@@ -153,6 +154,8 @@ class RelayError(Exception):
                 'unsupported_terminal_approval_key': 'This key was not sent. Only Enter or Escape can answer a basic command approval. Use the review buttons for other choices.',
                 'terminal_review_required': 'Terminal keys are unavailable for this review. Use the review buttons. No key was sent.',
             }.get(details.get('reason'), message)
+        if code is ErrorCode.POLICY_REFUSED and details.get('reason') == 'owner_only_preview':
+            message = 'The session relay preview is limited to install owners.'
         if code is ErrorCode.OUTCOME_UNKNOWN and (receipt is None or receipt.state is not ReceiptState.UNCERTAIN):
             raise ValueError("OUTCOME_UNKNOWN requires the uncertain receipt")
         super().__init__(message)

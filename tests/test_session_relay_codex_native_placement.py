@@ -102,6 +102,7 @@ async def test_production_codex_native_public_take_and_input(runtime_case, monke
                 return token, csrf
         token, csrf = login()
         monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+        monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
         app = FastAPI()
         app.include_router(router(context))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture',

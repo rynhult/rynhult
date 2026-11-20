@@ -27,7 +27,7 @@ async def test_approved_subscription_same_id_path_only_launches_fake_cli(ownersh
     await select_owner(c,'chat','stub-subscription-chat')
     assert c.owned_factory.current.spec.spec['cli_path']==str(CLI.resolve())
     assert initial.process.returncode is not None and terminal.process.returncode is not None
-    assert all(owner.spec.binding.native_conversation=='fixture-conversation' for owner in c.owned_factory.owners)
+    assert all(owner.spec.binding.native_conversation=='f1c7ec0e-0000-4000-8000-000000000001' for owner in c.owned_factory.owners)
     # Revoke consent through the production function, then refuse before stop.
     current=c.owned_factory.current
     @write_intent

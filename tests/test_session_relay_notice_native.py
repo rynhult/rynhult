@@ -23,6 +23,7 @@ async def test_native_coalesced_notice_keeps_intents_and_one_schedule_submission
     c = process_node
     monkeypatch.setattr(service, 'DELIVERY_QUALIFIED', True)
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     monkeypatch.setattr(delivery, 'enabled', lambda: True)
     @write_intent
     def reserve_team():

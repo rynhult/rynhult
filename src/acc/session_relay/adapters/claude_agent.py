@@ -14,6 +14,7 @@ from dataclasses import asdict, is_dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
 
+from ...claude_session_id import canonical_session_id
 from ..protocol import NO_CAPABILITIES, ActorKind, ErrorCode, RelayError
 from .base import (
     AdmissionResult,
@@ -30,15 +31,28 @@ from .base import (
 )
 
 
+def pinned_options(options):
+    """The only ClaudeAgentOptions construction: an explicit absolute cli_path.
+
+    Without one the SDK would search for (or fall back to) its bundled CLI,
+    bypassing the broker's executable pin.
+    """
+    path = options.get('cli_path')
+    if type(path) is not str or not os.path.isabs(path):
+        raise RelayError(ErrorCode.INTEGRITY_FAILURE)
+    from claude_agent_sdk import ClaudeAgentOptions
+    return ClaudeAgentOptions(**options)
+
+
 def sdk_client(options):
     # Optional deployment dependency. Importing the relay never launches a CLI.
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+    from claude_agent_sdk import ClaudeSDKClient
     if version('claude-agent-sdk') != '0.1.50':
         raise RelayError(ErrorCode.VERSION_MISMATCH)
     from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
     from ..claude_permission_wire import PermissionWire
-    configured=ClaudeAgentOptions(**options)
+    configured=pinned_options(options)
     async def empty_stream():
         return
         yield  # SDK streaming transport, no automatic user input
@@ -113,7 +127,8 @@ class ClaudeAgentAdapter(UnavailableAdapter):
         if spec.spec.get('permission_mode', 'default') not in ('default', 'acceptEdits', 'plan', 'bypassPermissions'):
             raise RelayError(ErrorCode.UNSUPPORTED)
         if (spec.binding.provider != 'claude' or not spec.spec.get('cli_path')
-                or not spec.binding.native_conversation or spec.spec.get('prior_owner_exit_verified') is not True):
+                or not canonical_session_id(spec.binding.native_conversation)
+                or spec.spec.get('prior_owner_exit_verified') is not True):
             raise RelayError(ErrorCode.INTEGRITY_FAILURE)
         # Reviewed launch must attest hook installation; do not suppress settings/hooks.
         if (spec.spec.get('guard_intact') is not True or
@@ -223,9 +238,13 @@ class ClaudeAgentAdapter(UnavailableAdapter):
             # Pin the same reviewed default root on both ownership paths.
             if 'CLAUDE_CONFIG_DIR' not in launch_env:
                 options['env']['CLAUDE_CONFIG_DIR'] = str(Path(launch_env['HOME']) / '.claude')
+        # GHSA-h4mw-j7qp-8mwm: SDK 0.1.50 forwards resume unvalidated; only a canonical
+        # UUID may reach the CLI argv as either --session-id or --resume.
+        if not canonical_session_id(self.spec.binding.native_conversation):
+            raise RelayError(ErrorCode.INTEGRITY_FAILURE)
         if self.spec.spec.get('initial_chat'):
             options['extra_args'] = {**options.get('extra_args', {}), 'session-id': self.spec.binding.native_conversation}
-        elif self.spec.binding.native_conversation:
+        else:
             options['resume'] = self.spec.binding.native_conversation
         return options
 

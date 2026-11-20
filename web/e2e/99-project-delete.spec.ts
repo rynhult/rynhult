@@ -21,7 +21,9 @@ for (const managed of [true, false]) test(`${managed ? 'managed checkout' : 'reg
     await page.getByRole('button', { name: 'Project actions', exact: true }).click();
     await page.getByRole('button', { name: 'Delete project', exact: true }).click();
   } else {
-    await page.goto('/projects');
+    // The list shows 20 projects a page, sorted by name; on the shared server earlier specs leave more than that before
+    // "delete-registered-…", so find this one through the list's own search rather than hoping it is on page one.
+    await page.goto(`/projects?q=${encodeURIComponent(project.slug)}`);
     await page.getByRole('button', { name: `Project actions for ${project.slug}`, exact: true }).click();
     await expect(page.getByRole('menuitem', { name: 'Archive', exact: true })).toBeVisible();
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();

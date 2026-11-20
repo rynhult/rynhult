@@ -108,11 +108,12 @@ def install(app, capability):
                 'model_providers.fixture={name="Offline fixture",base_url="' + endpoint
                 + '",wire_api="responses",requires_openai_auth=false,request_max_retries=0,stream_max_retries=0}'])}
         active['restore'] = (original_call, original_fresh, original_accounts, provider, original_compile,
-            writers.PUBLIC_WRITER_QUALIFIED, dict(ctx.settings.feature_overrides))
+            (writers.PUBLIC_WRITER_QUALIFIED, writers.CODEX_PUBLIC_WRITER_QUALIFIED), dict(ctx.settings.feature_overrides))
         ctx.broker.call, ctx.broker.fresh, provider.compile = call, fresh, compile
         ctx.broker.accounts = lambda: sorted(set(original_accounts()) | {account})
         ctx.settings.feature_overrides['session_relay'] = True
-        writers.PUBLIC_WRITER_QUALIFIED = True
+        # Artificial Codex qualification for this harness only (decision 0074 keeps it off).
+        writers.PUBLIC_WRITER_QUALIFIED = writers.CODEX_PUBLIC_WRITER_QUALIFIED = True
         active['project'] = identifier
         return JSONResponse({'projectId': identifier})
 
@@ -212,7 +213,7 @@ def install(app, capability):
         return JSONResponse({'pid': os.getpid(), 'state': str(state),
             'runtimePresent': getattr(ctx, 'relay_runtime', None) is not None,
             'nativeFixtureActive': bool(active), 'runtimeAllocations': list(cold_calls),
-            'publicWriterQualified': writers.PUBLIC_WRITER_QUALIFIED})
+            'publicWriterQualified': writers.qualified('codex')})
 
     async def retained_control(request):
         if not allowed(request) or not active.get('session'):
@@ -315,7 +316,7 @@ def install(app, capability):
             if 'restore' in active:
                 original_call, original_fresh, original_accounts, provider, original_compile, qualified, features = active['restore']
                 ctx.broker.call, ctx.broker.fresh, ctx.broker.accounts, provider.compile = original_call, original_fresh, original_accounts, original_compile
-                writers.PUBLIC_WRITER_QUALIFIED = qualified
+                writers.PUBLIC_WRITER_QUALIFIED, writers.CODEX_PUBLIC_WRITER_QUALIFIED = qualified
                 ctx.settings.feature_overrides.clear()
                 ctx.settings.feature_overrides.update(features)
             if 'native' in active:

@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from acc.server.api.context import Principal
 from acc.server.db import write_intent
-from acc.server.models import AuditLog, RelayDecision, RelayOperation, RelaySession, User
+from acc.server.models import AuditLog, RelayDecision, RelayOperation, RelaySession
 from acc.server.session_relay import store
 from acc.server.session_relay.hub import Hub, refuse_legacy, seal_for_stop
 from acc.session_relay import protocol as p
@@ -85,19 +85,21 @@ def test_decision_race_first_valid_answer_and_atomic_receipt(case):
     @write_intent
     def seed():
         with case.db() as db:
-            db.get(User, 2).role = 'owner'
             store.add_decision(db, store.lock(db, 'relay'), p.Decision('question', 'relay', '1', p.DecisionKind.QUESTION,
                                DIGEST, 'Keep notes?', (p.DecisionChoice('yes', 'Yes', p.ChoiceEffect.ANSWER),),
                                9999999999999, 0))
             db.commit()
     seed()
-    other_actor = p.Actor(p.ActorKind.PERSON, 'sam', p.Channel.PHONE, 'fixture-device')
-    other = lambda: (Principal('sam', 'owner', 'fixture', 2), other_actor)
+    # Two independently attributed channels of the same preview owner may race;
+    # a second install owner is not this session's owner and must remain refused.
+    other_actor = p.Actor(p.ActorKind.PERSON, 'alex', p.Channel.PHONE, 'fixture-device')
+    other = lambda: (Principal('alex', 'owner', 'fixture', 1), other_actor)
     answer_digest = p.operation_digest('decision.reply', {
         'sessionId': 'relay', 'expectedRunId': '1', 'decisionId': 'question',
         'choiceId': 'yes', 'expectedRevision': 0, 'actionDigest': DIGEST})
     one = case.hub.register(case.resolve, 'relay', '1', 'one', 'decision.reply', answer_digest)
     two = case.hub.register(other, 'relay', '1', 'two', 'decision.reply', answer_digest)
+    assert one.receipt.actor != two.receipt.actor
     def answer(resolve, op, choice='yes'):
         return case.hub.answer(resolve, 'relay', 'question', expected_run='1', attached=True, choice_id=choice,
                                revision=0, digest=DIGEST, operation_id=op)
@@ -114,7 +116,7 @@ def test_decision_race_first_valid_answer_and_atomic_receipt(case):
                 assert error.code is p.ErrorCode.DECISION_RESOLVED
     assert len(results) == 1
     with case.db() as db:
-        assert db.get(RelayDecision, ('relay', 'question')).decision['winner']['principal'] == results[0].winner.principal
+        assert db.get(RelayDecision, ('relay', 'question')).decision['winner'] == p.to_wire(results[0].winner)
         ops = db.scalars(select(RelayOperation)).all()
         assert sorted(op.receipt['state'] for op in ops) == ['queued', 'submitting']
         assert not any('Keep notes?' in str(a.detail) for a in db.scalars(select(AuditLog)))

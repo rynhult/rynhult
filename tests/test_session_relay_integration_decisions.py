@@ -15,6 +15,7 @@ async def test_primary_and_enrolled_decisions_each_register_and_release_one_exac
     c = public_claude
     qualify(c, monkeypatch, decisions=primary)
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', enrolled)
+    monkeypatch.setattr('acc.server.session_relay.native_decisions.CLAUDE_ENROLLED_DECISIONS_QUALIFIED', enrolled)
     await attach(c.client, 'joined-decision', ['decisions'])
     pending, decision = await pending_hook(c)
     attempts = []
@@ -37,7 +38,7 @@ async def test_primary_and_enrolled_decisions_each_register_and_release_one_exac
     c.launch.answer_operations.clear()
     applied = await c.launch.handle('publication', {'kind': 'decision.applied', 'operationId': identifier,
         'runId': str(c.launch.run_id), 'application': {'effect': 'deny', 'decisionId': decision['decisionId'],
-            'actionDigest': decision['actionDigest'], 'nativeRef': 'fixture-conversation:user:provider:' + decision['decisionId'] + ':fixture-tool'}})
+            'actionDigest': decision['actionDigest'], 'nativeRef': 'f1c7ec0e-0000-4000-8000-000000000001:user:provider:' + decision['decisionId'] + ':fixture-tool'}})
     assert applied == {'outcome': 'accepted'} and len(attempts) == 1
     with c.db() as db:
         assert db.get(RelayOperation, identifier).receipt['state'] == 'accepted'

@@ -363,6 +363,9 @@ def router(ctx: Context) -> APIRouter:
             from acc.session_relay.protocol import ActorKind
             if actor.kind is not ActorKind.PERSON:
                 raise HTTPException(403, 'A person sign-in is required for relay enrollment.')
+            from ..session_relay.release_qualification import OWNER_ONLY
+            if getattr(person, 'role', None) != 'owner':
+                raise HTTPException(403, OWNER_ONLY)
             if body.provider == 'claude':
                 from .. import claude_subscription
                 from ..admin_features import Features
@@ -381,9 +384,12 @@ def router(ctx: Context) -> APIRouter:
         except BrokerError:
             ready = {}
         from acc.broker.claude_owner import CLI_DIGEST as claude_digest
-        if (ready.get('available') is not True or body.provider=='claude' and
-                (ready.get('provider')!='claude' or ready.get('cliDigest')!=claude_digest)):
+        from acc.session_relay.codex_preview import CLI_DIGEST as codex_digest
+        expected_digest = claude_digest if body.provider=='claude' else codex_digest
+        if (ready.get('available') is not True or ready.get('provider')!=body.provider
+                or ready.get('cliDigest')!=expected_digest):
             raise HTTPException(409, f'This {providers.get(body.provider).label} installation is not qualified for relay enrollment.')
+        return ready
 
     async def launch_session(body: SessionIn, who, schedule_run_id: str | None = None,
                              multirun_entry: tuple[str, int] | None = None, relay_resolve=None):
@@ -424,7 +430,7 @@ def router(ctx: Context) -> APIRouter:
         body = development_target(body, who)
         no_worktree_for_workspace(body)
         selected_account, selected_host = machine_scope(body, who)
-        await relay_target(body, selected_account, selected_host)
+        relay_ready = await relay_target(body, selected_account, selected_host)
         if body.machine:
             try:
                 installed = await broker.call("installed_providers", account=selected_account, host=selected_host)
@@ -582,6 +588,9 @@ def router(ctx: Context) -> APIRouter:
                     runtime = manager(ctx)
                     relay_options['relay_launch'] = (runtime.new_exclusive_launch(relay_resolve) if body.provider == 'claude'
                         else runtime.new_launch(relay_resolve))
+                    if relay_ready and relay_ready.get('available') is True:
+                        # The broker-probed pin; the preview grant compares it with its declaration.
+                        relay_options['relay_launch'].cli_digest = relay_ready.get('cliDigest')
                 acc_id = await supervisor.create_session(project_id, inputs, body.name, who.username, workdir=workdir,
                                                          owner=who.username, worktree=worktree, orchestrator=limits,
                                                          schedule_run_id=schedule_run_id, multirun_entry=multirun_entry,

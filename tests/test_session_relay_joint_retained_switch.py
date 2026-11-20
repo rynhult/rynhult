@@ -41,7 +41,7 @@ async def test_reviewed_replacements_retain_run_events_and_reset_cross_run_curso
         assert runs['currentRunId'] == str(current)
         assert {run['runId'] for run in runs['runs']} == {str(original), str(terminal_run)}
         assert all(run['exitOutcome'] == 'unknown' for run in runs['runs'])
-        assert 'fixture-conversation' not in response.text
+        assert 'f1c7ec0e-0000-4000-8000-000000000001' not in response.text
         for identifier in (original, terminal_run):
             params = {'runId': str(identifier), 'limit': 1}
             response = await client.get(f'/api/sessions/{SID}/relay/events', params=params)
@@ -65,7 +65,7 @@ async def test_reviewed_replacements_retain_run_events_and_reset_cross_run_curso
         c.state['revoked'] = True
         for suffix in ('runs', 'events'):
             refused = await client.get(f'/api/sessions/{SID}/relay/{suffix}', params={'runId': str(original)})
-            assert refused.status_code == 401 and 'fixture-conversation' not in refused.text
+            assert refused.status_code == 401 and 'f1c7ec0e-0000-4000-8000-000000000001' not in refused.text
     with c.db() as db:
         assert db.get(SessionRun, original).ended_at and db.get(SessionRun, terminal_run).ended_at
         assert db.get(SessionRun, current).ended_at is None

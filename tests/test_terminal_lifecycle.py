@@ -187,7 +187,7 @@ async def test_observer_output_authorization_is_bounded_not_per_frame():
     from acc.server.tty import _frame
     reader = asyncio.StreamReader()
     reader.feed_data(b'{"ok":true,"readonly":true}\n' + _frame(b'd', b'output') * 3000 + _frame(b'x', b''))
-    checks, seen = 0, 0
+    checks, seen, closed = 0, 0, []
     async def authorize():
         nonlocal checks
         checks += 1
@@ -201,6 +201,8 @@ async def test_observer_output_authorization_is_bounded_not_per_frame():
             seen += 1
         async def receive_text(self):
             await asyncio.Event().wait()
+        async def close(self, code=1000, reason=None):
+            closed.append(code)
     class Stream:
         def write(self, data):
             pass
@@ -213,6 +215,7 @@ async def test_observer_output_authorization_is_bounded_not_per_frame():
     await bridge(Socket(), connect, 'session', 'acc-test', Writers(), False, False, 40, 120,
                  signed_in=authorize, bound_run='1', bound_instance='test')
     assert seen == 3000
+    assert closed == [1000]  # detached with access intact: a normal close frame, never a dropped connection
     assert checks < 100  # not 3000 synchronous DB checks, even on a loaded host
 
 
@@ -389,3 +392,48 @@ async def test_relay_stop_and_unmediated_terminal_paths_with_real_fixture_broker
     with api.app.state.db() as db:
         assert db.get(RelaySession, identifier).sealed
         assert db.get(Session, identifier).desired_state == 'stopped'
+
+
+@pytest.mark.parametrize('broken', ['reset', 'geometry-not-json', 'geometry-not-object'])
+@pytest.mark.parametrize('still_valid,code', [(True, 4503), (False, 4401)])
+async def test_broken_broker_stream_ends_the_browser_terminal_with_a_close_code(broken, still_valid, code):
+    """A reset or a malformed broker frame ends like broker EOF: a close frame, never a silent drop."""
+    from acc.server.tty import _frame
+
+    class Reader(asyncio.StreamReader):
+        async def readexactly(self, n):
+            if broken == 'reset':
+                raise ConnectionResetError()
+            return await super().readexactly(n)
+
+    reader = Reader()
+    payload = {'geometry-not-json': b'{', 'geometry-not-object': b'[1]'}.get(broken, b'')
+    reader.feed_data(b'{"ok":true,"readonly":true}\n' + _frame(b'g', payload))
+    closed, allowed = [], [True]
+
+    async def authorize():
+        return allowed[0]
+
+    class Socket:
+        async def send_text(self, data):
+            allowed[0] = still_valid  # access changes once the terminal is up
+        async def send_bytes(self, data):
+            pass
+        async def receive_text(self):
+            await asyncio.Event().wait()
+        async def close(self, code=1000, reason=None):
+            closed.append(code)
+
+    class Stream:
+        def write(self, data):
+            pass
+        async def drain(self):
+            pass
+        def close(self):
+            pass
+
+    async def connect():
+        return reader, Stream()
+    await asyncio.wait_for(bridge(Socket(), connect, 'session', 'acc-test', Writers(), False, False, 40, 120,
+                                  signed_in=authorize, recheck=3600), 2)
+    assert closed == [code]

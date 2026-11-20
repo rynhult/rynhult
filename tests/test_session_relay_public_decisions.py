@@ -16,8 +16,10 @@ from acc.session_relay import protocol as p
 @pytest.fixture
 async def decision_case(public_case, monkeypatch):  # noqa: F811
     c = public_case
+    monkeypatch.setattr('acc.server.session_relay.native_decisions.CODEX_ENROLLED_DECISIONS_QUALIFIED',True)
     c.qualify_fixture()
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     @write_intent
     def enable_fixture_capability():
         with c.db() as db:

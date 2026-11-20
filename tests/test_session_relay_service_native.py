@@ -31,6 +31,7 @@ async def test_native_service_delivery_retains_actor_and_one_writer_over_typed_n
     c.service_supervisor = supervisor
     monkeypatch.setattr(service, 'DELIVERY_QUALIFIED', True)
     monkeypatch.setattr('acc.server.session_relay.writers.PUBLIC_WRITER_QUALIFIED', True)
+    monkeypatch.setattr('acc.server.session_relay.writers.CODEX_PUBLIC_WRITER_QUALIFIED', True)
     monkeypatch.setattr(delivery, 'enabled', lambda: True)
     @write_intent
     def qualify():

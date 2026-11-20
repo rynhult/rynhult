@@ -19,6 +19,7 @@ from acc.session_relay import protocol as p
 @pytest.fixture
 async def approval_case(stream_case, monkeypatch):  # noqa: F811
     c=stream_case
+    monkeypatch.setattr('acc.server.session_relay.native_decisions.CODEX_ENROLLED_DECISIONS_QUALIFIED',True)
     c.key_grant=(await claim(c))['result']
     monkeypatch.setattr('acc.server.session_relay.stock_approval_frames.PUBLIC_STOCK_KEYS_QUALIFIED',True)
     @write_intent

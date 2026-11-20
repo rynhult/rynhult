@@ -1,7 +1,8 @@
-"""Dormant Claude L1 HTTP switch binding; no automatic qualification promotion.
+"""Claude L1 HTTP switch binding; no automatic qualification promotion.
 
 The R1 method set is unchanged. Only a separately qualified Claude L1 placement
-may negotiate this extension, and production qualification remains false.
+may negotiate this extension. Production qualification is the owner-only
+preview (docs/decisions/0074-relay-preview.md); decisions stay unqualified.
 """
 from __future__ import annotations
 
@@ -11,9 +12,11 @@ from ..admin_features import enabled
 from . import authority, history, store
 from .runtime import RequestResolver
 
-PUBLIC_CLAUDE_QUALIFIED = False
+PUBLIC_CLAUDE_QUALIFIED = True  # owner preview, docs/decisions/0074-relay-preview.md
 PUBLIC_CLAUDE_DECISIONS_QUALIFIED = False
 METHODS = frozenset({'switch.prepare', 'switch.commit', 'switch.cancel'})
+# Never executed: preview_args renders it back as <native-id>; a real UUID passes the GHSA-h4mw-j7qp-8mwm guard.
+PREVIEW_NATIVE_ID = "00000000-0000-4000-8000-000000000000"
 
 
 def supported(ctx, row):
@@ -129,15 +132,16 @@ def preview_args(inputs, files):
     from types import SimpleNamespace
 
     from acc.providers.base import CompileError
-    from acc.session_relay.adapters.claude_agent import ClaudeAgentAdapter
+    from acc.session_relay.adapters.claude_agent import ClaudeAgentAdapter, pinned_options
     try:
         if version('claude-agent-sdk') != '0.1.50':
             raise CompileError('This Claude Agent SDK installation is not qualified for relay enrollment.')
-        from claude_agent_sdk import ClaudeAgentOptions
         from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
     except (ImportError, PackageNotFoundError):
         raise CompileError('Claude relay requires the qualified Agent SDK installation.') from None
-    spec = {'cli_path': 'claude', 'settings_path': '<run-dir>/settings.json', 'initial_chat': True,
+    # Never executed: the executable is dropped below. Absolute so the SDK never
+    # searches for its bundled CLI, even in a preview.
+    spec = {'cli_path': '/nonexecuting/claude-preview', 'settings_path': '<run-dir>/settings.json', 'initial_chat': True,
         'permission_mode': inputs.permission_mode, 'model': inputs.model, 'effort': inputs.effort}
     for filename, key in (('append-prompt.md', 'append_prompt_path'), ('mcp.json', 'mcp_config_path'),
                           ('plugin/.claude-plugin/plugin.json', 'plugin_path')):
@@ -145,11 +149,12 @@ def preview_args(inputs, files):
             spec[key] = '<run-dir>/' + ('plugin' if key == 'plugin_path' else filename)
     adapter = ClaudeAgentAdapter(policy=lambda *_: False, publish=None)
     adapter.spec = SimpleNamespace(spec=spec, binding=SimpleNamespace(
-        workspace='<workspace>', native_conversation='<native-id>'))
+        workspace='<workspace>', native_conversation=PREVIEW_NATIVE_ID))
     # SDKClient.connect sets stdio for the can_use_tool callback before creating
     # the transport. Mirror that pure transformation; never call connect here.
-    options = replace(ClaudeAgentOptions(**adapter.options()), permission_prompt_tool_name='stdio')
-    return SubprocessCLITransport(prompt=None, options=options)._build_command()[1:]
+    options = replace(pinned_options(adapter.options()), permission_prompt_tool_name='stdio')
+    return ['<native-id>' if arg == PREVIEW_NATIVE_ID else arg
+            for arg in SubprocessCLITransport(prompt=None, options=options)._build_command()[1:]]
 
 
 def decisions_ready(ctx, row):
