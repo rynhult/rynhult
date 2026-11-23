@@ -14,7 +14,7 @@ path = "src/main.rs"
 required-features = ["native-host"]
 
 [build-dependencies]
-tauri-build = { version = "=2.7.4", features = [], optional = true }
+tauri-build = { version = "=2.7.6", features = [], optional = true }
 
 [dependencies]
 tauri = { version = "=2.12.5", features = [], optional = true }
